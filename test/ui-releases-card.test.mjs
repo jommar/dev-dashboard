@@ -12,6 +12,7 @@ const pr = (over = {}) => ({
   repo: 'example/api',
   number: 535,
   title: 'Mileage rate fix',
+  owner: 'release-owner',
   url: 'https://github.com/example/api/pull/535',
   state: 'merged',
   base: 'ops/development',
@@ -50,6 +51,7 @@ const classesOf = (tag) => (tag.match(/class="([^"]*)"/)?.[1] ?? '').split(/\s+/
 
 const rowIds = (repo, number) => ({
   state: `release-pr-state-${repo}-${number}`,
+  owner: `release-pr-owner-${repo}-${number}`,
   num: `release-pr-num-${repo}-${number}`,
   base: `release-pr-base-${repo}-${number}`,
 });
@@ -59,6 +61,7 @@ test('a PR row shows its state pill, repo and number, and a base badge', () => {
   const ids = rowIds('example/api', 535);
   assert.equal(textOf(html, ids.state), 'merged');
   assert.match(openingTag(html, ids.state), /data-pr-state="merged"/);
+  assert.equal(textOf(html, ids.owner), '@release-owner');
   assert.match(textOf(html, ids.num), /example\/api/);
   assert.match(textOf(html, ids.num), /#535/);
   assert.equal(textOf(html, ids.base), 'ops/development');
@@ -94,6 +97,16 @@ test('PR title, branch and repo are escaped so markup in them stays text', () =>
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt; &quot;quoted&quot; &amp; more'));
   assert.ok(html.includes('feature/&lt;script&gt;alert(1)&lt;/script&gt;'));
   assert.ok(html.includes('example/&lt;b&gt;repo&lt;/b&gt;'));
+});
+
+test('a PR owner is escaped and omitted when unavailable', () => {
+  const html = releasePrRowHtml(pr({ owner: '<script>alert(1)</script>' }));
+  assert.ok(html.includes('@&lt;script&gt;alert(1)&lt;/script&gt;'));
+  assert.doesNotMatch(html, /<script/);
+  assert.equal(
+    textOf(releasePrRowHtml(pr({ owner: null })), rowIds('example/api', 535).owner),
+    null,
+  );
 });
 
 test('a PR with no url renders its title without any link', () => {

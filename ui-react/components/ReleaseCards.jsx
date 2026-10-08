@@ -39,6 +39,11 @@ function ReleasePrRow({ pr }) {
         >
           {pr.state}
         </span>
+        {pr.owner && (
+          <span className="pr-owner" data-testid={testId('owner')}>
+            @{pr.owner}
+          </span>
+        )}
         <span className="pr-num" data-testid={testId('num')}>
           {pr.repo} #{pr.number}
         </span>

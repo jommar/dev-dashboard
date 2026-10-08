@@ -1,8 +1,9 @@
 // releases.mjs — Jira fix-version tickets with the merge state of their GitHub
 // PRs, read from Jira alone: project versions, a JQL search, and the dev-status
-// summary/detail endpoints. No GitHub call is made, so "merged" is Jira's copy of
-// GitHub's state and can lag a fresh merge.
+// summary/detail endpoints. GitHub is queried only to resolve linked PR authors;
+// "merged" is still Jira's copy of GitHub's state and can lag a fresh merge.
 import { jiraConfig, authorization } from './jira.mjs';
+import { fetchPrOwners } from './github.mjs';
 import {
   orderVersions,
   defaultVersionId,
@@ -323,6 +324,16 @@ export async function fetchRelease({
       prs,
     };
   });
+  const owners = await fetchPrOwners(
+    tickets.flatMap((ticket) => ticket.prs),
+    { snapshot },
+  );
+  for (const ticket of tickets) {
+    ticket.prs = ticket.prs.map((pr) => ({
+      ...pr,
+      owner: owners[`${pr.repo}#${pr.number}`] ?? null,
+    }));
+  }
   return {
     versions,
     version: {
