@@ -17,6 +17,23 @@ gives you the same services but with:
 - an **agent-readable** log path (CLI + files + HTTP) so an agent can read logs,
   spot a crash, drive a restart, and verify — i.e. "heal with debugging"
 
+## Requirements and layout
+
+The dashboard starts, stops and diffs the EZAT service repos, so it expects them
+to sit next to it in one folder:
+
+```text
+ezat/
+├── dev-dashboard/      this repo
+├── Portage-backend/
+├── Portage-frontend/
+├── TravelTracker/
+└── .nvmrc              monorepo root Node pin
+```
+
+Node.js 24 runs the dashboard itself. Each service runs under the Node version
+pinned by its repo's `.nvmrc`, which must be installed through nvm.
+
 ## Quick start
 
 ```bash
@@ -24,6 +41,8 @@ cd dev-dashboard
 npm start
 # → EZAT Dev Dashboard → http://127.0.0.1:6500
 ```
+
+Prefer containers? [Run in Docker](#run-in-docker-linux) needs no local Node setup.
 
 For development, use watch mode so the dashboard restarts when server files
 change:
