@@ -1,0 +1,18 @@
+# Rolling service logs produced by the dashboard — local-only, never committed
+logs/
+
+# Dependencies
+node_modules/
+dist/
+
+# Local secrets — GitHub token etc. Never committed.
+.env
+
+# Browser artifacts (the configured runner writes outside this project)
+playwright-report/
+test-results/
+blob-report/
+.playwright-mcp/
+
+# Orchestrator session artifacts — local-only, never committed
+.orchestrator/

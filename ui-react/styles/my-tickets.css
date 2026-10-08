@@ -1,0 +1,224 @@
+/* my-tickets.css — "My Tickets" tab: category sections with status sub-groups.
+   Ticket rows reuse the .pill / .ticket-status / .jira-link visuals from prs.css. */
+
+.my-tickets-section {
+  margin: 0;
+}
+.my-tickets-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  white-space: nowrap;
+}
+/* Active-sprint line: derived from the sprint field of your own tickets, so it
+   can name several sprints (one per board) or none at all. */
+.my-tickets-sprint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin: 0 0 var(--s3);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.my-tickets-sprint-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.my-tickets-sprint-sep {
+  color: var(--border);
+}
+.my-tickets-sprint:has(.my-tickets-sprint-none) {
+  border-left-color: var(--border);
+  background: var(--panel);
+}
+.my-tickets-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.my-ticket-category-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s2);
+  color: var(--text);
+  font-size: var(--fs-lg);
+}
+.my-ticket-groups {
+  columns: 1;
+  column-gap: 16px;
+}
+@media (min-width: 760px) {
+  .my-ticket-groups {
+    columns: 2;
+  }
+}
+@media (min-width: 1700px) {
+  .my-ticket-groups {
+    columns: 3;
+  }
+}
+.my-ticket-status-group {
+  break-inside: avoid;
+  margin: 0 0 var(--s3);
+  padding: 0;
+  background: var(--panel);
+  border: 0;
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+}
+.my-ticket-status-group + .my-ticket-status-group {
+  margin-top: 16px;
+}
+.my-ticket-status-group[data-jira-status-kind='queued'] {
+  --jira-status-color: var(--muted);
+}
+.my-ticket-status-group[data-jira-status-kind='active'] {
+  --jira-status-color: var(--accent);
+}
+.my-ticket-status-group[data-jira-status-kind='done'] {
+  --jira-status-color: var(--green);
+}
+.my-ticket-status-group[data-jira-status-kind='attention'] {
+  --jira-status-color: var(--red);
+}
+.my-ticket-status-group[data-jira-status-kind='unknown'] {
+  --jira-status-color: var(--muted);
+}
+.my-ticket-status-group[data-jira-status-kind] {
+  background: var(--panel);
+}
+.my-ticket-status-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--accent);
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.my-ticket-rows {
+  display: flex;
+  flex-direction: column;
+}
+.my-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: 20px;
+  border-left: 0;
+}
+.my-ticket + .my-ticket {
+  border-top: 1px solid var(--border);
+}
+.my-ticket-key {
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.my-ticket-summary {
+  font-size: 16px;
+  color: var(--strong);
+  overflow-wrap: anywhere;
+}
+.my-ticket-key {
+  font-family: var(--mono);
+}
+.my-ticket-key a {
+  text-decoration: none;
+}
+.my-ticket-category-head {
+  font-size: 19px;
+  margin-block: 12px;
+}
+.my-ticket-status-head {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.my-ticket-status-head[hidden] {
+  display: none;
+}
+@media (min-width: 960px) {
+  .my-tickets-list .my-ticket {
+    display: grid;
+    grid-template-columns: 140px minmax(0, 1fr);
+    column-gap: 24px;
+    row-gap: 8px;
+  }
+  .my-tickets-list .my-ticket-key {
+    grid-row: span 2;
+    padding-top: 2px;
+    overflow-wrap: anywhere;
+  }
+  .my-tickets-list .my-ticket-meta {
+    grid-column: 2;
+  }
+}
+.my-tickets-toggle {
+  min-height: 36px;
+}
+input[type='checkbox'] {
+  accent-color: var(--accent-fill);
+  width: 16px;
+  height: 16px;
+}
+/* A ticket in the current active sprint gets an accent rail and a faint tint,
+   so "what am I on right now" is a scan of the list rather than a read of every
+   pill. The status pill keeps its own color: the two signals are independent
+   (a done ticket can still belong to the active sprint). The rail is an inset
+   box-shadow, not a border, so the 3px does not shift the row's content —
+   a border here would misalign the keys against the non-sprint rows below. */
+.my-ticket[data-in-current-sprint='true'] {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+/* Sprint pill sits beside .ticket-status and borrows its geometry from
+   prs.css; only the state colors differ. */
+.ticket-sprint {
+  font-weight: 400;
+  color: var(--sprint-color, var(--muted));
+  border-color: var(--sprint-color, var(--border));
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ticket-sprint[data-sprint-state='active'] {
+  --sprint-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.ticket-sprint[data-sprint-state='future'] {
+  border-style: dashed;
+}
+.ticket-sprint[data-sprint-state='closed'] {
+  text-decoration: line-through;
+}
+.ticket-sprint[data-sprint-state='none'] {
+  opacity: 0.7;
+}
+.my-ticket-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.my-ticket-sub {
+  color: var(--muted);
+}

@@ -1,0 +1,575 @@
+/* home.css — the Home overview: KPI tiles, sprint progress, the action queue
+   and the service health strip. Colours and spacing come from tokens.css; the
+   status pill and the Jira status-kind palette are shared with the other
+   panels rather than restated. */
+
+/* ── layout ───────────────────────────────────────────────────────────────── */
+
+.home-kpis {
+  margin: 32px 0;
+  padding: 24px 0;
+  border-block: 1px solid var(--border);
+}
+
+/* One column stacked, in DOM order: Velocity, then Sprint, Needs you,
+   Services inside the columns. The velocity chart sits outside .home-cols so
+   it spans the full row at every width. */
+.home-cols {
+  column-gap: var(--s5);
+}
+.home-block + .home-block {
+  margin-top: var(--s5);
+}
+
+/* Full-width velocity strip between the KPIs and the columns. */
+.home-block-velocity {
+  margin: 0 0 var(--s5);
+}
+
+/* Wide: the 3 blocks column-pack (Pinterest-style) instead of a fixed
+   left/right split, so column height balances against real content — a long
+   Needs you queue no longer leaves dead space under a shorter column. */
+@media (min-width: 960px) {
+  .home-cols {
+    columns: 2;
+  }
+}
+
+.home-block {
+  min-width: 0;
+  break-inside: avoid;
+}
+.home-block-actions {
+  padding: 22px;
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.home-block-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s3);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text);
+}
+.home-block-more {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  text-decoration: none;
+}
+.home-block-caption {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+}
+.home-block-more:hover {
+  color: var(--accent);
+}
+
+.home-empty {
+  color: var(--muted);
+  font-size: var(--fs-md);
+  margin: 0;
+}
+.home-more {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin: var(--s3) 0 0;
+  padding-left: var(--s3);
+}
+
+/* ── KPI tiles ────────────────────────────────────────────────────────────── */
+
+.kpi-row {
+  display: grid;
+  gap: var(--s3);
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 760px) {
+  .kpi-row {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.kpi-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s3) var(--s4);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+a.kpi-tile:hover {
+  border-color: var(--accent);
+  background: var(--panel2);
+}
+
+.kpi-value {
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-tile[data-unknown='true'] .kpi-value {
+  color: var(--muted);
+}
+.kpi-label {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* ── sprint progress ──────────────────────────────────────────────────────── */
+
+.sprint-select-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--s3);
+}
+/* The dropdown itself is the reusable listbox (see listbox.css); the row
+   only carries the placement. Sprint-specific overrides live there via
+   [data-state] hooks. */
+
+.sprint-card {
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.sprint-card + .sprint-card {
+  margin-top: var(--s3);
+}
+
+.sprint-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s3);
+}
+.sprint-name {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  margin: 0;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.sprint-when {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.sprint-bar {
+  display: flex;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--panel2);
+}
+.sprint-band {
+  display: block;
+  height: 100%;
+}
+.sprint-band[data-kind='queued'] {
+  background: var(--muted);
+}
+.sprint-band[data-kind='active'] {
+  background: var(--accent);
+}
+.sprint-band[data-kind='done'] {
+  background: var(--green);
+}
+
+.sprint-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: var(--s2);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+/* The legend item is the disclosure control, not the 8px band: a band is too
+   small to be a reliable hit target and its focus ring would be clipped by the
+   bar's own overflow:hidden. Needs a full button reset. */
+.sprint-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  min-height: 24px;
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0 var(--s1);
+  margin-left: calc(var(--s1) * -1);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.sprint-legend-item:hover {
+  color: var(--text);
+  background: var(--panel2);
+}
+.sprint-legend-item:focus-visible,
+.sprint-legend-note:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sprint-legend-item::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.sprint-legend-item[data-kind='active']::before {
+  background: var(--accent);
+}
+.sprint-legend-item[data-kind='done']::before {
+  background: var(--green);
+}
+.sprint-legend-total {
+  margin-left: auto;
+}
+
+/* The unestimated note is a fourth drill-down when there is one, and plain
+   text when the whole sprint is unestimated — so it is styled as a button but
+   only reset as one where it is one. */
+.sprint-legend-note {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0 var(--s1);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--amber);
+}
+button.sprint-legend-note {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+button.sprint-legend-note:hover {
+  background: var(--panel2);
+}
+
+.sprint-caret {
+  font-size: var(--fs-sm);
+  line-height: 1;
+  transform-origin: center;
+}
+[aria-expanded='true'] > .sprint-caret {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sprint-caret {
+    transition: transform 120ms ease;
+  }
+}
+
+/* The expanded band. Height-capped so a 21-ticket Done list cannot push the
+   rest of the page out of reach; .sprint-card has no overflow:hidden, so this
+   is safe to grow inside it. */
+.sprint-tickets {
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--border);
+}
+.sprint-tickets-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.sprint-tickets-count {
+  margin-left: auto;
+  font-weight: 400;
+}
+/* Height-capped so a 21-ticket Done list cannot push the rest of the page out
+   of reach; the cap is on the rows, not the section, so the heading stays put
+   while they scroll. Generous enough that a handful of tickets never scrolls —
+   a scrollbar on four rows reads as broken. */
+.sprint-tickets-rows {
+  max-height: min(32rem, 60vh);
+  overflow-y: auto;
+}
+.sprint-points {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.sprint-points[data-unestimated='true'] {
+  color: var(--amber);
+  border-style: dashed;
+}
+
+.home-warn {
+  color: var(--amber);
+  padding: var(--s3);
+  margin: 0 0 var(--s3);
+  border: 1px dashed var(--amber);
+  border-radius: var(--radius-sm);
+}
+
+/* ── velocity chart ──────────────────────────────────────────────────────── */
+
+.velocity-chart {
+  padding: var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.velocity-bars {
+  display: flex;
+  align-items: stretch;
+  gap: var(--s3);
+  min-height: 180px;
+  overflow-x: auto;
+  padding-top: var(--s2);
+}
+.velocity-column {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--s1);
+  flex: 1 0 52px;
+  min-width: 0;
+  max-width: 140px;
+  text-align: center;
+}
+/* Wide: the chart spans the full row, so columns are sized against it — up
+   to 30 sprints share the row via flex-grow, and the 31st pushes the summed
+   minimum past 100% so the strip scrolls instead of squishing further.
+   Narrow screens keep the fixed 52px floor above and scroll sooner. */
+@media (min-width: 1200px) {
+  .velocity-column {
+    flex: 1 1 0;
+    min-width: calc((100% - 29 * var(--s3)) / 30);
+  }
+}
+.velocity-value {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.velocity-track {
+  display: flex;
+  align-items: flex-end;
+  min-height: 120px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(to top, var(--panel2), transparent 65%);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.velocity-bar {
+  display: block;
+  width: 100%;
+  min-height: 2px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--green);
+}
+.velocity-label {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.velocity-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-top: var(--s3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.velocity-note {
+  color: var(--amber);
+}
+
+/* ── action queue ─────────────────────────────────────────────────────────── */
+
+.action-group + .action-group {
+  margin-top: var(--s4);
+}
+
+.action-reason {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s2);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.action-count {
+  font-size: var(--fs-xs);
+  padding: 0 var(--s2);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  letter-spacing: 0;
+}
+
+/* PR rows come from pr-card.js's prItemHtml so the two views can't drift on
+   how a PR reads. It ships only the coloured state rail, so give it the same
+   card surface the ticket rows have. */
+.action-group .pr-item {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  padding: 16px 0;
+}
+.action-group .pr-item + .pr-item {
+  margin-top: 0;
+}
+
+.action-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.action-ticket + .action-ticket {
+  margin-top: var(--s2);
+}
+.action-ticket-key a {
+  font-size: var(--fs-md);
+}
+.action-ticket-summary {
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.action-ticket-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.action-dim {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* The queue borrows the Jira status-kind palette used by the ticket groups. */
+.action-ticket-meta .pill[data-jira-status-kind='queued'] {
+  --jira-status-color: var(--muted);
+}
+.action-ticket-meta .pill[data-jira-status-kind='active'] {
+  --jira-status-color: var(--accent);
+}
+.action-ticket-meta .pill[data-jira-status-kind='done'] {
+  --jira-status-color: var(--green);
+}
+.action-ticket-meta .pill[data-jira-status-kind='attention'] {
+  --jira-status-color: var(--red);
+}
+.action-ticket-meta .pill[data-jira-status-kind='unknown'] {
+  --jira-status-color: var(--muted);
+}
+.action-ticket-meta .pill[data-jira-status-kind] {
+  color: var(--jira-status-color);
+  border-color: color-mix(in srgb, var(--jira-status-color) 45%, transparent);
+}
+
+/* ── service health strip ─────────────────────────────────────────────────── */
+
+.svc-strip {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.svc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+}
+.svc-row + .svc-row {
+  border-top: 1px solid var(--border);
+}
+.svc-row .status {
+  min-width: 68px;
+  text-align: center;
+}
+.svc-name {
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.svc-row {
+  padding-block: 14px;
+  flex-wrap: wrap;
+}
+.svc-row .status {
+  min-width: 64px;
+}
+.home-block-actions .action-ticket {
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 14px 0;
+}
+.home-block-actions .action-reason {
+  margin-top: 20px;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+}
+.home-block-velocity .velocity-chart {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.home-block-velocity .velocity-bar {
+  background: var(--accent-fill);
+}
+.home-block-velocity .velocity-track {
+  background: var(--panel);
+}
+.home-block-sprint .listbox-label {
+  display: none;
+}
+.sprint-legend-item,
+button.sprint-legend-note {
+  min-height: 32px;
+}
+@media (hover: none) {
+  .sprint-legend-item,
+  button.sprint-legend-note {
+    min-height: 44px;
+  }
+}
+.svc-spacer {
+  flex: 1;
+}

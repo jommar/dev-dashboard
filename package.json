@@ -1,0 +1,53 @@
+{
+  "name": "dev-dashboard",
+  "version": "0.1.0",
+  "description": "EZAT dev-service dashboard with tail-by-default logs and agent-readable access",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "dev-dashboard": "./server.mjs",
+    "dev-dashboard-cli": "./cli.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "nodemon server.mjs",
+    "dev:ui": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.{js,mjs,jsx,css,html,json}\"",
+    "format:check": "prettier --check \"**/*.{js,mjs,jsx,css,html,json}\"",
+    "logs": "node cli.mjs logs",
+    "restart": "node cli.mjs restart",
+    "stop": "node cli.mjs stop",
+    "start:svc": "node cli.mjs start",
+    "test": "node --test",
+    "test:ui": "playwright test",
+    "test:ui:proxy": "playwright test --config=e2e/vite-proxy.config.js",
+    "test:ui:serve": "node e2e/static-server.mjs"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "devDependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@eslint/js": "^9.39.5",
+    "@mui/material": "^9.4.0",
+    "@playwright/test": "^1.63.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^17.13.0",
+    "nodemon": "^3.1.14",
+    "prettier": "^3.9.9",
+    "react": "^19.3.0",
+    "vite": "^8.3.3"
+  },
+  "overrides": {
+    "chokidar": "4.0.3",
+    "nodemon": {
+      "minimatch": {
+        "brace-expansion": "5.0.12"
+      }
+    }
+  }
+}

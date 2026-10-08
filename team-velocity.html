@@ -1,0 +1,1228 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Team velocity</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root {
+        --bg: #0f1419;
+        --panel: #161b22;
+        --panel2: #1c232d;
+        --border: #2a323d;
+        --text: #d7dde4;
+        --muted: #7d8794;
+        --accent: #4aa6ff;
+        --green: #41d07c;
+        --red: #ff5c6a;
+        --amber: #ffb454;
+        --s1: 4px;
+        --s2: 8px;
+        --s3: 12px;
+        --s4: 16px;
+        --s5: 24px;
+        --s6: 32px;
+        --radius: 10px;
+        --radius-sm: 6px;
+        --fs-xs: 10px;
+        --fs-sm: 11px;
+        --fs-md: 12px;
+        --fs-lg: 13px;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      .velocity-chart {
+        padding: var(--s4);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--panel);
+        overflow: hidden;
+        margin-bottom: var(--s3);
+      }
+      .velocity-bars {
+        display: flex;
+        align-items: stretch;
+        gap: var(--s3);
+        min-height: 180px;
+        overflow-x: auto;
+        padding-top: var(--s2);
+      }
+      .velocity-column {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: var(--s1);
+        flex: 1 0 52px;
+        min-width: 0;
+        max-width: 140px;
+        text-align: center;
+      }
+      @media (min-width: 1200px) {
+        .velocity-column {
+          flex: 1 1 0;
+          min-width: calc((100% - 29 * var(--s3)) / 30);
+        }
+      }
+      .velocity-value {
+        color: var(--text);
+        font-size: var(--fs-sm);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .velocity-track {
+        display: flex;
+        align-items: flex-end;
+        min-height: 120px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(to top, var(--panel2), transparent 65%);
+        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+      }
+      .velocity-bar {
+        display: block;
+        width: 100%;
+        min-height: 2px;
+        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+        background: var(--green);
+      }
+      .velocity-label {
+        overflow: hidden;
+        color: var(--muted);
+        font-size: var(--fs-xs);
+        line-height: 1.25;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .velocity-summary {
+        display: flex;
+        justify-content: space-between;
+        gap: var(--s3);
+        margin-top: var(--s3);
+        color: var(--muted);
+        font-size: var(--fs-sm);
+        font-variant-numeric: tabular-nums;
+      }
+      .velocity-note {
+        color: var(--amber);
+      }
+      .tv-table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--panel);
+      }
+      .tv-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--fs-sm);
+      }
+      .tv-table th,
+      .tv-table td {
+        padding: var(--s2) var(--s3);
+        text-align: right;
+        border-top: 1px solid var(--border);
+        font-variant-numeric: tabular-nums;
+      }
+      .tv-table tr:first-child th {
+        border-top: 0;
+      }
+      .tv-table th[scope='row'] {
+        text-align: left;
+        color: var(--text);
+        font-weight: 600;
+      }
+      .tv-table th[scope='col'] {
+        color: var(--muted);
+        font-weight: 400;
+      }
+      .tv-state {
+        font-size: var(--fs-xs);
+      }
+      .tv-n {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body class="max-w-[1400px] mx-auto p-6">
+    <h1 class="text-lg font-semibold">Team velocity</h1>
+    <p class="text-[12px] mb-6" style="color: var(--muted)">
+      Done story points by sprint, per person. Last 8 sprints per board · snapshot 2026-09-04.
+    </p>
+    <section class="mb-8">
+      <h2 class="text-[13px] font-semibold mb-3">Hippo</h2>
+      <div class="velocity-chart" data-testid="home-velocity-chart">
+        <div class="velocity-bars" role="list" aria-label="Done story points by sprint">
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Hippo Sprint 17: 0 points across 1 ticket, 1 unestimated"
+            data-testid="home-velocity-column-1460"
+          >
+            <span class="velocity-value">0</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 0%"
+                data-tooltip="Hippo Sprint 17: 0 points across 1 ticket, 1 unestimated"
+                data-testid="home-velocity-bar-1460"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Hippo Sprint 17">Hippo Sprint 17</span>
+          </div>
+        </div>
+        <div class="velocity-summary">
+          <span>0 pts total</span><span class="velocity-note">no estimates</span>
+        </div>
+      </div>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <tr>
+            <th scope="col">Who</th>
+            <th scope="col">Sprint 17<br /><span class="tv-state">active</span></th>
+          </tr>
+          <tr>
+            <th scope="row">Bartosz Palacz</th>
+            <td>0<span class="tv-n"> (1)</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+    <section class="mb-8">
+      <h2 class="text-[13px] font-semibold mb-3">Mobile</h2>
+      <div class="velocity-chart" data-testid="home-velocity-chart">
+        <div class="velocity-bars" role="list" aria-label="Done story points by sprint">
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Mobile Sprint 10: 19 points across 3 tickets, 1 unestimated"
+            data-testid="home-velocity-column-1159"
+          >
+            <span class="velocity-value">19</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 16.96%"
+                data-tooltip="Mobile Sprint 10: 19 points across 3 tickets, 1 unestimated"
+                data-testid="home-velocity-bar-1159"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Mobile Sprint 10">Mobile Sprint 10</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Mobile Sprint 11: 19 points across 3 tickets, 1 unestimated"
+            data-testid="home-velocity-column-1262"
+          >
+            <span class="velocity-value">19</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 16.96%"
+                data-tooltip="Mobile Sprint 11: 19 points across 3 tickets, 1 unestimated"
+                data-testid="home-velocity-bar-1262"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Mobile Sprint 11">Mobile Sprint 11</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Mobile Sprint 12: 19 points across 3 tickets, 1 unestimated"
+            data-testid="home-velocity-column-1333"
+          >
+            <span class="velocity-value">19</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 16.96%"
+                data-tooltip="Mobile Sprint 12: 19 points across 3 tickets, 1 unestimated"
+                data-testid="home-velocity-bar-1333"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Mobile Sprint 12">Mobile Sprint 12</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Mobile Sprint 13: 19 points across 3 tickets, 1 unestimated"
+            data-testid="home-velocity-column-1367"
+          >
+            <span class="velocity-value">19</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 16.96%"
+                data-tooltip="Mobile Sprint 13: 19 points across 3 tickets, 1 unestimated"
+                data-testid="home-velocity-bar-1367"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Mobile Sprint 13">Mobile Sprint 13</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Mobile Sprint 14: 25 points across 5 tickets, 1 unestimated"
+            data-testid="home-velocity-column-1403"
+          >
+            <span class="velocity-value">25</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 22.32%"
+                data-tooltip="Mobile Sprint 14: 25 points across 5 tickets, 1 unestimated"
+                data-testid="home-velocity-bar-1403"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Mobile Sprint 14">Mobile Sprint 14</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Mobile Sprint 15: 29 points across 9 tickets, 1 unestimated"
+            data-testid="home-velocity-column-1407"
+          >
+            <span class="velocity-value">29</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 25.89%"
+                data-tooltip="Mobile Sprint 15: 29 points across 9 tickets, 1 unestimated"
+                data-testid="home-velocity-bar-1407"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Mobile Sprint 15">Mobile Sprint 15</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Mobile Sprint 16: 103 points across 50 tickets, 17 unestimated"
+            data-testid="home-velocity-column-1409"
+          >
+            <span class="velocity-value">103</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 91.96%"
+                data-tooltip="Mobile Sprint 16: 103 points across 50 tickets, 17 unestimated"
+                data-testid="home-velocity-bar-1409"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Mobile Sprint 16">Mobile Sprint 16</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Mobile Sprint 17: 112 points across 50 tickets, 16 unestimated"
+            data-testid="home-velocity-column-1451"
+          >
+            <span class="velocity-value">112</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 100%"
+                data-tooltip="Mobile Sprint 17: 112 points across 50 tickets, 16 unestimated"
+                data-testid="home-velocity-bar-1451"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Mobile Sprint 17">Mobile Sprint 17</span>
+          </div>
+        </div>
+        <div class="velocity-summary">
+          <span>345 pts total</span><span class="velocity-note">39 unestimated</span>
+        </div>
+      </div>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <tr>
+            <th scope="col">Who</th>
+            <th scope="col">Sprint 10<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 11<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 12<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 13<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 14<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 15<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 16<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 17<br /><span class="tv-state">active</span></th>
+          </tr>
+          <tr>
+            <th scope="row">Karthika Palanisamy</th>
+            <td>15<span class="tv-n"> (1)</span></td>
+            <td>15<span class="tv-n"> (1)</span></td>
+            <td>15<span class="tv-n"> (1)</span></td>
+            <td>15<span class="tv-n"> (1)</span></td>
+            <td>15<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>8<span class="tv-n"> (4)</span></td>
+            <td>12<span class="tv-n"> (5)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Jan Edward Hernandez</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>10<span class="tv-n"> (2)</span></td>
+            <td>30<span class="tv-n"> (22)</span></td>
+            <td>30<span class="tv-n"> (22)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Shivam Verma</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>24<span class="tv-n"> (6)</span></td>
+            <td>28<span class="tv-n"> (7)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Gopinath S</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>6<span class="tv-n"> (2)</span></td>
+            <td>9<span class="tv-n"> (3)</span></td>
+            <td>18<span class="tv-n"> (6)</span></td>
+            <td>13<span class="tv-n"> (4)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Prena Mohan</th>
+            <td>4<span class="tv-n"> (1)</span></td>
+            <td>4<span class="tv-n"> (1)</span></td>
+            <td>4<span class="tv-n"> (1)</span></td>
+            <td>4<span class="tv-n"> (1)</span></td>
+            <td>4<span class="tv-n"> (1)</span></td>
+            <td>4<span class="tv-n"> (1)</span></td>
+            <td>13<span class="tv-n"> (5)</span></td>
+            <td>4<span class="tv-n"> (1)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">John Paul De Jesus</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>6<span class="tv-n"> (2)</span></td>
+            <td>6<span class="tv-n"> (2)</span></td>
+            <td>8<span class="tv-n"> (3)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Sudharsan Chandrasekaran</th>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>3<span class="tv-n"> (3)</span></td>
+            <td>8<span class="tv-n"> (5)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Sharath Kumar</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>5<span class="tv-n"> (2)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Parameswaran</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>4<span class="tv-n"> (1)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Ryan Hill</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>1<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+          </tr>
+        </table>
+      </div>
+    </section>
+    <section class="mb-8">
+      <h2 class="text-[13px] font-semibold mb-3">Nexus</h2>
+      <div class="velocity-chart" data-testid="home-velocity-chart">
+        <div class="velocity-bars" role="list" aria-label="Done story points by sprint">
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Nexus Sprint 10: 16 points across 3 tickets"
+            data-testid="home-velocity-column-988"
+          >
+            <span class="velocity-value">16</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 4.41%"
+                data-tooltip="Nexus Sprint 10: 16 points across 3 tickets"
+                data-testid="home-velocity-bar-988"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Nexus Sprint 10">Nexus Sprint 10</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Nexus Sprint 11: 8 points across 1 ticket"
+            data-testid="home-velocity-column-1022"
+          >
+            <span class="velocity-value">8</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 2.2%"
+                data-tooltip="Nexus Sprint 11: 8 points across 1 ticket"
+                data-testid="home-velocity-bar-1022"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Nexus Sprint 11">Nexus Sprint 11</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Nexus Sprint 12: 8 points across 1 ticket"
+            data-testid="home-velocity-column-1023"
+          >
+            <span class="velocity-value">8</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 2.2%"
+                data-tooltip="Nexus Sprint 12: 8 points across 1 ticket"
+                data-testid="home-velocity-bar-1023"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Nexus Sprint 12">Nexus Sprint 12</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Nexus Sprint 13: 20 points across 3 tickets"
+            data-testid="home-velocity-column-1024"
+          >
+            <span class="velocity-value">20</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 5.51%"
+                data-tooltip="Nexus Sprint 13: 20 points across 3 tickets"
+                data-testid="home-velocity-bar-1024"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Nexus Sprint 13">Nexus Sprint 13</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Nexus Sprint 14: 53 points across 8 tickets"
+            data-testid="home-velocity-column-1057"
+          >
+            <span class="velocity-value">53</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 14.6%"
+                data-tooltip="Nexus Sprint 14: 53 points across 8 tickets"
+                data-testid="home-velocity-bar-1057"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Nexus Sprint 14">Nexus Sprint 14</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Nexus Sprint 15: 67 points across 12 tickets"
+            data-testid="home-velocity-column-1294"
+          >
+            <span class="velocity-value">67</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 18.46%"
+                data-tooltip="Nexus Sprint 15: 67 points across 12 tickets"
+                data-testid="home-velocity-bar-1294"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Nexus Sprint 15">Nexus Sprint 15</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Nexus Sprint 16: 282 points across 48 tickets"
+            data-testid="home-velocity-column-1299"
+          >
+            <span class="velocity-value">282</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 77.69%"
+                data-tooltip="Nexus Sprint 16: 282 points across 48 tickets"
+                data-testid="home-velocity-bar-1299"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Nexus Sprint 16">Nexus Sprint 16</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Nexus Sprint 17: 363 points across 65 tickets, 1 unestimated"
+            data-testid="home-velocity-column-1404"
+          >
+            <span class="velocity-value">363</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 100%"
+                data-tooltip="Nexus Sprint 17: 363 points across 65 tickets, 1 unestimated"
+                data-testid="home-velocity-bar-1404"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Nexus Sprint 17">Nexus Sprint 17</span>
+          </div>
+        </div>
+        <div class="velocity-summary">
+          <span>817 pts total</span><span class="velocity-note">1 unestimated</span>
+        </div>
+      </div>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <tr>
+            <th scope="col">Who</th>
+            <th scope="col">Sprint 10<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 11<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 12<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 13<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 14<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 15<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 16<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 17<br /><span class="tv-state">active</span></th>
+          </tr>
+          <tr>
+            <th scope="row">Bk Santiago</th>
+            <td>—</td>
+            <td>8<span class="tv-n"> (1)</span></td>
+            <td>8<span class="tv-n"> (1)</span></td>
+            <td>13<span class="tv-n"> (2)</span></td>
+            <td>19<span class="tv-n"> (3)</span></td>
+            <td>14<span class="tv-n"> (3)</span></td>
+            <td>70<span class="tv-n"> (10)</span></td>
+            <td>72<span class="tv-n"> (11)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Jommar Ilagan</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>6<span class="tv-n"> (2)</span></td>
+            <td>14<span class="tv-n"> (5)</span></td>
+            <td>49<span class="tv-n"> (15)</span></td>
+            <td>107<span class="tv-n"> (25)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Justin George</th>
+            <td>5<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>7<span class="tv-n"> (1)</span></td>
+            <td>7<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>59<span class="tv-n"> (8)</span></td>
+            <td>73<span class="tv-n"> (10)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Patrick Rivera</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>18<span class="tv-n"> (2)</span></td>
+            <td>42<span class="tv-n"> (7)</span></td>
+            <td>47<span class="tv-n"> (9)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">EJ Bringuela</th>
+            <td>11<span class="tv-n"> (2)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>38<span class="tv-n"> (5)</span></td>
+            <td>43<span class="tv-n"> (6)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Cristina Picciola</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>21<span class="tv-n"> (2)</span></td>
+            <td>21<span class="tv-n"> (2)</span></td>
+            <td>24<span class="tv-n"> (3)</span></td>
+            <td>19<span class="tv-n"> (3)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Yuliia Palamarchuk</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>2<span class="tv-n"> (1)</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+    <section class="mb-8">
+      <h2 class="text-[13px] font-semibold mb-3">Pathfinders</h2>
+      <div class="velocity-chart" data-testid="home-velocity-chart">
+        <div class="velocity-bars" role="list" aria-label="Done story points by sprint">
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Pathfinders Sprint 9: 10 points across 10 tickets, 5 unestimated"
+            data-testid="home-velocity-column-520"
+          >
+            <span class="velocity-value">10</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 3.36%"
+                data-tooltip="Pathfinders Sprint 9: 10 points across 10 tickets, 5 unestimated"
+                data-testid="home-velocity-bar-520"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Pathfinders Sprint 9">Pathfinders Sprint 9</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Pathfinders Sprint 10: 11 points across 8 tickets, 2 unestimated"
+            data-testid="home-velocity-column-521"
+          >
+            <span class="velocity-value">11</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 3.69%"
+                data-tooltip="Pathfinders Sprint 10: 11 points across 8 tickets, 2 unestimated"
+                data-testid="home-velocity-bar-521"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Pathfinders Sprint 10">Pathfinders Sprint 10</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Pathfinders Sprint 11: 0 points across 8 tickets, 8 unestimated"
+            data-testid="home-velocity-column-721"
+          >
+            <span class="velocity-value">0</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 0%"
+                data-tooltip="Pathfinders Sprint 11: 0 points across 8 tickets, 8 unestimated"
+                data-testid="home-velocity-bar-721"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Pathfinders Sprint 11">Pathfinders Sprint 11</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Pathfinders Sprint 13: 5 points across 2 tickets"
+            data-testid="home-velocity-column-1192"
+          >
+            <span class="velocity-value">5</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 1.68%"
+                data-tooltip="Pathfinders Sprint 13: 5 points across 2 tickets"
+                data-testid="home-velocity-bar-1192"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Pathfinders Sprint 13">Pathfinders Sprint 13</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Pathfinders Sprint 14: 4 points across 3 tickets"
+            data-testid="home-velocity-column-1193"
+          >
+            <span class="velocity-value">4</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 1.34%"
+                data-tooltip="Pathfinders Sprint 14: 4 points across 3 tickets"
+                data-testid="home-velocity-bar-1193"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Pathfinders Sprint 14">Pathfinders Sprint 14</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Pathfinders Sprint 15: 34 points across 13 tickets"
+            data-testid="home-velocity-column-1194"
+          >
+            <span class="velocity-value">34</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 11.41%"
+                data-tooltip="Pathfinders Sprint 15: 34 points across 13 tickets"
+                data-testid="home-velocity-bar-1194"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Pathfinders Sprint 15">Pathfinders Sprint 15</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Pathfinders Sprint 16: 192 points across 60 tickets"
+            data-testid="home-velocity-column-1295"
+          >
+            <span class="velocity-value">192</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 64.43%"
+                data-tooltip="Pathfinders Sprint 16: 192 points across 60 tickets"
+                data-testid="home-velocity-bar-1295"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Pathfinders Sprint 16">Pathfinders Sprint 16</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="Pathfinders Sprint 17: 298 points across 85 tickets, 1 unestimated"
+            data-testid="home-velocity-column-1296"
+          >
+            <span class="velocity-value">298</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 100%"
+                data-tooltip="Pathfinders Sprint 17: 298 points across 85 tickets, 1 unestimated"
+                data-testid="home-velocity-bar-1296"
+              ></span>
+            </div>
+            <span class="velocity-label" title="Pathfinders Sprint 17">Pathfinders Sprint 17</span>
+          </div>
+        </div>
+        <div class="velocity-summary">
+          <span>554 pts total</span><span class="velocity-note">16 unestimated</span>
+        </div>
+      </div>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <tr>
+            <th scope="col">Who</th>
+            <th scope="col">Sprint 9<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 10<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 11<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 13<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 14<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 15<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 16<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 17<br /><span class="tv-state">active</span></th>
+          </tr>
+          <tr>
+            <th scope="row">Joey Gutierrez</th>
+            <td>2<span class="tv-n"> (3)</span></td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>0<span class="tv-n"> (3)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>7<span class="tv-n"> (3)</span></td>
+            <td>55<span class="tv-n"> (15)</span></td>
+            <td>113<span class="tv-n"> (31)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Boren Zang</th>
+            <td>4<span class="tv-n"> (3)</span></td>
+            <td>4<span class="tv-n"> (3)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>10<span class="tv-n"> (2)</span></td>
+            <td>16<span class="tv-n"> (5)</span></td>
+            <td>43<span class="tv-n"> (10)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">alberto.ortega</th>
+            <td>—</td>
+            <td>—</td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>3<span class="tv-n"> (2)</span></td>
+            <td>23<span class="tv-n"> (10)</span></td>
+            <td>45<span class="tv-n"> (13)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Michael W Martin</th>
+            <td>—</td>
+            <td>—</td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>4<span class="tv-n"> (3)</span></td>
+            <td>2<span class="tv-n"> (1)</span></td>
+            <td>54<span class="tv-n"> (13)</span></td>
+            <td>9<span class="tv-n"> (4)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Michael Nguyen</th>
+            <td>2<span class="tv-n"> (2)</span></td>
+            <td>2<span class="tv-n"> (1)</span></td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>2<span class="tv-n"> (1)</span></td>
+            <td>11<span class="tv-n"> (5)</span></td>
+            <td>22<span class="tv-n"> (9)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Don Adams</th>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>4<span class="tv-n"> (2)</span></td>
+            <td>8<span class="tv-n"> (3)</span></td>
+            <td>27<span class="tv-n"> (5)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Ramesh S</th>
+            <td>2<span class="tv-n"> (1)</span></td>
+            <td>2<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>16<span class="tv-n"> (6)</span></td>
+            <td>19<span class="tv-n"> (6)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Raghavendra V</th>
+            <td>—</td>
+            <td>3<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>2<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>10<span class="tv-n"> (3)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Jon Wells</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>5<span class="tv-n"> (1)</span></td>
+            <td>5<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <th scope="row">Yann Cayrac</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>9<span class="tv-n"> (3)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Todd Yates</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>1<span class="tv-n"> (1)</span></td>
+            <td>3<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <th scope="row">Aaron Zhou</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>3<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <th scope="row">Richard Yandow</th>
+            <td>—</td>
+            <td>—</td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>1<span class="tv-n"> (1)</span></td>
+            <td>1<span class="tv-n"> (1)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">(unassigned)</th>
+            <td>—</td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>0<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+          </tr>
+        </table>
+      </div>
+    </section>
+    <section class="mb-8">
+      <h2 class="text-[13px] font-semibold mb-3">PHP</h2>
+      <div class="velocity-chart" data-testid="home-velocity-chart">
+        <div class="velocity-bars" role="list" aria-label="Done story points by sprint">
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="PHP Sprint 9: 1 points across 1 ticket"
+            data-testid="home-velocity-column-1090"
+          >
+            <span class="velocity-value">1</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 3.13%"
+                data-tooltip="PHP Sprint 9: 1 points across 1 ticket"
+                data-testid="home-velocity-bar-1090"
+              ></span>
+            </div>
+            <span class="velocity-label" title="PHP Sprint 9">PHP Sprint 9</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="PHP Sprint 13: 1 points across 1 ticket"
+            data-testid="home-velocity-column-1366"
+          >
+            <span class="velocity-value">1</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 3.13%"
+                data-tooltip="PHP Sprint 13: 1 points across 1 ticket"
+                data-testid="home-velocity-bar-1366"
+              ></span>
+            </div>
+            <span class="velocity-label" title="PHP Sprint 13">PHP Sprint 13</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="PHP Sprint 15: 9 points across 3 tickets"
+            data-testid="home-velocity-column-1406"
+          >
+            <span class="velocity-value">9</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 28.13%"
+                data-tooltip="PHP Sprint 15: 9 points across 3 tickets"
+                data-testid="home-velocity-bar-1406"
+              ></span>
+            </div>
+            <span class="velocity-label" title="PHP Sprint 15">PHP Sprint 15</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="PHP Sprint 16: 20 points across 9 tickets"
+            data-testid="home-velocity-column-1408"
+          >
+            <span class="velocity-value">20</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 62.5%"
+                data-tooltip="PHP Sprint 16: 20 points across 9 tickets"
+                data-testid="home-velocity-bar-1408"
+              ></span>
+            </div>
+            <span class="velocity-label" title="PHP Sprint 16">PHP Sprint 16</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="PHP Sprint 17: 32 points across 17 tickets"
+            data-testid="home-velocity-column-1450"
+          >
+            <span class="velocity-value">32</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 100%"
+                data-tooltip="PHP Sprint 17: 32 points across 17 tickets"
+                data-testid="home-velocity-bar-1450"
+              ></span>
+            </div>
+            <span class="velocity-label" title="PHP Sprint 17">PHP Sprint 17</span>
+          </div>
+        </div>
+        <div class="velocity-summary"><span>63 pts total</span></div>
+      </div>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <tr>
+            <th scope="col">Who</th>
+            <th scope="col">Sprint 9<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 13<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 15<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 16<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 17<br /><span class="tv-state">active</span></th>
+          </tr>
+          <tr>
+            <th scope="row">Susanta Kumar Sahoo</th>
+            <td>—</td>
+            <td>—</td>
+            <td>9<span class="tv-n"> (3)</span></td>
+            <td>9<span class="tv-n"> (3)</span></td>
+            <td>9<span class="tv-n"> (3)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Prakash P</th>
+            <td>1<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>9<span class="tv-n"> (4)</span></td>
+            <td>15<span class="tv-n"> (9)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Barathkumar N</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>2<span class="tv-n"> (2)</span></td>
+            <td>5<span class="tv-n"> (4)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Prince Raj</th>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>3<span class="tv-n"> (1)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">(unassigned)</th>
+            <td>—</td>
+            <td>1<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+          </tr>
+        </table>
+      </div>
+    </section>
+    <section class="mb-8">
+      <h2 class="text-[13px] font-semibold mb-3">TransAud</h2>
+      <div class="velocity-chart" data-testid="home-velocity-chart">
+        <div class="velocity-bars" role="list" aria-label="Done story points by sprint">
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="TransAud Sprint 16: 15 points across 3 tickets"
+            data-testid="home-velocity-column-1400"
+          >
+            <span class="velocity-value">15</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 100%"
+                data-tooltip="TransAud Sprint 16: 15 points across 3 tickets"
+                data-testid="home-velocity-bar-1400"
+              ></span>
+            </div>
+            <span class="velocity-label" title="TransAud Sprint 16">TransAud Sprint 16</span>
+          </div>
+          <div
+            class="velocity-column"
+            role="listitem"
+            aria-label="TransAud Sprint 17: 5 points across 2 tickets"
+            data-testid="home-velocity-column-1401"
+          >
+            <span class="velocity-value">5</span>
+            <div class="velocity-track">
+              <span
+                class="velocity-bar"
+                style="height: 33.33%"
+                data-tooltip="TransAud Sprint 17: 5 points across 2 tickets"
+                data-testid="home-velocity-bar-1401"
+              ></span>
+            </div>
+            <span class="velocity-label" title="TransAud Sprint 17">TransAud Sprint 17</span>
+          </div>
+        </div>
+        <div class="velocity-summary"><span>20 pts total</span></div>
+      </div>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <tr>
+            <th scope="col">Who</th>
+            <th scope="col">Sprint 16<br /><span class="tv-state">closed</span></th>
+            <th scope="col">Sprint 17<br /><span class="tv-state">active</span></th>
+          </tr>
+          <tr>
+            <th scope="row">Chelsea Chen</th>
+            <td>10<span class="tv-n"> (2)</span></td>
+            <td>5<span class="tv-n"> (1)</span></td>
+          </tr>
+          <tr>
+            <th scope="row">jeremy.baumann</th>
+            <td>5<span class="tv-n"> (1)</span></td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <th scope="row">Chris Love</th>
+            <td>—</td>
+            <td>0<span class="tv-n"> (1)</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+  </body>
+</html>

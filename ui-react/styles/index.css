@@ -1,0 +1,17 @@
+/* index.css — stylesheet barrel: the single entry point for the dashboard UI.
+   Order is the cascade order (tokens first, per-panel sheets after), mirroring
+   the previous <link> sequence in index.html. Add new sheets here rather than
+   adding <link> tags — one edit point, no ordering drift. No bundler involved:
+   the browser resolves these relative @imports against plain static files. */
+@import './tokens.css';
+@import './base.css';
+@import './tabs.css';
+@import './services.css';
+@import './terminal.css';
+@import './prs.css';
+@import './diff-viewer.css';
+@import './my-tickets.css';
+@import './releases.css';
+@import './listbox.css';
+@import './home.css';
+@import './settings.css';

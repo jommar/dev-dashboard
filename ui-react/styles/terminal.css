@@ -1,0 +1,27 @@
+/* terminal.css — the log viewport owned by ui/components/terminal.js. */
+
+.log {
+  margin: 0;
+  padding: 16px 20px;
+  height: 248px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 12px/1.65 var(--mono);
+  color: var(--text);
+  background: var(--bg);
+}
+.log:empty::before {
+  content: '(no output yet)';
+  color: var(--muted);
+  padding-left: var(--s4);
+}
+.log {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+@media (min-width: 760px) and (max-height: 800px) {
+  .log {
+    height: 220px;
+  }
+}

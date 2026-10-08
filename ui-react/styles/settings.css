@@ -1,0 +1,172 @@
+.settings-notice {
+  max-width: 68ch;
+  margin-bottom: var(--s5);
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+.settings-errors {
+  padding: var(--s4);
+  margin-bottom: var(--s5);
+  background: var(--panel2);
+  border-left: 3px solid var(--red);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+.settings-errors p {
+  margin: 0;
+}
+.settings-errors ul {
+  margin-bottom: 0;
+  padding-left: var(--s5);
+}
+.settings-errors a {
+  color: var(--accent);
+}
+.settings-groups,
+.settings-services {
+  columns: 1;
+  column-gap: var(--s5);
+}
+.settings-group {
+  min-width: 0;
+  margin: 0;
+  padding: var(--s5);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  break-inside: avoid;
+}
+.settings-group + .settings-group,
+.settings-service + .settings-service {
+  margin-top: var(--s5);
+}
+.settings-group legend,
+.settings-service legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin-bottom: var(--s4);
+  color: var(--strong);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+.settings-group legend + *,
+.settings-service legend + * {
+  clear: both;
+}
+.settings-group p,
+.settings-actions p {
+  max-width: 68ch;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin: 0 0 var(--s4);
+}
+.settings-field {
+  min-width: 0;
+  margin-bottom: var(--s4);
+}
+.settings-field label {
+  display: block;
+  margin-bottom: var(--s2);
+  color: var(--strong);
+  font-size: var(--fs-md);
+}
+.settings-field input {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  min-height: 40px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+}
+.settings-field input[readonly] {
+  color: var(--muted);
+}
+.settings-field input[aria-invalid='true'] {
+  border-color: var(--red);
+}
+.settings-field small {
+  display: block;
+  margin-top: var(--s1);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.settings-field small:empty,
+.settings-field small[hidden] {
+  display: none;
+}
+.settings-field .settings-field-error {
+  color: var(--red);
+}
+.settings-repository {
+  display: flex;
+  align-items: start;
+  gap: var(--s2);
+}
+.settings-repository .settings-field {
+  flex: 1;
+}
+.settings-repository button {
+  margin-top: 29px;
+}
+.settings-group > button {
+  margin-bottom: var(--s4);
+}
+.settings-local {
+  margin-top: var(--s5);
+}
+.settings-local > .settings-field {
+  max-width: 680px;
+}
+.settings-service {
+  min-width: 0;
+  break-inside: avoid;
+  border: 0;
+  border-top: 1px solid var(--border);
+  padding: var(--s4) 0 0;
+  margin: 0;
+}
+.settings-service legend {
+  font-size: var(--fs-md);
+}
+.settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  padding: var(--s5) 0;
+}
+.settings-actions p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.settings-save {
+  color: var(--accent);
+  border-color: var(--accent-fill);
+}
+@media (min-width: 760px) {
+  .settings-groups,
+  .settings-services {
+    columns: 2;
+  }
+}
+@media (min-width: 1700px) {
+  .settings-groups,
+  .settings-services {
+    columns: 3;
+  }
+}
+@media (max-width: 600px) {
+  .settings-group {
+    padding: var(--s4);
+  }
+}

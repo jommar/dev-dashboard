@@ -1,0 +1,129 @@
+/* listbox.css — generic styles for ui/components/listbox.js. Every other
+   stylesheet reads colors from tokens.css; per-option state tints hook off
+   [data-state] so any consumer gets them by passing a `state` string.
+   The active/future/closed convention mirrors .ticket-sprint. */
+
+.listbox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  max-width: 100%;
+}
+.listbox-label {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.listbox-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  max-width: 100%;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--s1) var(--s2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  min-height: 36px;
+  font-family: var(--sans);
+  min-width: 0;
+}
+.listbox-button:hover {
+  border-color: var(--muted);
+}
+.listbox-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The closed control tints itself by the selected option's state. */
+.listbox-button[data-state='active'] {
+  border-color: var(--accent);
+}
+.listbox-button[data-state='active'] .listbox-button-value {
+  color: var(--accent);
+}
+.listbox-button[data-state='closed'] .listbox-button-value {
+  color: var(--muted);
+}
+.listbox-button-label {
+  color: var(--muted);
+}
+.listbox-button-value {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.listbox-caret {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.listbox-list {
+  position: absolute;
+  top: calc(100% + var(--s1));
+  left: 0;
+  min-width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 30;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: var(--s1);
+}
+
+.listbox-option {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  cursor: pointer;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-height: 36px;
+}
+.listbox-option:hover {
+  background: var(--panel2);
+}
+.listbox-option[data-active='true'] {
+  background: var(--panel2);
+}
+.listbox-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* The selected row stays visibly distinct while the list is open. */
+.listbox-option[aria-selected='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.listbox-check {
+  width: 1.2em;
+  color: var(--accent);
+}
+/* State colors apply to every option, selected or not. */
+.listbox-option[data-state='active'] .listbox-option-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+.listbox-option[data-state='future'] .listbox-option-label {
+  color: var(--text);
+}
+.listbox-option[data-state='closed'] .listbox-option-label {
+  color: var(--muted);
+}
+.listbox-option[data-state='closed'][aria-selected='true'] .listbox-option-label {
+  color: var(--text);
+}
+@media (hover: none) {
+  .listbox-button,
+  .listbox-option {
+    min-height: 44px;
+  }
+}

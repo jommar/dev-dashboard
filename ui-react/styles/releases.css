@@ -1,0 +1,239 @@
+/* releases.css — "Releases" tab: merge-state groups of ticket cards.
+   Ticket cards and PR rows reuse .ticket-card, .pr-group-head, .pr-item and the
+   pill styles from prs.css. */
+
+.releases-section {
+  margin: 0;
+}
+.releases-version {
+  min-height: 36px;
+  max-width: 100%;
+  padding: 5px var(--s2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+}
+.releases-view {
+  display: inline-flex;
+  gap: var(--s1);
+}
+.releases-view .btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.releases-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.releases-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+}
+/* aria-busy sits on the panel root, and only the cards dim: the first-load spinner stays at full strength. */
+.release-group {
+  transition: opacity 120ms ease;
+}
+#panel-releases[aria-busy='true'] .release-group {
+  opacity: 0.6;
+}
+.releases-lag-note {
+  margin: 0 0 var(--s3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.release-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s3);
+  color: var(--text);
+  font-size: var(--fs-lg);
+}
+.release-group-head .pr-count {
+  margin-left: 0;
+}
+
+/* Masonry: one container per merge-state group. */
+.release-ticket-groups {
+  columns: 1;
+  column-gap: 20px;
+}
+@media (min-width: 760px) {
+  .release-ticket-groups {
+    columns: 2;
+  }
+}
+@media (min-width: 1700px) {
+  .release-ticket-groups {
+    columns: 3;
+  }
+}
+
+.release-ticket {
+  break-inside: avoid;
+  border-left: 3px solid var(--release-state-color, var(--border));
+}
+.release-ticket + .release-ticket {
+  margin-top: 20px;
+}
+.release-ticket[data-merge-state='open'] {
+  --release-state-color: var(--accent);
+}
+.release-ticket[data-merge-state='partial'] {
+  --release-state-color: var(--amber);
+}
+.release-ticket[data-merge-state='no-pr'] {
+  --release-state-color: var(--border-strong);
+}
+.release-ticket[data-merge-state='unavailable'] {
+  --release-state-color: var(--red);
+}
+.release-ticket[data-merge-state='merged'] {
+  --release-state-color: var(--green);
+}
+
+.release-ticket-summary {
+  padding: 0 20px;
+  color: var(--text);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.release-ticket-meta {
+  padding: 0 20px var(--s3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.release-ticket-note {
+  padding: var(--s3) 20px 20px;
+  color: var(--muted);
+}
+.release-ticket-note[data-state='unavailable'] {
+  color: var(--amber);
+}
+
+/* List view: one row per ticket inside each merge-state group. Plain flow, no masonry: rows are
+   single-line records, not cards. */
+.release-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.release-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  grid-template-areas:
+    'key summary status'
+    'key meta meta'
+    'key prs prs';
+  column-gap: var(--s3);
+  row-gap: 4px;
+  align-items: baseline;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--release-state-color, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.release-row[data-merge-state='open'] {
+  --release-state-color: var(--accent);
+}
+.release-row[data-merge-state='partial'] {
+  --release-state-color: var(--amber);
+}
+.release-row[data-merge-state='no-pr'] {
+  --release-state-color: var(--border-strong);
+}
+.release-row[data-merge-state='unavailable'] {
+  --release-state-color: var(--red);
+}
+.release-row[data-merge-state='merged'] {
+  --release-state-color: var(--green);
+}
+.release-row > .jira-link {
+  grid-area: key;
+}
+.release-row-summary {
+  grid-area: summary;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.release-row > .ticket-status {
+  grid-area: status;
+  justify-self: end;
+}
+.release-row-meta {
+  grid-area: meta;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.release-row-prs {
+  grid-area: prs;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  font-size: var(--fs-sm);
+}
+.release-row-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
+}
+.release-row-note {
+  color: var(--muted);
+}
+.release-row-note[data-state='unavailable'] {
+  color: var(--amber);
+}
+
+.release-pr {
+  border-left: 3px solid transparent;
+}
+.release-pr[data-pr-state='open'] {
+  border-left-color: var(--accent);
+}
+.release-pr[data-pr-state='merged'] {
+  border-left-color: var(--green);
+}
+.release-pr[data-pr-state='declined'] {
+  opacity: 0.65;
+}
+.release-pr-state[data-pr-state='open'] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.release-pr-state[data-pr-state='merged'] {
+  color: var(--green);
+  border-color: var(--green);
+}
+.release-pr-state[data-pr-state='declined'],
+.release-pr-state[data-pr-state='unknown'] {
+  border-style: dashed;
+}
+.release-pr-base {
+  font-family: var(--mono);
+}
+.release-pr-base[data-base-match='false'] {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.release-pr-head {
+  min-width: 0;
+  color: var(--muted);
+  font: 12px var(--mono);
+  overflow-wrap: anywhere;
+}

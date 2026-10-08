@@ -1,0 +1,9 @@
+node_modules/
+dist/
+logs/
+test-results/
+blob-report/
+playwright-report/
+.playwright-mcp/
+.orchestrator/
+.claude/
