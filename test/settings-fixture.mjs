@@ -77,21 +77,21 @@ export function settingsFixture(t, options = {}) {
     dependencies,
     write,
     async store() {
-      let moduleUrl = new URL('../settings.mjs', import.meta.url);
+      let moduleUrl = new URL('../backend/settings.mjs', import.meta.url);
       if (options.realEnvLoader) {
         fs.copyFileSync(
-          new URL('../env.mjs', import.meta.url),
+          new URL('../backend/env.mjs', import.meta.url),
           path.join(paths.dashboardDir, 'env.mjs'),
         );
         const source = fs
-          .readFileSync(new URL('../settings.mjs', import.meta.url), 'utf8')
+          .readFileSync(new URL('../backend/settings.mjs', import.meta.url), 'utf8')
           .replaceAll(
             "from './config.mjs'",
-            `from ${JSON.stringify(new URL('../config.mjs', import.meta.url).href)}`,
+            `from ${JSON.stringify(new URL('../backend/config.mjs', import.meta.url).href)}`,
           )
           .replaceAll(
             "from './credentials.mjs'",
-            `from ${JSON.stringify(new URL('../credentials.mjs', import.meta.url).href)}`,
+            `from ${JSON.stringify(new URL('../backend/credentials.mjs', import.meta.url).href)}`,
           );
         fs.writeFileSync(path.join(paths.dashboardDir, 'settings.mjs'), source);
         moduleUrl = pathToFileURL(path.join(paths.dashboardDir, 'settings.mjs'));

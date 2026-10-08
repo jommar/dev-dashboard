@@ -10,7 +10,7 @@ import {
   MY_TICKETS_FIELDS,
   POINTS_FIELD,
   SPRINT_FIELD,
-} from '../jira.mjs';
+} from '../backend/jira.mjs';
 
 test('my-tickets JQL uses currentUser and filters Done by default', () => {
   const open = buildMyTicketsJql();

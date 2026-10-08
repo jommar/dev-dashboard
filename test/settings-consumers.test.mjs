@@ -8,12 +8,12 @@ test('successive saved snapshots reach PR, review, Jira, nested UAT, velocity an
   const f = settingsFixture(t);
   const store = await f.store();
   await accept(f, store);
-  const github = await import('../github.mjs');
-  const review = await import('../review.mjs');
-  const jira = await import('../jira.mjs');
-  const velocity = await import('../team-velocity.mjs');
-  const uat = await import('../uat-promote.mjs');
-  const diff = await import('../diff.mjs');
+  const github = await import('../backend/github.mjs');
+  const review = await import('../backend/review.mjs');
+  const jira = await import('../backend/jira.mjs');
+  const velocity = await import('../backend/team-velocity.mjs');
+  const uat = await import('../backend/uat-promote.mjs');
+  const diff = await import('../backend/diff.mjs');
   const first = store.getSnapshot();
   const nextRoot = path.join(f.home, 'next-repos');
   fs.mkdirSync(nextRoot);

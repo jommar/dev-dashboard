@@ -5,7 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { createHttpHandler } from '../http-app.mjs';
+import { createHttpHandler } from '../backend/http-app.mjs';
 
 const hostPort = 6519;
 const vitePort = 6518;

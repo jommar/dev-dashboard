@@ -8,7 +8,7 @@ test('production HTTP handler gates every operation, unlocks setup, closes revok
   const f = settingsFixture(t);
   const store = await f.store();
   await store.initialize();
-  const { createHttpHandler } = await import('../http-app.mjs');
+  const { createHttpHandler } = await import('../backend/http-app.mjs');
   const work = [];
   const spy =
     (name, result) =>

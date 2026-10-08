@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as jira from '../jira.mjs';
-import * as github from '../github.mjs';
+import * as jira from '../backend/jira.mjs';
+import * as github from '../backend/github.mjs';
 
 // jira.mjs and github.mjs exist today but do not yet export the Promote-to-UAT
 // symbols under test, so these are imported as namespaces (not destructured)
@@ -121,7 +121,7 @@ test('uat-promote candidates drop a ticket absent from the PR groups', async () 
       }
       throw new Error(`unexpected fetch: ${u}`);
     };
-    const { fetchUatPromoteCandidates } = await import('../uat-promote.mjs');
+    const { fetchUatPromoteCandidates } = await import('../backend/uat-promote.mjs');
     const result = await fetchUatPromoteCandidates();
     assert.ok(!Object.prototype.hasOwnProperty.call(result.groups, 'PRT-20'));
   } finally {
@@ -205,7 +205,7 @@ test('uat-promote candidates filter PRs to the ops/development base', async () =
       }
       throw new Error(`unexpected fetch: ${u}`);
     };
-    const { fetchUatPromoteCandidates } = await import('../uat-promote.mjs');
+    const { fetchUatPromoteCandidates } = await import('../backend/uat-promote.mjs');
     const result = await fetchUatPromoteCandidates();
     assert.deepEqual(
       result.groups['PRT-30'].prs.map((pr) => pr.number),
@@ -248,7 +248,7 @@ test('uat-promote candidates degrade instead of throwing when Jira fails', async
         return { ok: true, json: async () => ({ total_count: 0, items: [] }) };
       throw new Error(`unexpected fetch: ${u}`);
     };
-    const { fetchUatPromoteCandidates } = await import('../uat-promote.mjs');
+    const { fetchUatPromoteCandidates } = await import('../backend/uat-promote.mjs');
     const result = await fetchUatPromoteCandidates();
     assert.deepEqual(result, { available: false, groups: {}, total: 0 });
   } finally {
@@ -298,7 +298,7 @@ test('uat-promote candidates degrade instead of throwing when the internal fetch
       }
       throw new Error(`unexpected fetch: ${u}`);
     };
-    const { fetchUatPromoteCandidates } = await import('../uat-promote.mjs');
+    const { fetchUatPromoteCandidates } = await import('../backend/uat-promote.mjs');
     const result = await fetchUatPromoteCandidates();
     assert.deepEqual(result, { available: false, groups: {}, total: 0 });
   } finally {

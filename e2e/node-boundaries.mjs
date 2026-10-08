@@ -146,7 +146,7 @@ process.on('exit', () => {
   }
 });
 
-const envModule = new URL('../env.mjs', import.meta.url).href;
+const envModule = new URL('../backend/env.mjs', import.meta.url).href;
 
 // Factories remain real; only the legacy env loader is intercepted.
 registerHooks({

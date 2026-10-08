@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
-import { DASHBOARD_HOST, DASHBOARD_PORT } from './config.mjs';
+import { DASHBOARD_HOST, DASHBOARD_PORT } from './backend/config.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const uiRoot = path.resolve(root, 'ui-react');

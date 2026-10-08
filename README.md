@@ -86,7 +86,7 @@ and back/forward navigation also resolve to Settings; operational panels and the
 service feed are not mounted. Log fetching pauses while Services is hidden.
 
 > The dashboard port (`6500`) and tail line count are configurable in
-> [`config.mjs`](config.mjs).
+> [`backend/config.mjs`](backend/config.mjs).
 
 ### Run in Docker (Linux)
 
@@ -113,7 +113,7 @@ repo inside the container, which takes several minutes. Later starts reuse it.
 - Settings, saved tokens and logs live in the `dashboard-config` and
   `dashboard-logs` volumes. `docker compose down -v` deletes them, along with
   the dependency volumes.
-- Run CLI commands in the container: `docker compose exec dashboard node cli.mjs logs`.
+- Run CLI commands in the container: `docker compose exec dashboard node backend/cli.mjs logs`.
 - `docker compose config` prints the `.env` values in plain text. Do not paste its
   output anywhere.
 - After changing dashboard code, run `docker compose up --build` again.
@@ -156,10 +156,10 @@ such as `["npm","run","dev"]`, with no shell expansion. A blank port means no
 port. Service directories may be relative to the absolute local root or absolute.
 
 Once `settings.json` exists, it is authoritative: edits to `.env`, exported
-integration variables or the defaults in `config.mjs` do not override saved
+integration variables or the defaults in `backend/config.mjs` do not override saved
 configuration. An unreadable, malformed or unsupported settings file is not
 silently overwritten or backfilled; setup stays closed for repair. Host, dashboard
-port, tail count and log-buffer limits remain runtime constants in `config.mjs`.
+port, tail count and log-buffer limits remain runtime constants in `backend/config.mjs`.
 
 ### Fresh setup and validation
 
@@ -280,22 +280,22 @@ npm run restart -- legacy                  # restart one service
 npm run restart -- --all                   # restart all
 npm run stop    -- fe                      # stop one
 npm run start:svc -- queue                 # start one service
-node cli.mjs status                        # list services and status
-node cli.mjs prs                           # list your open PRs
-node cli.mjs my-tickets [--include-done] [--json]
-                                           # list Jira tickets assigned to you
-node cli.mjs releases [--version <id|name>] [--all] [--json]
-                                           # list a Jira fix version's tickets and
-                                           # whether their PRs merged
-node cli.mjs team-velocity [--sprints N] [--out PATH]
-                                           # rebuild team-velocity.html (whole-team
-                                           # sprint velocity, last 8 sprints)
+node backend/cli.mjs status                        # list services and status
+node backend/cli.mjs prs                           # list your open PRs
+node backend/cli.mjs my-tickets [--include-done] [--json]
+                                                   # list Jira tickets assigned to you
+node backend/cli.mjs releases [--version <id|name>] [--all] [--json]
+                                                   # list a Jira fix version's tickets and
+                                                   # whether their PRs merged
+node backend/cli.mjs team-velocity [--sprints N] [--out PATH]
+                                                   # rebuild team-velocity.html (whole-team
+                                                   # sprint velocity, last 8 sprints)
 ```
 
 > `npm start` runs the **dashboard server** — the npm script for starting a
 > single service is `start:svc`. `status`, `prs`, `my-tickets`, `releases`, and
-> `team-velocity` have no npm script; run them through `cli.mjs` directly
-> (`node cli.mjs --help` lists every command).
+> `team-velocity` have no npm script; run them through `backend/cli.mjs` directly
+> (`node backend/cli.mjs --help` lists every command).
 
 The CLI reads live logs from the dashboard over HTTP when it is running (so
 `logs` shows the real captured output). If the dashboard is down, control
@@ -305,7 +305,7 @@ Every operational command first checks setup, including direct GitHub/Jira
 commands and offline service controls. If the dashboard reports `SETUP_REQUIRED`
 or the persisted setup is unready, the command exits nonzero with a Settings
 diagnostic instead of falling back. Ready offline fallback uses saved service IDs
-and configuration; `node cli.mjs --help` works before setup.
+and configuration; `node backend/cli.mjs --help` works before setup.
 
 ## Agent interface
 
@@ -401,7 +401,7 @@ page.
 ### Two honest caveats
 
 - **"Needs review" is not "review requested from you."** GitHub's requested
-  reviewers are never fetched ([`review.mjs`](review.mjs) asks only for
+  reviewers are never fetched ([`backend/review.mjs`](backend/review.mjs) asks only for
   submitted reviews), so that is not knowable without a new call. The tile and
   queue group mean: *open PRs by other people, under the approval threshold,
   that you have not reviewed yet* — drafts excluded.
@@ -455,7 +455,7 @@ The dashboard shows the authenticated GitHub user's open pull requests across
 the watched repos saved in Settings (defaulting to `TransActComm`'s
 `Portage-backend`, `Portage-frontend`, `TravelTracker`) —
 as **masonry cards grouped by ticket** on the dashboard, and via
-`node cli.mjs prs` / `GET /api/prs`. Cards show the PR title, owner, its status
+`node backend/cli.mjs prs` / `GET /api/prs`. Cards show the PR title, owner, its status
 (`draft`/`open`), the repo `#number`, and how long ago it was last updated,
 sorted newest-first within each ticket group.
 
@@ -506,7 +506,7 @@ The dashboard shows Jira tickets assigned to you (`assignee = currentUser()`
 in JQL) — as sections grouped by status category (**To Do**, **In Progress**,
 **Done**), with sub-groups per status name sorted A→Z and tickets newest-first
 within each status. Available in the **My Tickets** tab, via
-`node cli.mjs my-tickets` / `GET /api/my-tickets`. Rows show the ticket key
+`node backend/cli.mjs my-tickets` / `GET /api/my-tickets`. Rows show the ticket key
 (linked to Jira), summary, status pill (same color mapping as PR ticket
 status), sprint pill, priority, issue type, and relative update time.
 
@@ -549,7 +549,7 @@ estimate the code keeps distinct from "nobody estimated this".
 While the My Tickets tab is active, the panel auto-refreshes every 90 seconds
 with the same silent-background-update behavior as Pull Requests (countdown,
 `Refresh` button, polling pauses while hidden). Pass `?includeDone=1`
-(or tick _include Done_ / `node cli.mjs my-tickets --include-done`) to keep
+(or tick _include Done_ / `node backend/cli.mjs my-tickets --include-done`) to keep
 Done tickets; the default hides `statusCategory = Done`. Missing Jira credentials
 close the setup gate and direct operational APIs return `409 SETUP_REQUIRED`.
 
@@ -560,7 +560,7 @@ Each PR card also shows its review state via a small badge in the meta row —
 dashed). Hover a badge for a tooltip naming who approved / requested changes.
 
 Review state comes from batched GitHub **GraphQL** requests
-(`review.mjs`), and reflects the **latest** review: an approval that followed an
+(`backend/review.mjs`), and reflects the **latest** review: an approval that followed an
 earlier change request wins. If the token cannot read review data, the dashboard
 can omit the badge when a runtime review fetch fails — open PRs are unaffected.
 Fresh/changed integration setup also requires the GraphQL access probe.
@@ -584,7 +584,7 @@ grouped by ticket and rendered as masonry cards using the same responsive layout
 as the Open PRs section.
 The same filtered data is available from `GET /api/prs` in
 `approvalThreshold`, `reviewDataAvailable`, `prsNeedingApprovals`, and
-`approvalGroups`. The CLI prints the grouped section with `node cli.mjs prs`.
+`approvalGroups`. The CLI prints the grouped section with `node backend/cli.mjs prs`.
 When GitHub review data cannot be loaded, the normal open PR list remains
 available and the approval section is reported as unavailable rather than
 treating every PR as having zero approvals.
@@ -624,7 +624,7 @@ The **Releases** tab answers *"did the work in this release reach
 project. For every ticket in the chosen version it lists the GitHub PRs linked
 to that ticket and rolls them up into one merge state, with the tickets that
 still need attention first. It is available in the **Releases** tab, via
-`node cli.mjs releases` and `GET /api/releases`.
+`node backend/cli.mjs releases` and `GET /api/releases`.
 
 Everything is read from Jira: the project's versions, a JQL search for the
 version's tickets (`fixVersion = <id>`, plus `assignee = currentUser()` for
@@ -723,7 +723,7 @@ Jira calls: the versions list, a search (one call per 50 tickets), one summary t
 learn the instance key and one detail lookup per ticket. With the key already
 remembered it is N + 2; with every lookup cached it is just the versions and the
 search. For example, 11 tickets cost 14 calls cold, 13 on Refresh and 2 within
-the cache window. `node cli.mjs releases` runs in its own process, so it shares
+the cache window. `node backend/cli.mjs releases` runs in its own process, so it shares
 no cache with the dashboard and always starts cold.
 
 ### Configuration
@@ -738,7 +738,7 @@ Tickets.
 
 ### CLI, HTTP and response
 
-`node cli.mjs releases [--version <id|name>] [--all] [--json]` uses the
+`node backend/cli.mjs releases [--version <id|name>] [--all] [--json]` uses the
 picker's default version and your tickets unless told otherwise. `--version`
 takes a numeric id or an exact version name that matches exactly one version
 (a name is resolved to an id and never reaches JQL); a missing value, or one
@@ -769,8 +769,8 @@ key). Error bodies stay generic: no upstream text, JQL or credential reaches the
 browser.
 
 The rules above — version order, request validation, JQL, PR ownership and the
-merge roll-up — are pure and live in [`release-model.mjs`](release-model.mjs);
-the Jira calls, caches and concurrency are in [`releases.mjs`](releases.mjs).
+merge roll-up — are pure and live in [`backend/release-model.mjs`](backend/release-model.mjs);
+the Jira calls, caches and concurrency are in [`backend/releases.mjs`](backend/releases.mjs).
 The browser's grouping and remembered-version helpers are DOM-free in
 [`ui/releases-data.js`](ui/releases-data.js). Tests are
 `test/release-*.test.mjs` and `test/ui-releases-*.test.mjs`. The Releases
@@ -782,7 +782,7 @@ contract.
 ## Services
 
 Edited in **Settings → Local services** and persisted in the settings store.
-The initial defaults in [`config.mjs`](config.mjs) mirror these `scripts/run.sh`
+The initial defaults in [`backend/config.mjs`](backend/config.mjs) mirror these `scripts/run.sh`
 commands:
 
 | id        | label                | dir               | command              | port |
@@ -814,13 +814,13 @@ Both the dashboard and every service **free their own port before binding**:
   that service from the dashboard, it kills the old process holding the port and
   takes over — no `EADDRINUSE`.
 
-The shared helper lives in [`port.mjs`](port.mjs).
+The shared helper lives in [`backend/port.mjs`](backend/port.mjs).
 
 ## UI layout
 
 The dashboard browser UI is a React + MUI application under `ui-react/`, built
 with Vite into `dist/` and served by the existing Node server through
-[`static.mjs`](static.mjs). Production uses the built assets; Vite is a
+[`backend/static.mjs`](backend/static.mjs). Production uses the built assets; Vite is a
 development/build tool, not the production server. Use Node 24 (`nvm use` from
 the repository root), install the committed lockfile with `npm ci`, and build
 with `npm run build`. `npm run dev:ui` runs Vite for frontend development and
@@ -877,6 +877,6 @@ treat those names as a contract and don't rename them.
   never lingers in the tail or the agent-readable file.
 - `logs/<id>/out.log` holds a rolling buffer (last 64 KB per service) and is
   gitignored — never committed.
-- The manager is an in-process class (`manager.mjs`); the CLI and the HTTP
+- The manager is an in-process class (`backend/manager.mjs`); the CLI and the HTTP
   server both use the same `Manager`, so `logs` is consistent whether the
   dashboard is running or not.

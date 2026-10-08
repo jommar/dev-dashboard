@@ -13,7 +13,7 @@ async function runControl(t, command, response) {
     process.argv = argv;
     fs.rmSync(root, { recursive: true, force: true });
   });
-  fs.copyFileSync(new URL('../cli.mjs', import.meta.url), path.join(root, 'cli.mjs'));
+  fs.copyFileSync(new URL('../backend/cli.mjs', import.meta.url), path.join(root, 'cli.mjs'));
   fs.writeFileSync(
     path.join(root, 'config.mjs'),
     `
@@ -184,9 +184,9 @@ async function runReleasesCli(t, args, { result = null, failure = null } = {}) {
     process.argv = argv;
     fs.rmSync(root, { recursive: true, force: true });
   });
-  fs.copyFileSync(new URL('../cli.mjs', import.meta.url), path.join(root, 'cli.mjs'));
+  fs.copyFileSync(new URL('../backend/cli.mjs', import.meta.url), path.join(root, 'cli.mjs'));
   fs.copyFileSync(
-    new URL('../release-model.mjs', import.meta.url),
+    new URL('../backend/release-model.mjs', import.meta.url),
     path.join(root, 'release-model.mjs'),
   );
   fs.writeFileSync(

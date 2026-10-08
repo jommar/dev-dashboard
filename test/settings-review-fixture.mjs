@@ -32,7 +32,7 @@ export async function reviewHttp(t, { ready = true, realManager = false, configu
   else await store.initialize();
   const calls = [];
   const manager = realManager
-    ? new (await import('../manager.mjs')).Manager({
+    ? new (await import('../backend/manager.mjs')).Manager({
         local: { root: f.root, services: [] },
         logsDir: f.home + '/logs',
       })
@@ -53,7 +53,7 @@ export async function reviewHttp(t, { ready = true, realManager = false, configu
           return { ok: true };
         },
       };
-  const { createHttpHandler } = await import('../http-app.mjs');
+  const { createHttpHandler } = await import('../backend/http-app.mjs');
   const handler = createHttpHandler({ settings: store, manager });
   const server = http.createServer(handler);
   server.listen(0, '127.0.0.1');

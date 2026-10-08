@@ -6,7 +6,7 @@ import { settingsFixture } from './settings-fixture.mjs';
 export async function invokeCli(t, command, { ready = false, dashboard = 'gated' } = {}) {
   const f = settingsFixture(t);
   const root = f.paths.dashboardDir;
-  fs.copyFileSync(new URL('../cli.mjs', import.meta.url), path.join(root, 'cli.mjs'));
+  fs.copyFileSync(new URL('../backend/cli.mjs', import.meta.url), path.join(root, 'cli.mjs'));
   fs.writeFileSync(
     path.join(root, 'settings.mjs'),
     `

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
-import { parseLines } from '../log-lines.mjs';
+import { parseLines } from '../backend/log-lines.mjs';
 
 test('missing line counts use the supplied default', () => {
   assert.equal(parseLines(null, 120), 120);
@@ -50,7 +50,7 @@ test('invalid and negative line counts cannot escape the default', () => {
 });
 
 test('HTTP log route honors configured default, explicit zero and positive tails through the production handler', async (t) => {
-  const { createHttpHandler } = await import('../http-app.mjs');
+  const { createHttpHandler } = await import('../backend/http-app.mjs');
   const calls = [];
   const retained = Array.from({ length: 45 }, (_, index) => `line ${index + 1}`).join('\n');
   const settings = {

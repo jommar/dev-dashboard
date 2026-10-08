@@ -62,8 +62,8 @@ test('trailing-slash saved Jira URL reaches all public Jira consumers as single-
     });
   });
   const options = { snapshot: store.getSnapshot() };
-  const jira = await import('../jira.mjs');
-  const velocity = await import('../team-velocity.mjs');
+  const jira = await import('../backend/jira.mjs');
+  const velocity = await import('../backend/team-velocity.mjs');
   await jira.fetchMyTickets(options);
   await jira.fetchTicketStatuses(['DEMO-1'], options);
   await jira.fetchUatPromoteTickets(options);

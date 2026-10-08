@@ -57,7 +57,7 @@ async function startRoute(t, { ready }) {
   const store = await fixture.store();
   if (ready) await accept(fixture, store);
   else await store.initialize();
-  const { createHttpHandler } = await import('../http-app.mjs');
+  const { createHttpHandler } = await import('../backend/http-app.mjs');
   const calls = [];
   const behaviour = { next: async () => releaseResult };
   const manager = { list: () => [], logs: () => '', applySettings: async () => {} };

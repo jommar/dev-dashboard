@@ -46,7 +46,7 @@ async function fixture(t, { customNvm = false } = {}) {
   });
   // Copy production code unchanged; only configuration paths are isolated.
   for (const file of ['manager.mjs', 'port.mjs']) {
-    fs.copyFileSync(new URL(`../${file}`, import.meta.url), path.join(root, file));
+    fs.copyFileSync(new URL(`../backend/${file}`, import.meta.url), path.join(root, file));
   }
   fs.writeFileSync(
     path.join(root, 'config.mjs'),

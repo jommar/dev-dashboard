@@ -96,7 +96,7 @@ const healthyUpstream = {
 };
 
 async function startRelease(t) {
-  const releases = await import('../releases.mjs');
+  const releases = await import('../backend/releases.mjs');
   for (const name of ['fetchRelease', 'resetReleaseCaches']) {
     assert.equal(typeof releases[name], 'function', `releases.mjs must export ${name}`);
   }
@@ -116,7 +116,7 @@ async function startRelease(t) {
 }
 
 async function serveRoute(t, store) {
-  const { createHttpHandler } = await import('../http-app.mjs');
+  const { createHttpHandler } = await import('../backend/http-app.mjs');
   const manager = { list: () => [], logs: () => '', applySettings: async () => {} };
   const server = http.createServer(createHttpHandler({ settings: store, manager }));
   server.listen(0, '127.0.0.1');

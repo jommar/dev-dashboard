@@ -10,3 +10,5 @@
 - Added a Docker setup (`Dockerfile`, `docker-compose.yml`) that runs the
   dashboard with its sibling repos' pinned Node versions and dependencies
   installed in the container. Linux only (host networking).
+- Moved the Node backend into `backend/`. Commands are now
+  `node backend/cli.mjs` and `node backend/server.mjs`.

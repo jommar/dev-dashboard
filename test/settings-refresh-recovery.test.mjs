@@ -20,7 +20,7 @@ async function recoveryHttp(t, { failApply = false } = {}) {
     false,
     'missing accepted token closes startup gate',
   );
-  const { Manager } = await import('../manager.mjs');
+  const { Manager } = await import('../backend/manager.mjs');
   const manager = new Manager({ local: { root: f.root, services: [] }, logsDir: f.home + '/logs' });
   assert.deepEqual(manager.list(), [], 'startup manager has no wrappers');
   const log = f.home + '/logs/app/out.log';
@@ -36,7 +36,7 @@ async function recoveryHttp(t, { failApply = false } = {}) {
   settings.subscribe((status) =>
     publishedReadiness.push({ ready: status.ready, ids: manager.list().map(({ id }) => id) }),
   );
-  const { createHttpHandler } = await import('../http-app.mjs');
+  const { createHttpHandler } = await import('../backend/http-app.mjs');
   const handler = createHttpHandler({ settings, manager });
   const server = http.createServer(handler);
   server.listen(0, '127.0.0.1');
