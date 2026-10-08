@@ -160,7 +160,11 @@ function installJira(t, handlers, projectKey = 'TRIPS') {
   return calls;
 }
 
-async function startRelease(t, handlers, { specifier = '../releases.mjs', projectKey } = {}) {
+async function startRelease(
+  t,
+  handlers,
+  { specifier = '../backend/releases.mjs', projectKey } = {},
+) {
   const releases = await import(specifier);
   for (const name of ['fetchRelease', 'resetReleaseCaches']) {
     assert.equal(typeof releases[name], 'function', `releases.mjs must export ${name}`);
@@ -456,7 +460,7 @@ test('an unknown version name, or a name carrying JQL, is rejected with status h
 test('a project key from the environment is validated when a request runs, so an invalid one does not stop the import and sends nothing', async (t) => {
   withEnvironment(t, 'JIRA_RELEASES_PROJECT', 'bad key!');
   const { fetchRelease, calls } = await startRelease(t, threeTicketRelease(), {
-    specifier: '../releases.mjs?invalid-project-key',
+    specifier: '../backend/releases.mjs?invalid-project-key',
   });
   await assert.rejects(fetchRelease(), /JIRA_RELEASES_PROJECT/);
   assert.equal(calls.length, 0);
@@ -579,7 +583,7 @@ test('with an underscore project key from the environment each ticket keeps the 
     38010: { count: 3, detail: [detailEntry([titleOwned, branchOwned, lookalike])] },
   };
   const { fetchRelease } = await startRelease(t, standardHandlers({ issues, devStatus }), {
-    specifier: '../releases.mjs?underscore-project-key',
+    specifier: '../backend/releases.mjs?underscore-project-key',
     projectKey: underscoreProject,
   });
   const [ticket] = (await fetchRelease()).tickets;

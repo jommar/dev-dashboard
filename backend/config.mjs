@@ -5,17 +5,17 @@
 // for the label / link and for a lightweight "is it up?" health hint — they are
 // not the source of truth for where the app binds (that comes from each repo).
 //
-// cwd is relative to the monorepo root (parent of this dir).
+// cwd is relative to the monorepo root (parent of the dashboard folder).
 
-// Monorepo root: config.mjs lives in <repo>/dev-dashboard/, so one level up.
-export const REPOS_ROOT = new URL('../', import.meta.url).pathname;
-export const LOGS_DIR = new URL('./logs/', import.meta.url).pathname;
+// Monorepo root: config.mjs lives in <repo>/dev-dashboard/backend/, so two levels up.
+export const REPOS_ROOT = new URL('../../', import.meta.url).pathname;
+export const LOGS_DIR = new URL('../logs/', import.meta.url).pathname;
 
 // `path` gives a cross-platform resolve for the local .env file path (github.mjs
 // reads it via the same path — no hardcoded cwd assumptions).
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-export const DASHBOARD_DIR = dirname(fileURLToPath(import.meta.url));
+export const DASHBOARD_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Tail default: every surface (UI, CLI, file, HTTP) respects this so nothing
 // dumps more than N lines unless explicitly asked.

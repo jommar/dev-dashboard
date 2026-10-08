@@ -70,7 +70,7 @@ test('production Node handler serves built assets safely without swallowing API 
   const fixture = settingsFixture(t);
   const settings = await fixture.store();
   await settings.initialize();
-  const { createHttpHandler } = await import('../http-app.mjs');
+  const { createHttpHandler } = await import('../backend/http-app.mjs');
   const manager = {
     list: () => [],
     logs: () => '',

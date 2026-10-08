@@ -88,7 +88,7 @@ function installJira(t, { issues, failingDetailIds = new Set() }) {
 }
 
 async function startRelease(t, scenario) {
-  const releases = await import('../releases.mjs');
+  const releases = await import('../backend/releases.mjs');
   for (const name of ['fetchRelease', 'resetReleaseCaches']) {
     assert.equal(typeof releases[name], 'function', `releases.mjs must export ${name}`);
   }

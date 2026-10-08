@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 async function model(...names) {
-  const mod = await import('../release-model.mjs');
+  const mod = await import('../backend/release-model.mjs');
   for (const name of names)
     assert.equal(typeof mod[name], 'function', `release-model.mjs must export ${name}`);
   return mod;

@@ -6,8 +6,8 @@ import {
   buildTeamBoards,
   fetchTeamIssues,
   renderTeamVelocityHtml,
-} from '../team-velocity.mjs';
-import { SPRINT_FIELD, POINTS_FIELD } from '../jira.mjs';
+} from '../backend/team-velocity.mjs';
+import { SPRINT_FIELD, POINTS_FIELD } from '../backend/jira.mjs';
 
 const sprint = (id, name, state, endDate) => ({ id, name, state, endDate });
 const issue = (key, who, points, sprints) => ({

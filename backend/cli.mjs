@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 // cli.mjs — agent/human-facing tail + control commands.
 //
-//   node cli.mjs logs    <id> [--lines N]    tail a service's recent logs
-//   node cli.mjs restart <id|--all>          restart one or all services
-//   node cli.mjs stop    <id|--all>          stop one or all services
-//   node cli.mjs start   <id|--all>          start one or all services
-//   node cli.mjs status                      list services with status
-//   node cli.mjs prs                         list the user's open PRs
-//   node cli.mjs my-tickets [--include-done] [--json]
+//   node backend/cli.mjs logs    <id> [--lines N]    tail a service's recent logs
+//   node backend/cli.mjs restart <id|--all>          restart one or all services
+//   node backend/cli.mjs stop    <id|--all>          stop one or all services
+//   node backend/cli.mjs start   <id|--all>          start one or all services
+//   node backend/cli.mjs status                      list services with status
+//   node backend/cli.mjs prs                         list the user's open PRs
+//   node backend/cli.mjs my-tickets [--include-done] [--json]
 //                                            list Jira tickets assigned to you
-//   node cli.mjs releases [--version <id|name>] [--all] [--json]
+//   node backend/cli.mjs releases [--version <id|name>] [--all] [--json]
 //                                            list a Jira fix version's tickets with
 //                                            the merge state of their GitHub PRs
-//   node cli.mjs team-velocity [--sprints N] [--out PATH]
+//   node backend/cli.mjs team-velocity [--sprints N] [--out PATH]
 //                                            rebuild team-velocity.html (whole-team
 //                                            sprint velocity, last N sprints)
 //

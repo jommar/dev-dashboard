@@ -4,10 +4,10 @@ test('static fixture denies non-UI paths and mutation methods @smoke', async ({ 
   for (const path of [
     '/api/config',
     '/api/pr-diff',
-    '/server.mjs',
-    '/manager.mjs',
+    '/backend/server.mjs',
+    '/backend/manager.mjs',
     '/package.json',
-    '/ui/../server.mjs',
+    '/ui/../backend/server.mjs',
   ]) {
     expect((await request.get(path)).status(), path).toBe(404);
   }

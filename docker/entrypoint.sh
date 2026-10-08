@@ -20,7 +20,7 @@ if [ "$(id -u)" = 0 ]; then
 fi
 
 # Node version a service runs under: its own .nvmrc, else the monorepo root's.
-# Same rule as manager.mjs nvmrc().
+# Same rule as backend/manager.mjs nvmrc().
 pin_for() {
   if [ -f "$1/.nvmrc" ]; then file="$1/.nvmrc"; else file="$ROOT/.nvmrc"; fi
   sed -e 's/^v//' -e 's/[[:space:]]//g' "$file"

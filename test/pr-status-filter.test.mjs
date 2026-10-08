@@ -4,8 +4,8 @@
 // pinned here rather than eyeballed against the live Jira/GitHub responses.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as github from '../github.mjs';
-import * as jira from '../jira.mjs';
+import * as github from '../backend/github.mjs';
+import * as jira from '../backend/jira.mjs';
 
 // github.mjs and jira.mjs exist today but do not yet export the symbols under
 // test, so these are imported as namespaces (not destructured) — a missing

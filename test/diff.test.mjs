@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DIFF_TMP_NS, getOriginDiff, parsePrNumber, parseRepoRef } from '../diff.mjs';
+import { DIFF_TMP_NS, getOriginDiff, parsePrNumber, parseRepoRef } from '../backend/diff.mjs';
 import { prItemHtml } from '../ui/components/pr-card.js';
 
 test('copy diff accepts only configured repositories and positive PR numbers', () => {

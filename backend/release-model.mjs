@@ -1,4 +1,4 @@
-// release-model.mjs — pure rules behind the Releases tab and `cli.mjs releases`:
+// release-model.mjs — pure rules behind the Releases tab and `backend/cli.mjs releases`:
 // version ordering, request validation, JQL, PR ownership and merge roll-up,
 // CLI argument parsing and text output. No I/O and no imports, so the browser
 // data module and plain `node --test` runs can load it without touching

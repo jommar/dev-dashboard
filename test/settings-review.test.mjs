@@ -25,12 +25,12 @@ for (const cause of ['revoked', 'missing-token'])
     await restarted.initialize();
     assert.equal(restarted.getSetupStatus().ready, false);
     if (cause === 'missing-token') f.write(f.paths.jiraToken, jiraToken);
-    const { Manager } = await import('../manager.mjs');
+    const { Manager } = await import('../backend/manager.mjs');
     const manager = new Manager({
       local: { root: f.root, services: [] },
       logsDir: f.home + '/logs',
     });
-    const { createHttpHandler } = await import('../http-app.mjs');
+    const { createHttpHandler } = await import('../backend/http-app.mjs');
     const server = http.createServer(createHttpHandler({ settings: restarted, manager }));
     server.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
@@ -124,7 +124,7 @@ for (const change of ['missing-cwd', 'invalid-runtime', 'invalid-pin']) {
   test(`external ${change} closes operational gate before real Manager effects or log clearing`, async (t) => {
     const effects = forbidProcessEffects(t);
     let runtimeValid = true;
-    const { inspectRuntime } = await import('../manager.mjs');
+    const { inspectRuntime } = await import('../backend/manager.mjs');
     const h = await reviewHttp(t, {
       realManager: true,
       configure(f) {
@@ -218,7 +218,7 @@ for (const headers of [
 test('production shutdown lifecycle ends active SSE and completes within deadline without starting services', async (t) => {
   const effects = forbidProcessEffects(t);
   const h = await reviewHttp(t, { realManager: true });
-  const { shutdownServer } = await import('../server.mjs');
+  const { shutdownServer } = await import('../backend/server.mjs');
   assert.equal(
     typeof shutdownServer,
     'function',

@@ -4,10 +4,11 @@
 // Parsing is a minimal KEY=VALUE scan; values are used verbatim, so quote-free
 // shells-style values are fine.
 import fs from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const DASHBOARD_DIR = dirname(fileURLToPath(import.meta.url));
+// env.mjs lives in <dashboard>/backend/, so the .env file is one level up.
+const DASHBOARD_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export function loadEnvFile({
   directory = DASHBOARD_DIR,

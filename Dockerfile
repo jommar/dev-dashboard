@@ -73,4 +73,4 @@ RUN chmod 0755 docker/entrypoint.sh \
 
 EXPOSE 6500
 ENTRYPOINT ["/usr/bin/tini", "--", "/ezat/dev-dashboard/docker/entrypoint.sh"]
-CMD ["node", "server.mjs"]
+CMD ["node", "backend/server.mjs"]

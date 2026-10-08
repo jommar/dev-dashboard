@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import { jiraConfig } from './jira.mjs';
 import { captureConfiguration } from './settings.mjs';
-import { velocityChartHtml } from './ui/components/home-cards.js';
+import { velocityChartHtml } from '../ui/components/home-cards.js';
 
 export const TEAM_VELOCITY_MAX_ISSUES = 200;
 export const DEFAULT_KEEP_SPRINTS = 8;

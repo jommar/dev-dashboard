@@ -7,7 +7,7 @@ import {
   serializeSelection,
   summarizeRelease,
 } from '../ui/releases-data.js';
-import { MERGE_STATE_ORDER as SERVER_MERGE_STATE_ORDER } from '../release-model.mjs';
+import { MERGE_STATE_ORDER as SERVER_MERGE_STATE_ORDER } from '../backend/release-model.mjs';
 
 const pr = (number, over = {}) => ({
   repo: 'example/api',

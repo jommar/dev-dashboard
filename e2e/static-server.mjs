@@ -22,7 +22,7 @@ const server = await createViteServer({
           }
           if (
             pathname.startsWith('/api/') ||
-            ['/server.mjs', '/manager.mjs', '/package.json'].includes(pathname) ||
+            ['/backend/server.mjs', '/backend/manager.mjs', '/package.json'].includes(pathname) ||
             !['GET', 'HEAD'].includes(req.method)
           ) {
             res.writeHead(404).end();

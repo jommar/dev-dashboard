@@ -5,9 +5,9 @@ import {
   fetchReviewData,
   filterPrsNeedingApprovals,
   summarizeReviews,
-} from '../review.mjs';
-import { getMinPrApprover, parseMinPrApprover } from '../config.mjs';
-import { fetchOpenPRs } from '../github.mjs';
+} from '../backend/review.mjs';
+import { getMinPrApprover, parseMinPrApprover } from '../backend/config.mjs';
+import { fetchOpenPRs } from '../backend/github.mjs';
 
 test('MIN_PR_APPROVER accepts only positive integers', () => {
   assert.equal(parseMinPrApprover(undefined), 1);

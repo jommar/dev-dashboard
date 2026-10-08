@@ -289,7 +289,7 @@ test('missing settings initialize once as fresh, partial or grandfathered legacy
   assert.throws(
     () =>
       withSyntheticEnvRead(
-        new URL('../env.mjs', import.meta.url),
+        new URL('../backend/env.mjs', import.meta.url),
         boundary.paths.dashboardDir,
         () => {},
       ),
