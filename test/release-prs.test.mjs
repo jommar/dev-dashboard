@@ -8,7 +8,16 @@ async function model(...names) {
   return mod;
 }
 
-const rawPr = ({ number, repo, title, status, base = 'ops/development', head, url }) => ({
+const rawPr = ({
+  number,
+  repo,
+  title,
+  status,
+  base = 'ops/development',
+  head,
+  url,
+  author = { name: 'release-owner' },
+}) => ({
   id: `#${number}`,
   name: title,
   status,
@@ -18,7 +27,7 @@ const rawPr = ({ number, repo, title, status, base = 'ops/development', head, ur
   source: { branch: head },
   destination: { branch: base },
   lastUpdate: '2026-10-05T15:58:37.000Z',
-  author: { name: 'User ' },
+  author,
   commentCount: 0,
 });
 

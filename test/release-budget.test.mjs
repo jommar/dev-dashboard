@@ -69,6 +69,18 @@ function installJira(t, { issues, failingDetailIds = new Set() }) {
   const flight = { current: 0, peak: 0 };
   t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
     const url = new URL(input);
+    if (url.pathname === '/graphql') {
+      const aliases = [...JSON.parse(init.body).query.matchAll(/a(\d+): repository/g)];
+      calls.push({ kind: 'githubOwners', url, init });
+      return Response.json({
+        data: Object.fromEntries(
+          aliases.map(([, index]) => [
+            `a${index}`,
+            { pullRequest: { author: { login: 'owner' } } },
+          ]),
+        ),
+      });
+    }
     const kind = Object.keys(PATHS).find((name) => PATHS[name] === url.pathname) ?? 'unexpected';
     calls.push({ kind, url, init });
     if (kind === 'versions') return Response.json(rawVersions);
@@ -110,10 +122,10 @@ const detailIds = (calls) =>
     .filter((call) => call.kind === 'detail')
     .map((call) => call.url.searchParams.get('issueId'));
 
-test('a cold load of an 11-ticket release costs 14 Jira calls', async (t) => {
+test('a cold load of an 11-ticket release uses 14 Jira calls and one batched owner lookup', async (t) => {
   const { fetchRelease, calls } = await startRelease(t, { issues: releaseTickets(11) });
   await fetchRelease();
-  assert.equal(calls.length, 14);
+  assert.equal(calls.length, 15);
   assert.deepEqual(
     [
       countOf(calls, 'versions'),
@@ -123,31 +135,33 @@ test('a cold load of an 11-ticket release costs 14 Jira calls', async (t) => {
     ],
     [1, 1, 1, 11],
   );
+  assert.equal(countOf(calls, 'githubOwners'), 1);
 });
 
-test('a second load within 60 seconds costs 2 calls, only the versions and the search', async (t) => {
+test('a second load within 60 seconds costs 3 calls: versions, search, and owner lookup', async (t) => {
   const { fetchRelease, calls } = await startRelease(t, { issues: releaseTickets(11) });
   await fetchRelease();
   const coldCalls = calls.length;
   t.mock.timers.tick(30_000);
   await fetchRelease();
-  assert.equal(calls.length - coldCalls, 2);
+  assert.equal(calls.length - coldCalls, 3);
   assert.deepEqual(
     calls
       .slice(coldCalls)
       .map((call) => call.kind)
       .sort(),
-    ['search', 'versions'],
+    ['githubOwners', 'search', 'versions'],
   );
 });
 
-test('refresh bypasses the PR cache and costs 13 calls', async (t) => {
+test('refresh bypasses the PR cache and makes 13 Jira calls and one owner lookup', async (t) => {
   const { fetchRelease, calls } = await startRelease(t, { issues: releaseTickets(11) });
   await fetchRelease();
   const coldCalls = calls.length;
   await fetchRelease(true);
-  assert.equal(calls.length - coldCalls, 13);
+  assert.equal(calls.length - coldCalls, 14);
   assert.equal(detailIds(calls.slice(coldCalls)).length, 11);
+  assert.equal(countOf(calls.slice(coldCalls), 'githubOwners'), 1);
 });
 
 test('dev-status calls in flight never exceed 4 while still running in parallel', async (t) => {

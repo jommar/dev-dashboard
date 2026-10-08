@@ -3,6 +3,7 @@ function releasePr(repo, number, overrides = {}) {
     repo,
     number,
     title: `Synthetic change ${number}`,
+    owner: `pr-owner-${number}`,
     url: `https://github.com/${repo}/pull/${number}`,
     state: 'open',
     base: 'ops/development',

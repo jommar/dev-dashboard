@@ -2,7 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
-import { settingsFixture, accept, jiraToken, assertNoSecrets } from './settings-fixture.mjs';
+import {
+  settingsFixture,
+  accept,
+  githubToken,
+  jiraToken,
+  assertNoSecrets,
+} from './settings-fixture.mjs';
 
 const JIRA_ORIGIN = 'https://jira.example.invalid';
 const SAVED_AUTHORIZATION =
@@ -108,6 +114,18 @@ async function startRelease(t) {
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
     const url = new URL(input);
+    if (url.pathname === '/graphql') {
+      calls.push({ kind: 'githubOwners', url, init });
+      const aliases = [...JSON.parse(init.body).query.matchAll(/a(\d+): repository/g)];
+      return Response.json({
+        data: Object.fromEntries(
+          aliases.map(([, index]) => [
+            `a${index}`,
+            { pullRequest: { author: { login: 'cpicciolak12' } } },
+          ]),
+        ),
+      });
+    }
     const kind = Object.keys(PATHS).find((name) => PATHS[name] === url.pathname) ?? 'unexpected';
     calls.push({ kind, url, init });
     return (upstream[kind] ?? (() => new Response('{}', { status: 404 })))(url, init);
@@ -166,12 +184,14 @@ test('an upstream 500 on a dev-status call leaves the route payload free of the 
   assertNoSecrets(response.text, leakMarkers);
 });
 
-test('a successful payload carries no token, Basic value, JQL or unmapped upstream text', async (t) => {
+test('a successful payload includes the GitHub owner login without leaking credentials or Jira metadata', async (t) => {
   const { store } = await startRelease(t);
   const get = await serveRoute(t, store);
   const response = await get('/api/releases?scope=all');
   assert.equal(response.status, 200);
   assert.ok(response.text.includes('DEMO-1058'));
+  assert.ok(response.text.includes('cpicciolak12'));
+  assert.ok(!response.text.includes(canary));
   assertNoSecrets(response.text, leakMarkers);
 });
 
@@ -211,33 +231,30 @@ test('every request goes to the saved Jira origin with redirect error and the sa
   await releases.fetchRelease({ versionId: '18741', mine: true, refresh: false, snapshot });
   assert.deepEqual([...new Set(calls.map((call) => call.kind))].sort(), [
     'detail',
+    'githubOwners',
     'search',
     'summary',
     'versions',
   ]);
-  for (const { url, init } of calls) {
+  for (const { url, init } of calls.filter(({ kind }) => kind !== 'githubOwners')) {
     assert.equal(url.origin, JIRA_ORIGIN, url.href);
     assert.equal(init.redirect, 'error', url.href);
     assert.equal(new Headers(init.headers).get('authorization'), SAVED_AUTHORIZATION, url.href);
   }
 });
 
-test('no GitHub request is made and no GitHub token is sent', async (t) => {
+test('GitHub owner lookup uses the saved GitHub token rather than environment credentials', async (t) => {
   const { releases, calls, snapshot } = await startRelease(t);
   process.env.GH_TOKEN = 'synthetic-env-poison-github';
   t.after(() => {
     delete process.env.GH_TOKEN;
   });
   await releases.fetchRelease({ versionId: '18741', mine: false, refresh: true, snapshot });
-  assert.ok(calls.length >= 4);
-  assert.equal(
-    calls.some(({ url }) => /github/i.test(url.hostname)),
-    false,
-  );
-  assert.equal(
-    calls.some(({ init }) =>
-      /Bearer|synthetic-env-poison-github/.test(JSON.stringify(init.headers ?? {})),
-    ),
-    false,
+  const ownerCall = calls.find(({ url }) => url.pathname === '/graphql');
+  assert.ok(ownerCall);
+  assert.equal(new Headers(ownerCall.init.headers).get('authorization'), `Bearer ${githubToken}`);
+  assert.notEqual(
+    new Headers(ownerCall.init.headers).get('authorization'),
+    'Bearer synthetic-env-poison-github',
   );
 });

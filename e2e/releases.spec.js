@@ -84,6 +84,7 @@ test('releases tab opens on its own route, loads the default release grouped by 
   }
 
   await expect(page.getByTestId('release-pr-state-example/web-535')).toHaveText('merged');
+  await expect(page.getByTestId('release-pr-owner-example/web-535')).toHaveText('@pr-owner-535');
   await expect(page.getByTestId('release-pr-base-example/web-535')).toHaveText('ops/development');
   await expect(page.getByTestId('release-pr-state-example/worker-451')).toHaveText('open');
   await expect(page.getByTestId('release-pr-base-example/worker-451')).toHaveText(

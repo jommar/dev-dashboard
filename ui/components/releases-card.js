@@ -32,6 +32,9 @@ export function releasePrRowHtml(pr) {
     `<span class="pr-title">${titleHtml}</span>` +
     '<div class="pr-meta">' +
     `<span class="pill release-pr-state" data-pr-state="${esc(pr.state)}" data-testid="${testId('state')}">${esc(pr.state)}</span>` +
+    (pr.owner
+      ? `<span class="pr-owner" data-testid="${testId('owner')}">@${esc(pr.owner)}</span>`
+      : '') +
     `<span class="pr-num" data-testid="${testId('num')}">${esc(pr.repo)} #${esc(pr.number)}</span>` +
     `<span class="pill release-pr-base"${baseAttributes} data-testid="${testId('base')}">${esc(pr.base)}</span>` +
     (pr.head

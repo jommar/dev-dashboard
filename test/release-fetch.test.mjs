@@ -153,6 +153,22 @@ function installJira(t, handlers, projectKey = 'TRIPS') {
   const paths = { ...PATHS, versions: `/rest/api/3/project/${projectKey}/versions` };
   t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
     const url = new URL(input);
+    if (url.pathname === '/graphql') {
+      calls.push({ kind: 'githubOwners', url, init });
+      const aliases = [
+        ...JSON.parse(init.body).query.matchAll(
+          /a(\d+): repository[\s\S]*?pullRequest\(number: (\d+)\)/g,
+        ),
+      ];
+      return Response.json({
+        data: Object.fromEntries(
+          aliases.map(([, index, number]) => [
+            `a${index}`,
+            { pullRequest: { author: { login: `github-owner-${number}` } } },
+          ]),
+        ),
+      });
+    }
     const kind = Object.keys(paths).find((name) => paths[name] === url.pathname) ?? 'unexpected';
     calls.push({ kind, url, init });
     return (handlers[kind] ?? (() => new Response('{}', { status: 404 })))(url, init);
@@ -215,7 +231,7 @@ test('tickets come back in numeric key order whatever order Jira returned them',
 });
 
 test('a ticket keeps only its own PRs, with their states, and rolls up to partial', async (t) => {
-  const { fetchRelease } = await startRelease(t, threeTicketRelease());
+  const { fetchRelease, calls } = await startRelease(t, threeTicketRelease());
   const [ticket] = (await fetchRelease()).tickets;
   assert.equal(ticket.key, 'DEMO-1058');
   assert.equal(ticket.summary, 'Summary of DEMO-1058');
@@ -236,6 +252,7 @@ test('a ticket keeps only its own PRs, with their states, and rolls up to partia
     repo: 'TransActComm/Portage-frontend',
     number: 535,
     title: 'DEMO-1058: Mileage rate in the form',
+    owner: 'github-owner-535',
     url: 'https://github.com/TransActComm/Portage-frontend/pull/535',
     state: 'merged',
     base: 'ops/development',
@@ -243,6 +260,7 @@ test('a ticket keeps only its own PRs, with their states, and rolls up to partia
     updatedAt: '2026-10-05T15:58:37.000Z',
     countsAsMerged: true,
   });
+  assert.ok(calls.some((call) => call.url.pathname === '/graphql'));
   assert.equal(ticket.prs.find((pr) => pr.number === 451).state, 'open');
   assert.equal(ticket.prs.find((pr) => pr.number === 451).countsAsMerged, false);
 });

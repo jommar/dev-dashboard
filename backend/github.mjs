@@ -25,6 +25,68 @@ async function getLogin(tokenStr, config) {
   return data.login;
 }
 
+function pullRequestAuthorsQuery(prs) {
+  const aliases = prs.map((pr, index) => {
+    const [owner, repo] = pr.repo.split('/');
+    return (
+      `a${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repo)}) {\n` +
+      `pullRequest(number: ${pr.number}) { author { login } }\n}`
+    );
+  });
+  return `query {\n${aliases.join('\n')}\n}`;
+}
+
+// Jira's dev-status author name is not a reliable GitHub identity. Resolve the
+// actual login for a batch of linked PRs with one GitHub GraphQL request.
+export async function fetchPrOwners(prs, { snapshot } = {}) {
+  const captured = captureConfiguration(snapshot);
+  const tokenStr = captured.credentials.githubToken;
+  const validPrs = [
+    ...new Map(
+      (prs || [])
+        .filter(
+          (pr) =>
+            pr &&
+            typeof pr.repo === 'string' &&
+            /^[^/]+\/[^/]+$/.test(pr.repo) &&
+            Number.isSafeInteger(pr.number) &&
+            pr.number > 0,
+        )
+        .map((pr) => [`${pr.repo}#${pr.number}`, pr]),
+    ).values(),
+  ];
+  if (!tokenStr || !validPrs.length) return {};
+
+  try {
+    const owners = {};
+    for (let offset = 0; offset < validPrs.length; offset += 50) {
+      const batch = validPrs.slice(offset, offset + 50);
+      const res = await fetch(`${captured.github.api}/graphql`, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          Authorization: `Bearer ${tokenStr}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'dev-dashboard',
+        },
+        body: JSON.stringify({ query: pullRequestAuthorsQuery(batch) }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (!json.data || json.errors) continue;
+      for (const [index, pr] of batch.entries()) {
+        const login = json.data[`a${index}`]?.pullRequest?.author?.login;
+        if (typeof login === 'string' && login) owners[`${pr.repo}#${pr.number}`] = login;
+      }
+    }
+    return owners;
+  } catch {
+    return {};
+  }
+}
+
 // Derive a lightweight {owner, repo} from a GitHub URL.
 function parseRepoUrl(url) {
   const m = typeof url === 'string' ? url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)/) : null;
