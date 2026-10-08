@@ -1,0 +1,46 @@
+# EZAT dev dashboard in Docker.
+#
+#   cp .env.example .env   # optional: GH_TOKEN / JIRA_* for first-run setup
+#   docker compose up --build
+#   open http://127.0.0.1:6500
+#
+# Expects the monorepo layout: this folder sits next to Portage-backend/,
+# Portage-frontend/, TravelTracker/ and the monorepo .nvmrc.
+#
+# Linux only. Host networking lets the dashboard and the services use the
+# host's loopback exactly as they do outside Docker (MySQL, Redis, Kafka on
+# localhost). Docker Desktop on macOS and Windows runs containers in a VM, so
+# this file does not work there.
+
+services:
+  dashboard:
+    build: .
+    image: ezat-dev-dashboard
+    network_mode: host
+    env_file:
+      - path: ./.env
+        required: false
+    volumes:
+      # Sibling repos the dashboard starts and diffs, at the paths its config expects.
+      - ../Portage-backend:/ezat/Portage-backend
+      - ../Portage-frontend:/ezat/Portage-frontend
+      - ../TravelTracker:/ezat/TravelTracker
+      - ../.nvmrc:/ezat/.nvmrc:ro
+      # Dependencies are installed inside the container, so these shadow any host node_modules.
+      - portage-backend-node-modules:/ezat/Portage-backend/node_modules
+      - portage-frontend-node-modules:/ezat/Portage-frontend/node_modules
+      - traveltracker-node-modules:/ezat/TravelTracker/node_modules
+      - traveltracker-ui-node-modules:/ezat/TravelTracker/ui/node_modules
+      # Settings and saved tokens (~/.config), rolling service logs, npm download cache.
+      - dashboard-config:/home/node/.config
+      - dashboard-logs:/ezat/dev-dashboard/logs
+      - dashboard-npm-cache:/home/node/.npm
+
+volumes:
+  portage-backend-node-modules:
+  portage-frontend-node-modules:
+  traveltracker-node-modules:
+  traveltracker-ui-node-modules:
+  dashboard-config:
+  dashboard-logs:
+  dashboard-npm-cache:

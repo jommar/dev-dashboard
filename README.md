@@ -69,6 +69,41 @@ service feed are not mounted. Log fetching pauses while Services is hidden.
 > The dashboard port (`6500`) and tail line count are configurable in
 > [`config.mjs`](config.mjs).
 
+### Run in Docker (Linux)
+
+The container bundles the dashboard, the Node versions the sibling repos pin, and
+their dependencies, so nobody has to install Node or run `npm install` in each
+repo by hand. It needs Docker Engine with Compose v2.24 or newer and the monorepo
+layout: this folder next to `Portage-backend/`, `Portage-frontend/`,
+`TravelTracker/` and the monorepo `.nvmrc`.
+
+```bash
+cd dev-dashboard
+cp .env.example .env     # optional: GH_TOKEN and JIRA_* for first-run setup
+docker compose up --build
+```
+
+Then open `http://127.0.0.1:6500`. The first start runs `npm ci` in each sibling
+repo inside the container, which takes several minutes. Later starts reuse it.
+
+- Stop any host dashboard (`npm start`) first. Only one process can listen on
+  port 6500.
+- Linux only. The container uses host networking so services reach the host's
+  MySQL, Redis and Kafka on `localhost`. Docker Desktop on macOS and Windows runs
+  containers in a VM, so this file does not work there as written.
+- Settings, saved tokens and logs live in the `dashboard-config` and
+  `dashboard-logs` volumes. `docker compose down -v` deletes them, along with
+  the dependency volumes.
+- Run CLI commands in the container: `docker compose exec dashboard node cli.mjs logs`.
+- `docker compose config` prints the `.env` values in plain text. Do not paste its
+  output anywhere.
+- After changing dashboard code, run `docker compose up --build` again.
+- The image pins the Node versions listed in `NODE_PINS` in the Dockerfile. When a
+  sibling repo changes its `.nvmrc`, add the version there and rebuild. Until
+  then the container refuses to start and names the missing version.
+- PR diffs run `git` in the sibling repos and authenticate to GitHub with
+  `GH_TOKEN`. SSH remotes do not work inside the container.
+
 ## Settings and setup
 
 ### Saved configuration and credentials

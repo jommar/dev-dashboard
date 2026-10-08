@@ -7,3 +7,6 @@
   updates, dark theme, and responsive card layouts.
 - Replaced all six legacy DOM panel controllers with React-rendered panels,
   shared React controls, panel-owned interaction state and app-owned styles.
+- Added a Docker setup (`Dockerfile`, `docker-compose.yml`) that runs the
+  dashboard with its sibling repos' pinned Node versions and dependencies
+  installed in the container. Linux only (host networking).

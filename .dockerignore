@@ -1,0 +1,18 @@
+# Keep the image small and keep secrets out of it.
+.env
+.env.*
+.git
+node_modules
+dist
+logs
+test
+e2e
+test-results
+playwright-report
+blob-report
+.playwright-mcp
+.orchestrator
+.claude
+Dockerfile
+docker-compose.yml
+.dockerignore
