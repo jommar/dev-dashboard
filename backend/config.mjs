@@ -51,7 +51,7 @@ export const GITHUB = {
 };
 
 // Jira browse base — a ticket key is appended to form a link (e.g.
-// TRIPS-1691 → https://pathwise.atlassian.net/browse/TRIPS-1691). Used to make
+// TAP-1691 → https://pathwise.atlassian.net/browse/TAP-1691). Used to make
 // PR group titles clickable. Group keys that don't look like a ticket key
 // (e.g. 'Unticketed') are NOT linked.
 export const JIRA_BASE = 'https://pathwise.atlassian.net/browse/';

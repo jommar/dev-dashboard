@@ -22,7 +22,7 @@ const leakMarkers = [
   Buffer.from(`qa@example.invalid:${jiraToken}`).toString('base64'),
 ];
 const PATHS = {
-  versions: '/rest/api/3/project/TRIPS/versions',
+  versions: '/rest/api/3/project/TAP/versions',
   search: '/rest/api/3/search/jql',
   summary: '/rest/dev-status/latest/issue/summary',
   detail: '/rest/dev-status/latest/issue/detail',

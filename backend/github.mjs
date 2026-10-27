@@ -94,7 +94,7 @@ function parseRepoUrl(url) {
   return { owner: m[1], repo: m[2] };
 }
 
-// Extract ticket prefix(es) like [TRIPS-1665], [PRT-1543], or bare PRT-1221
+// Extract ticket prefix(es) like [TAP-1665], [TRIPS-1665] (titles from before 2026-10-27), [PRT-1543], or bare PRT-1221
 // from a PR title. Returns the tags in title order (uppercased, deduped).
 function extractTickets(title) {
   const tags = [];

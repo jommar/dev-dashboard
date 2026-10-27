@@ -620,7 +620,7 @@ backlog.
 ## Releases
 
 The **Releases** tab answers *"did the work in this release reach
-`ops/development`?"*. A release is a Jira **fix version** of the `TRIPS`
+`ops/development`?"*. A release is a Jira **fix version** of the `TAP`
 project. For every ticket in the chosen version it lists the GitHub PRs linked
 to that ticket and rolls them up into one merge state, with the tickets that
 still need attention first. It is available in the **Releases** tab, via
@@ -729,7 +729,7 @@ no cache with the dashboard and always starts cold.
 ### Configuration
 
 The project key comes from the optional environment variable
-`JIRA_RELEASES_PROJECT` (default `TRIPS`), read when the dashboard or the CLI
+`JIRA_RELEASES_PROJECT` (default `TAP`; the project was named `TRIPS` until 2026-10-27), read when the dashboard or the CLI
 starts. There is no Settings field and no change to the saved-settings schema.
 A value that is not a valid Jira project key (uppercase letters, digits and
 underscores, starting with a letter) fails the request rather than stopping the

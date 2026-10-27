@@ -4,7 +4,7 @@ import { settingsFixture, accept } from './settings-fixture.mjs';
 
 const GITHUB_INSTANCE = 'oAuth-com.github.integration.production';
 const PATHS = {
-  versions: '/rest/api/3/project/TRIPS/versions',
+  versions: '/rest/api/3/project/TAP/versions',
   search: '/rest/api/3/search/jql',
   summary: '/rest/dev-status/latest/issue/summary',
   detail: '/rest/dev-status/latest/issue/detail',
@@ -148,7 +148,7 @@ function standardHandlers({ versions = rawVersions, issues = [], devStatus = {} 
   };
 }
 
-function installJira(t, handlers, projectKey = 'TRIPS') {
+function installJira(t, handlers, projectKey = 'TAP') {
   const calls = [];
   const paths = { ...PATHS, versions: `/rest/api/3/project/${projectKey}/versions` };
   t.mock.method(globalThis, 'fetch', async (input, init = {}) => {

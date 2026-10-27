@@ -20,7 +20,7 @@ export { parseReleasesArgs, formatReleaseText } from './release-model.mjs';
 
 // Per-instance like SPRINT_FIELD; checked when a request runs, not at import,
 // so a bad value cannot stop the server or every module that imports it.
-export const RELEASES_PROJECT_KEY = (process.env.JIRA_RELEASES_PROJECT || 'TRIPS').trim();
+export const RELEASES_PROJECT_KEY = (process.env.JIRA_RELEASES_PROJECT || 'TAP').trim();
 const PROJECT_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const CALL_TIMEOUT_MS = 15_000;
 const SEARCH_PAGE_SIZE = 50;

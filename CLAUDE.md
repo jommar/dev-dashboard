@@ -1,7 +1,7 @@
 # CLAUDE.md — dev-dashboard
 
 Personal EZAT dev-service dashboard (its own git repo, nested inside the `/ezat` monorepo — not one
-of the ticketed TransAct business repos, no `TRIPS` tickets, no graphify graph). See `README.md` for
+of the ticketed TransAct business repos, no `TAP` tickets, no graphify graph). See `README.md` for
 what it does. This file holds conventions worth knowing before touching the UI layer.
 
 ## Formatting and linting agent changes
