@@ -29,6 +29,31 @@
 .tab.active::before {
   background: currentColor;
 }
+/* Pending-count pill, rendered inline after the label. Fixed height and a
+   tabular-numeral font keep the nav from shifting as the count changes. */
+.tab-badge {
+  flex: none;
+  margin-left: var(--s2);
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
+}
+/* Unread-but-unmentioned: a dot carries the same weight without inventing a count. */
+.tab-badge-dot {
+  width: 6px;
+  min-width: 6px;
+  height: 6px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--warn);
+}
 @media (hover: hover) {
   .tab:hover {
     color: var(--strong);
@@ -53,6 +78,11 @@
   }
   .tab::before {
     display: none;
+  }
+  /* Tabs sit in a tight horizontal row here, so the badge keeps its own space
+     with the smallest gap instead of pushing neighbours apart. */
+  .tab-badge {
+    margin-left: var(--s1);
   }
 }
 @media (max-width: 600px) {

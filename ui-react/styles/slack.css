@@ -1,0 +1,116 @@
+.slack-section {
+  padding: var(--s5);
+}
+
+.slack-threads-card {
+  margin-top: 20px;
+}
+
+.slack-body {
+  min-height: 72px;
+}
+
+.slack-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  max-width: 74ch;
+}
+
+.slack-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+}
+
+.slack-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+}
+
+.slack-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.slack-tab[aria-selected='true'] {
+  background: var(--bg);
+  color: var(--strong);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.slack-tab-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.slack-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.slack-thread {
+  display: block;
+  padding: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 120ms var(--ease-out);
+}
+
+.slack-thread:hover,
+.slack-thread:focus-visible {
+  border-color: var(--accent);
+}
+
+.slack-thread-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--strong);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.slack-thread-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.slack-thread-who {
+  color: var(--text);
+}
+
+.slack-thread-when {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.slack-needs {
+  color: var(--warn);
+  font-weight: 600;
+}

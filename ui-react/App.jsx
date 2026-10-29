@@ -9,16 +9,21 @@ import { ServicesPanel } from './panels/ServicesPanel.jsx';
 import { PrsPanel } from './panels/PrsPanel.jsx';
 import { MyTicketsPanel } from './panels/MyTicketsPanel.jsx';
 import { ReleasesPanel } from './panels/ReleasesPanel.jsx';
+import { SlackPanel } from './panels/SlackPanel.jsx';
+import { SlackTabBadge } from './components/SlackTabBadge.jsx';
 import { SettingsPanel } from './panels/SettingsPanel.jsx';
 import { TooltipLayer } from './components/Tooltip.jsx';
 import './styles.css';
 
+// The badge polls from inside the Slack tab entry, so setup-only mode (which
+// renders SETTINGS_TAB) never starts a Slack request at all.
 const READY_TABS = [
   { id: 'home', label: 'Home' },
   { id: 'services', label: 'Services' },
   { id: 'prs', label: 'Pull Requests' },
   { id: 'my-tickets', label: 'My Tickets' },
   { id: 'releases', label: 'Releases' },
+  { id: 'slack', label: 'Slack', badge: <SlackTabBadge /> },
   { id: 'settings', label: 'Settings' },
 ];
 const SETTINGS_TAB = [{ id: 'settings', label: 'Settings' }];
@@ -130,6 +135,7 @@ export function App() {
                 view={releaseView}
                 onViewChange={changeReleaseView}
               />
+              <SlackPanel active={active === 'slack'} />
             </>
           )}
           <SettingsPanel config={config} active={active === 'settings'} />

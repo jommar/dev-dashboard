@@ -1,7 +1,7 @@
 export function AppTabs({ tabs, active, onNavigate }) {
   return (
     <nav className="tabs" id="tabs" data-testid="tabs" aria-label="Workspace">
-      {tabs.map(({ id, label }) => (
+      {tabs.map(({ id, label, badge }) => (
         <a
           key={id}
           className={`tab${active === id ? ' active' : ''}`}
@@ -23,6 +23,7 @@ export function AppTabs({ tabs, active, onNavigate }) {
           }}
         >
           {label}
+          {badge}
         </a>
       ))}
     </nav>

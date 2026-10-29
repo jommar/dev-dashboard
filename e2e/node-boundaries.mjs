@@ -60,7 +60,7 @@ function guard(file, reading = false) {
     throw new Error('Test boundary: production runtime inspection forbidden');
   }
   if (
-    /[/\\]\.config[/\\](github[/\\]token|jira[/\\]token|dev-dashboard[/\\]settings\.json)/.test(
+    /[/\\]\.config[/\\](github[/\\]token|jira[/\\]token|slack[/\\]session\.json|dev-dashboard[/\\]settings\.json)/.test(
       filename,
     ) &&
     !filename.startsWith(temporaryParent + path.sep)

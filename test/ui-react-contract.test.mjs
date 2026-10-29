@@ -28,6 +28,9 @@ test('the shared API boundary retains every existing endpoint and payload operat
     '/api/my-tickets',
     '/api/releases',
     '/api/pr-diff',
+    '/api/slack/status',
+    '/api/slack/threads',
+    '/api/slack/pending',
     '/api/events',
   ]) {
     assert.ok(api.includes(route), `API route ${route} is represented`);
@@ -80,6 +83,7 @@ test('React panels own structural rendering and compose shared React components'
     'PrsPanel.jsx',
     'MyTicketsPanel.jsx',
     'ReleasesPanel.jsx',
+    'SlackPanel.jsx',
     'SettingsPanel.jsx',
   ];
   for (const name of panels) {
@@ -116,6 +120,26 @@ test('React panels own structural rendering and compose shared React components'
   assert.match(read('components/Terminal.jsx'), /useState/);
   assert.match(read('components/Listbox.jsx'), /listboxMove/);
   assert.match(read('components/DiffViewer.jsx'), /openDiffViewer/);
+});
+
+test('the Slack tab carries a pending-count badge driven by its own endpoint', () => {
+  assert.ok(
+    fs.existsSync(path.join(root, 'components', 'SlackTabBadge.jsx')),
+    'SlackTabBadge.jsx exists',
+  );
+  const badge = read('components/SlackTabBadge.jsx');
+  assert.match(badge, /tab-slack-badge/);
+  assert.match(badge, /tab-badge-dot/);
+  assert.match(badge, /useSlackPending/);
+  const hook = read('hooks/useSlackPending.js');
+  assert.match(hook, /getSlackPending/);
+  assert.match(hook, /SLACK_POLL_MS/);
+  assert.match(hook, /notifySlackSessionChanged/);
+  assert.match(read('components/AppTabs.jsx'), /\{badge\}/);
+  const app = read('App.jsx');
+  assert.match(app, /from '\.\/components\/SlackTabBadge\.jsx'/);
+  assert.match(app, /id: 'slack', label: 'Slack', badge: <SlackTabBadge \/>/);
+  assert.match(read('panels/SlackPanel.jsx'), /notifySlackSessionChanged\(\)/);
 });
 
 test('production and build contract tests isolate or serialize all access to dist/', () => {

@@ -115,6 +115,57 @@ export async function getPrDiff(repo, number) {
   return res.json();
 }
 
+// Slack is optional, so every Slack call resolves instead of throwing: an
+// unreachable or unconnected integration is a state the panel renders, never an
+// error that blocks it.
+export async function getSlackStatus() {
+  try {
+    const res = await fetch('/api/slack/status');
+    if (!res.ok) return { connected: false, connecting: false };
+    return await res.json();
+  } catch {
+    return { connected: false, connecting: false };
+  }
+}
+
+export async function getSlackThreads() {
+  try {
+    const res = await fetch('/api/slack/threads');
+    if (!res.ok) return { available: false };
+    return await res.json();
+  } catch {
+    return { available: false };
+  }
+}
+
+export async function getSlackPending() {
+  try {
+    const res = await fetch('/api/slack/pending');
+    if (!res.ok) return { available: false };
+    return await res.json();
+  } catch {
+    return { available: false };
+  }
+}
+
+export async function connectSlack() {
+  try {
+    const res = await fetch('/api/slack/connect', { method: 'POST' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function disconnectSlack() {
+  try {
+    const res = await fetch('/api/slack/disconnect', { method: 'POST' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function subscribeServices(onSnapshot, onConnection = () => {}) {
   const source = new EventSource('/api/events');
   source.addEventListener('setup-required', () => {

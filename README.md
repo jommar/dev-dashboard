@@ -75,11 +75,13 @@ validation details. Once setup is ready, the navigation contains:
   earliest unreleased EZAT version), each with its GitHub PRs, grouped by
   whether the work reached `ops/development`. It opens on your own tickets;
   **All release tickets** widens it. See [Releases](#releases).
+- **Slack** — optional. One connect button that captures your own Slack web
+  session; nothing else in the app depends on it. See [Slack](#slack).
 - **Settings** — saved integrations, token replacements, local services and
   advanced options.
 
 The visible view lives in the URL hash (`#/home`, `#/services`, `#/prs`,
-`#/my-tickets`, `#/releases`, `#/settings`), so a reload — or a link you paste to
+`#/my-tickets`, `#/releases`, `#/slack`, `#/settings`), so a reload — or a link you paste to
 yourself — lands where you left off. A bare URL or an unrecognised hash is
 canonicalized to Home when ready, or Settings during setup. During setup, deep links, title clicks
 and back/forward navigation also resolve to Settings; operational panels and the
@@ -129,11 +131,12 @@ repo inside the container, which takes several minutes. Later starts reuse it.
 
 The dashboard persists configuration outside the project:
 
-| Path | Contents |
-| ---- | -------- |
+| Path                                    | Contents                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `~/.config/dev-dashboard/settings.json` | Versioned non-secret settings (`schemaVersion: 1`), revision, migration origin and integration acceptance metadata |
-| `~/.config/github/token` | GitHub token |
-| `~/.config/jira/token` | Jira API token |
+| `~/.config/github/token`                | GitHub token                                                                                                       |
+| `~/.config/jira/token`                  | Jira API token                                                                                                     |
+| `~/.config/slack/session.json`          | Slack web-session credentials (`xoxc-` token + `d` cookie), only after you connect Slack                           |
 
 Token files use mode `600`; existing regular token files are normalized to that
 mode when read. Symlinks and nonregular credential files are rejected. Tokens
@@ -247,11 +250,11 @@ Until ready, operational HTTP APIs (services, logs, controls, events, PRs,
 tickets, releases and diff) return `409 SETUP_REQUIRED` before doing their work.
 The page, static assets and these setup endpoints remain available:
 
-| Endpoint | Contract |
-| -------- | -------- |
-| `GET /api/config` | Tail count, derived Jira browse URL and `setup` (readiness, errors, revision, origin, connection status) |
-| `GET /api/settings` | Editable saved settings, revision, token presence/source and setup status; no tokens |
-| `PUT /api/settings` | Full editable configuration plus `expectedRevision`; optional `credentials.githubToken` / `credentials.jiraToken`; omitted/blank replacements retain saved tokens |
+| Endpoint                      | Contract                                                                                                                                                                                                                                                             |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/config`             | Tail count, derived Jira browse URL and `setup` (readiness, errors, revision, origin, connection status)                                                                                                                                                             |
+| `GET /api/settings`           | Editable saved settings, revision, token presence/source and setup status; no tokens                                                                                                                                                                                 |
+| `PUT /api/settings`           | Full editable configuration plus `expectedRevision`; optional `credentials.githubToken` / `credentials.jiraToken`; omitted/blank replacements retain saved tokens                                                                                                    |
 | `POST /api/settings/validate` | JSON object body with optional `expectedRevision` (sent by the browser); stale revisions return `409 REVISION_CONFLICT` before probes. Revalidates saved settings and returns public state with the current revision; `setup`/connection errors determine the result |
 
 JSON bodies are limited to 64 KiB. Saves return `409 REVISION_CONFLICT` or
@@ -321,12 +324,12 @@ An agent can read the same logs three ways:
    - `GET /api/prs`
    - `GET /api/my-tickets?includeDone=0|1`
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
-    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
+   - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
 
 ## Home
 
-The landing view, and the one screen meant to answer *"what should I be doing
-right now?"*. Reach it through the Home tab or page title once setup is ready;
+The landing view, and the one screen meant to answer _"what should I be doing
+right now?"_. Reach it through the Home tab or page title once setup is ready;
 it is where a bare URL or an unknown hash lands in ready mode.
 
 Home adds **no new endpoints and no new upstream calls**. It composes
@@ -403,8 +406,8 @@ page.
 - **"Needs review" is not "review requested from you."** GitHub's requested
   reviewers are never fetched ([`backend/review.mjs`](backend/review.mjs) asks only for
   submitted reviews), so that is not knowable without a new call. The tile and
-  queue group mean: *open PRs by other people, under the approval threshold,
-  that you have not reviewed yet* — drafts excluded.
+  queue group mean: _open PRs by other people, under the approval threshold,
+  that you have not reviewed yet_ — drafts excluded.
 - **Home asks for `includeDone=1`**, because the default my-tickets query drops
   Done tickets and sprint progress needs them. That shares the
   `MY_TICKETS_MAX_ISSUES` cap of 200. The JQL sorts by `updated DESC` for this
@@ -604,12 +607,12 @@ can omit status data; incomplete Jira setup restricts the whole UI to Settings.
 The ticket status pill (and the card's side rail) is color-coded by status
 kind — all site statuses are mapped in `ui/components/pr-card.js`:
 
-| Kind | Color | Statuses |
-| ---- | ----- | -------- |
-| Queued | muted | `To Do`, `Open`, `Backlog`, `Selected for Development`, `Parking lot`, `Needs Definition`, `Needs Grooming`, `Asynchronous Grooming`, `Assigned`, `Scheduled`, `Ready For Scheduling`, `Discovery`, `Duplicate` |
-| Active | accent (blue) | `In Progress`, `Work in progress`, `Pending`, `In Development`, `In Review`, `Ready For Code Review`, `Ready For Testing`, `Testing In Progress`, `Testing`, `QA`, `Awaiting Merge`, `Stakeholder Sign Off`, `Promote to UAT`, `Delivery`, `Ready for delivery`, `Impact`, `In Remediation`, `Reopened` |
-| Done | green | `Done`, `Complete`, `Deployed`, `Closed`, `Resolved`, `Remediated`, `Hardening in UAT`, `Ready For Deployment` |
-| Attention | red | `Blocked`, `Impediment`, `Rejected`, `Active Incident`, `CS Escalation` |
+| Kind      | Color         | Statuses                                                                                                                                                                                                                                                                                                |
+| --------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Queued    | muted         | `To Do`, `Open`, `Backlog`, `Selected for Development`, `Parking lot`, `Needs Definition`, `Needs Grooming`, `Asynchronous Grooming`, `Assigned`, `Scheduled`, `Ready For Scheduling`, `Discovery`, `Duplicate`                                                                                         |
+| Active    | accent (blue) | `In Progress`, `Work in progress`, `Pending`, `In Development`, `In Review`, `Ready For Code Review`, `Ready For Testing`, `Testing In Progress`, `Testing`, `QA`, `Awaiting Merge`, `Stakeholder Sign Off`, `Promote to UAT`, `Delivery`, `Ready for delivery`, `Impact`, `In Remediation`, `Reopened` |
+| Done      | green         | `Done`, `Complete`, `Deployed`, `Closed`, `Resolved`, `Remediated`, `Hardening in UAT`, `Ready For Deployment`                                                                                                                                                                                          |
+| Attention | red           | `Blocked`, `Impediment`, `Rejected`, `Active Incident`, `CS Escalation`                                                                                                                                                                                                                                 |
 
 Matching is case-insensitive; any unmapped status falls back to muted. Note
 that Jira files several review/test gates (e.g. `Ready For Code Review`,
@@ -619,8 +622,8 @@ backlog.
 
 ## Releases
 
-The **Releases** tab answers *"did the work in this release reach
-`ops/development`?"*. A release is a Jira **fix version** of the `TAP`
+The **Releases** tab answers _"did the work in this release reach
+`ops/development`?"_. A release is a Jira **fix version** of the `TAP`
 project. For every ticket in the chosen version it lists the GitHub PRs linked
 to that ticket and rolls them up into one merge state, with the tickets that
 still need attention first. It is available in the **Releases** tab, via
@@ -661,13 +664,13 @@ than open, merged or declined shows as `unknown` and does not count.
 
 A ticket's state is rolled up from its PRs, leaving declined ones out:
 
-| State | When |
-| ----- | ---- |
-| `merged` | every PR counts as merged |
-| `partial` | some PRs count as merged and some do not |
-| `open` | no PR counts as merged (open, unknown, or merged into another base) |
-| `no-pr` | no PR is linked, or every PR was declined |
-| `unavailable` | looking up this ticket's PRs failed |
+| State         | When                                                                |
+| ------------- | ------------------------------------------------------------------- |
+| `merged`      | every PR counts as merged                                           |
+| `partial`     | some PRs count as merged and some do not                            |
+| `open`        | no PR counts as merged (open, unknown, or merged into another base) |
+| `no-pr`       | no PR is linked, or every PR was declined                           |
+| `unavailable` | looking up this ticket's PRs failed                                 |
 
 Groups are shown in the order open, partial, no PR, unavailable, merged, so
 what still needs attention reads first. There is **no draft state**: Jira's
@@ -705,8 +708,8 @@ that is not a plain GitHub pull-request address is shown as text without a link.
   ticket `unavailable` (`prsError` is `timeout`, `http` or `instance-mismatch`);
   the other cards render and a banner counts the unavailable ones. Failures are
   never cached, so Refresh retries them. If the versions or search call itself
-  fails, the tab keeps the cards already shown and says *Refresh failed —
-  showing last update*, or shows an error when nothing has loaded yet.
+  fails, the tab keeps the cards already shown and says _Refresh failed —
+  showing last update_, or shows an error when nothing has loaded yet.
 
 ### Refresh and Jira call budget
 
@@ -779,19 +782,101 @@ The browser's grouping and remembered-version helpers are DOM-free in
 `release-ticket-<key>`) are pinned by `e2e/releases.spec.js` — treat them as a
 contract.
 
+## Slack
+
+Optional, and deliberately the least privileged thing in the app: it holds no
+Jira/GitHub dependency, sits outside the setup gate, and every failure renders as
+"not connected" rather than an error.
+
+### Why there is no OAuth app
+
+Slack's public API only accepts tokens minted for a registered Slack app, and
+this dashboard does not register one. Instead **Connect Slack** captures the
+credentials the Slack _web client_ already uses after you sign in:
+
+- the `xoxc-` user token from the web client's `localConfig_v2` localStorage entry
+- the `d` session cookie
+
+Both are written to `~/.config/slack/session.json` (mode `600`) and sent from the
+dashboard server as `Authorization: Bearer …` plus `Cookie: d=…`. That pair
+carries the same access as your browser session — verified against `auth.test`,
+`conversations.list` and `search.messages`.
+
+Treat it as an unsupported surface: Slack can rotate or invalidate these
+credentials at any time, and when it does the tab simply flips back to
+**Connect Slack**. Nothing else in the dashboard notices.
+
+### Connecting
+
+**Connect Slack** spawns [`backend/slack-connect.mjs`](backend/slack-connect.mjs),
+which opens a dedicated Chromium profile at `~/.config/slack/browser-profile`,
+waits for the Slack web client to finish signing in, copies the credentials, and
+closes the window. The profile is reused afterwards, so a reconnect normally
+needs no sign-in at all. Closing the window cancels the attempt.
+
+The child process owns the whole exchange: no credential passes through the
+dashboard server, its logs, or the browser. Failures are appended to
+`~/.config/slack/connect.log` (mode `600`) and otherwise stay invisible.
+
+Because the flow needs a real browser, it does not work inside the Docker image —
+set `SLACK_WORKSPACE` to point the window at a different workspace, or
+`SLACK_PROFILE_DIR` to reuse a different profile.
+
+### What it shows
+
+Two lists over `#ezat_claudio`, both ordered by latest activity and both flagged
+**Needs reply** when the newest message in the thread is not yours:
+
+- **Threads I started** — thread roots authored by you, with reply count, who
+  replied last, and how long ago.
+- **Mentions** — threads (or standalone messages) where someone wrote `<@you>`,
+  grouped to one row per thread with the mentioning message as the preview.
+
+Each row links straight into the thread in Slack. The lists refresh every
+60 seconds while the tab is visible; the server caches for 60 seconds and only
+re-reads threads whose latest activity changed.
+
+The Slack tab label carries a badge: the unread mention count for
+`#ezat_claudio`, or a dot when the channel has unreads but no unread mentions.
+It comes from `client.counts` — another web-client-only method, parsed
+defensively and cached for a minute — and it is hidden when Slack is
+disconnected or when there is nothing unread.
+
+The shaping rules (mrkdwn to text, epoch to ISO, "who spoke last") are pure and
+live in [`backend/slack-model.mjs`](backend/slack-model.mjs); the Slack calls and
+budgets are in [`backend/slack.mjs`](backend/slack.mjs). Field notes on the
+underlying endpoints — including the `thread_ts === ts` root marker and the
+`search.messages` paging quirks — are in
+[`toolkit-mcp/docs/slack-web-session.md`](../../toolkit-mcp/docs/slack-web-session.md).
+
+### HTTP
+
+| Route                        | Purpose                                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/slack/status`      | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                             |
+| `GET /api/slack/threads`     | `{ available, channel, started[], mentions[], updatedAt }`; `available: false` when disconnected                                    |
+| `GET /api/slack/pending`     | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown |
+| `POST /api/slack/connect`    | starts the sign-in window, `{ ok, connecting }`                                                                                     |
+| `POST /api/slack/disconnect` | deletes the stored session                                                                                                          |
+
+`status` verifies the session with `auth.test` at most once a minute.
+`verified: false` means the token exists but Slack could not be reached — still
+not an error. These routes deliberately bypass the `SETUP_REQUIRED` gate: a
+missing GitHub or Jira configuration must not affect Slack, and vice versa.
+
 ## Services
 
 Edited in **Settings → Local services** and persisted in the settings store.
 The initial defaults in [`backend/config.mjs`](backend/config.mjs) mirror these `scripts/run.sh`
 commands:
 
-| id        | label                | dir               | command              | port |
-| --------- | -------------------- | ----------------- | -------------------- | ---- |
-| `be`      | Portage Backend      | `Portage-backend` | `npm run start:dev`  | 8000 |
-| `fe`      | Portage Frontend     | `Portage-frontend`| `npm run dev`        | 3000 |
-| `legacy`  | TravelTracker API    | `TravelTracker`   | `npm run start:be`   | 8081 |
-| `legacy-ui`| TravelTracker UI    | `TravelTracker`   | `npm run serve`      | —    |
-| `queue`   | Portage Queue        | `Portage-backend` | `npm run queue:dev`  | —    |
+| id          | label             | dir                | command             | port |
+| ----------- | ----------------- | ------------------ | ------------------- | ---- |
+| `be`        | Portage Backend   | `Portage-backend`  | `npm run start:dev` | 8000 |
+| `fe`        | Portage Frontend  | `Portage-frontend` | `npm run dev`       | 3000 |
+| `legacy`    | TravelTracker API | `TravelTracker`    | `npm run start:be`  | 8081 |
+| `legacy-ui` | TravelTracker UI  | `TravelTracker`    | `npm run serve`     | —    |
+| `queue`     | Portage Queue     | `Portage-backend`  | `npm run queue:dev` | —    |
 
 Each service uses its project `.nvmrc`, or the monorepo root `.nvmrc` only when
 the project file is absent. Exact release pins such as `20.18.0` and `v20.18.0`

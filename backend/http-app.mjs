@@ -13,6 +13,7 @@ import { enrichOpenPRs, filterPrsNeedingApprovals } from './review.mjs';
 import { getOriginDiff } from './diff.mjs';
 import { fetchRelease } from './releases.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
+import { slackIntegration } from './slack.mjs';
 
 function json(res, status, value) {
   res.writeHead(status, {
@@ -41,6 +42,7 @@ async function readJson(req) {
 }
 
 export function createHttpHandler({ settings, manager, integrations = {} }) {
+  const slack = integrations.slack || slackIntegration;
   const api = {
     fetchOpenPRs,
     fetchMyTickets,
@@ -154,6 +156,29 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         const input = await readJson(req);
         json(res, 200, await settings.validate({ expectedRevision: input.expectedRevision }));
         broadcast();
+        return;
+      }
+      // Slack sits outside the setup gate on purpose: connecting, checking or
+      // disconnecting it must never depend on GitHub/Jira setup, and every
+      // response degrades to "not connected" instead of an error.
+      if (req.method === 'GET' && pathname === '/api/slack/status') {
+        json(res, 200, await slack.status());
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/slack/threads') {
+        json(res, 200, await slack.threads());
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/slack/pending') {
+        json(res, 200, await slack.pending());
+        return;
+      }
+      if (req.method === 'POST' && pathname === '/api/slack/connect') {
+        json(res, 200, slack.connect());
+        return;
+      }
+      if (req.method === 'POST' && pathname === '/api/slack/disconnect') {
+        json(res, 200, slack.disconnect());
         return;
       }
       if (pathname.startsWith('/api/')) {
