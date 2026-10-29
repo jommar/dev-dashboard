@@ -6,6 +6,7 @@ import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { filterTickets, ticketFilterOptions } from '../../ui/work-filters.js';
 import { sprintDay, sprintCountdown } from '../../ui/domain-helpers.js';
+import { threadsByTicket } from '../../ui/slack-ticket-links.js';
 import { MY_TICKETS_POLL_MS } from '../../ui/polling.js';
 
 function sprintHtml(sprints) {
@@ -35,6 +36,7 @@ export function MyTicketsPanel({ config, active }) {
   const [meta, setMeta] = useState('loading…');
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState('');
+  const [slackStarted, setSlackStarted] = useState([]);
   const [filters, setFilters] = useState({
     search: '',
     status: '',
@@ -44,8 +46,24 @@ export function MyTicketsPanel({ config, active }) {
   });
   const dataRef = useRef(data);
   dataRef.current = data;
+  // Slack is optional and often slow. The request degrades to "no threads" on
+  // its own, and the catch is there because this runs without being awaited:
+  // anything thrown would otherwise become an unhandled rejection with nowhere
+  // to surface, and My Tickets has no error state for Slack by design.
+  const loadSlack = useCallback(async () => {
+    try {
+      const result = await api.getSlackThreads();
+      setSlackStarted(result?.available ? result.started || [] : []);
+    } catch {
+      setSlackStarted([]);
+    }
+  }, [api]);
   const load = useCallback(
     async ({ silent = false, include = includeDone } = {}) => {
+      // Fired, never awaited: the ticket list must not wait on Slack, and a
+      // Slack outage must not turn into a failed refresh. The icons appear on
+      // their own once the threads arrive.
+      loadSlack();
       setLoading(true);
       if (!silent) setMeta(dataRef.current ? 'Refreshing…' : 'loading…');
       try {
@@ -72,7 +90,7 @@ export function MyTicketsPanel({ config, active }) {
         setLoading(false);
       }
     },
-    [api, includeDone],
+    [api, includeDone, loadSlack],
   );
   const { countdown } = useActivePolling({
     active,
@@ -89,6 +107,7 @@ export function MyTicketsPanel({ config, active }) {
       .filter(([, tickets]) => tickets.length),
   );
   const options = ticketFilterOptions(rows, data?.allSprints);
+  const linksByTicket = useMemo(() => threadsByTicket(slackStarted), [slackStarted]);
   return (
     <section
       id="panel-my-tickets"
@@ -167,6 +186,7 @@ export function MyTicketsPanel({ config, active }) {
                   groups={groups}
                   jiraBase={config.jiraBase}
                   currentSprints={data.activeSprints}
+                  linksByTicket={linksByTicket}
                 />
               )}
             </>

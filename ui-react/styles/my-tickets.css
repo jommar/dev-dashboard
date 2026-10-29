@@ -140,6 +140,37 @@
 .my-ticket-key a {
   text-decoration: none;
 }
+/* One icon-only target per Slack thread that names this ticket, sitting beside
+   the Jira key. Wraps rather than widening the key column, so a ticket with
+   several threads still fits the 140px grid track at ≥960px. */
+.my-ticket-slack {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: var(--s1);
+  vertical-align: middle;
+}
+.slack-thread-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+}
+.slack-thread-link:hover,
+.slack-thread-link:focus-visible {
+  color: var(--accent);
+  background: var(--panel2);
+}
+.slack-thread-link svg {
+  width: 13px;
+  height: 13px;
+}
 .my-ticket-category-head {
   font-size: 19px;
   margin-block: 12px;

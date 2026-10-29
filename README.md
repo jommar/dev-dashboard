@@ -513,6 +513,15 @@ within each status. Available in the **My Tickets** tab, via
 (linked to Jira), summary, status pill (same color mapping as PR ticket
 status), sprint pill, priority, issue type, and relative update time.
 
+### Slack threads
+
+A ticket whose key heads a thread you started in `#ezat_claudio` gets a small
+Slack glyph next to its key — one per matching thread, newest activity first —
+that opens the thread. Only the thread's subject line is consulted, so the key
+must start it. Old `TRIPS-NNNN` threads match `TAP-NNNN` because Jira's rename
+carried the numbers over. The glyphs reuse the Slack tab's cached thread list, so
+they simply do not appear — never an error — when Slack is not connected.
+
 ### Sprints
 
 Each row carries a sprint pill next to its status pill: accent-colored for the

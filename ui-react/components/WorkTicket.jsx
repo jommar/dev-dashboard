@@ -1,7 +1,9 @@
 import { inSprints } from '../../ui/home-data.js';
 import { slug, timeAgo } from '../../ui/dom.js';
 import { jiraStatusKind } from '../../ui/components/pr-card.js';
+import { normalizeTicketKey } from '../../ui/slack-ticket-links.js';
 import { SprintPill } from './SprintPill.jsx';
+import { SlackThreadLinks } from './SlackThreadLink.jsx';
 
 export function WorkTicketRow({
   ticket,
@@ -10,6 +12,7 @@ export function WorkTicketRow({
   testIdPrefix = 'my-tickets-item',
   currentSprints = null,
   extraMeta,
+  slackLinks = [],
 }) {
   const key = slug(ticket.key);
   const testId = (name) => `${testIdPrefix}${name ? `-${name}` : ''}-${key}`;
@@ -33,6 +36,7 @@ export function WorkTicketRow({
         >
           {ticket.key}
         </a>
+        <SlackThreadLinks links={slackLinks} />
       </span>
       <span className="my-ticket-summary" data-testid={testId('summary')}>
         {ticket.summary || ''}
@@ -65,7 +69,7 @@ export function WorkTicketRow({
   );
 }
 
-export function MyTicketsGroups({ groups, jiraBase, currentSprints }) {
+export function MyTicketsGroups({ groups, jiraBase, currentSprints, linksByTicket }) {
   const entries = Object.entries(groups || {});
   if (!entries.length)
     return (
@@ -126,6 +130,7 @@ export function MyTicketsGroups({ groups, jiraBase, currentSprints }) {
                         ticket={ticket}
                         jiraBase={jiraBase}
                         currentSprints={currentSprints}
+                        slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
                       />
                     ))}
                   </div>

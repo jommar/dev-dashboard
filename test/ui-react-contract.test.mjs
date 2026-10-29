@@ -74,6 +74,7 @@ test('React panels own structural rendering and compose shared React components'
     'Terminal.jsx',
     'Listbox.jsx',
     'Spinner.jsx',
+    'SlackThreadLink.jsx',
   ];
   for (const name of components)
     assert.ok(fs.existsSync(path.join(root, 'components', name)), `${name} exists`);
@@ -171,6 +172,65 @@ test('the Slack tab carries a pending-count badge and chases an enriched thread 
     /checking[\s\S]*?Checking replies…[\s\S]*?need a reply[\s\S]*?All caught up/,
     'the checking state is a third branch before the reply count and caught-up copy',
   );
+});
+
+test('My Tickets rows link to their Slack threads and load them off the ticket path', () => {
+  // Presentational only: the glyph, the link, and the text a hover or a screen
+  // reader needs — every anchor carries its own tooltip and accessible name.
+  const link = read('components/SlackThreadLink.jsx');
+  assert.match(link, /export function SlackThreadLinks\(/);
+  assert.match(link, /className="slack-thread-link"/);
+  assert.match(link, /data-tooltip=\{/);
+  assert.match(link, /aria-label=\{/);
+  assert.match(link, /target="_blank"/);
+  assert.match(link, /rel="noopener noreferrer"/);
+  assert.match(link, /timeAgo/);
+  // Icon only, drawn not shipped: no <img>, no text node, a currentColor glyph
+  // hidden from assistive tech because the anchor's label already says it all.
+  assert.match(link, /stroke="currentColor"/);
+  assert.match(link, /fill="none"/);
+  assert.match(link, /aria-hidden="true"/);
+  assert.match(link, /focusable="false"/);
+  assert.doesNotMatch(link, /<img\b/);
+  // No match means no container at all, so a disconnected Slack renders the row
+  // exactly as before.
+  assert.match(link, /if \(!links\.length\) return null;/);
+
+  // The panel fetches once per ticket load and groups with the shared module.
+  const panel = read('panels/MyTicketsPanel.jsx');
+  assert.match(panel, /getSlackThreads\(\)/);
+  assert.match(panel, /threadsByTicket\(slackStarted\)/);
+  assert.match(panel, /linksByTicket=\{linksByTicket\}/);
+  // Slack must never sit on the ticket path: its call starts before the ticket
+  // request is awaited, and is never awaited itself.
+  const slackCall = panel.indexOf('loadSlack();');
+  const ticketsAwait = panel.indexOf('await api.getMyTickets');
+  assert.ok(slackCall > -1, 'the ticket load fires a Slack load');
+  assert.ok(ticketsAwait > -1, 'the ticket load awaits the ticket request');
+  assert.ok(slackCall < ticketsAwait, 'Slack is loaded before the ticket request is awaited');
+  assert.doesNotMatch(panel, /await loadSlack\(/, 'Slack is never awaited on the ticket path');
+  // A failed Slack call must leave the ticket list alone rather than reject the
+  // unawaited promise.
+  assert.match(panel, /catch \{\s*setSlackStarted\(\[\]\);/);
+
+  // The row renders the links inside the key cell, so it stays one account of
+  // the ticket; the group resolves the same normalised key the matcher produced.
+  const row = read('components/WorkTicket.jsx');
+  assert.match(row, /from '\.\/SlackThreadLink\.jsx'/);
+  assert.match(row, /normalizeTicketKey/);
+  assert.match(row, /slackLinks = \[\]/);
+  assert.match(row, /<SlackThreadLinks links=\{slackLinks\} \/>/);
+  assert.match(
+    row,
+    /slackLinks=\{linksByTicket\.get\(normalizeTicketKey\(ticket\.key\)\) \|\| \[\]\}/,
+  );
+
+  const css = read('styles/my-tickets.css');
+  assert.match(css, /\.my-ticket-slack\s*\{/);
+  assert.match(css, /\.slack-thread-link\s*\{/);
+  // The new rules read the palette from tokens, never from a literal colour.
+  const slackCss = css.slice(css.indexOf('.my-ticket-slack'));
+  assert.doesNotMatch(slackCss, /#[0-9a-f]{3,8}\b/i, 'Slack link colours come from tokens');
 });
 
 test('production and build contract tests isolate or serialize all access to dist/', () => {
