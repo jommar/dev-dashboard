@@ -843,10 +843,12 @@ Two lists over `#ezat_claudio`, both ordered by latest activity and both flagged
 - **Mentions** — threads (or standalone messages) where someone wrote `<@you>`,
   grouped to one row per thread with the mentioning message as the preview.
 
-Each row links straight into the thread in Slack. The lists paint as soon as the
-two thread lists have been read; the **Needs reply** flags fill in a moment
-later, one `conversations.replies` call per listed thread, because that is the
-only call that has to look inside a thread. A payload with `enriched: false`
+A click on a row opens the thread's full conversation in the same in-app dialog
+My Tickets uses, with **Open in Slack** and **Copy link** in its footer; the
+conversation is fetched on demand and cached for a minute. The lists paint as
+soon as the two thread lists have been read; the **Needs reply** flags fill in a
+moment later, one `conversations.replies` call per listed thread, because that is
+the only call that has to look inside a thread. A payload with `enriched: false`
 still has its flags on the way — the rows are usable and show no badge yet.
 
 The server caches that result for five minutes and revalidates it in the

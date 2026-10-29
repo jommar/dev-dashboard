@@ -314,6 +314,82 @@ test('the Slack thread dialog renders the conversation without leaving the app',
   assert.doesNotMatch(dialogCss, /#[0-9a-f]{3,8}\b/i, 'dialog colours come from tokens');
 });
 
+test('the Slack tab opens thread conversations in the shared dialog', () => {
+  const panel = read('panels/SlackPanel.jsx');
+  // One dialog implementation for the whole dashboard: the panel imports the
+  // component My Tickets already uses rather than growing a second copy.
+  assert.match(
+    panel,
+    /import \{ SlackThreadDialog \} from '\.\.\/components\/SlackThreadDialog\.jsx';/,
+  );
+  assert.match(panel, /const \[openThread, setOpenThread\] = useState\(null\);/);
+  // Mounted with the section, not inside the thread card that unmounts on
+  // disconnect, so an open conversation is not torn down by a status change.
+  assert.match(
+    panel,
+    /<SlackThreadDialog thread=\{openThread\} onClose=\{\(\) => setOpenThread\(null\)\} \/>/,
+  );
+  const card = panel.indexOf('className="slack-section slack-threads-card"');
+  const dialog = panel.indexOf('<SlackThreadDialog');
+  const sectionEnd = panel.indexOf('</section>');
+  assert.ok(card > -1 && dialog > card, 'the dialog is rendered after the thread card');
+  assert.ok(dialog < sectionEnd, 'the dialog lives inside the panel section');
+
+  // A row is a button now: it hands the thread to the dialog instead of
+  // navigating, so the dashboard tab keeps whatever it was showing.
+  assert.match(panel, /<button[\s\S]*?className="slack-thread"/);
+  assert.match(panel, /onClick=\{\(\) => setOpenThread\(thread\)\}/);
+  assert.doesNotMatch(
+    panel,
+    /href=\{thread\.url\}/,
+    'the row no longer links out of the dashboard',
+  );
+  assert.doesNotMatch(panel, /target="_blank"/);
+  // The rows stay addressable exactly as they were, plus the affordance that
+  // says a click opens a dialog.
+  assert.match(panel, /aria-haspopup="dialog"/);
+  assert.match(panel, /data-testid=\{`slack-thread-\$\{thread\.ts\}`\}/);
+
+  const css = read('styles/slack.css');
+  const block = css.slice(css.indexOf('.slack-thread {'), css.indexOf('.slack-thread:hover'));
+  assert.ok(block, 'the row block is styled');
+  for (const declaration of [
+    'display: block',
+    'width: 100%',
+    'text-align: left',
+    'font: inherit',
+    'background: transparent',
+    'cursor: pointer',
+  ]) {
+    assert.ok(block.includes(declaration), `.slack-thread declares ${declaration}`);
+  }
+  assert.match(
+    css,
+    /\.slack-thread:hover,\s*\n\.slack-thread:focus-visible\s*\{[^}]*border-color: var\(--accent\)/,
+  );
+
+  // A mentions row previews the mentioning message, so the list text alone cannot
+  // name the ticket: the dialog falls back to the loaded root message's plain
+  // text when the preview carries no key, and keeps its plain title when neither
+  // does. A plain re-render is enough — nothing is cached in a ref or effect.
+  const dialogSource = read('components/SlackThreadDialog.jsx');
+  assert.match(
+    dialogSource,
+    /const ticketKey =\s*ticketKeyFromThread\(thread\.text\) \|\| ticketKeyFromThread\(messages\[0\]\?\.text\);/,
+    'the title key falls back to the thread root',
+  );
+  assert.doesNotMatch(
+    dialogSource,
+    /ticketKeyFromThread\(messages\[0\]\?\.mrkdwn\)/,
+    'the fallback reads the cleaned text, not mrkdwn',
+  );
+  assert.match(
+    dialogSource,
+    /const title = ticketKey \? `\$\{ticketKey\} · Slack thread` : 'Slack thread';/,
+  );
+  assert.doesNotMatch(dialogSource, /useRef\(ticketKey|useMemo\(\(\) => ticketKey/);
+});
+
 test('production and build contract tests isolate or serialize all access to dist/', () => {
   const production = fs.readFileSync(
     fileURLToPath(new URL('../test/production-ui.test.mjs', import.meta.url)),

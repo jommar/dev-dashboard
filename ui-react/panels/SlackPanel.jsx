@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card, LoadingState } from '../components/Primitives.jsx';
+import { SlackThreadDialog } from '../components/SlackThreadDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { timeAgo } from '../../ui/dom.js';
 import { SLACK_POLL_MS } from '../../ui/polling.js';
@@ -27,6 +28,7 @@ export function SlackPanel({ active }) {
   const [threads, setThreads] = useState(null);
   const [threadsFailed, setThreadsFailed] = useState(false);
   const [section, setSection] = useState('started');
+  const [openThread, setOpenThread] = useState(null);
   // Which snapshot the enrichment retries belong to, so a refreshed snapshot
   // starts with its own budget instead of inheriting the previous one's.
   const [enrichRetries, setEnrichRetries] = useState({ updatedAt: null, count: 0 });
@@ -237,14 +239,16 @@ export function SlackPanel({ active }) {
               <p className="slack-note">{SECTIONS[section].empty}</p>
             ) : (
               items.map((thread) => (
-                <a
+                // The conversation opens in-app so this tab, and its state, stays put.
+                <button
                   key={thread.ts}
+                  type="button"
                   className="slack-thread"
-                  href={thread.url}
-                  target="_blank"
-                  rel="noreferrer"
                   data-testid={`slack-thread-${thread.ts}`}
                   data-needs-reply={thread.needsReply ? 'yes' : 'no'}
+                  data-tooltip="Open the conversation"
+                  aria-haspopup="dialog"
+                  onClick={() => setOpenThread(thread)}
                 >
                   <span className="slack-thread-text">{thread.text || '(no text)'}</span>
                   <span className="slack-thread-meta">
@@ -265,12 +269,13 @@ export function SlackPanel({ active }) {
                     <span className="slack-thread-when">{timeAgo(thread.activityAt)}</span>
                     {thread.needsReply && <span className="slack-needs">Needs reply</span>}
                   </span>
-                </a>
+                </button>
               ))
             )}
           </div>
         </Card>
       )}
+      <SlackThreadDialog thread={openThread} onClose={() => setOpenThread(null)} />
     </section>
   );
 }
