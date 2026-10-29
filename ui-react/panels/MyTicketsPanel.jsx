@@ -2,6 +2,7 @@ import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { Button, Card, LoadingState } from '../components/Primitives.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
 import { MyTicketsGroups } from '../components/WorkTicket.jsx';
+import { SlackThreadDialog } from '../components/SlackThreadDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { filterTickets, ticketFilterOptions } from '../../ui/work-filters.js';
@@ -37,6 +38,7 @@ export function MyTicketsPanel({ config, active }) {
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState('');
   const [slackStarted, setSlackStarted] = useState([]);
+  const [openThread, setOpenThread] = useState(null);
   const [filters, setFilters] = useState({
     search: '',
     status: '',
@@ -187,12 +189,14 @@ export function MyTicketsPanel({ config, active }) {
                   jiraBase={config.jiraBase}
                   currentSprints={data.activeSprints}
                   linksByTicket={linksByTicket}
+                  onOpenThread={setOpenThread}
                 />
               )}
             </>
           )}
         </div>
       </Card>
+      <SlackThreadDialog thread={openThread} onClose={() => setOpenThread(null)} />
     </section>
   );
 }

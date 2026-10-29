@@ -183,6 +183,32 @@ function fakeSlack() {
       permalink: 'https://team.slack.com/archives/C1/p6500008?thread_ts=600.0006&cid=C1',
     },
   ];
+  // The conversation a ticket glyph opens: one root authored by the signed-in
+  // user that names Patrick, and two replies from him. Its timestamps are real
+  // Slack ones, because `thread()` rejects anything that is not.
+  const dialogTs = '1793192214.548389';
+  const dialog = [
+    {
+      ts: dialogTs,
+      thread_ts: dialogTs,
+      user: 'U9',
+      text: 'TAP-1765: CS migration pre-check see thread for details <@U1>',
+      reply_count: 2,
+      latest_reply: '1793192567.000300',
+    },
+    {
+      ts: '1793192474.000200',
+      thread_ts: dialogTs,
+      user: 'U1',
+      text: 'Looking at it now.',
+    },
+    {
+      ts: '1793192567.000300',
+      thread_ts: dialogTs,
+      user: 'U1',
+      text: 'Done — *Sent using* Slack',
+    },
+  ];
   const routes = {
     'auth.test': () => ({
       ok: true,
@@ -255,6 +281,7 @@ function fakeSlack() {
       const ts = url.searchParams.get('ts');
       const limit = url.searchParams.get('limit');
       replies.push({ ts, limit });
+      if (ts === dialogTs) return { ok: true, messages: dialog, response_metadata: {} };
       const thread = threads[ts];
       if (!thread) return { ok: false, error: 'thread_not_found' };
       return {
@@ -269,7 +296,7 @@ function fakeSlack() {
     const handler = routes[method];
     return new Response(JSON.stringify(handler ? handler(new URL(url)) : { ok: false }));
   };
-  return { fetchImpl, calls, replies };
+  return { fetchImpl, calls, replies, dialogTs };
 }
 
 test('threads list only my threads and group mentions by their thread', async (t) => {
@@ -540,4 +567,209 @@ test('disconnect clears the pending cache so the next call re-fetches', async (t
   writeSession(paths);
   await integration.pending();
   assert.ok(slack.calls.length > before, 'the badge is fetched again after reconnecting');
+});
+
+// A fake that answers `conversations.replies` from a scripted page list, one
+// page per call, so the paging loop can be driven with a counter.
+function pagedSlack(pages) {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const target = new URL(url);
+    const method = target.pathname.split('/').pop();
+    calls.push({ method, params: Object.fromEntries(target.searchParams) });
+    const reply = () => calls.filter((entry) => entry.method === 'conversations.replies').length;
+    if (method === 'auth.test')
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          user: 'jommari',
+          user_id: 'U9',
+          team: 'TeamPathwise',
+          team_id: 'T1',
+        }),
+      );
+    if (method === 'search.messages')
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          messages: { total: 1, matches: [{ channel: { id: 'C1', name: 'ezat_claudio' } }] },
+        }),
+      );
+    if (method === 'users.list')
+      return new Response(
+        JSON.stringify({ ok: true, members: [{ id: 'U1', real_name: 'Patrick Rivera' }] }),
+      );
+    if (method === 'conversations.replies') {
+      const page = pages[Math.min(reply() - 1, pages.length - 1)];
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          messages: page.messages,
+          response_metadata: { next_cursor: page.cursor || '' },
+        }),
+      );
+    }
+    return new Response(JSON.stringify({ ok: false }));
+  };
+  return { fetchImpl, calls };
+}
+
+test('a ticket thread comes back as the exact dialog shape', async (t) => {
+  const clock = 1_700_000_000_000;
+  const slack = fakeSlack();
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => clock });
+  writeSession(paths);
+
+  const result = await integration.thread(slack.dialogTs);
+  assert.equal(result.available, true);
+  const { thread } = result;
+  assert.equal(thread.ts, slack.dialogTs);
+  assert.equal(
+    thread.url,
+    `https://app.slack.com/client/T1/C1/thread/C1-${slack.dialogTs}`,
+    'the link opens this thread in the workspace',
+  );
+  assert.deepEqual(thread.channel, { id: 'C1', name: 'ezat_claudio' });
+  assert.equal(thread.replyCount, 2, 'every message except the root is a reply');
+  assert.equal(thread.truncated, false);
+  assert.equal(thread.updatedAt, new Date(clock).toISOString());
+
+  assert.deepEqual(
+    thread.messages.map((message) => message.ts),
+    [slack.dialogTs, '1793192474.000200', '1793192567.000300'],
+    'Slack order: root first, then oldest to newest',
+  );
+  const [root, reply] = thread.messages;
+  assert.deepEqual(root.author, { id: 'U9', name: 'You' }, 'the signed-in user reads as You');
+  assert.equal(reply.author.name, 'Patrick Rivera');
+  assert.equal(
+    root.text,
+    'TAP-1765: CS migration pre-check see thread for details @Patrick Rivera',
+    'the mention is resolved to a name in the plain form',
+  );
+  assert.match(root.mrkdwn, /<@U1>/, 'the raw text keeps Slack’s own mention syntax');
+  assert.equal(root.mrkdwn, 'TAP-1765: CS migration pre-check see thread for details <@U1>');
+  assert.equal(thread.messages[2].text, 'Done — Sent using Slack', 'emphasis is plain text only');
+
+  assert.deepEqual(thread.names, { U9: 'You', U1: 'Patrick Rivera' });
+  assert.equal('U2' in thread.names, false, 'only the ids this thread actually names travel');
+  assert.equal(thread.messages[0].at, new Date(1793192214 * 1000).toISOString());
+
+  const dialogCall = slack.replies.find((entry) => entry.ts === slack.dialogTs);
+  assert.equal(dialogCall.limit, '200', 'the whole conversation is read in one generous page');
+});
+
+test('a thread opened twice in a minute is served from cache', async (t) => {
+  let clock = 1_700_000_000_000;
+  const slack = fakeSlack();
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => clock });
+  writeSession(paths);
+
+  await integration.thread(slack.dialogTs);
+  const before = slack.calls.length;
+  const cached = await integration.thread(slack.dialogTs);
+  assert.equal(cached.available, true);
+  assert.equal(slack.calls.length, before, 'reopening the dialog asks Slack nothing');
+
+  clock += 60_001;
+  await integration.thread(slack.dialogTs);
+  assert.ok(slack.calls.length > before, 'past the minute the conversation is read again');
+});
+
+test('a malformed ts is refused before Slack is asked anything', async (t) => {
+  const slack = fakeSlack();
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  for (const ts of ['abc', '', undefined, '1793192214', '1793192214.1'])
+    assert.deepEqual(await integration.thread(ts), { available: false });
+  assert.equal(slack.calls.length, 0, 'a bad ts never reaches the network');
+});
+
+test('a thread Slack refuses to open degrades to not available', async (t) => {
+  const slack = fakeSlack();
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  // Well-formed, but no such thread: the fake answers `thread_not_found`.
+  const result = await integration.thread('1793199999.000001');
+  assert.deepEqual(result, { available: false });
+  assert.equal('thread' in result, false);
+});
+
+test('disconnect clears the thread cache', async (t) => {
+  const slack = fakeSlack();
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  assert.equal((await integration.thread(slack.dialogTs)).available, true);
+  const before = slack.calls.length;
+  assert.equal((await integration.thread(slack.dialogTs)).available, true);
+  assert.equal(slack.calls.length, before, 'the second open is cached');
+
+  integration.disconnect();
+  assert.deepEqual(
+    await integration.thread(slack.dialogTs),
+    { available: false },
+    'without a session there is nothing to open',
+  );
+  assert.equal(slack.calls.length, before, 'and Slack is not asked');
+
+  writeSession(paths);
+  assert.equal((await integration.thread(slack.dialogTs)).available, true);
+  assert.ok(slack.calls.length > before, 'the conversation is read again after reconnecting');
+});
+
+test('a long thread is read page by page and keeps Slack order', async (t) => {
+  const ts = '1793193000.000001';
+  const slack = pagedSlack([
+    {
+      messages: [
+        { ts, thread_ts: ts, user: 'U9', text: 'root' },
+        { ts: '1793193010.000100', thread_ts: ts, user: 'U1', text: 'first page reply' },
+      ],
+      cursor: 'page-2',
+    },
+    {
+      messages: [{ ts: '1793193020.000200', thread_ts: ts, user: 'U1', text: 'second page reply' }],
+      cursor: '',
+    },
+  ]);
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  const result = await integration.thread(ts);
+  assert.equal(result.available, true);
+  assert.equal(result.thread.truncated, false);
+  assert.deepEqual(
+    result.thread.messages.map((message) => message.text),
+    ['root', 'first page reply', 'second page reply'],
+  );
+
+  const reads = slack.calls.filter((entry) => entry.method === 'conversations.replies');
+  assert.equal(reads.length, 2, 'the cursor buys exactly one more page');
+  assert.equal(reads[0].params.cursor, undefined);
+  assert.equal(reads[1].params.cursor, 'page-2');
+  assert.equal(reads[1].params.limit, '200');
+});
+
+test('a thread with more than three pages is flagged as truncated', async (t) => {
+  const ts = '1793193000.000001';
+  const page = (n) => ({
+    messages: [{ ts: `17931930${n}0.00000${n}`, user: 'U1', text: `page ${n}` }],
+    cursor: `page-${n + 1}`,
+  });
+  const slack = pagedSlack([page(1), page(2), page(3)]);
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  const result = await integration.thread(ts);
+  assert.equal(result.available, true);
+  assert.equal(result.thread.truncated, true, 'a cursor still remained after the third page');
+  assert.equal(
+    slack.calls.filter((entry) => entry.method === 'conversations.replies').length,
+    3,
+    'paging stops at three pages',
+  );
+  assert.equal(result.thread.replyCount, 2);
 });

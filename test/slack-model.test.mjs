@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {
   applyLastReply,
   buildThread,
+  buildThreadMessages,
   cleanText,
+  mentionedUserIds,
   person,
   slackTimestamp,
   sortByActivity,
@@ -128,4 +130,32 @@ test('sorting is newest activity first and never mutates the input', () => {
     ['b', 'a', 'c'],
   );
   assert.equal(input[0].ts, 'a');
+});
+
+test('only the ids a text actually names are collected, in first-seen order', () => {
+  assert.deepEqual(mentionedUserIds(['hey <@U1> and <@U2|Pat>', 'again <@U1>']), ['U1', 'U2']);
+  assert.deepEqual(mentionedUserIds(['<@U9>', '<@U1>']), ['U9', 'U1']);
+  assert.deepEqual(mentionedUserIds(['no mentions', null, undefined]), []);
+  assert.deepEqual(mentionedUserIds([]), []);
+  assert.deepEqual(mentionedUserIds(), []);
+});
+
+test('a conversation becomes messages with both a plain form and the raw mrkdwn', () => {
+  const messages = buildThreadMessages(
+    [
+      { ts: '100.0001', user: 'U1', text: 'hi <@U9>, see <#C1|general>' },
+      { ts: '200.0002', user: 'U9' },
+    ],
+    { me: 'U9', users: { U1: 'Patrick Rivera', U9: 'You' } },
+  );
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].ts, '100.0001');
+  assert.equal(messages[0].at, new Date(100_000).toISOString());
+  assert.deepEqual(messages[0].author, { id: 'U1', name: 'Patrick Rivera' });
+  assert.equal(messages[0].text, 'hi @You, see #general');
+  assert.equal(messages[0].mrkdwn, 'hi <@U9>, see <#C1|general>', 'the raw text is verbatim');
+  assert.deepEqual(messages[1].author, { id: 'U9', name: 'You' });
+  assert.equal(messages[1].text, '', 'a message without text is empty, never null');
+  assert.equal(messages[1].mrkdwn, '');
+  assert.deepEqual(buildThreadMessages(), []);
 });

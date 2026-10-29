@@ -114,3 +114,253 @@
   color: var(--warn);
   font-weight: 600;
 }
+
+/* ---- Thread dialog -------------------------------------------------------
+   The My Tickets glyph opens the conversation here instead of a new tab. The
+   dialog is a flex column so the header and footer stay put while only the
+   message list scrolls; width is vw-capped so it still fits a 600px window,
+   where the footer controls wrap onto their own line. */
+.slack-thread-dialog {
+  width: min(760px, 92vw);
+  max-height: 85vh;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.slack-thread-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.slack-thread-dialog::backdrop {
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(2px);
+}
+.slack-thread-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+}
+.slack-thread-dialog-title {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-xl);
+}
+.slack-thread-dialog-sub {
+  margin: var(--s1) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.slack-thread-dialog-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s2);
+  min-height: 0;
+  max-height: 60vh;
+  padding: var(--s4) var(--s5);
+  overflow-y: auto;
+}
+.slack-thread-dialog-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s5);
+  border-top: 1px solid var(--border);
+  background: var(--panel2);
+}
+.slack-thread-dialog-close {
+  margin-left: auto;
+}
+
+/* One message: a fixed avatar column and a content column, so every reply
+   lines up with the root above it. */
+.slack-message {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: var(--s3);
+  padding: var(--s2) 0;
+}
+/* The root is the thread's own subject; a stronger rule under it separates the
+   opening post from the replies without giving it a different layout. */
+.slack-message[data-root='true'] {
+  padding-bottom: var(--s3);
+  border-bottom: 1px solid var(--border-strong);
+}
+.slack-message-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 18%, var(--panel2));
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+/* Four muted tones, chosen from the author's id/name by the component, so a
+   person keeps their colour and no colour is random or stored. */
+.slack-avatar-tone-0 {
+  background: color-mix(in srgb, var(--muted) 18%, var(--panel2));
+  color: var(--text);
+}
+.slack-avatar-tone-1 {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel2));
+  color: var(--accent);
+}
+.slack-avatar-tone-2 {
+  background: color-mix(in srgb, var(--support) 20%, var(--panel2));
+  color: var(--support);
+}
+.slack-avatar-tone-3 {
+  background: color-mix(in srgb, var(--green) 16%, var(--panel2));
+  color: var(--green);
+}
+.slack-message-main {
+  min-width: 0;
+}
+.slack-message-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-bottom: 2px;
+}
+.slack-message-author {
+  color: var(--strong);
+  font-size: var(--fs-md);
+}
+.slack-message-time {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.slack-message-tag {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.slack-message-body {
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.slack-message-body strong {
+  color: var(--strong);
+}
+.slack-message-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.slack-message-body a:hover,
+.slack-message-body a:focus-visible {
+  text-decoration: underline;
+}
+.slack-message-mention {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 0 3px;
+}
+.slack-message-channel {
+  color: var(--support);
+}
+.slack-message-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+.slack-message-code,
+.slack-message-body code {
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+.slack-message-body pre.slack-message-codeblock {
+  margin: var(--s2) 0;
+  padding: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  overflow-x: auto;
+  white-space: pre;
+}
+.slack-message-codeblock code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--fs-sm);
+}
+/* The day divider is a centred label between two hairlines; it appears only
+   when the calendar day changes between consecutive messages. */
+.slack-day-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s2) 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.slack-day-divider::before,
+.slack-day-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.slack-thread-failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s3) 0;
+  color: var(--muted);
+}
+.slack-thread-failure p {
+  margin: 0;
+}
+.slack-copy-feedback {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.slack-copy-url {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 6px var(--s2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+/* The glyph used to be an anchor; as a <button> it needs the browser's own
+   chrome removed so the row looks exactly as it did. Declared here, after
+   my-tickets.css, because that file owns the glyph's size and colour. */
+.slack-thread-link {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}

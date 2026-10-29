@@ -20,7 +20,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn as spawnDefault } from 'node:child_process';
 import { readTokenFile, stageTokenFile } from './credentials.mjs';
-import { applyLastReply, buildThread, sortByActivity, threadKey } from './slack-model.mjs';
+import {
+  applyLastReply,
+  buildThread,
+  buildThreadMessages,
+  mentionedUserIds,
+  person,
+  sortByActivity,
+  threadKey,
+  threadUrl,
+} from './slack-model.mjs';
 
 const API_URL = 'https://app.slack.com/api';
 const STATUS_TTL_MS = 60_000;
@@ -37,6 +46,16 @@ const HISTORY_PAGES = 3;
 const SEARCH_PAGES = 2;
 const SECTION_LIMIT = 25;
 const ENRICH_CONCURRENCY = 5;
+
+// One conversation opened from a ticket glyph. A thread fits in one 200-message
+// page almost always; the other two pages are the ceiling, so a huge thread
+// says so instead of paging Slack forever. Each answer is reused for a minute,
+// because the dialog is reopened far more often than the thread changes.
+const THREAD_TTL_MS = 60_000;
+const THREAD_PAGES = 3;
+const THREAD_LIMIT = 200;
+const THREAD_TS = /^\d{10,}\.\d{4,}$/;
+const THREAD_CACHE_LIMIT = 20;
 
 export function slackPaths(home = os.homedir()) {
   const directory = path.join(home, '.config/slack');
@@ -157,6 +176,7 @@ export function createSlackIntegration({
   let retryAt = 0; // backoff deadline after a load that produced nothing.
   let generation = 0; // bumped by disconnect(), so a late refresh cannot write back.
   const lastReplyCache = new Map(); // "<thread ts>:<activity ts>" -> last message
+  const threadCache = new Map(); // thread ts -> { at, value }, one dialog per thread
 
   async function paged(credentials, method, params, pages, select) {
     const out = [];
@@ -419,6 +439,83 @@ export function createSlackIntegration({
     }
   }
 
+  // --- one thread, in full ------------------------------------------------
+  // The ticket glyph opens a dialog, so this is the only Slack call path a
+  // click triggers. The `ts` arrives from the browser, so it is validated
+  // before any credential is read, and every answer is either a thread or
+  // "unavailable" — never an exception out of the HTTP surface.
+
+  async function thread(ts) {
+    const key = typeof ts === 'string' ? ts.trim() : '';
+    if (!THREAD_TS.test(key)) return { available: false };
+    const hit = threadCache.get(key);
+    if (hit && now() - hit.at < THREAD_TTL_MS) return hit.value;
+    const credentials = session();
+    if (!credentials) return { available: false };
+    try {
+      const identity = await verify(credentials);
+      if (!identity.connected || !identity.userId) return { available: false };
+      const me = identity.userId;
+      const teamId = identity.teamId || credentials.teamId || '';
+      const target = await channel(credentials);
+      if (!target) return { available: false };
+
+      const messages = [];
+      let cursor = '';
+      let truncated = false;
+      for (let page = 0; page < THREAD_PAGES; page++) {
+        const payload = await call(
+          'conversations.replies',
+          {
+            channel: target.id,
+            ts: key,
+            limit: THREAD_LIMIT,
+            ...(cursor ? { cursor } : {}),
+          },
+          credentials,
+        );
+        if (!payload?.ok) return { available: false };
+        messages.push(...(payload.messages || []));
+        cursor = payload.response_metadata?.next_cursor || '';
+        if (!cursor) {
+          // `has_more` without a cursor means Slack stopped handing out pages.
+          if (payload.has_more) truncated = true;
+          break;
+        }
+        if (page === THREAD_PAGES - 1) truncated = true;
+      }
+
+      // Names cover the thread's authors and whoever it mentions — nobody else,
+      // since users.list is workspace-wide and this dialog is one conversation.
+      const members = await users(credentials);
+      const names = {};
+      for (const id of [
+        ...messages.map((message) => message.user).filter(Boolean),
+        ...mentionedUserIds(messages.map((message) => message.text)),
+      ])
+        names[id] = person(id, me, members).name;
+
+      const value = {
+        available: true,
+        thread: {
+          ts: key,
+          url: threadUrl({ teamId, channelId: target.id, ts: key }),
+          channel: { id: target.id, name: target.name },
+          replyCount: Math.max(0, messages.length - 1),
+          truncated,
+          updatedAt: new Date(now()).toISOString(),
+          names,
+          messages: buildThreadMessages(messages, { me, users: names }),
+        },
+      };
+      if (threadCache.size >= THREAD_CACHE_LIMIT) threadCache.clear();
+      threadCache.set(key, { at: now(), value });
+      return value;
+    } catch {
+      return { available: false };
+    }
+  }
+
   // --- unread badge -------------------------------------------------------
   // The badge wants one number, not a thread list: `client.counts` reports the
   // channel's unread mention count and whether anything is unread at all. It is
@@ -515,6 +612,7 @@ export function createSlackIntegration({
     usersCache = null;
     channelCache = null;
     lastReplyCache.clear();
+    threadCache.clear();
     return { ok: true };
   }
 
@@ -523,7 +621,7 @@ export function createSlackIntegration({
     fs.renameSync(temporary, paths.session);
   }
 
-  return { paths, status, threads, pending, connect, disconnect, writeSession };
+  return { paths, status, threads, thread, pending, connect, disconnect, writeSession };
 }
 
 export const slackIntegration = createSlackIntegration();

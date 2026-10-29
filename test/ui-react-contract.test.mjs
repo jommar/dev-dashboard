@@ -30,6 +30,7 @@ test('the shared API boundary retains every existing endpoint and payload operat
     '/api/pr-diff',
     '/api/slack/status',
     '/api/slack/threads',
+    '/api/slack/thread?ts=',
     '/api/slack/pending',
     '/api/events',
   ]) {
@@ -174,19 +175,22 @@ test('the Slack tab carries a pending-count badge and chases an enriched thread 
   );
 });
 
-test('My Tickets rows link to their Slack threads and load them off the ticket path', () => {
-  // Presentational only: the glyph, the link, and the text a hover or a screen
-  // reader needs — every anchor carries its own tooltip and accessible name.
+test('My Tickets rows open their Slack thread in an in-app dialog', () => {
+  // Presentational only: the glyph, the tooltip and the text a screen reader
+  // needs — every control carries its own tooltip and accessible name, and the
+  // click hands the thread to the panel's dialog rather than navigating.
   const link = read('components/SlackThreadLink.jsx');
   assert.match(link, /export function SlackThreadLinks\(/);
   assert.match(link, /className="slack-thread-link"/);
   assert.match(link, /data-tooltip=\{/);
   assert.match(link, /aria-label=\{/);
-  assert.match(link, /target="_blank"/);
-  assert.match(link, /rel="noopener noreferrer"/);
+  assert.match(link, /<button/);
+  assert.match(link, /type="button"/);
+  assert.match(link, /onClick=\{\(\) => onOpen\?\.\(thread\)\}/);
+  assert.doesNotMatch(link, /href=/);
   assert.match(link, /timeAgo/);
   // Icon only, drawn not shipped: no <img>, no text node, a currentColor glyph
-  // hidden from assistive tech because the anchor's label already says it all.
+  // hidden from assistive tech because the button's label already says it all.
   assert.match(link, /stroke="currentColor"/);
   assert.match(link, /fill="none"/);
   assert.match(link, /aria-hidden="true"/);
@@ -214,16 +218,19 @@ test('My Tickets rows link to their Slack threads and load them off the ticket p
   assert.match(panel, /catch \{\s*setSlackStarted\(\[\]\);/);
 
   // The row renders the links inside the key cell, so it stays one account of
-  // the ticket; the group resolves the same normalised key the matcher produced.
+  // the ticket; the group resolves the same normalised key the matcher produced
+  // and forwards the dialog opener unchanged.
   const row = read('components/WorkTicket.jsx');
   assert.match(row, /from '\.\/SlackThreadLink\.jsx'/);
   assert.match(row, /normalizeTicketKey/);
   assert.match(row, /slackLinks = \[\]/);
-  assert.match(row, /<SlackThreadLinks links=\{slackLinks\} \/>/);
+  assert.match(row, /onOpenThread/);
+  assert.match(row, /<SlackThreadLinks links=\{slackLinks\} onOpen=\{onOpenThread\} \/>/);
   assert.match(
     row,
     /slackLinks=\{linksByTicket\.get\(normalizeTicketKey\(ticket\.key\)\) \|\| \[\]\}/,
   );
+  assert.match(row, /onOpenThread=\{onOpenThread\}/);
 
   const css = read('styles/my-tickets.css');
   assert.match(css, /\.my-ticket-slack\s*\{/);
@@ -231,6 +238,80 @@ test('My Tickets rows link to their Slack threads and load them off the ticket p
   // The new rules read the palette from tokens, never from a literal colour.
   const slackCss = css.slice(css.indexOf('.my-ticket-slack'));
   assert.doesNotMatch(slackCss, /#[0-9a-f]{3,8}\b/i, 'Slack link colours come from tokens');
+});
+
+test('the Slack thread dialog renders the conversation without leaving the app', () => {
+  assert.ok(
+    fs.existsSync(path.join(root, 'components', 'SlackThreadDialog.jsx')),
+    'SlackThreadDialog.jsx exists',
+  );
+  const dialog = read('components/SlackThreadDialog.jsx');
+  assert.match(dialog, /export function SlackThreadDialog\(\{ thread, onClose \}\)/);
+  assert.match(dialog, /showModal\(\)/, 'the dialog opens modally');
+  assert.doesNotMatch(dialog, /dangerouslySetInnerHTML|innerHTML/, 'mrkdwn is rendered as tokens');
+  assert.match(dialog, /aria-labelledby=\{titleId\}/);
+  // A response that lands after the dialog closed must not repaint it.
+  assert.match(dialog, /if \(!live \|\| request\.current !== id\) return;/);
+  assert.match(dialog, /getSlackThread\(ts\)/);
+  assert.match(dialog, /parseSlackText/);
+  assert.match(dialog, /slack-thread-dialog-title/);
+  assert.match(dialog, /slack-thread-dialog-body/);
+  assert.match(dialog, /slack-thread-message-\$\{message\.ts\}/);
+  assert.match(dialog, /data-testid="slack-thread-copy"/);
+  assert.match(dialog, /data-testid="slack-thread-open"/);
+  assert.match(dialog, /data-testid="slack-thread-close"/);
+  assert.match(dialog, /navigator\.clipboard\.writeText/);
+  assert.match(dialog, /setCopy\('copied'\)/);
+  assert.match(dialog, /Couldn&apos;t copy/);
+  assert.match(dialog, /noopener noreferrer/);
+  assert.match(dialog, /if \(!thread\) return null;/);
+
+  // The renderer is a real module the dialog imports, not parsing inlined here.
+  assert.ok(
+    fs.existsSync(fileURLToPath(new URL('../ui/slack-mrkdwn.js', import.meta.url))),
+    'ui/slack-mrkdwn.js exists',
+  );
+  const renderer = fs.readFileSync(
+    fileURLToPath(new URL('../ui/slack-mrkdwn.js', import.meta.url)),
+    'utf8',
+  );
+  assert.match(renderer, /export function parseSlackText/);
+  assert.match(dialog, /import \{ parseSlackText \} from '\.\.\/\.\.\/ui\/slack-mrkdwn\.js';/);
+
+  const api = read('lib/api.js');
+  assert.match(api, /export async function getSlackThread\(ts\)/);
+  assert.match(api, /\/api\/slack\/thread\?ts=\$\{encodeURIComponent\(ts\)\}/);
+  assert.match(api, /if \(!res\.ok\) return \{ available: false \};/);
+
+  // The panel owns the open thread and mounts the dialog inside its section.
+  const panel = read('panels/MyTicketsPanel.jsx');
+  assert.match(panel, /const \[openThread, setOpenThread\] = useState\(null\);/);
+  assert.match(panel, /onOpenThread=\{setOpenThread\}/);
+  assert.match(
+    panel,
+    /<SlackThreadDialog thread=\{openThread\} onClose=\{\(\) => setOpenThread\(null\)\} \/>/,
+  );
+
+  const css = read('styles/slack.css');
+  for (const selector of [
+    '.slack-thread-dialog',
+    '.slack-thread-dialog[open]',
+    '.slack-thread-dialog-body',
+    '.slack-message',
+    '.slack-message-avatar',
+    '.slack-message-head',
+    '.slack-message-body',
+    '.slack-message-code',
+    '.slack-day-divider',
+    '.slack-copy-feedback',
+  ]) {
+    assert.ok(css.includes(selector), `${selector} is styled`);
+  }
+  assert.match(css, /\.slack-thread-dialog::backdrop\s*\{/);
+  assert.match(css, /width:\s*min\(760px, 92vw\)/);
+  // Tokens only: the dialog introduces no literal colours.
+  const dialogCss = css.slice(css.indexOf('.slack-thread-dialog'));
+  assert.doesNotMatch(dialogCss, /#[0-9a-f]{3,8}\b/i, 'dialog colours come from tokens');
 });
 
 test('production and build contract tests isolate or serialize all access to dist/', () => {

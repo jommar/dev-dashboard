@@ -1,4 +1,5 @@
-// slack-model.mjs — pure shaping rules for the Slack thread lists.
+// slack-model.mjs — pure shaping rules for the Slack thread lists and the one
+// conversation the ticket dialog opens.
 //
 // Slack hands back its own mrkdwn (`<@U123>`, `<#C123|general>`,
 // `<https://x|label>`), epoch-string timestamps and a `thread_ts === ts` marker
@@ -86,6 +87,33 @@ export function buildThread({ root, mention, channelId, teamId, me, users }) {
     latestReplyBy: null,
     needsReply: null,
   };
+}
+
+// Every id named as `<@U…>` anywhere in the given texts, in first-seen order.
+// Used to name only the people a thread actually talks about, rather than
+// carrying the whole workspace directory along with one conversation.
+export function mentionedUserIds(texts) {
+  const ids = [];
+  for (const text of texts || []) {
+    for (const match of String(text ?? '').matchAll(/<@([^>|]+)/g)) {
+      const id = match[1].trim();
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+  }
+  return ids;
+}
+
+// One conversation, message by message, root first. `text` is the plain form a
+// reader sees and `mrkdwn` the raw Slack text, so a richer renderer can still
+// use the formatting the plain form drops.
+export function buildThreadMessages(messages, { me, users } = {}) {
+  return (messages || []).map((message) => ({
+    ts: String(message.ts ?? ''),
+    at: slackTimestamp(message.ts),
+    author: person(message.user, me, users),
+    text: cleanText(message.text, users),
+    mrkdwn: String(message.text ?? ''),
+  }));
 }
 
 export function sortByActivity(threads) {

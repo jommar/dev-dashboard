@@ -138,6 +138,18 @@ export async function getSlackThreads() {
   }
 }
 
+// The full conversation behind one row's glyph. Also resolves on failure, so a
+// disconnected Slack becomes a Retry in the dialog rather than an error there.
+export async function getSlackThread(ts) {
+  try {
+    const res = await fetch(`/api/slack/thread?ts=${encodeURIComponent(ts)}`);
+    if (!res.ok) return { available: false };
+    return await res.json();
+  } catch {
+    return { available: false };
+  }
+}
+
 export async function getSlackPending() {
   try {
     const res = await fetch('/api/slack/pending');

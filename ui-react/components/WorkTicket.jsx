@@ -13,6 +13,7 @@ export function WorkTicketRow({
   currentSprints = null,
   extraMeta,
   slackLinks = [],
+  onOpenThread,
 }) {
   const key = slug(ticket.key);
   const testId = (name) => `${testIdPrefix}${name ? `-${name}` : ''}-${key}`;
@@ -36,7 +37,7 @@ export function WorkTicketRow({
         >
           {ticket.key}
         </a>
-        <SlackThreadLinks links={slackLinks} />
+        <SlackThreadLinks links={slackLinks} onOpen={onOpenThread} />
       </span>
       <span className="my-ticket-summary" data-testid={testId('summary')}>
         {ticket.summary || ''}
@@ -69,7 +70,7 @@ export function WorkTicketRow({
   );
 }
 
-export function MyTicketsGroups({ groups, jiraBase, currentSprints, linksByTicket }) {
+export function MyTicketsGroups({ groups, jiraBase, currentSprints, linksByTicket, onOpenThread }) {
   const entries = Object.entries(groups || {});
   if (!entries.length)
     return (
@@ -131,6 +132,7 @@ export function MyTicketsGroups({ groups, jiraBase, currentSprints, linksByTicke
                         jiraBase={jiraBase}
                         currentSprints={currentSprints}
                         slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
+                        onOpenThread={onOpenThread}
                       />
                     ))}
                   </div>

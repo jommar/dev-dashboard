@@ -173,6 +173,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         json(res, 200, await slack.pending());
         return;
       }
+      // Opened from a ticket's Slack glyph; a missing `ts` is answered locally
+      // rather than by asking Slack to look up nothing.
+      if (req.method === 'GET' && pathname === '/api/slack/thread') {
+        json(res, 200, await slack.thread(url.searchParams.get('ts')));
+        return;
+      }
       if (req.method === 'POST' && pathname === '/api/slack/connect') {
         json(res, 200, slack.connect());
         return;

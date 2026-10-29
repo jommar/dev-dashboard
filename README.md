@@ -517,10 +517,12 @@ status), sprint pill, priority, issue type, and relative update time.
 
 A ticket whose key heads a thread you started in `#ezat_claudio` gets a small
 Slack glyph next to its key — one per matching thread, newest activity first —
-that opens the thread. Only the thread's subject line is consulted, so the key
-must start it. Old `TRIPS-NNNN` threads match `TAP-NNNN` because Jira's rename
-carried the numbers over. The glyphs reuse the Slack tab's cached thread list, so
-they simply do not appear — never an error — when Slack is not connected.
+that opens a dialog with the full conversation: every message in Slack order,
+rendered from its own mrkdwn, plus **Copy link** and **Open in Slack** actions.
+Only the thread's subject line is consulted, so the key must start it. Old
+`TRIPS-NNNN` threads match `TAP-NNNN` because Jira's rename carried the numbers
+over. The glyphs reuse the Slack tab's cached thread list, so they simply do not
+appear — never an error — when Slack is not connected.
 
 ### Sprints
 
@@ -873,6 +875,7 @@ underlying endpoints — including the `thread_ts === ts` root marker and the
 | `GET /api/slack/status`      | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                  |
 | `GET /api/slack/threads`     | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected |
 | `GET /api/slack/pending`     | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                      |
+| `GET /api/slack/thread?ts=`  | one conversation: `{ available, thread: { ts, url, channel, replyCount, truncated, updatedAt, names, messages[] } }`; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses |
 | `POST /api/slack/connect`    | starts the sign-in window, `{ ok, connecting }`                                                                                                                          |
 | `POST /api/slack/disconnect` | deletes the stored session                                                                                                                                               |
 

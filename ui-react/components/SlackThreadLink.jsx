@@ -1,7 +1,8 @@
 // SlackThreadLink.jsx — the icon-only Slack entry point on a My Tickets row.
 // A row shows just a glyph per matching thread (never a label or a count), so
 // the tooltip and accessible name carry the whole description. Presentational
-// only: matching lives in ui/slack-ticket-links.js and fetching in the panel.
+// only: matching lives in ui/slack-ticket-links.js, and the click hands the
+// thread to the in-app dialog instead of navigating away.
 import { timeAgo } from '../../ui/dom.js';
 
 // Slack's own snapshot can arrive cold, without a reply count, and a thread
@@ -17,7 +18,7 @@ function threadLabel(thread) {
   return parts.join(' · ');
 }
 
-export function SlackThreadLinks({ links = [] }) {
+export function SlackThreadLinks({ links = [], onOpen }) {
   // Nothing matched: render nothing at all, so a disconnected Slack leaves the
   // row byte-identical to the pre-link version.
   if (!links.length) return null;
@@ -26,15 +27,14 @@ export function SlackThreadLinks({ links = [] }) {
       {links.map((thread) => {
         const label = threadLabel(thread);
         return (
-          <a
+          <button
             key={thread.ts}
+            type="button"
             className="slack-thread-link"
-            href={thread.url}
-            target="_blank"
-            rel="noopener noreferrer"
             data-testid={`slack-thread-link-${thread.ts}`}
             data-tooltip={label}
             aria-label={label}
+            onClick={() => onOpen?.(thread)}
           >
             {/* A speech bubble: at 13px a thread's outline reads faster than any
                 Slack mark that would need its own brand colours. */}
@@ -52,7 +52,7 @@ export function SlackThreadLinks({ links = [] }) {
             >
               <path d="M21 11.6a8.4 8.4 0 0 1-8.5 8.2 9.2 9.2 0 0 1-3.3-.6L4.2 20.6l1.3-4.3a8 8 0 0 1-1.6-4.7A8.4 8.4 0 0 1 12.5 3.3 8.4 8.4 0 0 1 21 11.6Z" />
             </svg>
-          </a>
+          </button>
         );
       })}
     </span>
