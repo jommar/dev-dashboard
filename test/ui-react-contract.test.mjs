@@ -122,7 +122,7 @@ test('React panels own structural rendering and compose shared React components'
   assert.match(read('components/DiffViewer.jsx'), /openDiffViewer/);
 });
 
-test('the Slack tab carries a pending-count badge driven by its own endpoint', () => {
+test('the Slack tab carries a pending-count badge and chases an enriched thread snapshot', () => {
   assert.ok(
     fs.existsSync(path.join(root, 'components', 'SlackTabBadge.jsx')),
     'SlackTabBadge.jsx exists',
@@ -139,7 +139,38 @@ test('the Slack tab carries a pending-count badge driven by its own endpoint', (
   const app = read('App.jsx');
   assert.match(app, /from '\.\/components\/SlackTabBadge\.jsx'/);
   assert.match(app, /id: 'slack', label: 'Slack', badge: <SlackTabBadge \/>/);
-  assert.match(read('panels/SlackPanel.jsx'), /notifySlackSessionChanged\(\)/);
+  const panel = read('panels/SlackPanel.jsx');
+  assert.match(panel, /notifySlackSessionChanged\(\)/);
+
+  // Rows arrive immediately while the server enriches "Needs reply" in the
+  // background, so the panel must chase the enriched snapshot a bounded number
+  // of times and must not claim "All caught up" while the flags are still null.
+  assert.match(panel, /const ENRICH_RETRY_MS = 2_000;/);
+  assert.match(panel, /const ENRICH_RETRY_LIMIT = 3;/);
+  // Only an explicit false means "still checking"; a missing field stays on the
+  // old copy so a rolling start against an older backend behaves as before.
+  assert.match(panel, /threads\?\.enriched === false/);
+  assert.match(panel, /threads\?\.enriched !== false/);
+  assert.match(panel, /setTimeout\([\s\S]*?\},\s*ENRICH_RETRY_MS,?\s*\)/);
+  assert.match(panel, /attempts >= ENRICH_RETRY_LIMIT/);
+  // The budget belongs to one snapshot: a new updatedAt starts a new count.
+  assert.match(panel, /enrichRetries\.updatedAt === snapshot \? enrichRetries\.count : 0/);
+  assert.match(panel, /setEnrichRetries\(\{ updatedAt: snapshot, count: attempts \+ 1 \}\)/);
+  // The retry reuses loadThreads (and its existing inFlight guard) rather than
+  // opening a second request path.
+  assert.match(panel, /setEnrichRetries\(\{[\s\S]*?loadThreads\(\);/);
+  assert.equal((panel.match(/const inFlight = useRef\(false\);/g) || []).length, 1);
+
+  // Three meta states: honest "checking", the existing count, the caught-up copy.
+  assert.match(panel, /Checking replies… · updated \$\{updatedLabel\}/);
+  assert.match(panel, /`\$\{needsReply\} need a reply · updated \$\{updatedLabel\}`/);
+  assert.match(panel, /`All caught up · updated \$\{updatedLabel\}`/);
+  const metaBlock = panel.slice(panel.indexOf('data-testid="slack-threads-meta"'));
+  assert.match(
+    metaBlock,
+    /checking[\s\S]*?Checking replies…[\s\S]*?need a reply[\s\S]*?All caught up/,
+    'the checking state is a third branch before the reply count and caught-up copy',
+  );
 });
 
 test('production and build contract tests isolate or serialize all access to dist/', () => {

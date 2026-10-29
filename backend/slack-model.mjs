@@ -44,6 +44,26 @@ export function threadUrl({ teamId, channelId, ts }) {
   return `https://app.slack.com/client/${teamId}/${channelId}/thread/${channelId}-${ts}`;
 }
 
+// Every message that belongs to the same thread maps to the same key.
+//
+// `search.messages` matches carry no `thread_ts` (a whole page of them can omit
+// it), but their permalink always names the thread it belongs to, so the
+// `thread_ts` query parameter is the grouping signal. A message with neither is
+// its own thread. A malformed permalink must not throw: it just falls back.
+export function threadKey(message) {
+  if (!message) return '';
+  if (message.thread_ts) return String(message.thread_ts);
+  if (typeof message.permalink === 'string' && message.permalink) {
+    try {
+      const thread = new URL(message.permalink).searchParams.get('thread_ts');
+      if (thread) return thread;
+    } catch {
+      // Not a URL: fall through to the message's own timestamp.
+    }
+  }
+  return message.ts ? String(message.ts) : '';
+}
+
 export function person(id, me, users) {
   if (!id) return { id: '', name: '' };
   if (id === me) return { id, name: 'You' };

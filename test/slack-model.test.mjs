@@ -8,6 +8,7 @@ import {
   person,
   slackTimestamp,
   sortByActivity,
+  threadKey,
   threadUrl,
 } from '../backend/slack-model.mjs';
 
@@ -46,6 +47,35 @@ test('people resolve to names, with "You" for the current user', () => {
   assert.deepEqual(person('U1', 'U9', users), { id: 'U1', name: 'Patrick Rivera' });
   assert.deepEqual(person('U9', 'U9', users), { id: 'U9', name: 'You' });
   assert.deepEqual(person('', 'U9', users), { id: '', name: '' });
+});
+
+test('messages group by the thread they belong to, not by their own timestamp', () => {
+  // A search match: no `thread_ts`, the permalink names the thread.
+  assert.equal(
+    threadKey({
+      ts: '250.0002',
+      permalink: 'https://team.slack.com/archives/C1/p2500002?thread_ts=200.0002&cid=C1',
+    }),
+    '200.0002',
+  );
+  // An explicit `thread_ts` always wins, even if the permalink disagrees.
+  assert.equal(
+    threadKey({
+      ts: '250.0002',
+      thread_ts: '200.0002',
+      permalink: 'https://team.slack.com/archives/C1/p2500002?thread_ts=999.0009',
+    }),
+    '200.0002',
+  );
+  // A permalink without a thread is a standalone message: its own `ts` is the key.
+  assert.equal(
+    threadKey({ ts: '500.0005', permalink: 'https://team.slack.com/archives/C1/p5000005' }),
+    '500.0005',
+  );
+  // A malformed permalink must not throw.
+  assert.equal(threadKey({ ts: '500.0005', permalink: 'not a url?thread_ts=1' }), '500.0005');
+  assert.equal(threadKey({}), '');
+  assert.equal(threadKey(null), '');
 });
 
 test('a thread root becomes one list entry ordered by its latest activity', () => {

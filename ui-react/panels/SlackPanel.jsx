@@ -10,6 +10,13 @@ const SECTIONS = {
   mentions: { label: 'Mentions', empty: 'Nobody has mentioned you there yet.' },
 };
 
+// The server answers a cold cache in about a second with the rows it has and
+// "Needs reply" still unknown, then finishes checking in the background. A
+// couple of short retries collect that enriched snapshot; the cap is what keeps
+// a server that never finishes from being polled faster than the 60 s refresh.
+const ENRICH_RETRY_MS = 2_000;
+const ENRICH_RETRY_LIMIT = 3;
+
 // Slack is entirely optional. Every state below is rendered from a status that
 // already degraded a failure into "not connected" — there is no error surface,
 // because a missing Slack session must never look like a broken dashboard.
@@ -20,6 +27,9 @@ export function SlackPanel({ active }) {
   const [threads, setThreads] = useState(null);
   const [threadsFailed, setThreadsFailed] = useState(false);
   const [section, setSection] = useState('started');
+  // Which snapshot the enrichment retries belong to, so a refreshed snapshot
+  // starts with its own budget instead of inheriting the previous one's.
+  const [enrichRetries, setEnrichRetries] = useState({ updatedAt: null, count: 0 });
   const inFlight = useRef(false);
   const wasConnected = useRef(false);
 
@@ -68,6 +78,24 @@ export function SlackPanel({ active }) {
     return () => clearInterval(timer);
   }, [active, connected, loadThreads]);
 
+  // A snapshot can arrive with `enriched: false`: the rows are real, but the
+  // server had not finished checking "Needs reply" when it answered. Retry a
+  // few times to collect the enriched version, then stop — after the cap the
+  // honest "Checking replies…" line stands until the next 60 s poll, so a
+  // server that never enriches cannot turn into a spin. The retry goes through
+  // loadThreads, which already refuses to overlap an in-flight request.
+  useEffect(() => {
+    if (!active || !connected || threads?.enriched !== false) return undefined;
+    const snapshot = threads.updatedAt ?? null;
+    const attempts = enrichRetries.updatedAt === snapshot ? enrichRetries.count : 0;
+    if (attempts >= ENRICH_RETRY_LIMIT) return undefined;
+    const timer = setTimeout(() => {
+      setEnrichRetries({ updatedAt: snapshot, count: attempts + 1 });
+      loadThreads();
+    }, ENRICH_RETRY_MS);
+    return () => clearTimeout(timer);
+  }, [active, connected, threads, enrichRetries, loadThreads]);
+
   // A first load that fails must not leave the tab spinning forever: retry on a
   // short interval until one attempt succeeds, then fall back to the slow poll.
   const waiting = !threads;
@@ -109,6 +137,11 @@ export function SlackPanel({ active }) {
 
   const items = threads?.[section] || [];
   const needsReply = items.filter((thread) => thread.needsReply).length;
+  // Only an explicit `false` means the server is still checking: a missing field
+  // comes from a backend that predates enrichment, and there the old copy is the
+  // truthful one.
+  const checking = threads?.enriched === false;
+  const updatedLabel = threads ? new Date(threads.updatedAt).toLocaleTimeString() : '';
 
   return (
     <section
@@ -184,9 +217,11 @@ export function SlackPanel({ active }) {
             <span className="pr-open-count" role="status" data-testid="slack-threads-meta">
               {!threads
                 ? 'Loading…'
-                : needsReply
-                  ? `${needsReply} need a reply · updated ${new Date(threads.updatedAt).toLocaleTimeString()}`
-                  : `All caught up · updated ${new Date(threads.updatedAt).toLocaleTimeString()}`}
+                : checking
+                  ? `Checking replies… · updated ${updatedLabel}`
+                  : needsReply
+                    ? `${needsReply} need a reply · updated ${updatedLabel}`
+                    : `All caught up · updated ${updatedLabel}`}
             </span>
           </div>
           <div className="slack-thread-list" data-testid="slack-threads">

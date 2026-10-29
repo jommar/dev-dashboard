@@ -832,9 +832,17 @@ Two lists over `#ezat_claudio`, both ordered by latest activity and both flagged
 - **Mentions** — threads (or standalone messages) where someone wrote `<@you>`,
   grouped to one row per thread with the mentioning message as the preview.
 
-Each row links straight into the thread in Slack. The lists refresh every
-60 seconds while the tab is visible; the server caches for 60 seconds and only
-re-reads threads whose latest activity changed.
+Each row links straight into the thread in Slack. The lists paint as soon as the
+two thread lists have been read; the **Needs reply** flags fill in a moment
+later, one `conversations.replies` call per listed thread, because that is the
+only call that has to look inside a thread. A payload with `enriched: false`
+still has its flags on the way — the rows are usable and show no badge yet.
+
+The server caches that result for five minutes and revalidates it in the
+background: a cached copy is returned immediately, even when it is past the
+five minutes, and the refresh happens behind the response. So the tab never
+waits on Slack for a refresh, and a failed read backs off for a minute instead
+of retrying on every poll.
 
 The Slack tab label carries a badge: the unread mention count for
 `#ezat_claudio`, or a dot when the channel has unreads but no unread mentions.
@@ -851,13 +859,13 @@ underlying endpoints — including the `thread_ts === ts` root marker and the
 
 ### HTTP
 
-| Route                        | Purpose                                                                                                                             |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/slack/status`      | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                             |
-| `GET /api/slack/threads`     | `{ available, channel, started[], mentions[], updatedAt }`; `available: false` when disconnected                                    |
-| `GET /api/slack/pending`     | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown |
-| `POST /api/slack/connect`    | starts the sign-in window, `{ ok, connecting }`                                                                                     |
-| `POST /api/slack/disconnect` | deletes the stored session                                                                                                          |
+| Route                        | Purpose                                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/slack/status`      | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                  |
+| `GET /api/slack/threads`     | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected |
+| `GET /api/slack/pending`     | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                      |
+| `POST /api/slack/connect`    | starts the sign-in window, `{ ok, connecting }`                                                                                                                          |
+| `POST /api/slack/disconnect` | deletes the stored session                                                                                                                                               |
 
 `status` verifies the session with `auth.test` at most once a minute.
 `verified: false` means the token exists but Slack could not be reached — still

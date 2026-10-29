@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn as spawnDefault } from 'node:child_process';
 import { readTokenFile, stageTokenFile } from './credentials.mjs';
-import { applyLastReply, buildThread, sortByActivity } from './slack-model.mjs';
+import { applyLastReply, buildThread, sortByActivity, threadKey } from './slack-model.mjs';
 
 const API_URL = 'https://app.slack.com/api';
 const STATUS_TTL_MS = 60_000;
@@ -30,8 +30,9 @@ const REQUEST_TIMEOUT_MS = 8_000;
 // refresh to a predictable number of calls.
 const CHANNEL_NAME = 'ezat_claudio';
 const USERS_TTL_MS = 10 * 60 * 1000;
-const THREADS_TTL_MS = 60_000;
+const THREADS_TTL_MS = 5 * 60 * 1000;
 const PENDING_TTL_MS = 60_000;
+const FAILURE_BACKOFF_MS = 60_000;
 const HISTORY_PAGES = 3;
 const SEARCH_PAGES = 2;
 const SECTION_LIMIT = 25;
@@ -139,12 +140,22 @@ export function createSlackIntegration({
   // --- thread lists -------------------------------------------------------
   // Two questions, one refresh: threads the user started in CHANNEL_NAME, and
   // threads where the user was mentioned. Both are ordered by latest activity,
-  // and both carry a "needs a reply" flag when the last message is not theirs.
+  // and carry a "needs a reply" flag when the last message is not theirs.
+  //
+  // The rows and the flags are read in two stages, because they cost very
+  // different amounts: `loadRows` answers the lists in a handful of calls, while
+  // the flags need one `conversations.replies` per listed thread. The rows are
+  // served as soon as they exist and the flags are filled in behind the
+  // response, so a cold tab paints immediately instead of waiting for the
+  // slow half.
 
   let usersCache = null;
   let channelCache = null;
-  let threadsCache = null;
+  let threadsCache = null; // { at, value } — served even when `at` is past the TTL.
   let pendingCache = null;
+  let refreshInFlight = null; // at most one background refresh at a time.
+  let retryAt = 0; // backoff deadline after a load that produced nothing.
+  let generation = 0; // bumped by disconnect(), so a late refresh cannot write back.
   const lastReplyCache = new Map(); // "<thread ts>:<activity ts>" -> last message
 
   async function paged(credentials, method, params, pages, select) {
@@ -171,27 +182,30 @@ export function createSlackIntegration({
     return value;
   }
 
-  // A channel the user is a member of can still be missing from
-  // conversations.list (private channels have done this); search names it.
+  // Search is asked first: this private channel never appears in
+  // `conversations.list` (ten paged calls, ~3 s), while `in:<name>` names it in
+  // one call (~0.35 s). The list scan stays as the fallback for a channel
+  // search cannot see.
   async function channel(credentials) {
     if (channelCache && now() - channelCache.at < USERS_TTL_MS) return channelCache.value;
-    const channels = await paged(
+    let found = null;
+    const payload = await call(
+      'search.messages',
+      { query: `in:${CHANNEL_NAME}`, count: 1 },
       credentials,
-      'conversations.list',
-      { types: 'public_channel,private_channel', exclude_archived: true, limit: 200 },
-      10,
-      (p) => p.channels,
-    );
-    let found = channels.find((entry) => entry.name === CHANNEL_NAME) || null;
+    ).catch(() => null);
+    const match = payload?.messages?.matches?.[0];
+    if (match?.channel?.id)
+      found = { id: match.channel.id, name: match.channel.name || CHANNEL_NAME };
     if (!found) {
-      const payload = await call(
-        'search.messages',
-        { query: `in:${CHANNEL_NAME}`, count: 1 },
+      const channels = await paged(
         credentials,
-      ).catch(() => null);
-      const match = payload?.messages?.matches?.[0];
-      if (match?.channel?.id)
-        found = { id: match.channel.id, name: match.channel.name || CHANNEL_NAME };
+        'conversations.list',
+        { types: 'public_channel,private_channel', exclude_archived: true, limit: 200 },
+        10,
+        (p) => p.channels,
+      );
+      found = channels.find((entry) => entry.name === CHANNEL_NAME) || null;
     }
     channelCache = { at: now(), value: found };
     return found;
@@ -229,18 +243,22 @@ export function createSlackIntegration({
     return matches;
   }
 
+  // Slack answers `limit=1` with the root plus the newest message and nothing
+  // else, which is exactly "who spoke last" — with far less payload than the
+  // limit=100 call it replaces.
   async function lastMessage(credentials, channelId, ts) {
     const payload = await call(
       'conversations.replies',
-      { channel: channelId, ts, limit: 100 },
+      { channel: channelId, ts, limit: 1 },
       credentials,
     );
     const messages = payload?.ok ? payload.messages || [] : [];
     return messages.length ? messages[messages.length - 1] : null;
   }
 
-  // Only the listed threads are fetched, five at a time, and a thread is not
-  // fetched again until its latest activity changes.
+  // Only the listed threads are fetched, five at a time (Slack rate-limits
+  // higher fan-out), and a thread is not fetched again until its latest
+  // activity changes.
   async function markLastReplies(credentials, channelId, me, users_, list) {
     const queue = [...list];
     const worker = async () => {
@@ -261,69 +279,142 @@ export function createSlackIntegration({
     await Promise.all(Array.from({ length: Math.min(ENRICH_CONCURRENCY, list.length) }, worker));
   }
 
-  async function threads() {
-    const credentials = session();
-    if (!credentials) return { available: false };
-    if (threadsCache && now() - threadsCache.at < THREADS_TTL_MS) return threadsCache.value;
-    try {
-      const identity = await verify(credentials);
-      if (!identity.connected || !identity.userId) return { available: false };
-      const me = identity.userId;
-      const teamId = identity.teamId || credentials.teamId || '';
-      const target = await channel(credentials);
-      if (!target) return { available: false };
-      const [members, messages, matches] = await Promise.all([
-        users(credentials),
-        history(credentials, target.id),
-        searchMentions(credentials, me),
-      ]);
-      // Mention text renders the signed-in user by name, not by raw id.
-      const names = { ...members, [me]: identity.user || 'you' };
+  // Everything except the reply flags. Returns null when the session cannot be
+  // used, so the caller can back off instead of asking again immediately.
+  async function loadRows(credentials) {
+    const identity = await verify(credentials);
+    if (!identity.connected || !identity.userId) return null;
+    const me = identity.userId;
+    const teamId = identity.teamId || credentials.teamId || '';
+    const target = await channel(credentials);
+    if (!target) return null;
+    const [members, messages, matches] = await Promise.all([
+      users(credentials),
+      history(credentials, target.id),
+      searchMentions(credentials, me),
+    ]);
+    // Mention text renders the signed-in user by name, not by raw id.
+    const names = { ...members, [me]: identity.user || 'you' };
 
-      const roots = messages.filter((message) => message.thread_ts === message.ts);
-      const rootByTs = new Map(roots.map((message) => [message.ts, message]));
+    const roots = messages.filter((message) => message.thread_ts === message.ts);
+    const rootByTs = new Map(roots.map((message) => [message.ts, message]));
 
-      const started = roots
-        .filter((root) => root.user === me)
-        .map((root) => buildThread({ root, channelId: target.id, teamId, me, users: names }));
+    const started = roots
+      .filter((root) => root.user === me)
+      .map((root) => buildThread({ root, channelId: target.id, teamId, me, users: names }));
 
-      const newestMention = new Map();
-      for (const match of matches) {
-        const key = match.thread_ts || match.ts;
-        const previous = newestMention.get(key);
-        if (!previous || Number(match.ts) > Number(previous.ts)) newestMention.set(key, match);
+    // Matches carry no `thread_ts`, so `threadKey` groups them by the thread
+    // their permalink points at: many matches, one row per thread. Only the
+    // newest mention of a thread becomes its preview.
+    const newestMention = new Map();
+    for (const match of matches) {
+      const key = threadKey(match);
+      if (!key) continue;
+      const previous = newestMention.get(key);
+      if (!previous || Number(match.ts) > Number(previous.ts)) newestMention.set(key, match);
+    }
+    const mentioned = [];
+    for (const [ts, match] of newestMention) {
+      let root = rootByTs.get(ts);
+      if (!root) {
+        // Only a thread the history page missed reaches this lookup, so it is
+        // one or two calls rather than one per match.
+        const payload = await call(
+          'conversations.replies',
+          { channel: target.id, ts, limit: 1 },
+          credentials,
+        ).catch(() => null);
+        root = payload?.ok ? payload.messages?.[0] : null;
       }
-      const mentions = [];
-      for (const [ts, match] of newestMention) {
-        let root = rootByTs.get(ts);
-        if (!root) {
-          const payload = await call(
-            'conversations.replies',
-            { channel: target.id, ts, limit: 1 },
-            credentials,
-          ).catch(() => null);
-          root = payload?.ok ? payload.messages?.[0] : null;
-        }
-        if (!root) continue;
-        mentions.push(
-          buildThread({ root, mention: match, channelId: target.id, teamId, me, users: names }),
-        );
-      }
+      if (!root) continue;
+      mentioned.push(
+        buildThread({ root, mention: match, channelId: target.id, teamId, me, users: names }),
+      );
+    }
+    // Defensive: one row per thread root, even if two matches grouped apart.
+    const mentions = [...new Map(mentioned.map((thread) => [thread.ts, thread])).values()];
 
-      const value = {
+    return {
+      me,
+      channelId: target.id,
+      names,
+      value: {
         available: true,
         channel: { id: target.id, name: target.name },
         started: sortByActivity(started).slice(0, SECTION_LIMIT),
         mentions: sortByActivity(mentions).slice(0, SECTION_LIMIT),
         updatedAt: new Date(now()).toISOString(),
-      };
-      await markLastReplies(credentials, target.id, me, names, [
-        ...value.started,
-        ...value.mentions,
-      ]);
-      threadsCache = { at: now(), value };
-      return value;
+        enriched: false,
+      },
+    };
+  }
+
+  // One background task: either fills in the flags of a snapshot the caller has
+  // already been handed, or re-reads everything once the snapshot is stale.
+  // Failure is silent and backs off, and a disconnect mid-flight wins.
+  function refresh(credentials, snapshot = null) {
+    if (refreshInFlight) return refreshInFlight;
+    const gen = generation;
+    const task = (async () => {
+      try {
+        if (!snapshot) {
+          snapshot = await loadRows(credentials);
+          if (gen !== generation) return;
+          if (!snapshot) {
+            retryAt = now() + FAILURE_BACKOFF_MS;
+            return;
+          }
+          threadsCache = { at: now(), value: snapshot.value };
+        }
+        await markLastReplies(credentials, snapshot.channelId, snapshot.me, snapshot.names, [
+          ...snapshot.value.started,
+          ...snapshot.value.mentions,
+        ]);
+        if (gen !== generation) return;
+        snapshot.value.enriched = true;
+        threadsCache = { at: now(), value: snapshot.value };
+        retryAt = 0;
+      } catch {
+        retryAt = now() + FAILURE_BACKOFF_MS;
+      }
+    })();
+    // The body never rejects; `finally` only clears the single-flight guard.
+    const guarded = task.finally(() => {
+      if (refreshInFlight === guarded) refreshInFlight = null;
+    });
+    refreshInFlight = guarded;
+    return guarded;
+  }
+
+  async function threads() {
+    const credentials = session();
+    if (!credentials) return { available: false };
+    // A snapshot is served immediately, even past its TTL: re-reading it is the
+    // background task's job, and a blocking refresh is what made this tab slow.
+    if (threadsCache) {
+      const stale = now() - threadsCache.at >= THREADS_TTL_MS;
+      const needsFlags = !threadsCache.value.enriched;
+      // One attempt at a time, and none inside a failure backoff.
+      if ((stale || needsFlags) && now() >= retryAt) refresh(credentials);
+      return threadsCache.value;
+    }
+    if (now() < retryAt) return { available: false };
+    const gen = generation;
+    try {
+      const snapshot = await loadRows(credentials);
+      // A disconnect while the rows were being read wins over this answer.
+      if (gen !== generation) return { available: false };
+      if (!snapshot) {
+        retryAt = now() + FAILURE_BACKOFF_MS;
+        return { available: false };
+      }
+      threadsCache = { at: now(), value: snapshot.value };
+      retryAt = 0;
+      // Rows first: the tab paints now and the reply flags land a moment later.
+      refresh(credentials, snapshot);
+      return snapshot.value;
     } catch {
+      retryAt = now() + FAILURE_BACKOFF_MS;
       return { available: false };
     }
   }
@@ -413,6 +504,11 @@ export function createSlackIntegration({
     } catch {
       /* An unreadable session already means "not connected". */
     }
+    // Anything already in flight belongs to the session being dropped: the
+    // generation bump stops it writing its snapshot back afterwards.
+    generation += 1;
+    refreshInFlight = null;
+    retryAt = 0;
     cached = null;
     threadsCache = null;
     pendingCache = null;
