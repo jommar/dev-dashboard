@@ -92,6 +92,10 @@ export function settingsFixture(t, options = {}) {
           .replaceAll(
             "from './credentials.mjs'",
             `from ${JSON.stringify(new URL('../backend/credentials.mjs', import.meta.url).href)}`,
+          )
+          .replaceAll(
+            "from './slack-notice.mjs'",
+            `from ${JSON.stringify(new URL('../backend/slack-notice.mjs', import.meta.url).href)}`,
           );
         fs.writeFileSync(path.join(paths.dashboardDir, 'settings.mjs'), source);
         moduleUrl = pathToFileURL(path.join(paths.dashboardDir, 'settings.mjs'));

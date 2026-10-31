@@ -371,3 +371,204 @@
   line-height: 1;
   cursor: pointer;
 }
+
+/* ---- Watch card ----------------------------------------------------------
+   The links are tabular records, not a list of cards, so the table scrolls
+   sideways inside its own wrapper instead of using the masonry columns. */
+.slack-watch-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  margin-top: 20px;
+}
+
+.slack-watch-card .pr-open-heading,
+.slack-watch-card p {
+  margin: 0;
+}
+
+.slack-watch-state {
+  color: var(--strong);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.slack-watch-state[data-state='running'] {
+  color: var(--green);
+}
+
+.slack-watch-state[data-state='paused'] {
+  color: var(--amber);
+}
+
+.slack-watch-state[data-state='disabled'] {
+  color: var(--red);
+}
+
+.slack-watch-reason {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.slack-watch-card textarea,
+.slack-watch-card select,
+.slack-watch-card input {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+}
+
+.slack-watch-card textarea {
+  resize: vertical;
+}
+
+.slack-watch-card [aria-invalid='true'] {
+  border-color: var(--red);
+}
+
+.slack-watch-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+
+.slack-watch-add textarea {
+  flex: 1 1 320px;
+}
+
+.slack-watch-error {
+  color: var(--red);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.slack-watch-warning {
+  color: var(--amber);
+  font-size: var(--fs-sm);
+}
+
+.slack-watch-rejections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slack-watch-table-wrap {
+  overflow-x: auto;
+}
+
+.slack-watch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.slack-watch-table th,
+.slack-watch-table td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.slack-watch-table th {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.slack-watch-link {
+  max-width: 320px;
+  color: var(--strong);
+  overflow-wrap: anywhere;
+}
+
+.slack-watch-none {
+  color: var(--muted);
+}
+
+.slack-watch-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slack-watch-session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.slack-watch-session-id {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.slack-watch-delivery[data-status='delivered'] {
+  color: var(--green);
+}
+
+.slack-watch-delivery[data-status='failed-transient'] {
+  color: var(--amber);
+}
+
+.slack-watch-delivery[data-status='failed-permanent'] {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.slack-watch-delivery[data-status='none'],
+.slack-watch-session-time {
+  color: var(--muted);
+}
+
+.slack-watch-session-reason {
+  color: var(--red);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.slack-watch-attach,
+.slack-watch-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s3);
+}
+
+.slack-watch-field {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+  color: var(--strong);
+  font-size: var(--fs-md);
+}
+
+.slack-watch-settings .slack-watch-field {
+  flex: 1 1 100%;
+}
+
+.slack-watch-settings > p {
+  flex: 1 1 100%;
+}

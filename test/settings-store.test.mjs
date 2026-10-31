@@ -5,7 +5,13 @@ import { isDeepStrictEqual } from 'node:util';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { withSyntheticEnvRead } from '../e2e/node-boundaries.mjs';
-import { settingsFixture, githubToken, jiraToken, assertNoSecrets } from './settings-fixture.mjs';
+import {
+  settingsFixture,
+  accept,
+  githubToken,
+  jiraToken,
+  assertNoSecrets,
+} from './settings-fixture.mjs';
 
 test('missing settings initialize once as fresh, partial or grandfathered legacy; existing records stay authoritative', async (t) => {
   for (const evidence of ['none', 'env-stat', 'partial', 'full', 'existing-token']) {
@@ -315,4 +321,70 @@ test('missing settings initialize once as fresh, partial or grandfathered legacy
     () => loader.loadEnvFile({ directory: boundary.paths.dashboardDir, env: {} }),
     /synthetic loader location/,
   );
+});
+
+const customizedWatchSection = { intervalSeconds: 45, noticeTemplate: 'Ping {link}', paused: true };
+
+function assertKeepsSlackWatch(fixture, store, configuration = fixture.configuration) {
+  const current = store.getPublicSettings();
+  assert.deepEqual(current.slackWatch, customizedWatchSection);
+  const persisted = JSON.parse(fs.readFileSync(fixture.paths.settings, 'utf8'));
+  assert.deepEqual(persisted.slackWatch, customizedWatchSection);
+  assert.equal(persisted.revision, current.revision, 'the file and the public revision agree');
+  for (const field of ['github', 'jira', 'local', 'minPrApprover'])
+    assert.deepEqual(current[field], configuration[field], field);
+  assert.deepEqual(current.credentials, {
+    github: { present: true, source: 'file' },
+    jira: { present: true, source: 'file' },
+  });
+  assert.equal(current.setup.ready, true);
+}
+
+test('an ordinary Settings save, validation and readiness refresh keeps slackWatch and every existing public field', async (t) => {
+  const f = settingsFixture(t);
+  const store = await f.store();
+  await accept(f, store);
+  const acceptedRevision = store.getPublicSettings().revision;
+
+  await store.saveSlackWatch(customizedWatchSection);
+  assert.equal(
+    store.getPublicSettings().revision,
+    acceptedRevision,
+    'the narrow save never bumps the revision',
+  );
+
+  await store.save({
+    ...f.configuration,
+    expectedRevision: acceptedRevision,
+    credentials: { githubToken, jiraToken },
+  });
+  assert.equal(store.getPublicSettings().revision, acceptedRevision + 1);
+  assertKeepsSlackWatch(f, store);
+
+  await store.validate({ expectedRevision: store.getPublicSettings().revision });
+  assertKeepsSlackWatch(f, store);
+
+  const readiness = await store.refreshReadiness();
+  assert.equal(readiness.ready, true);
+  assertKeepsSlackWatch(f, store);
+});
+
+test('an ordinary Settings save on a restarted store keeps slackWatch while it edits other fields', async (t) => {
+  const f = settingsFixture(t);
+  const writer = await f.store();
+  await accept(f, writer);
+  await writer.saveSlackWatch(customizedWatchSection);
+
+  const restarted = await f.store();
+  await restarted.initialize();
+  const revision = restarted.getPublicSettings().revision;
+  await restarted.save({
+    ...f.configuration,
+    minPrApprover: 3,
+    expectedRevision: revision,
+  });
+
+  assert.equal(restarted.getPublicSettings().revision, revision + 1);
+  assert.equal(restarted.getPublicSettings().minPrApprover, 3);
+  assertKeepsSlackWatch(f, restarted, { ...f.configuration, minPrApprover: 3 });
 });

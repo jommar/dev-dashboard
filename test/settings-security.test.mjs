@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { settingsFixture, accept, assertNoSecrets, errorCode } from './settings-fixture.mjs';
+import {
+  settingsFixture,
+  accept,
+  assertNoSecrets,
+  errorCode,
+  githubToken,
+  jiraToken,
+} from './settings-fixture.mjs';
 
 test('credentials stay private and restrictive; serialized durable saves and restart cannot accept partial identities', async (t) => {
   const f = settingsFixture(t);
@@ -177,4 +184,38 @@ test('credentials stay private and restrictive; serialized durable saves and res
     true,
     'process environment must remain unchanged',
   );
+});
+
+test('an ordinary Settings save keeps slackWatch as stored when its body smuggles a section; only the narrow path writes it', async (t) => {
+  const smuggledSecret = 'synthetic-smuggled-credential';
+  const customized = { intervalSeconds: 90, noticeTemplate: 'Ping {link}', paused: false };
+  const defaults = {
+    intervalSeconds: 180,
+    noticeTemplate: "There's a new message on {link}",
+    paused: false,
+  };
+  for (const [stored, expected] of [
+    [customized, customized],
+    [null, defaults],
+  ]) {
+    const f = settingsFixture(t);
+    const store = await f.store();
+    await accept(f, store);
+    if (stored) await store.saveSlackWatch(stored);
+
+    await store.save({
+      ...f.configuration,
+      slackWatch: { intervalSeconds: 31, paused: true, token: smuggledSecret },
+      expectedRevision: store.getSetupStatus().revision,
+      credentials: { githubToken, jiraToken },
+    });
+
+    const text = fs.readFileSync(f.paths.settings, 'utf8');
+    assert.deepEqual(store.getPublicSettings().slackWatch, expected);
+    assertNoSecrets(text, [smuggledSecret]);
+    assertNoSecrets(store.getPublicSettings(), [smuggledSecret]);
+    const restarted = await f.store();
+    await restarted.initialize();
+    assert.deepEqual(restarted.getPublicSettings().slackWatch, expected);
+  }
 });

@@ -120,11 +120,40 @@ export function sortByActivity(threads) {
   return [...threads].sort((a, b) => Date.parse(b.activityAt) - Date.parse(a.activityAt));
 }
 
+// A message is not mine when a person other than the user wrote it. A bot message has no
+// `user`, so it is never one the user owes a reply to and never one to wake a session for.
+export function isNotMine(message, me) {
+  return Boolean(message?.user) && message.user !== me;
+}
+
 // The last message of a fetched thread decides whether the user owes a reply,
 // which is the only signal this view exists to answer.
 export function applyLastReply(thread, last, me, users) {
   if (!last) return thread;
   thread.latestReplyBy = person(last.user, me, users);
-  thread.needsReply = Boolean(last.user) && last.user !== me;
+  thread.needsReply = isNotMine(last, me);
   return thread;
+}
+
+// A Slack ts is "<seconds>.<micro6>": two integers, compared as such, never as a float or text.
+function slackTsParts(ts) {
+  const match = /^(\d+)\.(\d+)$/.exec(String(ts ?? ''));
+  return match ? [Number(match[1]), Number(match[2].padEnd(6, '0'))] : null;
+}
+
+export function compareSlackTs(a, b) {
+  const [aSeconds, aMicro] = slackTsParts(a);
+  const [bSeconds, bMicro] = slackTsParts(b);
+  return aSeconds - bSeconds || aMicro - bMicro;
+}
+
+function isNewerTs(ts, referenceTs) {
+  if (!slackTsParts(ts)) return false;
+  return !slackTsParts(referenceTs) || compareSlackTs(ts, referenceTs) > 0;
+}
+
+// A thread wakes a session when its newest message is not the user's and is strictly newer
+// than the last one already notified; an equal or older ts is an edit or a deleted newest message.
+export function shouldWake(last, me, lastNotifiedTs) {
+  return isNotMine(last, me) && isNewerTs(last.ts, lastNotifiedTs);
 }

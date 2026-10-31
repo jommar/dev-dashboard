@@ -4,6 +4,7 @@ import os from 'node:os';
 import { GITHUB, SERVICES, REPOS_ROOT, DASHBOARD_DIR, parseMinPrApprover } from './config.mjs';
 import { createCredentialStore, credentialIdentity } from './credentials.mjs';
 import { loadEnvFile } from './env.mjs';
+import { validateNoticeTemplate } from './slack-notice.mjs';
 
 const clone = (value) => structuredClone(value);
 const freeze = (value) => {
@@ -49,6 +50,50 @@ const editable = (input = {}) => ({
   },
   minPrApprover: input.minPrApprover,
 });
+
+const slackWatchDefaults = {
+  intervalSeconds: 180,
+  noticeTemplate: "There's a new message on {link}",
+  paused: false,
+};
+const slackWatchFields = Object.keys(slackWatchDefaults);
+const pickSlackWatch = (source) =>
+  Object.fromEntries(
+    slackWatchFields
+      .filter((name) => source?.[name] !== undefined)
+      .map((name) => [name, source[name]]),
+  );
+function slackWatchIssues(section) {
+  const issues = [];
+  if (
+    !Number.isInteger(section.intervalSeconds) ||
+    section.intervalSeconds < 30 ||
+    section.intervalSeconds > 3600
+  )
+    issues.push(
+      fieldError(
+        'slackWatch.intervalSeconds',
+        'INVALID_FIELD',
+        'Enter whole seconds from 30 to 3600.',
+      ),
+    );
+  const template = validateNoticeTemplate(section.noticeTemplate);
+  if (!template.ok) issues.push(...template.errors);
+  if (typeof section.paused !== 'boolean')
+    issues.push(fieldError('slackWatch.paused', 'INVALID_FIELD', 'Paused must be true or false.'));
+  return issues;
+}
+// A stored value that fails validation (a hand-edited record) reads as its default.
+function readSlackWatch(stored) {
+  const section = { ...slackWatchDefaults, ...pickSlackWatch(stored) };
+  const invalid = new Set(slackWatchIssues(section).map((issue) => issue.field));
+  return Object.fromEntries(
+    slackWatchFields.map((name) => [
+      name,
+      invalid.has(`slackWatch.${name}`) ? slackWatchDefaults[name] : section[name],
+    ]),
+  );
+}
 
 export function createSettingsStore(options = {}) {
   const home = options.paths?.home || os.homedir();
@@ -277,6 +322,7 @@ export function createSettingsStore(options = {}) {
       jira: fields.jira || {},
       local: fields.local || { root: paths.root, services: [] },
       minPrApprover: record?.minPrApprover || 1,
+      slackWatch: readSlackWatch(record?.slackWatch),
       credentials: Object.fromEntries(
         ['github', 'jira'].map((name) => [
           name,
@@ -604,6 +650,7 @@ export function createSettingsStore(options = {}) {
           revision: (record?.revision || 0) + 1,
           origin: record?.origin || 'fresh',
           ...editable(input),
+          ...(record?.slackWatch && { slackWatch: clone(record.slackWatch) }),
           validation: clone(record?.validation || {}),
         };
         const issues = await inspect(candidate, values);
@@ -665,6 +712,19 @@ export function createSettingsStore(options = {}) {
         return getPublicSettings();
       };
       return lifecycle?.run ? lifecycle.run(operation) : operation();
+    });
+  }
+  function saveSlackWatch(partial) {
+    return serialize(async () => {
+      if (!record) throw fault('PERSISTENCE_FAILED', [], 503);
+      const section = { ...readSlackWatch(record.slackWatch), ...pickSlackWatch(partial) };
+      const issues = slackWatchIssues(section);
+      if (issues.length) throw fault('INVALID_SETTINGS', issues);
+      checkPersistedRevision();
+      const candidate = { ...record, slackWatch: section };
+      persist(candidate);
+      record = candidate;
+      return clone(section);
     });
   }
   function validate({ expectedRevision } = {}) {
@@ -771,6 +831,7 @@ export function createSettingsStore(options = {}) {
     getPublicSettings,
     getSetupStatus,
     save,
+    saveSlackWatch,
     validate,
     refreshReadiness,
     subscribe(listener) {

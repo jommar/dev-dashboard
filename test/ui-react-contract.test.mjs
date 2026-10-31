@@ -390,6 +390,52 @@ test('the Slack tab opens thread conversations in the shared dialog', () => {
   assert.doesNotMatch(dialogSource, /useRef\(ticketKey|useMemo\(\(\) => ticketKey/);
 });
 
+test('the shared API boundary carries every Slack watch route as a literal', () => {
+  const api = read('lib/api.js');
+  const hasLiteral = (route) =>
+    [`'${route}'`, `"${route}"`, `\`${route}\``].some((literal) => api.includes(literal));
+  for (const route of [
+    '/api/slack/watch',
+    '/api/slack/watch/links',
+    '/api/slack/watch/remove',
+    '/api/slack/watch/attach',
+    '/api/slack/watch/detach',
+    '/api/slack/watch/sessions',
+    '/api/slack/watch/settings',
+    '/api/slack/watch/pause',
+    '/api/slack/watch/resume',
+  ]) {
+    assert.ok(hasLiteral(route), `API route ${route} is represented as a literal`);
+  }
+});
+
+test('the Slack watch card composes the shared primitives, lists links in a table and guards its poll', () => {
+  assert.ok(
+    fs.existsSync(path.join(root, 'components', 'SlackWatchCard.jsx')),
+    'SlackWatchCard.jsx exists',
+  );
+  const card = read('components/SlackWatchCard.jsx');
+  assert.match(card, /export function SlackWatchCard\(/);
+  const primitives = card.match(/import \{([^}]*)\} from '\.\/Primitives\.jsx';/);
+  assert.ok(primitives, 'the card imports from Primitives.jsx');
+  assert.match(primitives[1], /\bCard\b/);
+  assert.match(primitives[1], /\bButton\b/);
+  assert.match(card, /<Card\b/);
+  assert.match(card, /<Button\b/);
+  // The poll belongs to a visible tab only, the same guard the thread list uses.
+  assert.match(card, /document\.hidden/);
+  // Links are tabular records, not a card list, so the masonry pattern does not apply.
+  assert.match(card, /<table\b/);
+  assert.match(card, /<thead\b/);
+  assert.match(card, /<th\b/);
+});
+
+test('the Slack panel mounts the watch card as an active-aware section', () => {
+  const panel = read('panels/SlackPanel.jsx');
+  assert.match(panel, /import \{ SlackWatchCard \} from '\.\.\/components\/SlackWatchCard\.jsx';/);
+  assert.match(panel, /<SlackWatchCard\b[^>]*\bactive=\{active\}/);
+});
+
 test('production and build contract tests isolate or serialize all access to dist/', () => {
   const production = fs.readFileSync(
     fileURLToPath(new URL('../test/production-ui.test.mjs', import.meta.url)),

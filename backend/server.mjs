@@ -25,6 +25,10 @@ export async function shutdownServer({ server, manager, handler, timeoutMs = 100
   }
 }
 
+export function startSlackWatcher(handler) {
+  handler.slackWatcher.start();
+}
+
 export async function start() {
   await settingsStore.initialize();
   const publicSettings = settingsStore.getPublicSettings();
@@ -53,6 +57,7 @@ export async function start() {
     process.exitCode = 1;
   });
   server.listen(DASHBOARD_PORT, DASHBOARD_HOST, () => {
+    startSlackWatcher(handler);
     console.log(`EZAT Dev Dashboard → http://${DASHBOARD_HOST}:${DASHBOARD_PORT}`);
     console.log(`  tail-by-default: ${DEFAULT_TAIL_LINES} lines; logs dir: ${LOGS_DIR}`);
   });

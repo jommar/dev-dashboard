@@ -178,6 +178,57 @@ export async function disconnectSlack() {
   }
 }
 
+// The watch wrappers resolve like the Slack ones, but they also carry the status
+// and the server's error text, because the card shows why a save or an attach was
+// refused instead of collapsing every failure into "unavailable".
+const WATCH_UNAVAILABLE = {
+  ok: false,
+  status: 0,
+  code: 'UNAVAILABLE',
+  error: 'The dashboard server could not be reached.',
+  errors: [],
+};
+
+async function watchRequest(url, { method = 'GET', body } = {}) {
+  const init =
+    body === undefined
+      ? { method }
+      : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  try {
+    const res = await fetch(url, init);
+    const payload = await res.json().catch(() => ({}));
+    return { errors: [], ...payload, ok: res.ok, status: res.status };
+  } catch {
+    return WATCH_UNAVAILABLE;
+  }
+}
+
+export const getSlackWatch = () => watchRequest('/api/slack/watch');
+
+export const getSlackWatchSessions = () => watchRequest('/api/slack/watch/sessions');
+
+export const addSlackWatchLinks = (links) =>
+  watchRequest('/api/slack/watch/links', { method: 'POST', body: { links } });
+
+export const removeSlackWatchLink = (link) =>
+  watchRequest('/api/slack/watch/remove', { method: 'POST', body: { link } });
+
+export const attachSlackWatchSession = (link, sessionId) =>
+  watchRequest('/api/slack/watch/attach', { method: 'POST', body: { link, sessionId } });
+
+export const detachSlackWatchSession = (link, sessionId) =>
+  watchRequest('/api/slack/watch/detach', { method: 'POST', body: { link, sessionId } });
+
+export const saveSlackWatchSettings = ({ intervalSeconds, noticeTemplate }) =>
+  watchRequest('/api/slack/watch/settings', {
+    method: 'PUT',
+    body: { intervalSeconds, noticeTemplate },
+  });
+
+export const pauseSlackWatch = () => watchRequest('/api/slack/watch/pause', { method: 'POST' });
+
+export const resumeSlackWatch = () => watchRequest('/api/slack/watch/resume', { method: 'POST' });
+
 export function subscribeServices(onSnapshot, onConnection = () => {}) {
   const source = new EventSource('/api/events');
   source.addEventListener('setup-required', () => {

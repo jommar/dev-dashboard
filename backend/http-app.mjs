@@ -14,6 +14,12 @@ import { getOriginDiff } from './diff.mjs';
 import { fetchRelease } from './releases.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
 import { slackIntegration } from './slack.mjs';
+import { parseSlackLink } from './slack-link.mjs';
+import { createSlackWatchStore, isSessionId } from './slack-watch-store.mjs';
+import { createClaudeSessions } from './claude-sessions.mjs';
+import { createSlackWatcher } from './slack-watcher.mjs';
+
+const MAX_LINKS_PER_REQUEST = 50;
 
 function json(res, status, value) {
   res.writeHead(status, {
@@ -41,8 +47,28 @@ async function readJson(req) {
   }
 }
 
+function httpError(code, message, status) {
+  return Object.assign(new Error(message), { code, status });
+}
+
+function parseLinkInput(input) {
+  const parsed = parseSlackLink(input);
+  if (parsed.reason) throw httpError('INVALID_LINK', 'Invalid Slack link.', 400);
+  return parsed;
+}
+
+function requireSessionId(sessionId) {
+  if (!isSessionId(sessionId)) throw httpError('INVALID_SESSION', 'Invalid session id.', 400);
+}
+
 export function createHttpHandler({ settings, manager, integrations = {} }) {
   const slack = integrations.slack || slackIntegration;
+  const slackWatchStore = integrations.slackWatchStore || createSlackWatchStore();
+  const claudeSessions =
+    integrations.claudeSessions || createClaudeSessions({ store: slackWatchStore });
+  const slackWatcher =
+    integrations.slackWatcher ||
+    createSlackWatcher({ slack, store: slackWatchStore, settings, sessions: claudeSessions });
   const api = {
     fetchOpenPRs,
     fetchMyTickets,
@@ -73,6 +99,60 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       ? (local) => manager.reconcileSettings(local)
       : (local) => manager.applySettings(local),
   });
+  const requireWatchEnabled = () => {
+    if (slackWatcher.isDisabled())
+      throw httpError('WATCH_DISABLED', 'Slack watching needs the Claude home directory.', 409);
+  };
+  const slackWatchRoutes = {
+    'GET /api/slack/watch': () => slackWatcher.list(),
+    'GET /api/slack/watch/sessions': () => claudeSessions.listSessions(),
+    'POST /api/slack/watch/links': async (req) => {
+      const { links } = await readJson(req);
+      requireWatchEnabled();
+      if (!Array.isArray(links) || links.length > MAX_LINKS_PER_REQUEST)
+        throw httpError('INVALID_LINK', 'Send at most 50 links.', 400);
+      const results = [];
+      for (const input of links) {
+        const parsed = parseSlackLink(input);
+        results.push(
+          parsed.reason
+            ? { input, ok: false, reason: parsed.reason }
+            : { input, ok: true, key: parsed.key, ...(await slackWatchStore.addLink(parsed)) },
+        );
+      }
+      return { results };
+    },
+    'POST /api/slack/watch/remove': async (req) => {
+      const { link } = await readJson(req);
+      requireWatchEnabled();
+      const { key } = parseLinkInput(link);
+      return { ok: true, ...(await slackWatchStore.removeLink(key)) };
+    },
+    'POST /api/slack/watch/attach': async (req) => {
+      const { link, sessionId } = await readJson(req);
+      requireWatchEnabled();
+      const parsed = parseLinkInput(link);
+      requireSessionId(sessionId);
+      await slackWatchStore.addLink(parsed);
+      const { inbox } = await slackWatchStore.attach(parsed.key, sessionId);
+      return { ok: true, key: parsed.key, inbox };
+    },
+    'POST /api/slack/watch/detach': async (req) => {
+      const { link, sessionId } = await readJson(req);
+      const { key } = parseLinkInput(link);
+      requireSessionId(sessionId);
+      await slackWatchStore.detach(key, sessionId);
+      return { ok: true };
+    },
+    'PUT /api/slack/watch/settings': async (req) => {
+      const { intervalSeconds, noticeTemplate } = await readJson(req);
+      const stored = await settings.saveSlackWatch({ intervalSeconds, noticeTemplate });
+      slackWatcher.refreshSchedule();
+      return { ok: true, settings: stored };
+    },
+    'POST /api/slack/watch/pause': async () => ({ ok: true, state: await slackWatcher.pause() }),
+    'POST /api/slack/watch/resume': async () => ({ ok: true, state: await slackWatcher.resume() }),
+  };
   const guard = () => {
     if (!settings.getSetupStatus().ready)
       throw Object.assign(new Error('Complete Settings setup.'), {
@@ -185,6 +265,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       }
       if (req.method === 'POST' && pathname === '/api/slack/disconnect') {
         json(res, 200, slack.disconnect());
+        return;
+      }
+      // The watch routes need Slack and the host only, never GitHub or Jira setup.
+      const slackWatchRoute = slackWatchRoutes[`${req.method} ${pathname}`];
+      if (slackWatchRoute) {
+        json(res, 200, await slackWatchRoute(req));
         return;
       }
       if (pathname.startsWith('/api/')) {
@@ -346,6 +432,9 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'UNSAFE_CREDENTIAL',
         'BODY_TOO_LARGE',
         'INVALID_JSON',
+        'INVALID_LINK',
+        'INVALID_SESSION',
+        'WATCH_DISABLED',
       ];
       const code = allowed.includes(error.code) ? error.code : 'OPERATION_FAILED';
       const conflict = ['SETUP_REQUIRED', 'REVISION_CONFLICT', 'SERVICE_IN_USE'].includes(code);
@@ -367,7 +456,9 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       );
     }
   };
+  handler.slackWatcher = slackWatcher;
   handler.close = () => {
+    slackWatcher.stop();
     unsubscribe?.();
     for (const res of clients) res.end();
     clients.clear();

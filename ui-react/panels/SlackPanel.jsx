@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card, LoadingState } from '../components/Primitives.jsx';
 import { SlackThreadDialog } from '../components/SlackThreadDialog.jsx';
+import { SlackWatchCard } from '../components/SlackWatchCard.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { timeAgo } from '../../ui/dom.js';
 import { SLACK_POLL_MS } from '../../ui/polling.js';
@@ -275,6 +276,7 @@ export function SlackPanel({ active }) {
           </div>
         </Card>
       )}
+      {connected && <SlackWatchCard active={active} />}
       <SlackThreadDialog thread={openThread} onClose={() => setOpenThread(null)} />
     </section>
   );

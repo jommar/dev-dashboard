@@ -392,6 +392,7 @@ export function dashboardData() {
     ),
     diff: { diff: '--- a/example.js\n+++ b/example.js\n@@ -1 +1 @@\n-old\n+new\n' },
     releases: releasesData(),
+    slack: slackData(),
   };
 }
 
@@ -426,6 +427,231 @@ function releasesResponse(url, { versions, tickets, defaultVersionId }) {
   };
 }
 
+export const WATCH_DEFAULT_TEMPLATE = "There's a new message on {link}";
+
+const WATCH_INTERVAL_BOUNDS = { min: 30, max: 3600 };
+const WATCH_TEMPLATE_MAX_LENGTH = 200;
+const WATCH_PERMALINK =
+  /^https:\/\/[a-z0-9-]+\.slack\.com\/archives\/(C[A-Z0-9]+)\/p(\d{10})(\d{6})$/;
+const WATCH_ARCHIVE_MESSAGE_PATH = /^\/archives\/[CDG][A-Z0-9]{8,}\/[^/]+$/;
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function watchPermalink(channelId, threadTs) {
+  return `https://example.slack.com/archives/${channelId}/p${threadTs.replace('.', '')}`;
+}
+
+export function watchSession(sessionId, delivery = null) {
+  return { sessionId, delivery };
+}
+
+export function watchLink(channelId, threadTs, overrides = {}) {
+  return {
+    key: `${channelId}:${threadTs}`,
+    link: watchPermalink(channelId, threadTs),
+    lastCheckedAt: null,
+    lastStatus: null,
+    sessions: [],
+    ...overrides,
+  };
+}
+
+export function slackWatchData(overrides = {}) {
+  return {
+    disabledReason: null,
+    settings: {
+      intervalSeconds: 180,
+      noticeTemplate: WATCH_DEFAULT_TEMPLATE,
+      paused: false,
+    },
+    links: [],
+    pickerSource: 'claude',
+    pickerSessions: [],
+    calls: [],
+    ...overrides,
+  };
+}
+
+function slackData() {
+  return {
+    status: { connected: true, connecting: false, user: 'developer', team: 'Example Workspace' },
+    pending: {
+      available: true,
+      channel: { id: 'C0EXAMPLE1', name: 'ezat_claudio', mentions: 0, unread: false },
+      mentionsTotal: 0,
+      updatedAt: '2026-10-31T09:00:00.000Z',
+    },
+    threads: {
+      available: true,
+      enriched: true,
+      updatedAt: '2026-10-31T09:00:00.000Z',
+      started: [],
+      mentions: [],
+    },
+    watch: slackWatchData(),
+  };
+}
+
+function watchState({ disabledReason, settings }) {
+  if (disabledReason) return 'disabled';
+  return settings.paused ? 'paused' : 'running';
+}
+
+const isSlackHost = ({ hostname, port }) =>
+  port === '' && (hostname === 'slack.com' || hostname.endsWith('.slack.com'));
+
+// The reason codes and their order are the server's. Only the top-level message permalink is
+// accepted here, so the other forms the server accepts read as `not_a_thread_link`.
+function watchLinkRejection(link) {
+  let url;
+  try {
+    url = new URL(link);
+  } catch {
+    return 'not_a_link';
+  }
+  if (/\s/.test(link)) return 'extra_text';
+  if (url.protocol !== 'https:') return 'not_https';
+  if (url.username || url.password) return 'credentials_not_allowed';
+  if (!isSlackHost(url)) return 'not_slack_host';
+  return WATCH_ARCHIVE_MESSAGE_PATH.test(url.pathname) ? 'invalid_timestamp' : 'not_a_thread_link';
+}
+
+function parseWatchLink(text) {
+  const link = text.trim();
+  const match = WATCH_PERMALINK.exec(link);
+  if (match) return { key: `${match[1]}:${match[2]}.${match[3]}`, link };
+  return { reason: watchLinkRejection(link) };
+}
+
+const hasControlCharacter = (text) =>
+  [...text].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+
+function watchSettingsErrors({ intervalSeconds, noticeTemplate }) {
+  const errors = [];
+  const { min, max } = WATCH_INTERVAL_BOUNDS;
+  if (!Number.isInteger(intervalSeconds) || intervalSeconds < min || intervalSeconds > max)
+    errors.push({
+      field: 'slackWatch.intervalSeconds',
+      code: 'INVALID_FIELD',
+      message: `Interval must be whole seconds from ${min} to ${max}.`,
+    });
+  if (
+    typeof noticeTemplate !== 'string' ||
+    noticeTemplate.length > WATCH_TEMPLATE_MAX_LENGTH ||
+    hasControlCharacter(noticeTemplate)
+  )
+    errors.push({
+      field: 'slackWatch.noticeTemplate',
+      code: 'INVALID_TEMPLATE',
+      message: `Notice must be one line of at most ${WATCH_TEMPLATE_MAX_LENGTH} characters.`,
+    });
+  return errors;
+}
+
+// The server answers a failure with its code, the code with underscores as spaces, and any field errors.
+const watchFailure = (status, code, errors = []) => ({
+  status,
+  json: { code, error: code.replaceAll('_', ' '), errors },
+});
+
+// Mirrors the server's contract for the Slack routes. Mutations change the fixture's own watch
+// state and are recorded in `watch.calls`, so a spec can assert exactly what the card sent.
+function slackResponse(url, method, { slack }, body) {
+  const watch = slack.watch;
+  const { pathname } = url;
+  if (method === 'GET') {
+    if (pathname === '/api/slack/status') return { json: slack.status };
+    if (pathname === '/api/slack/threads') return { json: slack.threads };
+    if (pathname === '/api/slack/pending') return { json: slack.pending };
+    if (pathname === '/api/slack/watch')
+      return {
+        json: {
+          state: watchState(watch),
+          reason: watch.disabledReason,
+          settings: structuredClone(watch.settings),
+          links: structuredClone(watch.links),
+        },
+      };
+    if (pathname === '/api/slack/watch/sessions') {
+      const attached = new Set(
+        watch.links.flatMap((entry) => entry.sessions.map((s) => s.sessionId)),
+      );
+      return {
+        json: {
+          source: watch.pickerSource,
+          sessions: watch.pickerSessions.map((session) => ({
+            ...session,
+            attached: attached.has(session.sessionId),
+          })),
+        },
+      };
+    }
+    return null;
+  }
+  if (!pathname.startsWith('/api/slack/watch/')) return null;
+  watch.calls.push({ method, path: pathname, body: structuredClone(body) });
+  const action = pathname.slice('/api/slack/watch/'.length);
+  const disabled = watchFailure(409, 'WATCH_DISABLED');
+  if (method === 'PUT' && action === 'settings') {
+    const errors = watchSettingsErrors(body ?? {});
+    if (errors.length) return watchFailure(422, 'INVALID_SETTINGS', errors);
+    watch.settings.intervalSeconds = body.intervalSeconds;
+    watch.settings.noticeTemplate = body.noticeTemplate;
+    return { json: { ok: true, settings: structuredClone(watch.settings) } };
+  }
+  if (method !== 'POST') return null;
+  if (action === 'pause' || action === 'resume') {
+    watch.settings.paused = action === 'pause';
+    return { json: { state: watchState(watch) } };
+  }
+  if (action === 'links') {
+    if (watch.disabledReason) return disabled;
+    const results = body.links.map((input) => {
+      const parsed = parseWatchLink(input);
+      if (parsed.reason) return { input, ok: false, reason: parsed.reason };
+      const added = !watch.links.some((entry) => entry.key === parsed.key);
+      if (added) watch.links.push(watchLinkFromParsed(parsed));
+      return { input, ok: true, key: parsed.key, added };
+    });
+    return { json: { results } };
+  }
+  if (action === 'remove') {
+    if (watch.disabledReason) return disabled;
+    watch.links = watch.links.filter((entry) => entry.link !== body.link);
+    return { json: { ok: true } };
+  }
+  if (action === 'attach' || action === 'detach') {
+    if (action === 'attach' && watch.disabledReason) return disabled;
+    const parsed = parseWatchLink(body.link);
+    if (parsed.reason) return watchFailure(400, 'INVALID_LINK');
+    if (!SESSION_ID.test(body.sessionId)) return watchFailure(400, 'INVALID_SESSION');
+    let entry = watch.links.find(({ link }) => link === body.link);
+    if (action === 'attach') {
+      if (!entry) watch.links.push((entry = watchLinkFromParsed(parsed)));
+      if (!entry.sessions.some(({ sessionId }) => sessionId === body.sessionId))
+        entry.sessions.push(watchSession(body.sessionId));
+      return {
+        json: {
+          ok: true,
+          key: entry.key,
+          inbox: `/home/example/.config/dev-dashboard/slack-watch/inbox/${body.sessionId}.log`,
+        },
+      };
+    }
+    if (entry)
+      entry.sessions = entry.sessions.filter(({ sessionId }) => sessionId !== body.sessionId);
+    return { json: { ok: true } };
+  }
+  return null;
+}
+
+function watchLinkFromParsed({ key, link }) {
+  const [channelId, threadTs] = key.split(':');
+  return { ...watchLink(channelId, threadTs), link };
+}
+
 export function apiResponse(url, method, data, body) {
   if (
     data.statefulSettings &&
@@ -452,6 +678,8 @@ export function apiResponse(url, method, data, body) {
     delete data.nextValidationSetup;
     return { json: structuredClone(data.settings) };
   }
+  if (url.pathname.startsWith('/api/slack/') && data.slack)
+    return slackResponse(url, method, data, body);
   if (method === 'GET') {
     if (url.pathname === '/api/config') return { json: data.config };
     if (url.pathname === '/api/settings') return { json: data.settings };

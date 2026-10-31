@@ -124,6 +124,8 @@ repo inside the container, which takes several minutes. Later starts reuse it.
   then the container refuses to start and names the missing version.
 - PR diffs run `git` in the sibling repos and authenticate to GitHub with
   `GH_TOKEN`. SSH remotes do not work inside the container.
+- The Slack thread watcher is host only. The image has no `.claude` directory, so
+  the watcher reports `disabled` and starts no timer (see [Watch](#watch)).
 
 ## Settings and setup
 
@@ -131,12 +133,14 @@ repo inside the container, which takes several minutes. Later starts reuse it.
 
 The dashboard persists configuration outside the project:
 
-| Path                                    | Contents                                                                                                           |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `~/.config/dev-dashboard/settings.json` | Versioned non-secret settings (`schemaVersion: 1`), revision, migration origin and integration acceptance metadata |
-| `~/.config/github/token`                | GitHub token                                                                                                       |
-| `~/.config/jira/token`                  | Jira API token                                                                                                     |
-| `~/.config/slack/session.json`          | Slack web-session credentials (`xoxc-` token + `d` cookie), only after you connect Slack                           |
+| Path                                                         | Contents                                                                                                                                     |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.config/dev-dashboard/settings.json`                      | Versioned non-secret settings (`schemaVersion: 1`), revision, migration origin, integration acceptance metadata and the `slackWatch` section |
+| `~/.config/dev-dashboard/slack-watch/map.json`               | Watched Slack links and the session ids attached to each; written by the Slack watcher only (see [Watch](#watch))                            |
+| `~/.config/dev-dashboard/slack-watch/inbox/<session-id>.log` | One notice line per wake for an attached session; plain text, created and removed by the watcher                                             |
+| `~/.config/github/token`                                     | GitHub token                                                                                                                                 |
+| `~/.config/jira/token`                                       | Jira API token                                                                                                                               |
+| `~/.config/slack/session.json`                               | Slack web-session credentials (`xoxc-` token + `d` cookie), only after you connect Slack                                                     |
 
 Token files use mode `600`; existing regular token files are normalized to that
 mode when read. Symlinks and nonregular credential files are rejected. Tokens
@@ -264,6 +268,38 @@ failures, and `503 VALIDATION_UNAVAILABLE` for unavailable validation
 oversized bodies `413`. Responses use sanitized errors. A setup revocation
 closes existing SSE streams with a `setup-required` event; the browser returns
 to Settings on that event or an operational `SETUP_REQUIRED` response.
+
+### Slack watch settings
+
+The Slack watcher has three settings, kept in a `slackWatch` section of
+`settings.json`. They are edited on the Slack tab's **Watch threads** card (and
+through the `/api/slack/watch` routes), not in the Settings panel:
+
+| Field             | Meaning                         | Valid values                                                                                                                                                   |
+| ----------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `intervalSeconds` | Polling period                  | A whole number from 30 to 3600; default 180                                                                                                                    |
+| `noticeTemplate`  | Text of the line a session gets | One line of at most 200 characters with no control characters; default `There's a new message on {link}`; `{link}` is the only placeholder and may be left out |
+| `paused`          | The global pause                | `true` or `false`; default `false`; changed only by the pause and resume routes                                                                                |
+
+A record without the section reads as these defaults, and so does a stored value that
+fails these rules (for example in a hand-edited file). An invalid value is refused with
+`422 INVALID_SETTINGS` and `slackWatch.<field>` errors, and nothing is written.
+
+The section is saved by its own narrow path, outside the setup gate. It validates only
+the three fields (a partial save keeps the stored values it does not mention) and
+writes `settings.json` atomically through the same staging helper as a normal save.
+It leaves the `revision`, the validation state, credentials, services and readiness
+alone, publishes no setup change and never touches running services. Because the
+revision does not move, this path takes no `expectedRevision`. It instead compares
+the revision in the file on disk with the one the server loaded, and answers
+`409 REVISION_CONFLICT` when they differ or the file cannot be read. The server reads
+the file once at startup, so after the file is edited outside the dashboard the
+conflict stays until the server restarts. It answers `503 PERSISTENCE_FAILED` when
+no settings record is loaded, such as after an unreadable or malformed file.
+
+An ordinary Settings save, validation or connection check carries the section over
+unchanged. A build from before this feature ignores the section and drops it on its
+next Settings save.
 
 ### Rollback
 
@@ -870,21 +906,202 @@ underlying endpoints — including the `thread_ts === ts` root marker and the
 `search.messages` paging quirks — are in
 [`toolkit-mcp/docs/slack-web-session.md`](../../toolkit-mcp/docs/slack-web-session.md).
 
+### Watch
+
+The Slack tab can also watch Slack threads and wake the Claude Code sessions that
+are working on them. You paste thread links on the **Watch threads** card, a session
+attaches its own id to a link over HTTP, and a watcher inside the dashboard server
+reads each watched thread on an interval. When the newest message in a thread is
+somebody else's and newer than the last one already announced, the watcher appends
+one plain-text line to an inbox file for every session attached to that link. A
+session that follows its inbox with the Monitor tool wakes on that line and reads the
+live thread; a session that has finished is also resumed. The watcher only reads
+Slack: it never posts, reacts or edits.
+
+**Links.** A pasted Slack link is the only input. The watcher parses the channel and
+the thread out of it, so any channel works and there is no channel setting. It
+accepts a message permalink (`…/archives/<channel>/p<digits>`), a reply permalink (the
+same with `?thread_ts=…`, which names the thread's parent) and the
+`app.slack.com/client/<team>/<channel>/thread/<channel>-<ts>` form the dashboard
+hands out; every form of one thread is the same watched link. It rejects, with a
+reason code, a channel-only link, another host, a non-https link, embedded
+credentials, a bad timestamp and any text around the link (`not_a_link`,
+`extra_text`, `not_https`, `credentials_not_allowed`, `not_slack_host`,
+`not_a_thread_link`, `invalid_timestamp`). The stored link is rebuilt from the
+validated parts and never echoed from what was pasted.
+
+**Wake rule.** A link wakes its sessions when the thread's newest message was written
+by someone other than you and is newer than the link's `lastNotifiedTs` (Slack
+timestamps are compared as seconds and microseconds, not as floats). Attaching never
+wakes: attach makes no Slack call, and the first read after an attach records the
+newest message at or before the attach time as already seen, so only messages
+posted after attaching count. Your own messages (including a reply a session posts as
+you), reactions, edits and deleted messages never wake, and neither does a bot
+message, which carries no user.
+
+**Delivery.** Each wake renders the notice and delivers it to every attached session:
+one line appended to that session's inbox,
+`~/.config/dev-dashboard/slack-watch/inbox/<session-id>.log`, which the session
+follows with the Monitor tool (`tail -n 0 -F` on that path). A session has one inbox
+for all its links. For a session the CLI lists as finished (its entry in
+`claude agents --json --all` has no `pid`) the watcher also runs
+`claude --bg --resume <full session id> -- <notice>` from that session's own
+working directory, with no other flag and at most once per session per tick: that is
+the only form that continues the session under its own id. It never resumes a live
+session (that would fork a copy), a session in an unknown state, or an id that is
+not a full session id. A resumed session starts without a Monitor, so it has to arm
+one on its inbox again to hear the next line, and because the resume carries only
+one notice it should read its whole inbox once first.
+
+Every session's last delivery for a link has a status: `delivered`,
+`failed-transient` while retries remain, or `failed-permanent`, with a reason code
+and the time of the attempt. The reasons are `append_failed`, `spawn_failed`,
+`timed_out` and `listing_unavailable` (the session listing could not be read), all
+transient, and `untrusted_workspace` and `live_at_resume`, both permanent.
+`delivered` with reason `not_listed` means the session is absent from a good listing,
+as an interactive session attached by hand may be; it gets the inbox line only and
+counts as delivered.
+
+A transient failure is retried once per tick, repeating only the step that failed
+(the inbox line is never appended twice for one notice), up to 3 attempts, then it
+is recorded `failed-permanent`. A permanent failure is never retried for that
+notice. `lastNotifiedTs` moves forward only once every attached session is
+delivered or has failed permanently, so one session that can never be resumed does
+not make the others hear the notice again. The next new message tries every session
+afresh. Delivery is at least once: a restart or a message that lands mid-tick can
+repeat a line, but a session that has not failed permanently is never skipped
+silently. Delivery statuses are kept in memory and a restart clears them. At most 20
+inbox lines are written per tick; the rest wait for the next tick. Every 10 minutes
+the watcher detaches a session that was listed earlier since the server started but
+is absent from two listings in a row, and deletes its inbox; a session never seen in
+a listing is kept.
+
+**Pause and resume.** One switch pauses the whole watcher. It is saved in the
+settings, so a restart does not resume. While paused there are no Slack calls and no
+inbox lines, every `lastNotifiedTs` is kept, and links and sessions can still be
+added and attached. Resume reads the threads at once, so a thread that got a new
+message from someone else during the pause wakes its sessions once.
+
+**Interval and notice.** The interval is whole seconds, 180 by default, from 30 to
+3600; a saved change takes effect at once. The notice is one line of at most 200
+characters, `There's a new message on {link}` by default. `{link}` is the only
+placeholder and every occurrence is replaced by the stored link, so a notice holds
+only the template and the link, never Slack text. Line breaks and other control
+characters are rejected. A template without `{link}` is accepted and the card
+warns that a session will not know which thread changed. The settings are described
+under [Slack watch settings](#slack-watch-settings).
+
+**Failures.** A rate limit (HTTP 429 with `Retry-After`) holds back every read until
+the delay has passed. A network or 5xx failure, a missing Slack connection or a
+rejected session backs off all reads, doubling from 60 seconds to 15 minutes until
+a read succeeds. A thread that cannot be read (deleted, not a member, a missing
+scope) or is longer than 20 pages of 200 messages backs off on its own link with the
+same doubling, and the other links are still read every tick. Each link reports its
+last read status (`ok`, `rate_limited`, `session_rejected`, `not_connected`,
+`thread_unreadable`, `too_long` or `unavailable`).
+
+**State on disk.** Everything is under `~/.config/dev-dashboard/slack-watch/` (directory
+mode `700`, files `600`). `map.json` holds, per link, its key (channel id and thread
+timestamp), the stored link, when it was added, the baseline time, `lastNotifiedTs`
+and the attached session ids; the server is its only writer and each write goes
+through a temporary file, an fsync and a rename. `inbox/<session-id>.log` holds one
+notice per line and is removed when its session's last link is detached or removed,
+or the session is pruned. Only keys, ids, timestamps and reason codes are stored or
+logged: never Slack message text, user names, tokens or cookies. A session's name
+appears only in the picker's reply and is never stored. The pause flag, interval and
+notice are in `settings.json`. To roll back, stop the dashboard and delete the
+`slack-watch` directory; an older build ignores the `slackWatch` settings section and
+drops it on its next Settings save.
+
+**Host only.** The watcher needs the `.claude` directory under your home and the
+`claude` CLI on `PATH` for the session picker and the resume. Without the
+directory, as in the Docker image, its state is `disabled` with the reason
+`claude_home_unreadable`: no timer runs and adding, attaching and removing links is
+refused with `409 WATCH_DISABLED` (detach still works, so inboxes can be cleaned
+up). Disabled wins over paused. Without the CLI the picker lists only the sessions
+already attached, and you can paste a full session id instead. The server starts the
+watcher when it starts listening, and nothing is read until a session is attached to
+a link.
+
+**The card.** Once Slack is connected the Slack tab shows a **Watch threads** card:
+
+- a textarea for links, one per line, with **Add**; refused lines stay in the box
+  and their reasons are listed under it
+- a table with one row per link: the link, **last checked** (`never` until it has
+  been read), the last read status, the attached sessions, each with its last
+  delivery status, how long ago and its reason code and a **Detach** button, and a
+  **Remove** button
+- an attach form: pick a link, then a session from the picker or paste a full
+  session id, then **Attach**
+- the watcher state (**Running**, **Paused**, or **Disabled** with its reason code),
+  **Pause** while running and **Resume** while paused, and the interval and notice
+  fields with **Save**
+
+While the state is disabled, Add, Attach and Remove are disabled. The card polls only
+the server's in-memory list, every 30 seconds, only while the Slack tab is open and
+the page is visible, so it makes no Slack calls itself. Reason codes are shown as
+the server sends them.
+
+**What is not verified.** The watcher is tested with fakes for Slack and the
+`claude` CLI and has not been run against a live Slack workspace. The wake path was
+tried only with background sessions: a Monitor on the inbox woke an idle one and
+reached a working one, and a finished one ignored the line. Not yet checked: waking
+an interactive session, whether an interactive session appears in the CLI's listing
+(the watcher treats an unlisted session as inbox-only), whether a Monitor's
+expiry notice wakes an idle session (a Monitor lives at most 30 minutes per arm, so
+the session side has to arm it again on every expiry and every wake), and what Slack
+answers when a reply timestamp is used as a thread timestamp (a message permalink
+without `thread_ts` is keyed by its own timestamp). The session-side skill that
+attaches, follows the inbox and re-arms the Monitor is not part of this repository
+and is not built yet.
+
 ### HTTP
 
-| Route                        | Purpose                                                                                                                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /api/slack/status`      | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                  |
-| `GET /api/slack/threads`     | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected |
-| `GET /api/slack/pending`     | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                      |
-| `GET /api/slack/thread?ts=`  | one conversation: `{ available, thread: { ts, url, channel, replyCount, truncated, updatedAt, names, messages[] } }`; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses |
-| `POST /api/slack/connect`    | starts the sign-in window, `{ ok, connecting }`                                                                                                                          |
-| `POST /api/slack/disconnect` | deletes the stored session                                                                                                                                               |
+| Route                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                                                                                                                                                                                                                                                                                           |
+| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected                                                                                                                                                                                                                                                                          |
+| `GET /api/slack/pending`                 | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                                                                                                                                                                                                                                                                                               |
+| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, channel, replyCount, truncated, updatedAt, names, messages[] } }`; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses                                                                                                                                                                               |
+| `POST /api/slack/connect`                | starts the sign-in window, `{ ok, connecting }`                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `POST /api/slack/disconnect`             | deletes the stored session                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `GET /api/slack/watch`                   | the [watcher](#watch) state, answered from memory with no Slack call: `{ state, reason?, settings: { intervalSeconds, noticeTemplate, paused }, links[] }`; `state` is `running`, `paused` or `disabled`, `reason` is present only when disabled; each link is `{ key, link, lastCheckedAt, lastStatus, sessions[] }` and each session `{ sessionId, delivery }`, where `delivery` is `{ status, reason, at }` or `null` before the first attempt |
+| `GET /api/slack/watch/sessions`          | the session picker: `{ source, sessions[] }`; `source` is `claude` (from `claude agents --json --all`) or `map` (the CLI was unusable, so only the ids already attached); each session is `{ sessionId, state, name?, attached }` with `state` `live`, `finished` or `unknown` (from the CLI's `pid`); `name` is a transient label, only here                                                                                                     |
+| `POST /api/slack/watch/links`            | body `{ links: [...] }`, at most 50; answers `{ results[] }`, one per input in order: `{ input, ok: true, key, added }` or `{ input, ok: false, reason }`; a link already watched is accepted with `added: false`                                                                                                                                                                                                                                 |
+| `POST /api/slack/watch/remove`           | body `{ link }`; removes the link and its attachments, answers `{ ok, removed }`                                                                                                                                                                                                                                                                                                                                                                  |
+| `POST /api/slack/watch/attach`           | body `{ link, sessionId }` with a full session id (UUID); adds the link if it is unknown, makes no Slack call (also while paused), is idempotent, answers `{ ok, key, inbox }` with the inbox path to follow                                                                                                                                                                                                                                      |
+| `POST /api/slack/watch/detach`           | body `{ link, sessionId }`; answers `{ ok }`, also when the pair was not attached, and also while disabled; the session's inbox goes with its last link                                                                                                                                                                                                                                                                                           |
+| `PUT /api/slack/watch/settings`          | body `{ intervalSeconds?, noticeTemplate? }`, either may be omitted; answers `{ ok, settings }` with the stored values; `paused` is not settable here                                                                                                                                                                                                                                                                                             |
+| `POST /api/slack/watch/pause`, `/resume` | no body; answers `{ ok, state }`; both are idempotent, and `resume` reads the threads before it answers                                                                                                                                                                                                                                                                                                                                           |
 
 `status` verifies the session with `auth.test` at most once a minute.
 `verified: false` means the token exists but Slack could not be reached — still
-not an error. These routes deliberately bypass the `SETUP_REQUIRED` gate: a
-missing GitHub or Jira configuration must not affect Slack, and vice versa.
+not an error. These routes, the `/api/slack/watch*` routes included, deliberately
+bypass the `SETUP_REQUIRED` gate: a missing GitHub or Jira configuration must not
+affect Slack, and vice versa. A watch route still answers when GitHub and Jira setup
+is incomplete, while `/api/services` keeps answering `SETUP_REQUIRED`.
+
+The watch routes run behind the dashboard's usual Host and Origin checks: a
+non-loopback `Host`, a foreign `Origin` or a cross-site or same-site `Sec-Fetch-Site` gets `403`,
+and a request that sends a `Content-Type` other than `application/json` gets `415`.
+A local POST with no `Origin` or `Content-Type` header is accepted, so `curl` works;
+a route that reads a body (`links`, `remove`, `attach`, `detach`, `settings`)
+needs a JSON object, `pause` and `resume` need none, and a body over 64 KiB is
+refused. Failures answer `{ code, error, errors[] }` with these codes:
+
+| Status | Code                 | When                                                                                     |
+| ------ | -------------------- | ---------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_LINK`       | the link is not one the parser accepts, or `links` is not an array or holds more than 50 |
+| `400`  | `INVALID_SESSION`    | `sessionId` is not a full session id                                                     |
+| `400`  | `INVALID_JSON`       | the body is not a JSON object                                                            |
+| `413`  | `BODY_TOO_LARGE`     | the body is over 64 KiB                                                                  |
+| `409`  | `WATCH_DISABLED`     | `links`, `remove` or `attach` while the watcher is disabled                              |
+| `409`  | `REVISION_CONFLICT`  | `settings`, `pause` or `resume` when the settings file no longer matches what was loaded |
+| `422`  | `INVALID_SETTINGS`   | `settings` holds a value that fails validation; `errors[]` carries `slackWatch.<field>`  |
+| `503`  | `PERSISTENCE_FAILED` | `settings`, `pause` or `resume` while no settings record is loaded                       |
+
+Anything else, including the `403` and `415` refusals above, answers
+`OPERATION_FAILED` and never echoes an error message.
 
 ## Services
 
@@ -946,7 +1163,7 @@ ui-react/
   lib/api.js            one browser API boundary
   hooks/                shared service event, polling and API hooks
   components/           shell, reusable MUI primitives, filters and card wrappers
-  panels/               Home, Services, PRs, My Tickets, Releases and Settings
+  panels/               Home, Services, PRs, My Tickets, Releases, Slack and Settings
   styles.css            theme variables plus the established bespoke panel CSS
 ui/
   dom.js                esc / slug / clamp / timeAgo

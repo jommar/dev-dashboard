@@ -24,6 +24,7 @@ import {
   applyLastReply,
   buildThread,
   buildThreadMessages,
+  compareSlackTs,
   mentionedUserIds,
   person,
   sortByActivity,
@@ -56,6 +57,23 @@ const THREAD_PAGES = 3;
 const THREAD_LIMIT = 200;
 const THREAD_TS = /^\d{10,}\.\d{4,}$/;
 const THREAD_CACHE_LIMIT = 20;
+
+// The session watcher reads a thread in any channel to its newest message, so
+// it pages further than the dialog does; past this many pages it gives up
+// instead of guessing at the newest message.
+const WATCH_PAGES = 20;
+const REJECTED_SESSION_ERRORS = new Set(['invalid_auth', 'token_revoked']);
+const UNREADABLE_THREAD_ERRORS = new Set([
+  'thread_not_found',
+  'channel_not_found',
+  'not_in_channel',
+  'missing_scope',
+]);
+
+function retryAfterOf(res) {
+  const seconds = Number(res.headers.get('retry-after'));
+  return seconds > 0 ? { retryAfterSeconds: seconds } : {};
+}
 
 export function slackPaths(home = os.homedir()) {
   const directory = path.join(home, '.config/slack');
@@ -100,10 +118,10 @@ export function createSlackIntegration({
     return parseSession(file.token);
   }
 
-  async function call(method, params, credentials) {
+  function send(method, params, credentials) {
     const url = new URL(`${API_URL}/${method}`);
     for (const [key, value] of Object.entries(params || {})) url.searchParams.set(key, value);
-    const res = await fetchImpl(url.toString(), {
+    return fetchImpl(url.toString(), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${credentials.token}`,
@@ -112,6 +130,10 @@ export function createSlackIntegration({
       redirect: 'error',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+  }
+
+  async function call(method, params, credentials) {
+    const res = await send(method, params, credentials);
     return res.json();
   }
 
@@ -516,6 +538,68 @@ export function createSlackIntegration({
     }
   }
 
+  // --- one thread, any channel, to its newest message ---------------------
+  // The session watcher's only Slack read. Unlike the calls above it must tell
+  // a rate limit from a rejected session from a thread it cannot read, so each
+  // failure is a reason the watcher can act on, and none of them throws. Only
+  // the newest author and ts leave this function, never message text.
+
+  async function readSlack(method, params, credentials) {
+    let res;
+    try {
+      res = await send(method, params, credentials);
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
+    const payload = await res.json().catch(() => null);
+    if (res.status === 429 || payload?.error === 'ratelimited')
+      return { ok: false, reason: 'rate_limited', ...retryAfterOf(res) };
+    if (REJECTED_SESSION_ERRORS.has(payload?.error))
+      return { ok: false, reason: 'session_rejected' };
+    if (UNREADABLE_THREAD_ERRORS.has(payload?.error))
+      return { ok: false, reason: 'thread_unreadable' };
+    if (!res.ok || !payload?.ok) return { ok: false, reason: 'unavailable' };
+    return { ok: true, payload };
+  }
+
+  async function lastInThread({ channelId, threadTs, asOfTs } = {}) {
+    try {
+      const credentials = session();
+      if (!credentials) return { ok: false, reason: 'not_connected' };
+      const identity = await readSlack('auth.test', {}, credentials);
+      if (!identity.ok) return identity;
+      const me = identity.payload.user_id;
+      if (!me) return { ok: false, reason: 'unavailable' };
+
+      let last = null;
+      let asOf = null;
+      let cursor = '';
+      for (let page = 0; page < WATCH_PAGES; page++) {
+        const answer = await readSlack(
+          'conversations.replies',
+          { channel: channelId, ts: threadTs, limit: THREAD_LIMIT, ...(cursor ? { cursor } : {}) },
+          credentials,
+        );
+        if (!answer.ok) return answer;
+        for (const message of answer.payload.messages || []) {
+          if (!last || compareSlackTs(message.ts, last.ts) >= 0)
+            last = { ...(message.user ? { user: message.user } : {}), ts: message.ts };
+          const withinBound = !asOfTs || compareSlackTs(message.ts, asOfTs) <= 0;
+          if (withinBound && (!asOf || compareSlackTs(message.ts, asOf) > 0)) asOf = message.ts;
+        }
+        cursor = answer.payload.response_metadata?.next_cursor || '';
+        if (!cursor) {
+          // A last page that still says "more" means Slack stopped handing out pages.
+          if (answer.payload.has_more) break;
+          return last ? { ok: true, me, last, asOf } : { ok: false, reason: 'unavailable' };
+        }
+      }
+      return { ok: false, reason: 'too_long' };
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
+  }
+
   // --- unread badge -------------------------------------------------------
   // The badge wants one number, not a thread list: `client.counts` reports the
   // channel's unread mention count and whether anything is unread at all. It is
@@ -621,7 +705,17 @@ export function createSlackIntegration({
     fs.renameSync(temporary, paths.session);
   }
 
-  return { paths, status, threads, thread, pending, connect, disconnect, writeSession };
+  return {
+    paths,
+    status,
+    threads,
+    thread,
+    lastInThread,
+    pending,
+    connect,
+    disconnect,
+    writeSession,
+  };
 }
 
 export const slackIntegration = createSlackIntegration();

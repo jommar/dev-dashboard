@@ -159,3 +159,91 @@ test('a conversation becomes messages with both a plain form and the raw mrkdwn'
   assert.equal(messages[1].mrkdwn, '');
   assert.deepEqual(buildThreadMessages(), []);
 });
+
+test('another user last message is not mine, the user and a bot message are', async () => {
+  const { isNotMine } = await import('../backend/slack-model.mjs');
+  assert.equal(isNotMine({ user: 'U1', ts: '100.0001' }, 'U9'), true);
+  assert.equal(isNotMine({ user: 'U9', ts: '100.0001' }, 'U9'), false, 'the user own message');
+  assert.equal(isNotMine({ ts: '100.0001' }, 'U9'), false, 'a bot message has no user');
+  assert.equal(
+    isNotMine({ ts: '100.0001', subtype: 'bot_message', bot_id: 'B1' }, 'U9'),
+    false,
+    'a bot id alone is not a person',
+  );
+});
+
+test('applyLastReply sets needsReply exactly as the not-mine predicate decides', async () => {
+  const { isNotMine } = await import('../backend/slack-model.mjs');
+  const cases = [
+    { last: { user: 'U2', ts: '300.0003' }, expected: true },
+    { last: { user: 'U9', ts: '400.0004' }, expected: false },
+    { last: { ts: '500.0005' }, expected: false },
+  ];
+  for (const { last, expected } of cases) {
+    const thread = buildThread({
+      root: { ts: '100.0001', user: 'U9', text: 'mine', reply_count: 2 },
+      channelId: 'C1',
+      teamId: 'T1',
+      me: 'U9',
+      users,
+    });
+    applyLastReply(thread, last, 'U9', users);
+    assert.equal(thread.needsReply, expected);
+    assert.equal(thread.needsReply, isNotMine(last, 'U9'), 'one rule serves both callers');
+  }
+});
+
+test('wake rule: another user message newer than the last notified one wakes', async () => {
+  const { shouldWake } = await import('../backend/slack-model.mjs');
+  assert.equal(
+    shouldWake({ user: 'U1', ts: '1793192474.000300' }, 'U9', '1793192474.000200'),
+    true,
+  );
+  assert.equal(
+    shouldWake({ user: 'U1', ts: '1793192600.000100' }, 'U9', '1793192474.000200'),
+    true,
+    'a later second wins whatever the microseconds',
+  );
+});
+
+test('wake rule: the user own message, a bot message, an equal or older ts never wake', async () => {
+  const { shouldWake } = await import('../backend/slack-model.mjs');
+  const notified = '1793192474.000200';
+  assert.equal(shouldWake({ user: 'U9', ts: '1793192474.000300' }, 'U9', notified), false, 'own');
+  assert.equal(shouldWake({ ts: '1793192474.000300' }, 'U9', notified), false, 'bot, no user');
+  assert.equal(shouldWake({ user: 'U1', ts: notified }, 'U9', notified), false, 'equal ts');
+  assert.equal(
+    shouldWake({ user: 'U1', ts: '1793192474.000100' }, 'U9', notified),
+    false,
+    'older ts: a deleted newest message exposing an earlier one',
+  );
+  assert.equal(
+    shouldWake({ user: 'U1', ts: '1793192400.999999' }, 'U9', notified),
+    false,
+    'an earlier second loses whatever the microseconds',
+  );
+});
+
+test('wake rule: no recorded lastNotifiedTs wakes for any message not mine', async () => {
+  const { shouldWake } = await import('../backend/slack-model.mjs');
+  for (const unset of [null, undefined]) {
+    assert.equal(shouldWake({ user: 'U1', ts: '1793192474.000300' }, 'U9', unset), true);
+    assert.equal(shouldWake({ user: 'U9', ts: '1793192474.000300' }, 'U9', unset), false, 'own');
+    assert.equal(shouldWake({ ts: '1793192474.000300' }, 'U9', unset), false, 'bot');
+  }
+});
+
+test('wake rule: timestamps compare as seconds and microseconds, not as text or floats', async () => {
+  const { shouldWake } = await import('../backend/slack-model.mjs');
+  const wakes = (ts, notified) => shouldWake({ user: 'U1', ts }, 'U9', notified);
+  assert.equal(wakes('1793192474.000201', '1793192474.000200'), true, 'one microsecond newer');
+  assert.equal(wakes('1793192474.000200', '1793192474.000201'), false, 'one microsecond older');
+  assert.equal(wakes('1793192474.100000', '1793192474.099999'), true, 'tenth beats 99999 micro');
+  assert.equal(wakes('1793192474.099999', '1793192474.100000'), false);
+  assert.equal(
+    wakes('1000000000.000000', '999999999.999999'),
+    true,
+    'ten digits of seconds beat nine, though "9" sorts after "1"',
+  );
+  assert.equal(wakes('999999999.999999', '1000000000.000000'), false, 'and not the reverse');
+});

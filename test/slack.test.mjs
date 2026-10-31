@@ -773,3 +773,329 @@ test('a thread with more than three pages is flagged as truncated', async (t) =>
   );
   assert.equal(result.thread.replyCount, 2);
 });
+
+// --- the session watcher's reader: any channel, one thread, to the end -----------------------
+
+const WATCH_CHANNEL = 'C0OTHER001';
+const WATCH_THREAD_TS = '1793200000.000100';
+const WATCH_TEXT_SENTINEL = 'sentinel-body-';
+const WATCH_NEWEST = { user: 'U4', ts: '1793200449.000549' };
+
+const jsonResponse = (body, init) => new Response(JSON.stringify(body), init);
+
+const authAccepted = () =>
+  jsonResponse({ ok: true, user: 'jommari', user_id: 'U9', team: 'TeamPathwise', team_id: 'T1' });
+
+// Answers each Slack method from `routes[method](params, callNumber)` and records
+// every call, so a test can say which methods were asked and with what.
+function recordingSlack(routes) {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const target = new URL(url);
+    const method = target.pathname.split('/').pop();
+    const params = Object.fromEntries(target.searchParams);
+    calls.push({ method, params });
+    const route = routes[method];
+    if (!route) return jsonResponse({ ok: false, error: 'unknown_method' });
+    return route(params, calls.filter((entry) => entry.method === method).length);
+  };
+  const named = (method) => calls.filter((entry) => entry.method === method);
+  return { fetchImpl, calls, named };
+}
+
+function watchMessage(index) {
+  return {
+    ts: `${1793200000 + index}.${String(100 + index).padStart(6, '0')}`,
+    thread_ts: WATCH_THREAD_TS,
+    user: index === 449 ? WATCH_NEWEST.user : ['U1', 'U2', 'U3'][index % 3],
+    text: `${WATCH_TEXT_SENTINEL}${index}`,
+  };
+}
+
+const watchThread = Array.from({ length: 450 }, (_, index) => watchMessage(index));
+
+const watchPages = {
+  first: { messages: watchThread.slice(0, 200), next: 'cursor-page-2' },
+  'cursor-page-2': { messages: watchThread.slice(200, 400), next: 'cursor-page-3' },
+  'cursor-page-3': { messages: watchThread.slice(400), next: '' },
+};
+
+function watchRepliesPage(params) {
+  const page = watchPages[params.cursor || 'first'];
+  if (params.channel !== WATCH_CHANNEL || params.ts !== WATCH_THREAD_TS || !page)
+    return jsonResponse({ ok: false, error: 'thread_not_found' });
+  return jsonResponse({
+    ok: true,
+    messages: page.messages,
+    has_more: Boolean(page.next),
+    response_metadata: { next_cursor: page.next },
+  });
+}
+
+// Every page is full and names a next one, however far the reader goes.
+function endlessRepliesPage(params, callNumber) {
+  const messages = Array.from({ length: 200 }, (_, index) => ({
+    ts: `${1793200000 + callNumber * 1000 + index}.${String(index + 1).padStart(6, '0')}`,
+    thread_ts: WATCH_THREAD_TS,
+    user: 'U1',
+    text: `${WATCH_TEXT_SENTINEL}endless-${callNumber}-${index}`,
+  }));
+  return jsonResponse({
+    ok: true,
+    messages,
+    has_more: true,
+    response_metadata: { next_cursor: `cursor-${callNumber + 1}` },
+  });
+}
+
+async function readWatched(integration, overrides = {}) {
+  let result;
+  await assert.doesNotReject(async () => {
+    result = await integration.lastInThread({
+      channelId: WATCH_CHANNEL,
+      threadTs: WATCH_THREAD_TS,
+      asOfTs: '1793300000.000000',
+      ...overrides,
+    });
+  }, 'a read never throws at the watcher');
+  return result;
+}
+
+test('watch reader pages a 450-message thread in another channel to the end', async (t) => {
+  const slack = recordingSlack({
+    'auth.test': authAccepted,
+    'conversations.replies': watchRepliesPage,
+  });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  const result = await readWatched(integration, { asOfTs: '1793300000.000000' });
+  assert.equal(result.ok, true);
+  assert.equal(result.me, 'U9', 'the signed-in user id comes from auth.test');
+  assert.deepEqual(result.last, WATCH_NEWEST, 'the newest author and ts, from the last page');
+  assert.equal(result.asOf, WATCH_NEWEST.ts, 'nothing is newer than the bound');
+
+  const reads = slack.named('conversations.replies');
+  assert.equal(reads.length, 3, 'three pages, no more');
+  for (const read of reads) {
+    assert.equal(read.params.channel, WATCH_CHANNEL, 'the given channel, not the hard-wired one');
+    assert.equal(read.params.ts, WATCH_THREAD_TS);
+  }
+  assert.ok(!reads[0].params.cursor, 'the first page starts without a cursor');
+  assert.equal(reads[1].params.cursor, 'cursor-page-2');
+  assert.equal(reads[2].params.cursor, 'cursor-page-3');
+});
+
+test('watch reader asks Slack only auth.test and conversations.replies', async (t) => {
+  const slack = recordingSlack({
+    'auth.test': authAccepted,
+    'conversations.replies': watchRepliesPage,
+  });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  assert.equal((await readWatched(integration)).ok, true);
+  const methods = [...new Set(slack.calls.map((entry) => entry.method))].sort();
+  assert.deepEqual(methods, ['auth.test', 'conversations.replies']);
+});
+
+test('watch reader returns no message text', async (t) => {
+  const slack = recordingSlack({
+    'auth.test': authAccepted,
+    'conversations.replies': watchRepliesPage,
+  });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  const result = await readWatched(integration);
+  assert.equal(result.ok, true);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(WATCH_TEXT_SENTINEL));
+});
+
+test('watch reader reports the newest ts at or before asOfTs', async (t) => {
+  const cases = [
+    { label: 'after everything', asOfTs: '1793300000.000000', asOf: '1793200449.000549' },
+    { label: 'exactly on a message', asOfTs: '1793200399.000499', asOf: '1793200399.000499' },
+    { label: 'between two messages', asOfTs: '1793200250.999999', asOf: '1793200250.000350' },
+    { label: 'a microsecond short of one', asOfTs: '1793200250.000349', asOf: '1793200249.000349' },
+    { label: 'before the root', asOfTs: '1793199999.999999', asOf: null },
+  ];
+  for (const { label, asOfTs, asOf } of cases) {
+    const slack = recordingSlack({
+      'auth.test': authAccepted,
+      'conversations.replies': watchRepliesPage,
+    });
+    const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+    writeSession(paths);
+
+    const result = await readWatched(integration, { asOfTs });
+    assert.equal(result.ok, true, label);
+    assert.equal(result.asOf, asOf, label);
+    assert.deepEqual(result.last, WATCH_NEWEST, `${label}: the newest message is unaffected`);
+  }
+});
+
+test('watch reader gives up on a thread past the page ceiling', async (t) => {
+  const slack = recordingSlack({
+    'auth.test': authAccepted,
+    'conversations.replies': endlessRepliesPage,
+  });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  const result = await readWatched(integration);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'too_long');
+  assert.equal('last' in result, false, 'never a guess at the newest message');
+  assert.ok(
+    slack.named('conversations.replies').length <= 20,
+    'at most twenty pages are ever requested',
+  );
+});
+
+// --- reader failures: every class is a result, never an exception ------------------------------
+
+const RETRY_AFTER_SECONDS = 30;
+const FAILURE_CHANNEL = 'C024BE91L';
+const FAILURE_THREAD_TS = '1793192214.548389';
+
+const rateLimited = (body) =>
+  new Response(body, { status: 429, headers: { 'Retry-After': String(RETRY_AFTER_SECONDS) } });
+const slackError = (error) => jsonResponse({ ok: false, error });
+const oneReply = () =>
+  jsonResponse({
+    ok: true,
+    messages: [{ ts: FAILURE_THREAD_TS, thread_ts: FAILURE_THREAD_TS, user: 'U1', text: 'x' }],
+    response_metadata: { next_cursor: '' },
+  });
+
+// `answer` is how the failing call responds; the other call succeeds.
+function failingAt(location, answer) {
+  return recordingSlack({
+    'auth.test': location === 'auth.test' ? answer : authAccepted,
+    'conversations.replies': location === 'conversations.replies' ? answer : oneReply,
+  });
+}
+
+async function readFailure(t, slack) {
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+  const result = await readWatched(integration, {
+    channelId: FAILURE_CHANNEL,
+    threadTs: FAILURE_THREAD_TS,
+    asOfTs: '1793192474.000200',
+  });
+  assert.equal(result.ok, false);
+  assert.equal('last' in result, false, 'a failed read never carries a newest message');
+  return result;
+}
+
+test('reader failure: HTTP 429 with Retry-After is rate_limited with the delay', async (t) => {
+  const bodies = ['', JSON.stringify({ ok: false, error: 'ratelimited' })];
+  for (const location of ['conversations.replies', 'auth.test']) {
+    for (const body of bodies) {
+      const result = await readFailure(
+        t,
+        failingAt(location, () => rateLimited(body)),
+      );
+      const label = `${location} with body ${JSON.stringify(body)}`;
+      assert.equal(result.reason, 'rate_limited', label);
+      assert.equal(result.retryAfterSeconds, RETRY_AFTER_SECONDS, label);
+    }
+  }
+});
+
+test('reader failure: a ratelimited answer in a 200 body is rate_limited', async (t) => {
+  for (const location of ['conversations.replies', 'auth.test']) {
+    const result = await readFailure(
+      t,
+      failingAt(location, () => slackError('ratelimited')),
+    );
+    assert.equal(result.reason, 'rate_limited', location);
+  }
+});
+
+test('reader failure: invalid_auth and token_revoked are session_rejected', async (t) => {
+  for (const location of ['auth.test', 'conversations.replies']) {
+    for (const error of ['invalid_auth', 'token_revoked']) {
+      const result = await readFailure(
+        t,
+        failingAt(location, () => slackError(error)),
+      );
+      assert.equal(result.reason, 'session_rejected', `${error} from ${location}`);
+    }
+  }
+});
+
+test('reader failure: no stored session is not_connected without any Slack call', async (t) => {
+  const { integration, calls } = setup(t);
+  const result = await readWatched(integration, {
+    channelId: FAILURE_CHANNEL,
+    threadTs: FAILURE_THREAD_TS,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'not_connected');
+  assert.equal('last' in result, false);
+  assert.equal(calls.length, 0, 'a disconnected reader never touches Slack');
+});
+
+test('reader failure: a network error is unavailable', async (t) => {
+  const unreachable = () => {
+    throw new Error('offline');
+  };
+  const everything = recordingSlack({
+    'auth.test': unreachable,
+    'conversations.replies': unreachable,
+  });
+  assert.equal((await readFailure(t, everything)).reason, 'unavailable', 'nothing answers');
+  const repliesOnly = failingAt('conversations.replies', unreachable);
+  assert.equal(
+    (await readFailure(t, repliesOnly)).reason,
+    'unavailable',
+    'auth.test answers and the thread read fails',
+  );
+});
+
+const PER_THREAD_ERRORS = [
+  'thread_not_found',
+  'channel_not_found',
+  'not_in_channel',
+  'missing_scope',
+];
+
+test('reader failure: an error of one thread is thread_unreadable, never unavailable', async (t) => {
+  for (const error of PER_THREAD_ERRORS) {
+    const result = await readFailure(
+      t,
+      failingAt('conversations.replies', () => slackError(error)),
+    );
+    assert.equal(result.reason, 'thread_unreadable', error);
+  }
+});
+
+test('reader failure: a forged but well-formed link is thread_unreadable', async (t) => {
+  const slack = recordingSlack({
+    'auth.test': authAccepted,
+    'conversations.replies': watchRepliesPage,
+  });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  const result = await readWatched(integration, { threadTs: '9999999999.999999' });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'thread_unreadable');
+  assert.equal('last' in result, false, 'a failed read never carries a newest message');
+});
+
+test('reader failure: an HTTP 5xx from either call is unavailable', async (t) => {
+  for (const location of ['auth.test', 'conversations.replies']) {
+    for (const status of [500, 503]) {
+      const result = await readFailure(
+        t,
+        failingAt(location, () => new Response('upstream failure', { status })),
+      );
+      assert.equal(result.reason, 'unavailable', `HTTP ${status} from ${location}`);
+    }
+  }
+});
