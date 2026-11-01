@@ -53,7 +53,7 @@ const LINK = {
 const finishedEntry = (sessionId = SESSION_A, extra = {}) =>
   listingEntry({ sessionId, cwd: FINISHED_CWD, ...extra });
 
-async function sessionsEnvironment(t) {
+async function sessionsEnvironment(t, options = {}) {
   const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
   const { createSlackWatchStore } = await import('../backend/slack-watch-store.mjs');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-sessions-'));
@@ -61,9 +61,29 @@ async function sessionsEnvironment(t) {
   const clock = createClock();
   const store = createSlackWatchStore({ home, fs, now: clock.now });
   const exec = createFakeExec();
-  const sessions = createClaudeSessions({ execFileImpl: exec.execFileImpl, store });
+  const sessions = createClaudeSessions({
+    execFileImpl: exec.execFileImpl,
+    store,
+    projectsDir: path.join(home, '.claude', 'projects'),
+    ...options,
+  });
   return { sessions, store, exec, home, clock };
 }
+
+function writeTranscript(home, project, sessionId, lines) {
+  const directory = path.join(home, '.claude', 'projects', project);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, `${sessionId}.jsonl`), `${lines.join('\n')}\n`);
+}
+
+function writeRegistry(home, file, entry) {
+  const directory = path.join(home, '.claude', 'sessions');
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, file), JSON.stringify(entry));
+}
+
+const timestampLine = (timestamp) => JSON.stringify({ type: 'user', timestamp });
+const sessionIds = (result) => result.sessions.map((session) => session.sessionId);
 
 async function attachSessions(store, sessionIds, link = LINK) {
   await store.addLink(link);
@@ -150,6 +170,475 @@ test('listing returns source claude with only sessionId, state, name, attached a
   }
 });
 
+test('picker resolves names of attached sessions omitted by the CLI without adding picker entries', async (t) => {
+  const env = await sessionsEnvironment(t);
+  await attachSessions(env.store, [SESSION_A, SESSION_B, SESSION_C, SHARED_PREFIX_SESSION]);
+  env.exec.setListing([listingEntry({ sessionId: SESSION_D, name: 'Listed' })]);
+  writeRegistry(env.home, '123.json', {
+    sessionId: SESSION_A,
+    name: 'Interactive session',
+    cwd: CWD_SENTINEL,
+  });
+  writeRegistry(env.home, '124.json', { sessionId: SESSION_C, name: '   ' });
+  writeRegistry(env.home, '125.json', { sessionId: SESSION_E, name: 'Unattached' });
+  fs.writeFileSync(path.join(env.home, '.claude', 'sessions', '126.json'), '{invalid');
+  writeTranscript(env.home, 'project', SESSION_B, [
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Stopped session', sessionId: SESSION_B }),
+    timestampLine('2026-03-01T00:00:00Z'),
+  ]);
+  writeTranscript(env.home, 'project', SESSION_C, [
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Wrong session', sessionId: SESSION_A }),
+  ]);
+
+  const result = await env.sessions.listSessions();
+
+  assert.deepEqual(sessionIds(result), [SESSION_D]);
+  assert.deepEqual(result.attachedNames, {
+    [SESSION_A]: 'Interactive session',
+    [SESSION_B]: 'Stopped session',
+  });
+  assert.equal(JSON.stringify(result).includes(CWD_SENTINEL), false);
+});
+
+test('registry-only names do not require reading omitted sessions transcripts', async (t) => {
+  let scanned = [];
+  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const env = await sessionsEnvironment(t, {
+    readActivities: async (files, cache) => {
+      scanned = files;
+      return readTranscriptActivities(files, cache);
+    },
+  });
+  await attachSessions(env.store, [SESSION_A]);
+  env.exec.setListing([]);
+  writeRegistry(env.home, '123.json', { sessionId: SESSION_A, name: 'Interactive' });
+  writeTranscript(env.home, 'project', SESSION_A, [timestampLine('2026-03-01T00:00:00Z')]);
+
+  const result = await env.sessions.listSessions();
+  assert.equal(result.attachedNames[SESSION_A], 'Interactive');
+  assert.deepEqual(scanned, []);
+});
+
+test('registry and saved titles fill blank CLI names without replacing a real CLI name', async (t) => {
+  const env = await sessionsEnvironment(t);
+  await attachSessions(env.store, [SESSION_A, SESSION_B, SESSION_C]);
+  env.exec.setListing([
+    listingEntry({ sessionId: SESSION_A, name: '' }),
+    listingEntry({ sessionId: SESSION_B, name: '   ' }),
+    listingEntry({ sessionId: SESSION_C, name: 'CLI name' }),
+  ]);
+  writeRegistry(env.home, '123.json', { sessionId: SESSION_A, name: 'Registry name' });
+  writeRegistry(env.home, '124.json', { sessionId: SESSION_C, name: 'Different registry name' });
+  writeTranscript(env.home, 'project', SESSION_B, [
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Saved title', sessionId: SESSION_B }),
+  ]);
+
+  const result = await env.sessions.listSessions();
+  assert.deepEqual(result.attachedNames, {
+    [SESSION_A]: 'Registry name',
+    [SESSION_B]: 'Saved title',
+  });
+  assert.equal(bySessionId(result.sessions)[SESSION_C].name, 'CLI name');
+});
+
+test('a transient registry read failure is incomplete until the name can be read', async (t) => {
+  let fail = true;
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: fs.promises.readdir,
+      readFile: async (...args) => {
+        if (fail) throw Object.assign(new Error('unreadable'), { code: 'EACCES' });
+        return fs.promises.readFile(...args);
+      },
+    },
+  });
+  await attachSessions(env.store, [SESSION_A]);
+  env.exec.setListing([]);
+  writeRegistry(env.home, '123.json', { sessionId: SESSION_A, name: 'Registry recovery' });
+
+  const failed = await env.sessions.listSessions();
+  assert.equal(failed.source, 'claude');
+  assert.equal(failed.namesIncomplete, true);
+  assert.equal(failed.attachedNames, undefined);
+
+  fail = false;
+  const recovered = await env.sessions.listSessions();
+  assert.equal(recovered.attachedNames[SESSION_A], 'Registry recovery');
+  assert.equal(recovered.namesIncomplete, undefined);
+});
+
+test('a transient transcript read failure is incomplete and does not rescan unchanged transcripts', async (t) => {
+  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  let fail = true;
+  const reads = [];
+  const env = await sessionsEnvironment(t, {
+    readActivities: (files, cache, _io, pending) =>
+      readTranscriptActivities(
+        files,
+        cache,
+        {
+          stat: fs.promises.stat,
+          readFile: async (file, ...args) => {
+            reads.push(path.basename(file));
+            if (fail && file.endsWith(`${SESSION_A}.jsonl`)) throw new Error('unreadable');
+            return fs.promises.readFile(file, ...args);
+          },
+        },
+        pending,
+      ),
+  });
+  await attachSessions(env.store, [SESSION_A]);
+  env.exec.setListing([
+    listingEntry({ sessionId: SESSION_A, name: '' }),
+    listingEntry({ sessionId: SESSION_B, name: 'Other session' }),
+  ]);
+  writeTranscript(env.home, 'project', SESSION_A, [
+    JSON.stringify({ type: 'custom-title', customTitle: 'Transcript recovery' }),
+  ]);
+  writeTranscript(env.home, 'project', SESSION_B, [timestampLine('2026-03-01T00:00:00Z')]);
+
+  const failed = await env.sessions.listSessions();
+  assert.equal(failed.namesIncomplete, true);
+  assert.equal(failed.attachedNames, undefined);
+
+  fail = false;
+  const recovered = await env.sessions.listSessions();
+  assert.equal(recovered.attachedNames[SESSION_A], 'Transcript recovery');
+  assert.equal(recovered.namesIncomplete, undefined);
+  assert.equal(reads.filter((file) => file === `${SESSION_A}.jsonl`).length, 2);
+  assert.equal(reads.filter((file) => file === `${SESSION_B}.jsonl`).length, 1);
+});
+
+test('a partial trailing transcript record remains incomplete until its title can be read', async (t) => {
+  const env = await sessionsEnvironment(t);
+  await attachSessions(env.store, [SESSION_A]);
+  env.exec.setListing([listingEntry({ sessionId: SESSION_B })]);
+  writeTranscript(env.home, 'project', SESSION_A, [timestampLine('2026-03-01T00:00:00Z')]);
+  const file = path.join(env.home, '.claude', 'projects', 'project', `${SESSION_A}.jsonl`);
+  fs.appendFileSync(file, '{"type":"custom-title","customTitle":"Recovered');
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const partial = await env.sessions.listSessions();
+    assert.deepEqual(sessionIds(partial), [SESSION_B]);
+    assert.equal(partial.namesIncomplete, true);
+    assert.equal(partial.attachedNames, undefined);
+  }
+
+  fs.appendFileSync(file, ' title"}');
+  const recovered = await env.sessions.listSessions();
+  assert.equal(recovered.attachedNames[SESSION_A], 'Recovered title');
+  assert.equal(recovered.namesIncomplete, undefined);
+});
+
+test('a valid final record without a newline and empty transcripts are complete', async (t) => {
+  const env = await sessionsEnvironment(t);
+  await attachSessions(env.store, [SESSION_A, SESSION_B, SESSION_C, SESSION_D, SESSION_E]);
+  env.exec.setListing([]);
+  writeTranscript(env.home, 'project', SESSION_A, []);
+  writeTranscript(env.home, 'project', SESSION_B, []);
+  writeTranscript(env.home, 'project', SESSION_C, []);
+  writeTranscript(env.home, 'project', SESSION_D, []);
+  writeTranscript(env.home, 'project', SESSION_E, []);
+  const directory = path.join(env.home, '.claude', 'projects', 'project');
+  fs.writeFileSync(
+    path.join(directory, `${SESSION_A}.jsonl`),
+    JSON.stringify({ type: 'custom-title', customTitle: 'Complete title' }),
+  );
+  fs.writeFileSync(path.join(directory, `${SESSION_B}.jsonl`), '{}');
+  fs.writeFileSync(path.join(directory, `${SESSION_C}.jsonl`), '   ');
+  fs.writeFileSync(path.join(directory, `${SESSION_D}.jsonl`), '');
+  fs.writeFileSync(path.join(directory, `${SESSION_E}.jsonl`), 'null');
+
+  const result = await env.sessions.listSessions();
+  assert.deepEqual(result.attachedNames, { [SESSION_A]: 'Complete title' });
+  assert.equal(result.namesIncomplete, undefined);
+});
+
+test('missing metadata and malformed records are complete when no name is available', async (t) => {
+  const env = await sessionsEnvironment(t);
+  await attachSessions(env.store, [SESSION_A]);
+  env.exec.setListing([]);
+  const missing = await env.sessions.listSessions();
+  assert.equal(missing.namesIncomplete, undefined);
+  assert.equal(missing.attachedNames, undefined);
+
+  writeRegistry(env.home, '123.json', {});
+  fs.writeFileSync(path.join(env.home, '.claude', 'sessions', '124.json'), '{invalid');
+  writeTranscript(env.home, 'project', SESSION_A, ['{invalid', '{}']);
+  const unnamed = await env.sessions.listSessions();
+  assert.equal(unnamed.namesIncomplete, undefined);
+  assert.equal(unnamed.attachedNames, undefined);
+});
+
+test('metadata directory errors are incomplete for names that depend on them', async (t) => {
+  let failedDirectory = 'sessions';
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: async (directory, ...args) => {
+        if (path.basename(directory) === failedDirectory)
+          throw Object.assign(new Error('unreadable'), { code: 'EACCES' });
+        return fs.promises.readdir(directory, ...args);
+      },
+      readFile: fs.promises.readFile,
+    },
+  });
+  await attachSessions(env.store, [SESSION_A]);
+  env.exec.setListing([]);
+  assert.equal((await env.sessions.listSessions()).namesIncomplete, true);
+  failedDirectory = 'projects';
+  assert.equal((await env.sessions.listSessions()).namesIncomplete, true);
+  writeTranscript(env.home, 'project', SESSION_A, ['{}']);
+  failedDirectory = 'project';
+  assert.equal((await env.sessions.listSessions()).namesIncomplete, true);
+  failedDirectory = null;
+  assert.equal((await env.sessions.listSessions()).namesIncomplete, undefined);
+});
+
+test('a transient project directory failure retains the transcript cache for recovery', async (t) => {
+  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  let fail = false;
+  let reads = 0;
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: async (directory, ...args) => {
+        if (fail && path.basename(directory) === 'projects')
+          throw Object.assign(new Error('unreadable'), { code: 'EACCES' });
+        return fs.promises.readdir(directory, ...args);
+      },
+      readFile: fs.promises.readFile,
+    },
+    readActivities: (files, cache, _io, pending) =>
+      readTranscriptActivities(
+        files,
+        cache,
+        {
+          stat: fs.promises.stat,
+          readFile: (...args) => {
+            reads += 1;
+            return fs.promises.readFile(...args);
+          },
+        },
+        pending,
+      ),
+  });
+  await attachSessions(env.store, [SESSION_A]);
+  env.exec.setListing([]);
+  writeTranscript(env.home, 'project', SESSION_A, [
+    JSON.stringify({ type: 'custom-title', customTitle: 'Cached title' }),
+  ]);
+  assert.equal((await env.sessions.listSessions()).attachedNames[SESSION_A], 'Cached title');
+  fail = true;
+  assert.equal((await env.sessions.listSessions()).namesIncomplete, true);
+  fail = false;
+  assert.equal((await env.sessions.listSessions()).attachedNames[SESSION_A], 'Cached title');
+  assert.equal(reads, 1);
+});
+
+test('overlapping scans share unchanged files but read a changed fingerprint independently', async (t) => {
+  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const entered = deferred();
+  const release = deferred();
+  t.after(() => release.resolve());
+  const pending = new Map();
+  const file = `/project/${SESSION_A}.jsonl`;
+  let version = 1;
+  let reads = 0;
+  const io = {
+    stat: async () => ({
+      dev: 1,
+      ino: 1,
+      size: 1,
+      mtimeMs: version,
+      ctimeMs: version,
+      isFile: () => true,
+    }),
+    readFile: async () => {
+      reads += 1;
+      const current = version;
+      if (current === 1) {
+        entered.resolve();
+        await release.promise;
+      }
+      return timestampLine(current === 1 ? '2026-01-01T00:00:00Z' : '2026-03-01T00:00:00Z');
+    },
+  };
+  const first = readTranscriptActivities([file], new Map(), io, pending);
+  await entered.promise;
+  const second = readTranscriptActivities([file], new Map(), io, pending);
+  await flush();
+  assert.equal(reads, 1);
+  version = 2;
+  const changed = await readTranscriptActivities([file], new Map(), io, pending);
+  assert.equal(reads, 2);
+  assert.equal(changed.get(file).timestamp, Date.parse('2026-03-01T00:00:00Z'));
+  release.resolve();
+  const [old, shared] = await Promise.all([first, second]);
+  assert.equal(old.get(file).fingerprint, null, 'a changed file is not cached');
+  assert.deepEqual(shared.get(file), old.get(file));
+});
+
+test('attached names are available in the map fallback and update after a title changes', async (t) => {
+  const env = await sessionsEnvironment(t);
+  await attachSessions(env.store, [SESSION_A]);
+  env.exec.onListing(() => ({ spawnError: 'ENOENT' }));
+  writeTranscript(env.home, 'project', SESSION_A, [
+    JSON.stringify({ type: 'ai-title', aiTitle: 'First title', sessionId: SESSION_A }),
+  ]);
+  assert.equal((await env.sessions.listSessions()).attachedNames[SESSION_A], 'First title');
+
+  writeTranscript(env.home, 'project', SESSION_A, [
+    JSON.stringify({ type: 'ai-title', aiTitle: 'First title', sessionId: SESSION_A }),
+    JSON.stringify({ type: 'custom-title', customTitle: 'Renamed session', sessionId: SESSION_A }),
+  ]);
+  assert.equal((await env.sessions.listSessions()).attachedNames[SESSION_A], 'Renamed session');
+});
+
+test('listing orders sessions by latest transcript activity, not start or file order', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([
+    { ...listingEntry({ sessionId: SESSION_B }), startedAt: Date.parse('2026-02-01T00:00:00Z') },
+    { ...listingEntry({ sessionId: SESSION_D }), startedAt: null },
+    { ...listingEntry({ sessionId: SESSION_A }), startedAt: Date.parse('2025-01-01T00:00:00Z') },
+    { ...listingEntry({ sessionId: SESSION_C }), startedAt: Date.parse('2026-04-01T00:00:00Z') },
+    { ...listingEntry({ sessionId: SESSION_E }), startedAt: 'invalid' },
+  ]);
+  // The transcript can remain in an older project directory after a session moves.
+  writeTranscript(env.home, 'original-project', SESSION_A, [
+    timestampLine('2026-03-01T00:00:00Z'),
+    '{invalid json',
+    timestampLine('2026-01-01T00:00:00Z'),
+  ]);
+  writeTranscript(env.home, 'another-project', SESSION_B, [timestampLine('2026-02-02T00:00:00Z')]);
+  writeTranscript(env.home, 'another-project', SESSION_C, ['{}', timestampLine('invalid')]);
+
+  const result = await env.sessions.listSessions();
+
+  assert.deepEqual(sessionIds(result), [SESSION_C, SESSION_A, SESSION_B, SESSION_D, SESSION_E]);
+  for (const session of result.sessions)
+    assert.deepEqual(Object.keys(session).sort(), [
+      'activity',
+      'attached',
+      'name',
+      'sessionId',
+      'state',
+    ]);
+});
+
+test('listing refreshes activity after transcripts change or move between project directories', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([
+    listingEntry({ sessionId: SESSION_A }),
+    listingEntry({ sessionId: SESSION_B }),
+  ]);
+  writeTranscript(env.home, 'first-project', SESSION_A, [timestampLine('2026-01-01T00:00:00Z')]);
+  writeTranscript(env.home, 'first-project', SESSION_B, [timestampLine('2026-02-01T00:00:00Z')]);
+  assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_B, SESSION_A]);
+
+  writeTranscript(env.home, 'second-project', SESSION_A, [
+    timestampLine('2026-03-01T00:00:00Z'),
+    timestampLine('2026-01-01T00:00:00Z'),
+  ]);
+  assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_A, SESSION_B]);
+
+  writeTranscript(env.home, 'first-project', SESSION_B, [timestampLine('2026-04-01T00:00:00Z')]);
+  assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_B, SESSION_A]);
+});
+
+test('listing rechecks a replaced or removed transcript even after caching it', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([
+    { ...listingEntry({ sessionId: SESSION_A }), startedAt: Date.parse('2027-01-01T00:00:00Z') },
+    { ...listingEntry({ sessionId: SESSION_B }), startedAt: Date.parse('2026-02-01T00:00:00Z') },
+  ]);
+  writeTranscript(env.home, 'project', SESSION_A, [timestampLine('2026-03-01T00:00:00Z')]);
+  assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_A, SESSION_B]);
+
+  const directory = path.join(env.home, '.claude', 'projects', 'project');
+  const original = path.join(directory, `${SESSION_A}.jsonl`);
+  const replacement = path.join(directory, 'replacement');
+  const originalStat = fs.statSync(original);
+  fs.writeFileSync(replacement, `${timestampLine('2026-01-01T00:00:00Z')}\n`);
+  fs.utimesSync(replacement, originalStat.atime, originalStat.mtime);
+  fs.renameSync(replacement, original);
+  assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_B, SESSION_A]);
+
+  fs.unlinkSync(original);
+  assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_A, SESSION_B]);
+});
+
+test('fallback listing sorts attached sessions by their transcripts and keeps unknowns stable', async (t) => {
+  const env = await sessionsEnvironment(t);
+  await attachSessions(env.store, [SESSION_A, SESSION_B, SESSION_C, SESSION_D]);
+  env.exec.onListing(() => ({ spawnError: 'ENOENT' }));
+  writeTranscript(env.home, 'project', SESSION_A, [timestampLine('2026-01-01T00:00:00Z')]);
+  writeTranscript(env.home, 'project', SESSION_B, [timestampLine('2026-02-01T00:00:00Z')]);
+
+  const listing = await env.sessions.listSessions();
+
+  assert.equal(listing.source, 'map');
+  assert.deepEqual(sessionIds(listing), [SESSION_B, SESSION_A, SESSION_C, SESSION_D]);
+  assert.deepEqual(Object.keys(listing.sessions[0]).sort(), ['attached', 'sessionId', 'state']);
+});
+
+for (const failure of ['disappears', 'cannot be read'])
+  test(`one duplicate transcript that ${failure} does not hide another`, async (t) => {
+    const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+    const duplicate = path.join('.claude', 'projects', 'removed', `${SESSION_A}.jsonl`);
+    let failed = false;
+    const env = await sessionsEnvironment(t, {
+      readActivities: async (files, cache) => {
+        const file = path.join(env.home, duplicate);
+        if (failure === 'disappears') {
+          fs.unlinkSync(file);
+          failed = true;
+          return readTranscriptActivities(files, cache);
+        }
+        return readTranscriptActivities(files, cache, {
+          stat: fs.promises.stat,
+          readFile: (target, ...args) => {
+            if (target === file) {
+              failed = true;
+              throw new Error('simulated read failure');
+            }
+            return fs.promises.readFile(target, ...args);
+          },
+        });
+      },
+    });
+    env.exec.setListing([
+      listingEntry({ sessionId: SESSION_B }),
+      listingEntry({ sessionId: SESSION_A }),
+    ]);
+    writeTranscript(env.home, 'valid', SESSION_A, [timestampLine('2026-03-01T00:00:00Z')]);
+    writeTranscript(env.home, 'removed', SESSION_A, [timestampLine('2026-04-01T00:00:00Z')]);
+    writeTranscript(env.home, 'valid', SESSION_B, [timestampLine('2026-02-01T00:00:00Z')]);
+
+    assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_A, SESSION_B]);
+    assert.equal(failed, true, 'the duplicate failed after it was discovered');
+  });
+
+test('transcript scans include early, late, malformed and partial lines without trusting file order', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([
+    listingEntry({ sessionId: SESSION_A }),
+    listingEntry({ sessionId: SESSION_B }),
+  ]);
+  writeTranscript(env.home, 'project', SESSION_A, [
+    timestampLine('2026-04-01T00:00:00Z'),
+    JSON.stringify({ message: 'x'.repeat(150_000) }),
+    '{broken',
+    timestampLine('2026-01-01T00:00:00Z'),
+  ]);
+  writeTranscript(env.home, 'project', SESSION_B, [timestampLine('2026-03-01T00:00:00Z')]);
+  const file = path.join(env.home, '.claude', 'projects', 'project', `${SESSION_B}.jsonl`);
+  fs.appendFileSync(file, '{"timestamp":"2026-05-01T00:00:00Z"');
+  assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_A, SESSION_B]);
+
+  // Completing a previously incomplete line must be seen, even without a trailing newline.
+  fs.appendFileSync(file, '}');
+  assert.deepEqual(sessionIds(await env.sessions.listSessions()), [SESSION_B, SESSION_A]);
+});
+
 test('listing carries activity idle, busy or null by kind, pid and status', async (t) => {
   const env = await sessionsEnvironment(t);
   env.exec.setListing([
@@ -227,28 +716,114 @@ test('listing runs the fixed claude argv without a shell, with a timeout and an 
   assertListingArgv(env.exec.calls[0]);
 });
 
-test('concurrent listing calls share one CLI run', async (t) => {
+test('a later picker takes a fresh CLI and attachment snapshot even while the first CLI is running', async (t) => {
+  const env = await sessionsEnvironment(t);
+  const gate = deferred();
+  t.after(() => gate.resolve({ stdout: '[]' }));
+  env.exec.onListing(() => gate.promise);
+  const first = env.sessions.listSessions();
+  await attachSessions(env.store, [SESSION_B]);
+  env.exec.setListing([listingEntry({ sessionId: SESSION_B })]);
+
+  const second = await env.sessions.listSessions();
+  assert.equal(env.exec.listings().length, 2);
+  assert.deepEqual(sessionIds(second), [SESSION_B]);
+  assert.equal(second.sessions[0].attached, true);
+  gate.resolve({ stdout: JSON.stringify([listingEntry({ sessionId: SESSION_A })]) });
+  assert.deepEqual(sessionIds(await first), [SESSION_A]);
+});
+
+test('watcher does not wait for a picker or sort its listing', async (t) => {
   const env = await sessionsEnvironment(t);
   const gate = deferred();
   env.exec.onListing(() => gate.promise);
+  writeTranscript(env.home, 'project', SESSION_A, [timestampLine('2026-01-01T00:00:00Z')]);
+  writeTranscript(env.home, 'project', SESSION_B, [timestampLine('2026-02-01T00:00:00Z')]);
 
-  const pending = [env.sessions.listSessions(), env.sessions.listSessions()];
+  const picker = env.sessions.listSessions();
+  const watcher = env.sessions.listSessions({ sortByActivity: false });
   await flush();
-  pending.push(env.sessions.listSessions());
-  await flush();
-  assert.equal(env.exec.listings().length, 1, 'one exec call while the run is held');
+  assert.equal(env.exec.listings().length, 2);
+  gate.resolve({
+    stdout: JSON.stringify([
+      listingEntry({ sessionId: SESSION_A }),
+      listingEntry({ sessionId: SESSION_B }),
+    ]),
+  });
 
-  gate.resolve({ stdout: JSON.stringify([listingEntry({ sessionId: SESSION_A, pid: 4242 })]) });
-  const results = await Promise.all(pending);
+  assert.deepEqual(sessionIds(await watcher), [SESSION_A, SESSION_B]);
+  assert.deepEqual(sessionIds(await picker), [SESSION_B, SESSION_A]);
+  assert.equal(env.exec.listings().length, 2);
+});
 
-  assert.equal(env.exec.listings().length, 1);
-  for (const result of results) {
-    assert.equal(result.source, 'claude');
-    assert.deepEqual(
-      result.sessions.map((session) => session.sessionId),
-      [SESSION_A],
-    );
-  }
+test('overlapping pickers take fresh listings while a watcher remains unsorted', async (t) => {
+  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const entered = deferred();
+  const release = deferred();
+  t.after(() => release.resolve());
+  let scans = 0;
+  const env = await sessionsEnvironment(t, {
+    readActivities: async (files, cache) => {
+      scans += 1;
+      if (scans === 1) {
+        entered.resolve();
+        await release.promise;
+      }
+      return readTranscriptActivities(files, cache);
+    },
+  });
+  env.exec.setListing([
+    listingEntry({ sessionId: SESSION_A }),
+    listingEntry({ sessionId: SESSION_B }),
+  ]);
+  writeTranscript(env.home, 'project', SESSION_A, [timestampLine('2026-01-01T00:00:00Z')]);
+  writeTranscript(env.home, 'project', SESSION_B, [timestampLine('2026-02-01T00:00:00Z')]);
+
+  const firstPicker = env.sessions.listSessions();
+  await entered.promise;
+  await attachSessions(env.store, [SESSION_B]);
+  env.exec.setListing([
+    listingEntry({ sessionId: SESSION_B }),
+    listingEntry({ sessionId: SESSION_C }),
+  ]);
+  const secondPicker = env.sessions.listSessions();
+  const watcher = await env.sessions.listSessions({ sortByActivity: false });
+  assert.deepEqual(sessionIds(watcher), [SESSION_B, SESSION_C]);
+  assert.equal(env.exec.listings().length, 3);
+  const second = await secondPicker;
+  assert.deepEqual(sessionIds(second), [SESSION_C, SESSION_B]);
+  assert.equal(bySessionId(second.sessions)[SESSION_B].attached, true);
+  release.resolve();
+  const first = await firstPicker;
+  assert.deepEqual(sessionIds(first), [SESSION_B, SESSION_A]);
+  assert.equal(bySessionId(first.sessions)[SESSION_B].attached, false);
+  assert.equal(scans, 2);
+});
+
+test('a fallback refresh sees attachments made during an earlier scan', async (t) => {
+  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const entered = deferred();
+  const release = deferred();
+  t.after(() => release.resolve());
+  let scans = 0;
+  const env = await sessionsEnvironment(t, {
+    readActivities: async (files, cache) => {
+      if (++scans === 1) {
+        entered.resolve();
+        await release.promise;
+      }
+      return readTranscriptActivities(files, cache);
+    },
+  });
+  env.exec.onListing(() => ({ spawnError: 'ENOENT' }));
+  await attachSessions(env.store, [SESSION_A]);
+  const first = env.sessions.listSessions();
+  await entered.promise;
+  await env.store.attach(LINK.key, SESSION_B);
+  const second = await env.sessions.listSessions();
+  assert.deepEqual(sessionIds(second), [SESSION_A, SESSION_B]);
+  release.resolve();
+  assert.deepEqual(sessionIds(await first), [SESSION_A]);
 });
 
 test('listing never logs or stores the session name or cwd, and returns the name', async (t) => {
@@ -276,6 +851,26 @@ test('listing never logs or stores the session name or cwd, and returns the name
   await attachSessions(env.store, [SESSION_A]);
   await env.sessions.listSessions();
   assertClean('after an attach');
+});
+
+test('listing never returns, logs or copies transcript content', async (t) => {
+  const lines = captureConsole(t);
+  const env = await sessionsEnvironment(t);
+  const transcriptSentinel = 'sentinel-transcript-content-c62f';
+  env.exec.setListing([listingEntry({ sessionId: SESSION_A })]);
+  writeTranscript(env.home, 'project', SESSION_A, [
+    JSON.stringify({ timestamp: '2026-03-01T00:00:00Z', message: transcriptSentinel }),
+  ]);
+
+  const result = await env.sessions.listSessions();
+  await attachSessions(env.store, [SESSION_A]);
+
+  assert.equal(JSON.stringify(result).includes(transcriptSentinel), false);
+  assert.deepEqual(
+    lines.filter((line) => line.includes(transcriptSentinel)),
+    [],
+  );
+  assert.deepEqual(findInTree(path.join(env.home, '.config'), [transcriptSentinel]), []);
 });
 
 test('listing failures never log or store the CLI output or error text', async (t) => {
@@ -335,6 +930,97 @@ test('picker route answers 200 with the picker data and keeps the name to itself
   assert.deepEqual(findInTree(f.home, needles), [], 'nothing is stored under the home');
 });
 
+test('picker route sends latest activity first on each refresh', async (t) => {
+  const f = await watchFixture(t, { http: true, sessions: 'real' });
+  f.exec.setListing([
+    listingEntry({ sessionId: SESSION_A }),
+    listingEntry({ sessionId: SESSION_B }),
+  ]);
+  writeTranscript(f.home, 'project', SESSION_A, [timestampLine('2026-01-01T00:00:00Z')]);
+  writeTranscript(f.home, 'project', SESSION_B, [timestampLine('2026-02-01T00:00:00Z')]);
+
+  const first = await f.http.raw('GET', '/api/slack/watch/sessions');
+  assert.equal(first.status, 200);
+  assert.deepEqual(sessionIds(first.json()), [SESSION_B, SESSION_A]);
+
+  writeTranscript(f.home, 'project', SESSION_A, [timestampLine('2026-03-01T00:00:00Z')]);
+  const refreshed = await f.http.raw('GET', '/api/slack/watch/sessions');
+  assert.equal(refreshed.status, 200);
+  assert.deepEqual(sessionIds(refreshed.json()), [SESSION_A, SESSION_B]);
+});
+
+test('picker route exposes attached registry and saved titles without leaking them on the watch list', async (t) => {
+  const f = await watchFixture(t, { http: true, sessions: 'real' });
+  await f.watch({ sessionIds: [SESSION_A, SESSION_B] });
+  f.exec.setListing([]);
+  writeRegistry(f.home, '123.json', { sessionId: SESSION_A, name: 'Interactive registry title' });
+  writeTranscript(f.home, 'project', SESSION_B, [
+    JSON.stringify({ type: 'ai-title', sessionId: SESSION_B, aiTitle: 'Stopped transcript title' }),
+  ]);
+
+  const picker = await f.http.raw('GET', '/api/slack/watch/sessions');
+  assert.equal(picker.status, 200);
+  assert.deepEqual(picker.json().sessions, []);
+  assert.deepEqual(picker.json().attachedNames, {
+    [SESSION_A]: 'Interactive registry title',
+    [SESSION_B]: 'Stopped transcript title',
+  });
+  const watch = await f.http.raw('GET', '/api/slack/watch');
+  assert.equal(watch.text.includes('Interactive registry title'), false);
+  assert.equal(watch.text.includes('Stopped transcript title'), false);
+});
+
+test('picker route reports incomplete metadata and clears the flag after recovery', async (t) => {
+  const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+  const f = await watchFixture(t, { http: true, sessions: 'real' });
+  await f.watch({ sessionIds: [SESSION_A] });
+  f.exec.setListing([]);
+  writeRegistry(f.home, '123.json', { sessionId: SESSION_A, name: 'Recovered registry title' });
+  let fail = true;
+  f.sessions.listSessions = createClaudeSessions({
+    execFileImpl: f.exec.execFileImpl,
+    store: f.store,
+    projectsDir: path.join(f.home, '.claude', 'projects'),
+    metadataIO: {
+      readdir: fs.promises.readdir,
+      readFile: (...args) => {
+        if (fail) throw Object.assign(new Error('unreadable'), { code: 'EACCES' });
+        return fs.promises.readFile(...args);
+      },
+    },
+  }).listSessions;
+
+  const failed = await f.http.raw('GET', '/api/slack/watch/sessions');
+  assert.equal(failed.status, 200);
+  assert.equal(failed.json().namesIncomplete, true);
+  assert.equal(failed.json().attachedNames, undefined);
+  fail = false;
+  const recovered = await f.http.raw('GET', '/api/slack/watch/sessions');
+  assert.equal(recovered.status, 200);
+  assert.equal(recovered.json().namesIncomplete, undefined);
+  assert.equal(recovered.json().attachedNames[SESSION_A], 'Recovered registry title');
+});
+
+test('picker route retries a partial transcript title and returns it after completion', async (t) => {
+  const f = await watchFixture(t, { http: true, sessions: 'real' });
+  await f.watch({ sessionIds: [SESSION_A] });
+  f.exec.setListing([]);
+  writeTranscript(f.home, 'project', SESSION_A, []);
+  const file = path.join(f.home, '.claude', 'projects', 'project', `${SESSION_A}.jsonl`);
+  fs.writeFileSync(file, '{"type":"ai-title","aiTitle":"Recovered');
+
+  const partial = await f.http.raw('GET', '/api/slack/watch/sessions');
+  assert.equal(partial.status, 200);
+  assert.equal(partial.json().namesIncomplete, true);
+  assert.equal(partial.json().attachedNames, undefined);
+
+  fs.appendFileSync(file, ' title"}');
+  const recovered = await f.http.raw('GET', '/api/slack/watch/sessions');
+  assert.equal(recovered.status, 200);
+  assert.equal(recovered.json().namesIncomplete, undefined);
+  assert.equal(recovered.json().attachedNames[SESSION_A], 'Recovered title');
+});
+
 test('picker route still answers 200 with source map when the CLI fails', async (t) => {
   const f = await watchFixture(t, { http: true, sessions: 'real' });
   await f.watch({ sessionIds: [SESSION_A] });
@@ -347,6 +1033,26 @@ test('picker route still answers 200 with source map when the CLI fails', async 
     source: 'map',
     sessions: [{ sessionId: SESSION_A, state: 'unknown', attached: true }],
   });
+
+  f.exec.setListing([listingEntry({ sessionId: SESSION_A, name: 'CLI-only title' })]);
+  const recovered = await f.http.raw('GET', '/api/slack/watch/sessions');
+  assert.equal(recovered.status, 200);
+  assert.equal(recovered.json().source, 'claude');
+  assert.equal(recovered.json().sessions[0].name, 'CLI-only title');
+});
+
+test('picker route orders fallback map sessions by transcript activity', async (t) => {
+  const f = await watchFixture(t, { http: true, sessions: 'real' });
+  await f.watch({ sessionIds: [SESSION_A, SESSION_B] });
+  f.exec.onListing(() => ({ exitCode: 1 }));
+  writeTranscript(f.home, 'project', SESSION_A, [timestampLine('2026-01-01T00:00:00Z')]);
+  writeTranscript(f.home, 'project', SESSION_B, [timestampLine('2026-02-01T00:00:00Z')]);
+
+  const picker = await f.http.raw('GET', '/api/slack/watch/sessions');
+
+  assert.equal(picker.status, 200);
+  assert.equal(picker.json().source, 'map');
+  assert.deepEqual(sessionIds(picker.json()), [SESSION_B, SESSION_A]);
 });
 
 test('picker route carries activity for live background sessions and none from the map', async (t) => {

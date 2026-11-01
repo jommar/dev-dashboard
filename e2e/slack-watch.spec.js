@@ -21,6 +21,7 @@ const SESSION_IDLE = '33333333-3333-4333-8333-333333333333';
 const SESSION_MANUAL = '44444444-4444-4444-8444-444444444444';
 const SESSION_SETTLING = '55555555-5555-4555-8555-555555555555';
 const SESSION_RESUMED = '66666666-6666-4666-8666-666666666666';
+const SESSION_SAME_PREFIX = '11111111-2222-4222-8222-222222222222';
 const CHECKED_AT = '2026-10-31T08:55:00.000Z';
 
 const SETTINGS_ROUTE = '/api/slack/watch/settings';
@@ -61,6 +62,29 @@ const freezeClock = async (page) => {
 };
 const flushPage = (page) =>
   page.evaluate(() => fetch('/api/config').then((response) => response.json()));
+const trackResponses = (page, pathname, property) =>
+  page.addInitScript(
+    ({ pathname, property }) => {
+      window[property] = [];
+      const fetch = window.fetch;
+      window.fetch = async (...args) => {
+        const response = await fetch(...args);
+        if (new URL(response.url).pathname === pathname) {
+          const json = response.json.bind(response);
+          response.json = async () => {
+            const result = await json();
+            window[property].push(response.status);
+            return result;
+          };
+        }
+        return response;
+      };
+    },
+    { pathname, property },
+  );
+const trackPickerResponses = (page) =>
+  trackResponses(page, '/api/slack/watch/sessions', '__pickerResponses');
+const pickerResponses = (page) => page.evaluate(() => window.__pickerResponses);
 const tickSeconds = async (page, seconds) => {
   for (let tick = 0; tick < seconds; tick += 1) {
     await page.clock.runFor(1000);
@@ -202,6 +226,597 @@ test.describe('watch card', () => {
       await expect(page.getByTestId(`slack-watch-remove-${key}`)).toHaveText('Remove');
   });
 
+  test('shows available session names beneath their IDs and updates them on picker refresh', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [
+        watchLink(CHANNEL, THREAD_A, {
+          sessions: [
+            watchSession(SESSION_BILLING),
+            watchSession(SESSION_FLAKY),
+            watchSession(SESSION_IDLE),
+            watchSession(SESSION_SAME_PREFIX),
+          ],
+        }),
+        watchLink(CHANNEL, THREAD_B, {
+          sessions: [watchSession(SESSION_BILLING), watchSession(SESSION_MANUAL)],
+        }),
+      ],
+      pickerSessions: [
+        { sessionId: SESSION_BILLING, state: 'live', name: 'Billing <review>' },
+        { sessionId: SESSION_FLAKY, state: 'finished', name: 'Stopped investigation' },
+        { sessionId: SESSION_IDLE, state: 'finished', name: '' },
+        { sessionId: SESSION_MANUAL, state: 'finished', name: '   ' },
+      ],
+    });
+    await openSlackTab(page);
+    const row = (key, sessionId) => page.getByTestId(`slack-watch-session-${key}-${sessionId}`);
+    const name = (key, sessionId) => page.getByTestId(sessionTestId('name', key, sessionId));
+
+    for (const key of [KEY_A, KEY_B]) {
+      await expect(row(key, SESSION_BILLING).locator('code')).toHaveText(SESSION_BILLING);
+      await expect(name(key, SESSION_BILLING)).toHaveText('Billing <review>');
+    }
+    for (const width of [1440, 640]) {
+      await page.setViewportSize({ width, height: 900 });
+      const idBox = await row(KEY_A, SESSION_BILLING).locator('code').boundingBox();
+      const nameBox = await name(KEY_A, SESSION_BILLING).boundingBox();
+      expect(nameBox.y).toBeGreaterThanOrEqual(idBox.y + idBox.height - 1);
+      expect(Math.abs(nameBox.x - idBox.x)).toBeLessThan(1);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(name(KEY_A, SESSION_FLAKY)).toHaveText('Stopped investigation');
+    for (const sessionId of [SESSION_IDLE, SESSION_SAME_PREFIX]) {
+      await expect(row(KEY_A, sessionId).locator('code')).toHaveText(sessionId);
+      await expect(name(KEY_A, sessionId)).toHaveCount(0);
+    }
+    await expect(name(KEY_B, SESSION_MANUAL)).toHaveCount(0);
+    for (const sessionId of [SESSION_BILLING, SESSION_FLAKY]) {
+      await expect(page.getByTestId(sessionTestId('status', KEY_A, sessionId))).toHaveText(
+        'no delivery yet',
+      );
+      await expect(page.getByTestId(`slack-watch-detach-${KEY_A}-${sessionId}`)).toHaveText(
+        'Detach',
+      );
+    }
+
+    dashboard.data.slack.watch.pickerSessions[0].name = 'Updated billing';
+    await page.getByTestId(`slack-watch-detach-${KEY_B}-${SESSION_MANUAL}`).click();
+    for (const key of [KEY_A, KEY_B])
+      await expect(name(key, SESSION_BILLING)).toHaveText('Updated billing');
+
+    dashboard.data.slack.watch.pickerSource = 'map';
+    dashboard.data.slack.watch.pickerSessions = [{ sessionId: SESSION_BILLING, state: 'unknown' }];
+    await page.getByTestId(`slack-watch-detach-${KEY_A}-${SESSION_IDLE}`).click();
+    for (const key of [KEY_A, KEY_B])
+      await expect(name(key, SESSION_BILLING)).toHaveText('Updated billing');
+  });
+
+  test('shows registry names on initial load and refreshes only when the attached-ID set changes', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+      pickerSessions: [{ sessionId: SESSION_FLAKY, state: 'finished', name: 'Listed first' }],
+      attachedNames: { [SESSION_BILLING]: 'Interactive session' },
+    });
+    const pickerReads = () =>
+      dashboard.requests.filter(
+        ({ method, path }) => method === 'GET' && path === '/api/slack/watch/sessions',
+      ).length;
+    const name = (id) => page.getByTestId(sessionTestId('name', KEY_A, id));
+    await page.clock.install();
+    await openSlackTab(page);
+    await expect(name(SESSION_BILLING)).toHaveText('Interactive session');
+    await expect.poll(pickerReads).toBe(1);
+
+    await page.clock.runFor(60_000);
+    await flushPage(page);
+    expect(pickerReads()).toBe(1);
+
+    dashboard.data.slack.watch.links[0].sessions.push(watchSession(SESSION_MANUAL));
+    dashboard.data.slack.watch.attachedNames[SESSION_MANUAL] = 'Stopped session';
+    await page.clock.runFor(30_000);
+    await expect(name(SESSION_MANUAL)).toHaveText('Stopped session');
+    await expect(
+      page.getByTestId(`slack-watch-session-${KEY_A}-${SESSION_MANUAL}`).locator('code'),
+    ).toHaveText(SESSION_MANUAL);
+    await expect(page.getByTestId(sessionTestId('status', KEY_A, SESSION_MANUAL))).toHaveText(
+      'no delivery yet',
+    );
+    await expect(page.getByTestId(`slack-watch-detach-${KEY_A}-${SESSION_MANUAL}`)).toHaveText(
+      'Detach',
+    );
+    await expect.poll(pickerReads).toBe(2);
+
+    dashboard.data.slack.watch.links.push(
+      watchLink(CHANNEL, THREAD_B, { sessions: [watchSession(SESSION_MANUAL)] }),
+    );
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(`slack-watch-row-${KEY_B}`)).toBeVisible();
+    expect(pickerReads()).toBe(2);
+
+    dashboard.data.slack.watch.links[0].sessions.push(watchSession(SESSION_IDLE));
+    dashboard.data.slack.watch.pickerSessions.unshift({
+      sessionId: SESSION_IDLE,
+      state: 'live',
+      name: 'Newly listed session',
+    });
+    await page.clock.runFor(30_000);
+    await expect(name(SESSION_IDLE)).toHaveText('Newly listed session');
+    await expect.poll(pickerReads).toBe(3);
+    await page.clock.runFor(30_000);
+    await flushPage(page);
+    expect(pickerReads()).toBe(3);
+  });
+
+  test('refreshes names after the first successful watch read follows an initial failure', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({ links: [watchLink(CHANNEL, THREAD_A)] });
+    let first = true;
+    await page.route('**/api/slack/watch', (route) => {
+      if (!first) return route.fallback();
+      first = false;
+      return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+    });
+    const pickerReads = () =>
+      dashboard.requests.filter(
+        ({ method, path }) => method === 'GET' && path === '/api/slack/watch/sessions',
+      ).length;
+    await page.clock.install();
+    await page.goto('/#/slack');
+    await expect(page.getByTestId('slack-watch-unavailable')).toBeVisible();
+    await expect.poll(pickerReads).toBe(1);
+
+    dashboard.data.slack.watch.links[0].sessions.push(watchSession(SESSION_MANUAL));
+    dashboard.data.slack.watch.attachedNames = { [SESSION_MANUAL]: 'Recovered session' };
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_MANUAL))).toHaveText(
+      'Recovered session',
+    );
+    await expect.poll(pickerReads).toBe(2);
+  });
+
+  test('retries a failed initial picker lookup on the next unchanged watch poll', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+      attachedNames: { [SESSION_BILLING]: 'Recovered name' },
+    });
+    let pickerReads = 0;
+    await page.route('**/api/slack/watch/sessions', (route) => {
+      pickerReads += 1;
+      if (pickerReads === 1) return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+      return route.fallback();
+    });
+    await page.clock.install();
+    await trackPickerResponses(page);
+    await openSlackTab(page);
+    await expect.poll(() => pickerResponses(page)).toEqual([503]);
+    await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING))).toHaveCount(0);
+    expect(pickerReads).toBe(1);
+
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING))).toHaveText(
+      'Recovered name',
+    );
+    expect(pickerReads).toBe(2);
+
+    dashboard.data.slack.watch.links[0].lastStatus = 'next poll';
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).toHaveText('next poll');
+    expect(pickerReads).toBe(2);
+  });
+
+  test('retries an HTTP 200 map fallback on an unchanged poll and shows the recovered CLI name', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+      pickerSource: 'map',
+      pickerSessions: [{ sessionId: SESSION_BILLING, state: 'unknown' }],
+    });
+    const pickerReads = () =>
+      dashboard.requests.filter(
+        ({ method, path }) => method === 'GET' && path === '/api/slack/watch/sessions',
+      ).length;
+    const name = page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING));
+    await page.clock.install();
+    await trackPickerResponses(page);
+    await openSlackTab(page);
+    await expect.poll(() => pickerResponses(page)).toEqual([200]);
+    await expect(name).toHaveCount(0);
+    expect(pickerReads()).toBe(1);
+    for (let i = 0; i < 2; i += 1) {
+      await checkNowButton(page).click();
+      await expect(checkNowButton(page)).toBeEnabled();
+      await expect.poll(() => checkCalls(dashboard).length).toBe(i + 1);
+    }
+    expect(pickerReads()).toBe(1);
+
+    dashboard.data.slack.watch.pickerSource = 'claude';
+    dashboard.data.slack.watch.pickerSessions = [
+      { sessionId: SESSION_BILLING, state: 'finished', name: 'CLI-only title' },
+    ];
+    await page.clock.runFor(30_000);
+    await expect(name).toHaveText('CLI-only title');
+    expect(pickerReads()).toBe(2);
+
+    dashboard.data.slack.watch.links[0].lastStatus = 'next poll';
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).toHaveText('next poll');
+    expect(pickerReads()).toBe(2);
+  });
+
+  test('retains existing names through incomplete metadata and retries on the next poll', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+      pickerSessions: [{ sessionId: SESSION_BILLING, state: 'finished', name: 'Existing name' }],
+    });
+    let pickerReads = 0;
+    await page.route('**/api/slack/watch/sessions', (route) => {
+      pickerReads += 1;
+      if (pickerReads === 2)
+        return route.fulfill({ json: { source: 'claude', sessions: [], namesIncomplete: true } });
+      return route.fallback();
+    });
+    await page.clock.install();
+    await trackPickerResponses(page);
+    await openSlackTab(page);
+    const existing = page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING));
+    const recovered = page.getByTestId(sessionTestId('name', KEY_A, SESSION_MANUAL));
+    await expect(existing).toHaveText('Existing name');
+
+    dashboard.data.slack.watch.links[0].sessions.push(watchSession(SESSION_MANUAL));
+    dashboard.data.slack.watch.attachedNames = { [SESSION_MANUAL]: 'Recovered metadata' };
+    await page.clock.runFor(30_000);
+    await expect.poll(() => pickerResponses(page)).toEqual([200, 200]);
+    await expect(existing).toHaveText('Existing name');
+    await expect(recovered).toHaveCount(0);
+    expect(pickerReads).toBe(2);
+
+    await page.clock.runFor(30_000);
+    await expect(recovered).toHaveText('Recovered metadata');
+    await expect(existing).toHaveText('Existing name');
+    expect(pickerReads).toBe(3);
+    dashboard.data.slack.watch.links[0].lastStatus = 'next poll';
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).toHaveText('next poll');
+    expect(pickerReads).toBe(3);
+  });
+
+  test('retries an incomplete unnamed lookup and shows its recovered title', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+    });
+    let pickerReads = 0;
+    await page.route('**/api/slack/watch/sessions', (route) => {
+      pickerReads += 1;
+      if (pickerReads === 1)
+        return route.fulfill({ json: { source: 'claude', sessions: [], namesIncomplete: true } });
+      return route.fallback();
+    });
+    await page.clock.install();
+    await trackPickerResponses(page);
+    await openSlackTab(page);
+    const name = page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING));
+    await expect.poll(() => pickerResponses(page)).toEqual([200]);
+    await expect(name).toHaveCount(0);
+    expect(pickerReads).toBe(1);
+
+    dashboard.data.slack.watch.attachedNames = { [SESSION_BILLING]: 'Recovered title' };
+    await page.clock.runFor(30_000);
+    await expect(name).toHaveText('Recovered title');
+    expect(pickerReads).toBe(2);
+    dashboard.data.slack.watch.links[0].lastStatus = 'next poll';
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).toHaveText('next poll');
+    expect(pickerReads).toBe(2);
+  });
+
+  test('does not retry a complete lookup for a genuinely unnamed session', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+    });
+    const pickerReads = () =>
+      dashboard.requests.filter(
+        ({ method, path }) => method === 'GET' && path === '/api/slack/watch/sessions',
+      ).length;
+    await page.clock.install();
+    await trackPickerResponses(page);
+    await openSlackTab(page);
+    await expect.poll(() => pickerResponses(page)).toEqual([200]);
+    await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING))).toHaveCount(0);
+    dashboard.data.slack.watch.links[0].lastStatus = 'unchanged attachment';
+    await page.clock.runFor(60_000);
+    await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).toHaveText(
+      'unchanged attachment',
+    );
+    expect(pickerReads()).toBe(1);
+  });
+
+  test('retries a failed lookup after an external attachment without another ID change', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+      attachedNames: { [SESSION_BILLING]: 'Original name' },
+    });
+    let pickerReads = 0;
+    await page.route('**/api/slack/watch/sessions', (route) => {
+      pickerReads += 1;
+      if (pickerReads === 2) return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+      return route.fallback();
+    });
+    await page.clock.install();
+    await trackPickerResponses(page);
+    await openSlackTab(page);
+    await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING))).toHaveText(
+      'Original name',
+    );
+
+    dashboard.data.slack.watch.links[0].sessions.push(watchSession(SESSION_MANUAL));
+    dashboard.data.slack.watch.attachedNames[SESSION_MANUAL] = 'New attachment';
+    await page.clock.runFor(30_000);
+    await expect.poll(() => pickerResponses(page)).toEqual([200, 503]);
+    await expect(page.getByTestId(`slack-watch-session-${KEY_A}-${SESSION_MANUAL}`)).toBeVisible();
+    await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_MANUAL))).toHaveCount(0);
+    await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING))).toHaveText(
+      'Original name',
+    );
+    expect(pickerReads).toBe(2);
+
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_MANUAL))).toHaveText(
+      'New attachment',
+    );
+    expect(pickerReads).toBe(3);
+
+    dashboard.data.slack.watch.links[0].lastStatus = 'next poll';
+    await page.clock.runFor(30_000);
+    await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).toHaveText('next poll');
+    expect(pickerReads).toBe(3);
+  });
+
+  test('ignores an older picker success after a newer refresh fails', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+      attachedNames: { [SESSION_BILLING]: 'Original name' },
+    });
+    let releaseOld;
+    const holdOld = new Promise((resolve) => {
+      releaseOld = resolve;
+    });
+    let pickerReads = 0;
+    await page.route('**/api/slack/watch/sessions', async (route) => {
+      pickerReads += 1;
+      if (pickerReads === 2) {
+        await holdOld;
+        return route.fulfill({
+          json: {
+            source: 'claude',
+            sessions: [{ sessionId: SESSION_BILLING, state: 'live', name: 'Stale name' }],
+            attachedNames: { [SESSION_MANUAL]: 'Stale attachment' },
+          },
+        });
+      }
+      if (pickerReads === 3) return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+      return route.fallback();
+    });
+    try {
+      await page.clock.install();
+      await trackPickerResponses(page);
+      await openSlackTab(page);
+      const billingName = page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING));
+      const manualName = page.getByTestId(sessionTestId('name', KEY_A, SESSION_MANUAL));
+      await expect(billingName).toHaveText('Original name');
+
+      dashboard.data.slack.watch.links[0].sessions.push(watchSession(SESSION_MANUAL));
+      await page.clock.runFor(30_000);
+      await expect.poll(() => pickerReads).toBe(2);
+      dashboard.data.slack.watch.links[0].lastStatus = 'waiting for picker';
+      await page.clock.runFor(30_000);
+      await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).toHaveText(
+        'waiting for picker',
+      );
+      expect(pickerReads).toBe(2);
+
+      dashboard.data.slack.watch.links[0].sessions.push(watchSession(SESSION_FLAKY));
+      dashboard.data.slack.watch.attachedNames[SESSION_MANUAL] = 'Fresh attachment';
+      await page.clock.runFor(30_000);
+      await expect.poll(() => pickerResponses(page)).toEqual([200, 503]);
+      expect(pickerReads).toBe(3);
+
+      releaseOld();
+      await expect.poll(() => pickerResponses(page)).toEqual([200, 503, 200]);
+      await page.clock.runFor(100);
+      await flushPage(page);
+      await expect(billingName).toHaveText('Original name');
+      await expect(manualName).toHaveCount(0);
+      await expect(page.getByTestId('slack-watch-picker').locator('option')).toHaveCount(1);
+
+      await page.clock.runFor(30_000);
+      await expect(manualName).toHaveText('Fresh attachment');
+      expect(pickerReads).toBe(4);
+    } finally {
+      releaseOld();
+    }
+  });
+
+  test('ignores an older watch response after a newer watch attempt fails', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+      attachedNames: { [SESSION_BILLING]: 'Original name' },
+    });
+    let releaseOld;
+    const holdOld = new Promise((resolve) => {
+      releaseOld = resolve;
+    });
+    let watchReads = 0;
+    await page.route('**/api/slack/watch', async (route) => {
+      watchReads += 1;
+      if (watchReads === 2) {
+        await holdOld;
+        return route.fulfill({
+          json: {
+            state: 'running',
+            nextCheckAt: null,
+            settings: dashboard.data.slack.watch.settings,
+            links: [
+              watchLink(CHANNEL, THREAD_A, {
+                lastStatus: 'stale response',
+                sessions: [watchSession(SESSION_BILLING), watchSession(SESSION_MANUAL)],
+              }),
+            ],
+          },
+        });
+      }
+      if (watchReads === 3) return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+      return route.fallback();
+    });
+    try {
+      await page.clock.install();
+      await trackResponses(page, '/api/slack/watch', '__watchResponses');
+      await openSlackTab(page);
+      await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING))).toHaveText(
+        'Original name',
+      );
+      await page.clock.runFor(30_000);
+      await expect.poll(() => watchReads).toBe(2);
+      await page.clock.runFor(30_000);
+      await expect.poll(() => watchReads).toBe(3);
+      releaseOld();
+      await expect
+        .poll(() => page.evaluate(() => window.__watchResponses))
+        .toEqual([200, 503, 200]);
+      await page.clock.runFor(100);
+      await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).not.toHaveText(
+        'stale response',
+      );
+      await expect(page.getByTestId(`slack-watch-session-${KEY_A}-${SESSION_MANUAL}`)).toHaveCount(
+        0,
+      );
+
+      dashboard.data.slack.watch.links[0].sessions.push(watchSession(SESSION_MANUAL));
+      dashboard.data.slack.watch.attachedNames[SESSION_MANUAL] = 'Fresh attachment';
+      await page.clock.runFor(30_000);
+      await expect(page.getByTestId(sessionTestId('name', KEY_A, SESSION_MANUAL))).toHaveText(
+        'Fresh attachment',
+      );
+    } finally {
+      releaseOld();
+    }
+  });
+
+  for (const newerWatchFails of [false, true])
+    test(`a returning tab refreshes names after a superseding watch ${newerWatchFails ? 'failure' : 'success'}`, async ({
+      page,
+      dashboard,
+    }) => {
+      dashboard.data.slack.watch = slackWatchData({
+        links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+        attachedNames: { [SESSION_BILLING]: 'Original name' },
+      });
+      let releaseOld;
+      const holdOld = new Promise((resolve) => {
+        releaseOld = resolve;
+      });
+      let watchReads = 0;
+      let pickerReads = 0;
+      await page.route('**/api/slack/watch/sessions', (route) => {
+        pickerReads += 1;
+        return route.fallback();
+      });
+      await page.route('**/api/slack/watch', async (route) => {
+        watchReads += 1;
+        if (watchReads === 2) {
+          await holdOld;
+          return route.fulfill({
+            json: {
+              state: 'running',
+              nextCheckAt: null,
+              settings: dashboard.data.slack.watch.settings,
+              links: [
+                watchLink(CHANNEL, THREAD_A, {
+                  lastStatus: 'stale response',
+                  sessions: [watchSession(SESSION_BILLING)],
+                }),
+              ],
+            },
+          });
+        }
+        if (watchReads === 3 && newerWatchFails)
+          return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+        return route.fallback();
+      });
+
+      try {
+        await page.clock.install();
+        await trackResponses(page, '/api/slack/watch', '__watchResponses');
+        await openSlackTab(page);
+        const name = page.getByTestId(sessionTestId('name', KEY_A, SESSION_BILLING));
+        await expect(name).toHaveText('Original name');
+        expect(pickerReads).toBe(1);
+
+        await page.getByTestId('tab-services').click();
+        dashboard.data.slack.watch.attachedNames[SESSION_BILLING] = 'Renamed session';
+        await page.getByTestId('tab-slack').click();
+        await expect.poll(() => watchReads).toBe(2);
+        await checkNowButton(page).click();
+        await expect(checkNowButton(page)).toBeEnabled();
+        await expect.poll(() => watchReads).toBe(3);
+
+        if (newerWatchFails) {
+          await expect(name).toHaveText('Original name');
+          expect(pickerReads).toBe(1);
+          await page.clock.runFor(30_000);
+        }
+        await expect(name).toHaveText('Renamed session');
+        expect(pickerReads).toBe(2);
+
+        releaseOld();
+        await expect
+          .poll(() => page.evaluate(() => window.__watchResponses.length))
+          .toBe(newerWatchFails ? 4 : 3);
+        await page.clock.runFor(100);
+        await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).not.toHaveText(
+          'stale response',
+        );
+        await expect(name).toHaveText('Renamed session');
+
+        dashboard.data.slack.watch.links[0].lastStatus = 'next poll';
+        await page.clock.runFor(60_000);
+        await expect(page.getByTestId(`slack-watch-status-${KEY_A}`)).toHaveText('next poll');
+        expect(pickerReads).toBe(2);
+      } finally {
+        releaseOld();
+      }
+    });
+
   test('mutes the waiting status and the reasons of delivered and waiting sessions, not failures', async ({
     page,
     dashboard,
@@ -268,6 +883,9 @@ test.describe('watch card', () => {
     await openSlackTab(page);
 
     const picker = page.getByTestId('slack-watch-picker');
+    await expect
+      .poll(() => picker.locator('option').evaluateAll((options) => options.map((o) => o.value)))
+      .toEqual(['', SESSION_BILLING, SESSION_FLAKY]);
     const billing = picker.locator(`option[value="${SESSION_BILLING}"]`);
     await expect(billing).toContainText('Refactor billing');
     await expect(billing).toContainText('live');
@@ -299,6 +917,46 @@ test.describe('watch card', () => {
       path: '/api/slack/watch/attach',
       body: { link: LINK_A, sessionId: SESSION_MANUAL },
     });
+  });
+
+  test('an older picker response cannot replace a newer response', async ({ page, dashboard }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [watchLink(CHANNEL, THREAD_A, { sessions: [watchSession(SESSION_BILLING)] })],
+    });
+    let releaseOld;
+    const holdOld = new Promise((resolve) => {
+      releaseOld = resolve;
+    });
+    let requests = 0;
+    await page.route('**/api/slack/watch/sessions', async (route) => {
+      requests += 1;
+      const request = requests;
+      if (request === 1) await holdOld;
+      const ids =
+        request === 1 ? [SESSION_BILLING, SESSION_FLAKY] : [SESSION_FLAKY, SESSION_BILLING];
+      await route.fulfill({
+        json: {
+          source: 'claude',
+          sessions: ids.map((sessionId) => ({ sessionId, state: 'live' })),
+        },
+      });
+    });
+    await openSlackTab(page);
+    await expect.poll(() => requests).toBe(1);
+
+    await page.getByTestId(`slack-watch-detach-${KEY_A}-${SESSION_BILLING}`).click();
+    const picker = page.getByTestId('slack-watch-picker');
+    const values = () =>
+      picker.locator('option').evaluateAll((options) => options.map((o) => o.value));
+    await expect.poll(values).toEqual(['', SESSION_FLAKY, SESSION_BILLING]);
+
+    const olderResponse = page.waitForResponse('**/api/slack/watch/sessions');
+    releaseOld();
+    await olderResponse;
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+    await expect.poll(values).toEqual(['', SESSION_FLAKY, SESSION_BILLING]);
   });
 
   test('detaches one session and removes one link', async ({ page, dashboard }) => {

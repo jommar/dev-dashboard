@@ -564,6 +564,19 @@
   overflow-wrap: anywhere;
 }
 
+.slack-watch-session-identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.slack-watch-session-name {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
 .slack-watch-delivery[data-status='delivered'] {
   color: var(--green);
 }

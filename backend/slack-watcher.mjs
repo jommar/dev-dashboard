@@ -209,7 +209,7 @@ export function createSlackWatcher({
     let listing;
     return () =>
       (listing ??= Promise.resolve()
-        .then(() => sessions.listSessions())
+        .then(() => sessions.listSessions({ sortByActivity: false }))
         .catch(() => ({ source: 'map', sessions: [] }))
         .then(rememberListed));
   }

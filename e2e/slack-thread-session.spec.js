@@ -377,6 +377,27 @@ test('thread session: picker offers the sessions not attached to this thread, la
   await expect(pickerOf(panel)).toHaveValue('');
 });
 
+test('thread session: picker preserves the returned order after filtering attached sessions', async ({
+  page,
+  dashboard,
+}) => {
+  seedThreadScenario(dashboard.data);
+  const sessions = dashboard.data.slack.watch.pickerSessions;
+  dashboard.data.slack.watch.pickerSessions = [
+    sessions[4],
+    sessions[0],
+    sessions[3],
+    sessions[5],
+    sessions[1],
+    sessions[2],
+  ];
+  const panel = sectionOf(await openFromTicketRow(page));
+
+  await expect
+    .poll(async () => (await pickerOptions(panel)).map(([value]) => value))
+    .toEqual(['', SESSION_FREE, SESSION_ELSEWHERE_CHANNEL, SESSION_UNNAMED, SESSION_ELSEWHERE_TS]);
+});
+
 test('thread session: picker keeps Attach disabled until a session is chosen', async ({
   page,
   dashboard,

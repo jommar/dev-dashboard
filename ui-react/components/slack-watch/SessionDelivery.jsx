@@ -3,11 +3,21 @@ import { RelativeTime } from './RelativeTime.jsx';
 
 const NO_DELIVERY_LABEL = 'no delivery yet';
 
-export function SessionDelivery({ linkKey, sessionId, delivery, onDetach }) {
+export function SessionDelivery({ linkKey, sessionId, name, delivery, onDetach }) {
   const idSuffix = `${linkKey}-${sessionId}`;
   return (
     <li className="slack-watch-session" data-testid={`slack-watch-session-${idSuffix}`}>
-      <code className="slack-watch-session-id">{sessionId}</code>
+      <span className="slack-watch-session-identity">
+        <code className="slack-watch-session-id">{sessionId}</code>
+        {typeof name === 'string' && name.trim() && (
+          <span
+            className="slack-watch-session-name"
+            data-testid={`slack-watch-session-name-${idSuffix}`}
+          >
+            {name}
+          </span>
+        )}
+      </span>
       <span
         className="slack-watch-delivery"
         data-status={delivery?.status ?? 'none'}

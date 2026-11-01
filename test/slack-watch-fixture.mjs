@@ -856,6 +856,7 @@ export async function watchFixture(t, options = {}) {
       fixture.sessions = createClaudeSessions({
         execFileImpl: exec.execFileImpl,
         store: fixture.store,
+        projectsDir: path.join(home, '.claude', 'projects'),
       });
     } else fixture.sessions = fakeSessions;
     fixture.watcher = createSlackWatcher({

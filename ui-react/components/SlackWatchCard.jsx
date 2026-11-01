@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card, LoadingState } from './Primitives.jsx';
 import { actionErrorText } from './slack-watch/actionErrorText.js';
 import { AttachForm } from './slack-watch/AttachForm.jsx';
@@ -25,39 +25,88 @@ export function SlackWatchCard({ active }) {
   const [watch, setWatch] = useState(null);
   const [listFailed, setListFailed] = useState(false);
   const [pickerSessions, setPickerSessions] = useState([]);
+  const [sessionNames, setSessionNames] = useState({});
+  const pickerRequests = useRef(0);
+  const pickerRefreshPending = useRef(false);
+  const pickerInFlight = useRef(false);
+  const watchRequests = useRef(0);
+  const watchPickerRefreshPending = useRef(false);
+  const attachedIds = useRef(null);
   const [linksText, setLinksText] = useState('');
   const [rejections, setRejections] = useState([]);
   const [actionError, setActionError] = useState('');
   const [checking, setChecking] = useState(false);
 
-  const load = useCallback(async () => {
-    const next = await api.getSlackWatch();
-    if (next.ok) setWatch(next);
-    setListFailed(!next.ok);
-  }, [api]);
-
   // The picker is transient: it is replaced on every read and never kept elsewhere.
   const loadPicker = useCallback(async () => {
+    const request = ++pickerRequests.current;
+    pickerRefreshPending.current = true;
+    pickerInFlight.current = true;
     const next = await api.getSlackWatchSessions();
-    if (next.ok) setPickerSessions(next.sessions ?? []);
+    if (request === pickerRequests.current) {
+      pickerInFlight.current = false;
+      if (next.ok) {
+        const incomplete = next.source === 'map' || next.namesIncomplete === true;
+        pickerRefreshPending.current = incomplete;
+        setPickerSessions(next.sessions ?? []);
+        const names = {};
+        for (const [sessionId, name] of Object.entries(next.attachedNames ?? {}))
+          if (typeof name === 'string' && name.trim()) names[sessionId] = name;
+        for (const { sessionId, name } of next.sessions ?? [])
+          if (typeof name === 'string' && name.trim()) names[sessionId] = name;
+        setSessionNames((previous) => (incomplete ? { ...previous, ...names } : names));
+      }
+    }
   }, [api]);
+
+  const load = useCallback(
+    async ({ refreshPicker = false, retryPending = false } = {}) => {
+      // Keep explicit refreshes until the latest successful watch read starts a picker read.
+      if (refreshPicker) watchPickerRefreshPending.current = true;
+      const request = ++watchRequests.current;
+      const next = await api.getSlackWatch();
+      if (request !== watchRequests.current) return;
+      let changed = false;
+      let retryPicker = false;
+      if (next.ok) {
+        const ids = [
+          ...new Set(
+            (next.links ?? []).flatMap((link) => link.sessions.map(({ sessionId }) => sessionId)),
+          ),
+        ]
+          .sort()
+          .join(',');
+        changed = attachedIds.current === null ? !refreshPicker : attachedIds.current !== ids;
+        attachedIds.current = ids;
+        retryPicker = retryPending && pickerRefreshPending.current && !pickerInFlight.current;
+        setWatch(next);
+      }
+      setListFailed(!next.ok);
+      if (next.ok && (watchPickerRefreshPending.current || changed || retryPicker)) {
+        watchPickerRefreshPending.current = false;
+        await loadPicker();
+      } else if (!next.ok && refreshPicker) {
+        await loadPicker();
+      }
+    },
+    [api, loadPicker],
+  );
 
   useEffect(() => {
     if (!active) return undefined;
-    load();
-    loadPicker();
+    load({ refreshPicker: true });
     const timer = setInterval(() => {
-      if (!document.hidden) load();
+      if (!document.hidden) load({ retryPending: true });
     }, SLACK_WATCH_POLL_MS);
     return () => clearInterval(timer);
-  }, [active, load, loadPicker]);
+  }, [active, load]);
 
   const settle = useCallback(
     async (response, { refreshPicker = false } = {}) => {
       setActionError(response.ok ? '' : actionErrorText(response));
-      await Promise.all([load(), refreshPicker ? loadPicker() : null]);
+      await load({ refreshPicker });
     },
-    [load, loadPicker],
+    [load],
   );
 
   const addLinks = async () => {
@@ -81,7 +130,6 @@ export function SlackWatchCard({ active }) {
   const state = watch?.state;
   const disabled = state === 'disabled';
   const links = watch?.links ?? [];
-
   return (
     <Card className="slack-section slack-watch-card" data-testid="slack-watch-card">
       <div className="pr-open-heading">
@@ -231,6 +279,7 @@ export function SlackWatchCard({ active }) {
                                 key={sessionId}
                                 linkKey={entry.key}
                                 sessionId={sessionId}
+                                name={sessionNames[sessionId]}
                                 delivery={delivery}
                                 onDetach={async () =>
                                   settle(await api.detachSlackWatchSession(entry.link, sessionId), {

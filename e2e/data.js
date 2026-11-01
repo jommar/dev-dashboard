@@ -609,6 +609,7 @@ function slackResponse(url, method, { slack }, body) {
             ...session,
             attached: attached.has(session.sessionId),
           })),
+          ...(watch.attachedNames && { attachedNames: structuredClone(watch.attachedNames) }),
         },
       };
     }
