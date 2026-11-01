@@ -1,14 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { once } from 'node:events';
 import {
   CHANNEL,
   DEFAULT_SLACK_WATCH,
+  DEFAULT_TEMPLATE,
   OTHER,
   SESSION_A,
   SESSION_B,
+  SESSION_C,
+  SESSION_D,
   START_MS,
   THREAD_TS,
+  flush,
   permalinkFor,
   threadKey,
   tsAt,
@@ -25,6 +30,13 @@ const CHANNEL_ONLY_LINK = `https://example.slack.com/archives/${CHANNEL}`;
 const NON_SLACK_LINK = 'https://example.com/archives/C024BE91L/p1793192214548389';
 const APP_THREAD_LINK = `https://app.slack.com/client/T024BE7LD/${CHANNEL}/thread/${CHANNEL}-${THREAD_TS}`;
 const SETTINGS_BODY = { intervalSeconds: 60, noticeTemplate: 'Ping {link}' };
+const POLL_INTERVAL_MS = 180_000;
+const PARTWAY_MS = 100_000;
+const STOP_AFTER_LINE_MS = 60_000;
+const RESUME_AFTER_STOP_MS = 90_000;
+const NO_STEP = { step: null, steps: null, nextStepAt: null };
+const REFUSAL_KEYS = ['code', 'error', 'errors'];
+const FIXED_CODE = /^[A-Z]+(?:_[A-Z]+)+$/;
 
 const post = (f, route, body) => f.http.json('POST', `${WATCH}/${route}`, body);
 const readIfPresent = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null);
@@ -688,4 +700,267 @@ test('endpoint trust: with setup incomplete every slack watch route answers whil
     assert.notEqual(res.json().code, 'SETUP_REQUIRED', `${method} ${pathname}`);
   }
   assert.equal((await f.http.bare('GET', '/api/services')).status, 409, 'the gate is unchanged');
+});
+
+const isoAt = (offsetMs) => new Date(START_MS + offsetMs).toISOString();
+
+async function nextCheckAtOf(f) {
+  const body = await listOf(f);
+  assert.ok('nextCheckAt' in body, 'the list carries nextCheckAt');
+  return body.nextCheckAt;
+}
+
+async function deliveryOf(f, key, sessionId) {
+  const link = (await listOf(f)).links.find((item) => item.key === key);
+  return link.sessions.find((session) => session.sessionId === sessionId).delivery;
+}
+
+// A delivery without its own timestamp: the status, the reason and the three step fields.
+function stepView(delivery) {
+  if (delivery === null) return null;
+  const { status, reason, step, steps, nextStepAt } = delivery;
+  return { status, reason, step, steps, nextStepAt };
+}
+
+async function stepViewOf(f, key, sessionId) {
+  return stepView(await deliveryOf(f, key, sessionId));
+}
+
+// Background sessions of the stateful fake CLI on one link whose newest message is new.
+async function watchStepFixture(t, sessionOptions) {
+  const f = await watchFixture(t, { http: true, sessions: 'real' });
+  for (const [sessionId, options] of Object.entries(sessionOptions)) f.cli.add(sessionId, options);
+  const key = await watchWithNewMessage(f, Object.keys(sessionOptions));
+  return { f, key };
+}
+
+test('next check: state is null before start and the armed poll time once started', async (t) => {
+  const f = await watchFixture(t, { http: true });
+  assert.equal(await nextCheckAtOf(f), null, 'nothing is armed before start');
+
+  await f.watcher.start();
+  assert.equal(await nextCheckAtOf(f), isoAt(POLL_INTERVAL_MS));
+  assertNoSlackReads(f);
+});
+
+test('next check: state is null while a poll is running and armed again once it ends', async (t) => {
+  const f = await watchFixture(t, { http: true });
+  await watchWithNewMessage(f, [SESSION_A]);
+  await f.watcher.start();
+  const hold = f.fakeReader.hold();
+
+  const polling = f.timers.advance(POLL_INTERVAL_MS);
+  await flush();
+  assert.equal(f.fakeReader.inFlight, 1, 'the timed poll is reading');
+  assert.equal(await nextCheckAtOf(f), null, 'no next check while the poll runs');
+
+  hold.release();
+  await polling;
+  assert.equal(await nextCheckAtOf(f), isoAt(2 * POLL_INTERVAL_MS));
+});
+
+test('next check: state is null while paused and while disabled', async (t) => {
+  const paused = await watchFixture(t, { http: true });
+  await paused.watcher.start();
+  assert.equal(await nextCheckAtOf(paused), isoAt(POLL_INTERVAL_MS), 'armed while running');
+  assert.equal((await post(paused, 'pause')).json().state, 'paused');
+  assert.equal(await nextCheckAtOf(paused), null, 'no next check while paused');
+
+  const disabled = await watchFixture(t, { http: true });
+  await disabled.watcher.start();
+  assert.equal(await nextCheckAtOf(disabled), isoAt(POLL_INTERVAL_MS), 'armed while readable');
+  disabled.claudeHome.readable = false;
+  assert.equal((await listOf(disabled)).state, 'disabled');
+  assert.equal(await nextCheckAtOf(disabled), null, 'no next check while disabled');
+});
+
+test('wake step: a woken session reports step 1 of 3, then 2 of 3, then 3 of 3 with the next step time', async (t) => {
+  const { f, key } = await watchStepFixture(t, { [SESSION_A]: {} });
+  assert.equal(await deliveryOf(f, key, SESSION_A), null, 'no delivery before the first poll');
+
+  await f.tick();
+  assert.deepEqual(await stepViewOf(f, key, SESSION_A), {
+    status: 'waiting',
+    reason: 'awaiting_wake',
+    step: 1,
+    steps: 3,
+    nextStepAt: isoAt(STOP_AFTER_LINE_MS),
+  });
+
+  f.clock.advance(STOP_AFTER_LINE_MS);
+  await f.tick();
+  assert.deepEqual(await stepViewOf(f, key, SESSION_A), {
+    status: 'waiting',
+    reason: 'settling',
+    step: 2,
+    steps: 3,
+    nextStepAt: isoAt(STOP_AFTER_LINE_MS + RESUME_AFTER_STOP_MS),
+  });
+
+  f.clock.advance(RESUME_AFTER_STOP_MS);
+  await f.tick();
+  assert.deepEqual(await stepViewOf(f, key, SESSION_A), {
+    status: 'delivered',
+    reason: 'resumed',
+    step: 3,
+    steps: 3,
+    nextStepAt: null,
+  });
+});
+
+test('wake step: a session that woke itself, an inbox-only session and a session with no delivery carry no step', async (t) => {
+  const { f, key } = await watchStepFixture(t, {
+    [SESSION_B]: { kind: 'interactive', status: 'idle' },
+    [SESSION_C]: {},
+  });
+  const quietKey = await f.watch({
+    threadTs: SECOND_THREAD_TS,
+    sessionIds: [SESSION_D],
+    messages: [{ ts: SECOND_THREAD_TS, user: OTHER }],
+  });
+
+  await f.tick();
+  assert.deepEqual(await stepViewOf(f, key, SESSION_B), {
+    status: 'delivered',
+    reason: 'inbox_only',
+    ...NO_STEP,
+  });
+  assert.equal(await deliveryOf(f, quietKey, SESSION_D), null, 'nothing was owed to this session');
+
+  f.cli.setStatus(SESSION_C, 'busy');
+  f.clock.advance(1_000);
+  await f.tick();
+  assert.deepEqual(await stepViewOf(f, key, SESSION_C), {
+    status: 'delivered',
+    reason: 'woke_itself',
+    ...NO_STEP,
+  });
+  assert.equal((await stepViewOf(f, key, SESSION_B)).step, null, 'still no step');
+  assert.equal(await deliveryOf(f, quietKey, SESSION_D), null);
+});
+
+test('wake step: a failed delivery carries no step', async (t) => {
+  const { f, key } = await watchStepFixture(t, { [SESSION_A]: {} });
+  f.cli.failNext('listing', { exitCode: 1, stderr: 'listing refused' });
+
+  await f.tick();
+  assert.deepEqual(await stepViewOf(f, key, SESSION_A), {
+    status: 'failed-transient',
+    reason: 'listing_unavailable',
+    ...NO_STEP,
+  });
+});
+
+test('force check: the route runs one poll now, answers checked true and restarts the poll countdown', async (t) => {
+  const f = await watchFixture(t, { http: true });
+  await f.watcher.start();
+  const key = await watchWithNewMessage(f, [SESSION_A]);
+  f.clock.advance(PARTWAY_MS);
+
+  const res = await post(f, 'check');
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json(), { ok: true, state: 'running', checked: true });
+  assert.equal(f.fakeReader.calls.length, 1, 'one poll read the thread once');
+  assert.deepEqual(f.inboxLines(SESSION_A), [
+    DEFAULT_TEMPLATE.replace('{link}', f.entry(key).link),
+  ]);
+  assert.equal(
+    await nextCheckAtOf(f),
+    isoAt(PARTWAY_MS + POLL_INTERVAL_MS),
+    'restarted at the check',
+  );
+
+  await f.timers.advance(POLL_INTERVAL_MS - 1);
+  assert.equal(
+    f.fakeReader.calls.length,
+    1,
+    'no poll one millisecond before the new countdown ends',
+  );
+  await f.timers.advance(1);
+  assert.equal(f.fakeReader.calls.length, 2, 'one timed poll at the end of the new countdown');
+});
+
+test('force check: a poll that is already running is not doubled and the route answers checked false', async (t) => {
+  const f = await watchFixture(t, { http: true });
+  await watchWithNewMessage(f, [SESSION_A]);
+  const hold = f.fakeReader.hold();
+  const running = f.tick();
+  await flush();
+  assert.equal(f.fakeReader.inFlight, 1, 'a poll is reading');
+
+  const requestLanded = once(f.http.server, 'request');
+  const answered = post(f, 'check');
+  await requestLanded;
+  await flush();
+  hold.release();
+  const [res] = await Promise.all([answered, running]);
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json(), { ok: true, state: 'running', checked: false });
+  assert.equal(f.fakeReader.calls.length, 1, 'the running poll was the only read');
+  assert.equal(f.fakeReader.maxInFlight, 1);
+  assert.equal(f.inboxLines(SESSION_A).length, 1, 'one notice line');
+});
+
+test('force check: the route reads nothing and answers a fixed failure while paused and while disabled', async (t) => {
+  const paused = await watchFixture(t, { http: true, paused: true });
+  await watchWithNewMessage(paused, [SESSION_A]);
+  const pausedBefore = await stateOf(paused);
+  const pausedRes = await post(paused, 'check');
+  assert.notEqual(pausedRes.status, 404, 'the route exists');
+  assert.ok(
+    pausedRes.status >= 400 && pausedRes.status < 500,
+    `a client failure: ${pausedRes.status}`,
+  );
+  const pausedBody = pausedRes.json();
+  assert.match(String(pausedBody.code), FIXED_CODE, 'a fixed code names the state');
+  assert.notEqual(pausedBody.code, 'OPERATION_FAILED');
+  assert.notEqual(pausedBody.code, 'WATCH_DISABLED');
+  assert.deepEqual(Object.keys(pausedBody).sort(), REFUSAL_KEYS);
+  assert.equal(paused.fakeReader.calls.length, 0, 'a paused check reads nothing from Slack');
+  assert.deepEqual(paused.inboxLines(SESSION_A), []);
+  assert.deepEqual(await stateOf(paused), pausedBefore, 'a paused check changes nothing');
+
+  const disabled = await watchFixture(t, { http: true, claudeHome: false });
+  await watchWithNewMessage(disabled, [SESSION_A]);
+  const disabledBefore = await stateOf(disabled);
+  const disabledRes = await post(disabled, 'check');
+  assert.equal(disabledRes.status, 409);
+  assert.equal(disabledRes.json().code, 'WATCH_DISABLED');
+  assert.deepEqual(Object.keys(disabledRes.json()).sort(), REFUSAL_KEYS);
+  assert.equal(disabled.fakeReader.calls.length, 0, 'a disabled check reads nothing from Slack');
+  assert.deepEqual(disabled.inboxLines(SESSION_A), []);
+  assert.deepEqual(await stateOf(disabled), disabledBefore, 'a disabled check changes nothing');
+});
+
+test('force check: the route keeps the trust checks of its neighbours and answers without setup', async (t) => {
+  const f = await watchFixture(t, { http: true });
+  await watchWithNewMessage(f, [SESSION_A]);
+  const refusals = [
+    [{ origin: 'http://evil.example' }, 403],
+    [{ 'sec-fetch-site': 'cross-site' }, 403],
+    [{ host: `evil.example:${f.http.port}` }, 403],
+    [{ 'content-type': 'text/plain' }, 415],
+  ];
+  for (const [headers, status] of refusals) {
+    const res = await f.http.raw('POST', `${WATCH}/check`, { headers });
+    assert.equal(res.status, status, `${JSON.stringify(headers)}: status`);
+  }
+  assert.equal(f.fakeReader.calls.length, 0, 'a refused request polls nothing');
+  assert.deepEqual(f.inboxLines(SESSION_A), []);
+
+  const headerless = await f.http.bare('POST', `${WATCH}/check`);
+  assert.equal(headerless.status, 200);
+  assert.deepEqual(headerless.json(), { ok: true, state: 'running', checked: true });
+  const sameOrigin = await f.http.raw('POST', `${WATCH}/check`, {
+    headers: { origin: f.http.base, 'content-type': 'application/json' },
+  });
+  assert.equal(sameOrigin.status, 200);
+  assert.equal(sameOrigin.json().checked, true);
+
+  const unready = await watchFixture(t, { http: true, setupAccepted: false });
+  const unreadyRes = await unready.http.json('POST', `${WATCH}/check`);
+  assert.equal(unreadyRes.status, 200);
+  assert.notEqual(unreadyRes.json().code, 'SETUP_REQUIRED');
+  assert.equal(unreadyRes.json().ok, true);
 });

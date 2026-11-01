@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The Slack watcher's interval now paces only the Slack poll. Each wake step runs on its
+  own timer: the stop is due 60 seconds after the notice line and the resume 90 seconds
+  after the stop, as design constants. Each session's `delivery` gains `step`, `steps`
+  and `nextStepAt`, the watch list gains a top-level `nextCheckAt`, and the new
+  `POST /api/slack/watch/check` route runs one poll now behind a Check now button.
 - Added a Slack thread watcher. Paste Slack thread links on the Slack tab, attach
   Claude Code sessions to them, and the dashboard server appends a one-line notice to
   each attached session's inbox file when someone else posts in a watched thread;

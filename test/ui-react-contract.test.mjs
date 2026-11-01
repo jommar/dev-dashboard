@@ -492,6 +492,57 @@ test('delivery statuses and reasons are pinned against the backend sources, the 
   assert.deepEqual(problems, []);
 });
 
+test('wake steps: the check route, the step fields and the three-step table are pinned across the backend, the UI and the README', () => {
+  const watcher = readRepoFile('backend/slack-watcher.mjs');
+  const httpApp = readRepoFile('backend/http-app.mjs');
+  const api = read('lib/api.js');
+  const watchComponents = path.join(root, 'components', 'slack-watch');
+  const uiSource = [
+    read('components/SlackWatchCard.jsx'),
+    ...fs
+      .readdirSync(watchComponents)
+      .map((file) => read(path.join('components', 'slack-watch', file))),
+  ].join('\n');
+  const readme = readRepoFile('README.md');
+  const checkRoute = '/api/slack/watch/check';
+  const hasLiteral = (source, text) =>
+    [`'${text}'`, `"${text}"`, `\`${text}\``].some((literal) => source.includes(literal));
+  const stepTable = [
+    ['awaiting_wake', 1],
+    ['settling', 2],
+    ['resumed', 3],
+  ];
+  const readmeLines = readme.split('\n');
+
+  const problems = [
+    ...['nextCheckAt', 'nextStepAt', 'steps', 'checkNow']
+      .filter((name) => !new RegExp(`\\b${name}\\b`).test(watcher))
+      .map((name) => `the watcher source does not name ${name}`),
+    ...(hasLiteral(httpApp, `POST ${checkRoute}`)
+      ? []
+      : [`http-app.mjs has no POST ${checkRoute}`]),
+    ...(hasLiteral(api, checkRoute) ? [] : [`api.js has no literal ${checkRoute}`]),
+    ...['nextCheckAt', 'nextStepAt', 'steps', 'Check now']
+      .filter((text) => !new RegExp(`\\b${text}\\b`).test(uiSource))
+      .map((text) => `the Watch threads card sources do not use ${text}`),
+    ...(readme.includes(checkRoute) ? [] : [`the README does not name ${checkRoute}`]),
+    ...['nextCheckAt', 'nextStepAt', 'step', 'steps']
+      .filter((field) => !readme.includes(`\`${field}\``))
+      .map((field) => `the README does not name \`${field}\``),
+    ...(readme.includes('Check now') ? [] : ['the README does not name the Check now button']),
+    ...stepTable
+      .filter(
+        ([reason, number]) =>
+          !readmeLines.some(
+            (line) =>
+              line.includes(`\`${reason}\``) && new RegExp(`\\b${number} of 3\\b`).test(line),
+          ),
+      )
+      .map(([reason, number]) => `no README line pairs \`${reason}\` with step ${number} of 3`),
+  ];
+  assert.deepEqual(problems, []);
+});
+
 test('the Slack panel mounts the watch card as an active-aware section', () => {
   const panel = read('panels/SlackPanel.jsx');
   assert.match(panel, /import \{ SlackWatchCard \} from '\.\.\/components\/SlackWatchCard\.jsx';/);

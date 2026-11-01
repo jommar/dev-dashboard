@@ -229,6 +229,8 @@ export const pauseSlackWatch = () => watchRequest('/api/slack/watch/pause', { me
 
 export const resumeSlackWatch = () => watchRequest('/api/slack/watch/resume', { method: 'POST' });
 
+export const checkSlackWatchNow = () => watchRequest('/api/slack/watch/check', { method: 'POST' });
+
 export function subscribeServices(onSnapshot, onConnection = () => {}) {
   const source = new EventSource('/api/events');
   source.addEventListener('setup-required', () => {

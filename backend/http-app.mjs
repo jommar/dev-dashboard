@@ -152,6 +152,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     },
     'POST /api/slack/watch/pause': async () => ({ ok: true, state: await slackWatcher.pause() }),
     'POST /api/slack/watch/resume': async () => ({ ok: true, state: await slackWatcher.resume() }),
+    'POST /api/slack/watch/check': async () => {
+      requireWatchEnabled();
+      const { state, checked } = await slackWatcher.checkNow();
+      if (state === 'paused') throw httpError('WATCH_PAUSED', 'Slack watching is paused.', 409);
+      return { ok: true, state, checked };
+    },
   };
   const guard = () => {
     if (!settings.getSetupStatus().ready)
@@ -435,6 +441,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'INVALID_LINK',
         'INVALID_SESSION',
         'WATCH_DISABLED',
+        'WATCH_PAUSED',
       ];
       const code = allowed.includes(error.code) ? error.code : 'OPERATION_FAILED';
       const conflict = ['SETUP_REQUIRED', 'REVISION_CONFLICT', 'SERVICE_IN_USE'].includes(code);

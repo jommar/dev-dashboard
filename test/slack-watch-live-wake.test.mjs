@@ -31,6 +31,8 @@ const NOTICE_PREFIX = "There's a new message on ";
 const NAME_SENTINEL = 'sentinel-session-name-7a1f';
 const CWD_SENTINEL = '/work/sentinel-cwd-2c9d';
 const NEVER_RESUMES_MS = 60 * 60_000;
+const STOP_AFTER_LINE_MS = 60_000;
+const RESUME_AFTER_STOP_MS = 90_000;
 
 // One link with the given sessions attached and a not-mine message newer than the attach, so the
 // first tick baselines the thread and delivers that message. `sessions` maps an id to the options
@@ -215,6 +217,242 @@ test('restart: a restart inside the settle gap never resumes early and never for
   assert.equal(f.cli.forks.length, 0);
   assert.equal(f.cli.entryCount(), 1);
   assertDelivery(f, key, SESSION_A, 'delivered:resumed');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Each wake step runs on its own timer; the poll interval paces only the poll
+
+// The watcher armed the way the server arms it, after the one tick that writes the line.
+async function startedWakeScenario(t, options) {
+  const scenario = await wakeScenario(t, options);
+  scenario.f.watcher.start();
+  await scenario.f.tick();
+  return scenario;
+}
+
+async function wakeUntilStoppedByTimer(f) {
+  await f.timers.advance(STOP_AFTER_LINE_MS);
+  assert.equal(f.cli.stops.length, 1, 'the stop timer stopped the idle session');
+}
+
+const continuedResumes = (f, sessionId = SESSION_A) =>
+  f.cli.resumes.filter(
+    (resume) => resume.sessionId === sessionId && resume.outcome === 'continued',
+  );
+
+test('step timers: own schedule: the stop runs 60 s after the line and the resume 90 s after the stop, with no poll in between', async (t) => {
+  const { f, key } = await startedWakeScenario(t);
+  const readsAfterLine = f.fakeReader.calls.length;
+  assertDelivery(f, key, SESSION_A, 'waiting:awaiting_wake');
+
+  await f.timers.advance(STOP_AFTER_LINE_MS - 1);
+  assert.equal(f.cli.stops.length, 0, 'nothing is stopped before the 60 s have passed');
+
+  await f.timers.advance(1);
+  assert.deepEqual(
+    f.cli.stops.map(({ sessionId, atMs }) => ({ sessionId, atMs })),
+    [{ sessionId: SESSION_A, atMs: START_MS + 60_000 }],
+    'the stop timer fires 60 s after the line',
+  );
+  assertDelivery(f, key, SESSION_A, 'waiting:settling');
+  assert.equal(f.cli.resumes.length, 0, 'the stop timer resumes nothing');
+
+  await f.timers.advance(RESUME_AFTER_STOP_MS - 1);
+  assert.equal(f.cli.resumes.length, 0, 'nothing resumes before the 90 s have passed');
+
+  await f.timers.advance(1);
+  assert.deepEqual(
+    f.cli.resumes,
+    [{ sessionId: SESSION_A, outcome: 'continued', atMs: START_MS + 150_000 }],
+    'the resume timer fires 90 s after the stop, under the same id',
+  );
+  assertDelivery(f, key, SESSION_A, 'delivered:resumed');
+  assert.equal(f.entry(key).lastNotifiedTs, NEW_MESSAGE_TS, 'the cursor advances');
+  assert.equal(f.fakeReader.calls.length, readsAfterLine, 'no poll ran: 150 s is under the 180 s');
+  assert.deepEqual(f.timers.escapes, [], 'nothing escaped a timer callback');
+});
+
+test('step timers: backstop: a poll tick advances an overdue step whose timer was lost, and a restart leaves the poll as the only driver', async (t) => {
+  const lost = await startedWakeScenario(t);
+  assert.equal(lost.f.cli.stops.length, 0, 'the tick that wrote the line stops nothing');
+  lost.f.timers.clear();
+  lost.f.clock.set(START_MS + STOP_AFTER_LINE_MS);
+
+  await lost.f.tick();
+  assert.deepEqual(
+    lost.f.cli.stops.map(({ atMs }) => atMs),
+    [START_MS + 60_000],
+    'the poll tick stops the overdue wake',
+  );
+  assertDelivery(lost.f, lost.key, SESSION_A, 'waiting:settling');
+
+  await lost.f.timers.advance(RESUME_AFTER_STOP_MS - 1);
+  assert.equal(lost.f.cli.resumes.length, 0, 'the stop the poll made arms its own resume timer');
+  await lost.f.timers.advance(1);
+  assert.equal(continuedResumes(lost.f).length, 1, 'which resumes 90 s after that stop');
+
+  const restarted = await startedWakeScenario(t);
+  await wakeUntilStoppedByTimer(restarted.f);
+  await restarted.f.restart();
+  restarted.f.watcher.start();
+  await restarted.f.timers.advance(TICK_MS);
+  assert.deepEqual(resumeOutcomes(restarted.f), ['continued'], 'the poll after a restart resumes');
+  assert.equal(restarted.f.cli.forks.length, 0, 'and never forks a copy');
+  assertDelivery(restarted.f, restarted.key, SESSION_A, 'delivered:resumed');
+});
+
+test('step timers: backstop: a tick that wrote the line stops nothing even when the grace passed inside it', async (t) => {
+  const { f } = await wakeScenario(t);
+  const gate = f.cli.hold('listing');
+  const polling = f.tick();
+  await flush();
+  f.clock.advance(STOP_AFTER_LINE_MS);
+  gate.release();
+  await polling;
+  assert.equal(f.cli.stops.length, 0, 'the tick that appended the line stops nothing');
+});
+
+test('step timers: guards: a paused watcher never stops, and the Resume tick that stops arms its own resume timer', async (t) => {
+  const { f, key } = await startedWakeScenario(t);
+  await f.watcher.pause();
+
+  await f.timers.advance(STOP_AFTER_LINE_MS + TICK_MS);
+  assert.equal(f.exec.stops().length, 0, 'no stop while paused');
+  assertDelivery(f, key, SESSION_A, 'waiting:awaiting_wake');
+
+  await f.watcher.resume();
+  assert.equal(f.cli.stops.length, 1, 'the first running tick stops the overdue wake');
+
+  await f.timers.advance(RESUME_AFTER_STOP_MS);
+  assert.equal(continuedResumes(f).length, 1, 'and the resume follows on its own timer');
+});
+
+test('step timers: guards: a paused watcher still resumes the session it stopped, on the resume timer', async (t) => {
+  const { f, key } = await startedWakeScenario(t);
+  await wakeUntilStoppedByTimer(f);
+
+  await f.watcher.pause();
+  await f.timers.advance(RESUME_AFTER_STOP_MS);
+
+  assert.deepEqual(resumeOutcomes(f), ['continued'], 'one resume, same id');
+  assert.equal(f.cli.forks.length, 0);
+  assertDelivery(f, key, SESSION_A, 'delivered:resumed');
+});
+
+test('step timers: guards: a link in backoff does not hold back the resume timer', async (t) => {
+  const { f, key } = await startedWakeScenario(t);
+  await wakeUntilStoppedByTimer(f);
+
+  f.fakeReader.script(() => ({ ok: false, reason: 'rate_limited', retryAfterSeconds: 3600 }));
+  await f.timers.advance(1_000);
+  await f.tick();
+  const readsInBackoff = f.fakeReader.calls.length;
+
+  await f.timers.advance(RESUME_AFTER_STOP_MS - 1_000);
+  assert.equal(
+    f.fakeReader.calls.length,
+    readsInBackoff,
+    'the link was not read: it is backed off',
+  );
+  assert.deepEqual(resumeOutcomes(f), ['continued'], 'one resume, same id');
+  assertDelivery(f, key, SESSION_A, 'delivered:resumed');
+});
+
+test('step timers: guards: nothing runs for a detached session, and a stopped one is still resumed once', async (t) => {
+  const { f, key } = await startedWakeScenario(t, {
+    sessions: { [SESSION_A]: {}, [SESSION_B]: {} },
+  });
+  await f.store.detach(key, SESSION_B);
+
+  await wakeUntilStoppedByTimer(f);
+  assert.deepEqual(
+    f.exec.stops().map(({ args }) => args),
+    [['stop', SESSION_A.slice(0, 8)]],
+    'the attached session is stopped and the detached one is not',
+  );
+
+  await f.store.detach(key, SESSION_A);
+  await f.timers.advance(RESUME_AFTER_STOP_MS);
+  assert.deepEqual(
+    f.exec.spawns().map(({ args }) => args[2]),
+    [SESSION_A],
+    'the session stopped before its detach is resumed once, the detached one never',
+  );
+  assert.equal(f.cli.forks.length, 0);
+});
+
+test('step timers: guards: no resume inside the settle gap, the Resume button included', async (t) => {
+  const { f, key } = await startedWakeScenario(t);
+  await wakeUntilStoppedByTimer(f);
+
+  await f.timers.advance(1_000);
+  await f.watcher.resume();
+  assert.equal(f.cli.resumes.length, 0, 'the Resume button tick does not resume');
+  assertDelivery(f, key, SESSION_A, 'waiting:settling');
+
+  await f.timers.advance(RESUME_AFTER_STOP_MS - 1_000 - 1);
+  assert.equal(f.cli.resumes.length, 0, 'one millisecond before the gap ends');
+  assert.equal(f.cli.forks.length, 0, 'no copy was made');
+
+  await f.timers.advance(1);
+  assert.deepEqual(resumeOutcomes(f), ['continued'], 'the resume timer resumes at the gap end');
+  assertDelivery(f, key, SESSION_A, 'delivered:resumed');
+});
+
+test('step timers: guards: no resume inside the settle gap after a restart, polls every 30 s included', async (t) => {
+  const { f, key } = await startedWakeScenario(t);
+  await wakeUntilStoppedByTimer(f);
+  await f.settings.saveSlackWatch({ intervalSeconds: 30 });
+  await f.timers.advance(1_000);
+  await f.restart();
+  f.watcher.start();
+
+  await f.timers.advance(RESUME_AFTER_STOP_MS - 1);
+  assert.equal(f.cli.resumes.length, 0, 'no poll within 90 s of the restart resumes');
+  assert.equal(f.cli.forks.length, 0, 'and no copy was made');
+
+  await f.timers.advance(1);
+  assert.deepEqual(
+    resumeOutcomes(f),
+    ['continued'],
+    'the poll a full gap after the restart resumes',
+  );
+  assert.equal(f.cli.forks.length, 0);
+  assertDelivery(f, key, SESSION_A, 'delivered:resumed');
+});
+
+test('step timers: guards: a session that came back live is not resumed by the resume timer', async (t) => {
+  const { f, key } = await startedWakeScenario(t);
+  await wakeUntilStoppedByTimer(f);
+
+  f.cli.revive(SESSION_A, 'busy');
+  await f.timers.advance(RESUME_AFTER_STOP_MS);
+
+  assert.equal(f.exec.spawns().length, 0, 'a live session is not resumed');
+  assert.equal(f.cli.forks.length, 0);
+  assert.equal(f.delivery(key, SESSION_A)?.status, 'waiting', 'it goes back to waiting');
+});
+
+test('step timers: cleanup: stop() clears the stop timer and the resume timer, and no step timer keeps the process alive', async (t) => {
+  const awaitingStop = await startedWakeScenario(t);
+  assert.ok(awaitingStop.f.timers.pending() >= 2, 'the poll timer and the stop timer are armed');
+  assert.equal(awaitingStop.f.timers.referenced(), 0, 'none of them keeps the process alive');
+  awaitingStop.f.watcher.stop();
+  assert.equal(awaitingStop.f.timers.pending(), 0, 'stop clears every timer');
+  await awaitingStop.f.timers.advance(STOP_AFTER_LINE_MS + TICK_MS);
+  assert.equal(awaitingStop.f.cli.stops.length, 0, 'a stopped watcher stops nothing');
+
+  const awaitingResume = await startedWakeScenario(t);
+  await wakeUntilStoppedByTimer(awaitingResume.f);
+  assert.ok(
+    awaitingResume.f.timers.pending() >= 2,
+    'the poll timer and the resume timer are armed',
+  );
+  assert.equal(awaitingResume.f.timers.referenced(), 0, 'none of them keeps the process alive');
+  awaitingResume.f.watcher.stop();
+  assert.equal(awaitingResume.f.timers.pending(), 0, 'stop clears every timer');
+  await awaitingResume.f.timers.advance(RESUME_AFTER_STOP_MS + TICK_MS);
+  assert.equal(awaitingResume.f.cli.resumes.length, 0, 'a stopped watcher resumes nothing');
 });
 
 // ---------------------------------------------------------------------------------------------

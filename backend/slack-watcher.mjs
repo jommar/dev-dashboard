@@ -1,8 +1,9 @@
 // slack-watcher.mjs — polls each watched Slack thread and appends one plain notice line to the
 // inbox of every session attached to it when the newest message is somebody else's and new.
 //
-// A session that stays idle with the line unread is woken by the watcher itself: it is stopped on a
-// later tick and, after a settle gap, resumed under its own session id.
+// A session that stays idle with the line unread is woken by the watcher itself: it is stopped a
+// grace after the line and, after a settle gap, resumed under its own session id. Each step runs on
+// its own timer; the poll tick advances a step that is overdue.
 //
 // Only keys, ids, timestamps and fixed reason codes are kept; no message text, name or error
 // text is held, logged or returned. The watcher reads Slack and never writes to it.
@@ -32,6 +33,8 @@ const PER_LINK_FAILURES = new Set(['too_long', 'thread_unreadable']);
 const WAITING_AWAITING = { status: 'waiting', reason: 'awaiting_wake' };
 const WAITING_SETTLING = { status: 'waiting', reason: 'settling' };
 const LISTING_UNAVAILABLE = { status: 'failed-transient', reason: 'listing_unavailable' };
+const WAKE_STEPS = 3;
+const NO_STEP = { step: null, steps: null, nextStepAt: null };
 
 export function claudeHomeReadable(home = os.homedir()) {
   try {
@@ -105,6 +108,7 @@ export function createSlackWatcher({
   let started = false;
   let generation = 0;
   let timer = null;
+  let pollDueAtMs = null;
   let ticking = false;
   let lastTickAt = null;
   let lastPruneAt = null;
@@ -118,18 +122,22 @@ export function createSlackWatcher({
   // One wake per session that owes a line and is listed live. It belongs to the session, not to a
   // link or a notice, so a session attached to two links is stopped and resumed once.
   const wakes = new Map();
+  let queue = Promise.resolve();
 
   const watchSettings = () => settings.getPublicSettings().slackWatch;
-  const isoNow = () => new Date(now()).toISOString();
+  const isoAt = (milliseconds) => new Date(milliseconds).toISOString();
+  const isoNow = () => isoAt(now());
   const isDisabled = () => !homeReadable();
 
   function clearTimer() {
     if (timer !== null) timers.clearTimeout(timer);
     timer = null;
+    pollDueAtMs = null;
   }
 
   async function onTimer() {
     timer = null;
+    pollDueAtMs = null;
     await tickOnce();
     if (started) arm();
   }
@@ -139,17 +147,20 @@ export function createSlackWatcher({
     if (!started || isDisabled()) return;
     timer = timers.setTimeout(onTimer, delayMs);
     timer.unref?.();
+    pollDueAtMs = now() + delayMs;
   }
 
   function start() {
     started = true;
     arm();
+    for (const [sessionId, wake] of wakes) armStep(sessionId, wake);
   }
 
   function stop() {
     started = false;
     generation += 1;
     clearTimer();
+    for (const wake of wakes.values()) clearStepTimer(wake);
   }
 
   // A saved interval takes effect at once, measured from the last tick.
@@ -157,6 +168,22 @@ export function createSlackWatcher({
     const intervalMs = watchSettings().intervalSeconds * 1000;
     const elapsed = lastTickAt === null ? 0 : now() - lastTickAt;
     arm(Math.max(0, intervalMs - elapsed));
+  }
+
+  // The time the armed poll fires. Null while a poll runs, while paused or disabled, and before start,
+  // because the countdown means nothing then.
+  function nextCheckAt() {
+    return state() === 'running' && !ticking && pollDueAtMs !== null ? isoAt(pollDueAtMs) : null;
+  }
+
+  // One timed poll now, then the countdown restarts from it. A poll already running is never doubled,
+  // and a paused or disabled watcher reads nothing.
+  async function checkNow() {
+    if (ticking || state() !== 'running') return { state: state(), checked: false };
+    clearTimer();
+    await tickOnce();
+    arm();
+    return { state: state(), checked: true };
   }
 
   function state() {
@@ -291,12 +318,41 @@ export function createSlackWatcher({
     }
   }
 
-  // A delivered or permanent outcome ends the wake; a waiting or transient one leaves it open.
+  // A wake's stop falls a grace after its line, and its resume a settle gap after the stop.
+  function stepDueAtMs(wake) {
+    return wake.phase === 'stopped'
+      ? wake.stoppedAtMs + SETTLE_MS
+      : wake.appendedAtMs + WAKE_GRACE_MS;
+  }
+
+  function clearStepTimer(wake) {
+    if (wake.timer !== null) timers.clearTimeout(wake.timer);
+    wake.timer = null;
+  }
+
+  // A step already due gets no timer: the poll tick advances it. Arming replaces any earlier timer.
+  function armStep(sessionId, wake) {
+    clearStepTimer(wake);
+    const delayMs = stepDueAtMs(wake) - now();
+    if (!started || delayMs <= 0) return;
+    wake.timer = timers.setTimeout(() => onStepTimer(sessionId, wake), delayMs);
+    wake.timer.unref?.();
+  }
+
+  function forgetWake(sessionId) {
+    const wake = wakes.get(sessionId);
+    if (wake) clearStepTimer(wake);
+    wakes.delete(sessionId);
+  }
+
+  // A delivered or permanent outcome ends the wake; a waiting or transient one leaves it open, and
+  // its next step is timed from here.
   function setWakeOutcome(sessionId, wake, outcome) {
     const next = countAttempt(wake.attempts, outcome);
     wake.attempts = next.attempts;
     wake.outcome = { status: next.status, reason: next.reason };
-    if (next.status === 'delivered' || next.status === 'failed-permanent') wakes.delete(sessionId);
+    if (next.status === 'delivered' || next.status === 'failed-permanent') forgetWake(sessionId);
+    else armStep(sessionId, wake);
     mirrorWake(sessionId, wake);
   }
 
@@ -337,7 +393,7 @@ export function createSlackWatcher({
     if (listed.state === 'finished') return resumeFinished(sessionId, notice, tickState);
     if (listed.activity !== 'idle' && listed.activity !== 'busy')
       return { status: 'delivered', reason: 'inbox_only' };
-    wakes.set(sessionId, {
+    const wake = {
       phase: 'awaiting',
       notice,
       appendedAtMs: record.appendedAtMs,
@@ -346,7 +402,10 @@ export function createSlackWatcher({
       stoppedAtMs: null,
       attempts: 0,
       outcome: WAITING_AWAITING,
-    });
+      timer: null,
+    };
+    wakes.set(sessionId, wake);
+    armStep(sessionId, wake);
     return WAITING_AWAITING;
   }
 
@@ -471,7 +530,7 @@ export function createSlackWatcher({
 
   async function advanceAwaiting(sessionId, wake, tickState) {
     if (!attachedSessionIds().has(sessionId)) {
-      wakes.delete(sessionId);
+      forgetWake(sessionId);
       return;
     }
     if (now() - wake.appendedAtMs >= WAKE_DEADLINE_MS) {
@@ -527,6 +586,12 @@ export function createSlackWatcher({
     setWakeOutcome(sessionId, wake, result);
   }
 
+  async function advanceWake(sessionId, wake, tickState, { resumeOnly }) {
+    if (wake.phase === 'stopped') await advanceStopped(sessionId, wake);
+    else if (!resumeOnly) await advanceAwaiting(sessionId, wake, tickState);
+    await settleWakeCursors(sessionId, tickState);
+  }
+
   // Runs after a tick's reads. A paused or unavailable watcher runs only the resume of a session it
   // already stopped, since the settle gap must still end.
   async function advanceWakes(tickState, { resumeOnly }) {
@@ -534,10 +599,33 @@ export function createSlackWatcher({
       const wake = wakes.get(sessionId);
       if (!wake) continue;
       if (!tickState.isCurrent()) return;
-      if (wake.phase === 'stopped') await advanceStopped(sessionId, wake);
-      else if (!resumeOnly) await advanceAwaiting(sessionId, wake, tickState);
-      await settleWakeCursors(sessionId, tickState);
+      await advanceWake(sessionId, wake, tickState, { resumeOnly });
     }
+  }
+
+  // A step's own timer. Firing early re-arms for the rest of the wait, and a wake replaced or
+  // forgotten meanwhile is left alone.
+  async function advanceDueStep(sessionId, wake, isCurrent) {
+    if (wakes.get(sessionId) !== wake || !isCurrent()) return;
+    if (stepDueAtMs(wake) > now()) {
+      armStep(sessionId, wake);
+      return;
+    }
+    const tickState = tickStateFor(isCurrent);
+    await advanceWake(sessionId, wake, tickState, { resumeOnly: state() !== 'running' });
+  }
+
+  function onStepTimer(sessionId, wake) {
+    wake.timer = null;
+    const tickGeneration = generation;
+    const isCurrent = () => tickGeneration === generation;
+    return queued(async () => {
+      try {
+        await advanceDueStep(sessionId, wake, isCurrent);
+      } catch {
+        // As for a poll tick, the next pass retries; nothing may escape a timer callback.
+      }
+    });
   }
 
   function tickStateFor(isCurrent) {
@@ -565,11 +653,14 @@ export function createSlackWatcher({
     if (isCurrent()) await pruneIfDue(tickState.listing, isCurrent);
   }
 
-  async function tickOnce() {
-    if (ticking) return;
-    ticking = true;
-    const tickGeneration = generation;
-    const isCurrent = () => tickGeneration === generation;
+  // Ticks and step passes take turns on one queue, so neither acts on a wake the other is advancing.
+  function queued(task) {
+    const run = queue.then(task);
+    queue = run.catch(() => {});
+    return run;
+  }
+
+  async function runPollPass(isCurrent) {
     try {
       if (state() === 'running') {
         lastTickAt = now();
@@ -579,9 +670,36 @@ export function createSlackWatcher({
       }
     } catch {
       // A failed tick is retried by the next one; nothing may escape the timer callback.
+    }
+  }
+
+  async function tickOnce() {
+    if (ticking) return;
+    ticking = true;
+    const tickGeneration = generation;
+    const isCurrent = () => tickGeneration === generation;
+    try {
+      await queued(() => runPollPass(isCurrent));
     } finally {
       ticking = false;
     }
+  }
+
+  // A settling session has a wake that knows its stop time. One found finished after a restart has
+  // none, and its resume waits out the gap from this watcher's start.
+  function settleEndMs(sessionId) {
+    return (wakes.get(sessionId)?.stoppedAtMs ?? builtAtMs) + SETTLE_MS;
+  }
+
+  // Which of a wake's three steps a delivery is on. Every other delivery has none.
+  function stepOf(sessionId, record) {
+    if (record.status === 'waiting' && record.reason === 'awaiting_wake')
+      return { step: 1, steps: WAKE_STEPS, nextStepAt: isoAt(record.appendedAtMs + WAKE_GRACE_MS) };
+    if (record.status === 'waiting' && record.reason === 'settling')
+      return { step: 2, steps: WAKE_STEPS, nextStepAt: isoAt(settleEndMs(sessionId)) };
+    if (record.status === 'delivered' && record.reason === 'resumed')
+      return { step: 3, steps: WAKE_STEPS, nextStepAt: null };
+    return NO_STEP;
   }
 
   function list() {
@@ -589,6 +707,7 @@ export function createSlackWatcher({
     return {
       state: state(),
       ...(reason && { reason }),
+      nextCheckAt: nextCheckAt(),
       settings: { ...watchSettings() },
       links: Object.values(store.snapshot().links).map((entry) => {
         const read = reads.get(entry.key);
@@ -603,7 +722,12 @@ export function createSlackWatcher({
             return {
               sessionId,
               delivery: record?.status
-                ? { status: record.status, reason: record.reason, at: record.at }
+                ? {
+                    status: record.status,
+                    reason: record.reason,
+                    at: record.at,
+                    ...stepOf(sessionId, record),
+                  }
                 : null,
             };
           }),
@@ -616,6 +740,7 @@ export function createSlackWatcher({
     start,
     stop,
     refreshSchedule,
+    checkNow,
     tickOnce,
     pause,
     resume,

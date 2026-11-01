@@ -47,7 +47,11 @@ const NEEDLE_NAMES = Object.keys(ALL_NEEDLES);
 const NEEDLE_VALUES = Object.values(ALL_NEEDLES);
 const LABEL_VALUES = Object.values(LABELS);
 const SESSION_FILE = path.join('.config', 'slack', 'session.json');
+const WATCH_PATH = '/api/slack/watch';
 const PICKER_PATH = '/api/slack/watch/sessions';
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const WATCH_PAYLOAD_KEYS = ['links', 'nextCheckAt', 'settings', 'state'];
+const DELIVERY_KEYS = ['at', 'nextStepAt', 'reason', 'status', 'step', 'steps'];
 const STORED_THREAD_KEYS = [
   'key',
   'link',
@@ -72,7 +76,8 @@ function needlesIn(text, allowedValues = []) {
 
 // Runs add link, attach, baseline, wake (with a failing resume spawn), 429, pause, resume, list,
 // picker and detach through the real handler, scanning every sink after each step. Directories
-// are scanned at each step because a detach removes an inbox for good.
+// are scanned at each step because a detach removes an inbox for good. The live session is an idle
+// background one, so its wake is waiting at the wake step and settling after the 429 step.
 async function runScenario(t) {
   const consoleLines = captureConsole(t);
   const f = await watchFixture(t, { http: true, reader: 'real', sessions: 'real' });
@@ -85,6 +90,7 @@ async function runScenario(t) {
     link,
     hits: [],
     responses: [],
+    watchPayloads: [],
     snapshots: [],
     inboxAfterWake: {},
     inboxBeforeDetach: {},
@@ -116,12 +122,14 @@ async function runScenario(t) {
         ? await f.http.bare(method, pathname)
         : await f.http.json(method, pathname, body);
     evidence.responses.push({ method, pathname, status: response.status, text: response.text });
+    if (method === 'GET' && pathname === WATCH_PATH) evidence.watchPayloads.push(response.json());
     const allowed = pathname === PICKER_PATH ? LABEL_VALUES : [];
     record(`${method} ${pathname}`, 'response body', needlesIn(response.text, allowed));
     assert.equal(response.status, 200, `${method} ${pathname} answered ${response.status}`);
     return response;
   }
 
+  await f.watcher.start();
   f.exec.setListing([
     listingEntry({
       sessionId: SESSION_A,
@@ -131,7 +139,7 @@ async function runScenario(t) {
     listingEntry({
       sessionId: SESSION_B,
       pid: LIVE_PID,
-      state: 'working',
+      status: 'idle',
       name: LABELS.liveName,
       cwd: SENTINELS.cwdLive,
     }),
@@ -188,11 +196,13 @@ async function runScenario(t) {
   checkpoint('wake');
   for (const sessionId of [SESSION_A, SESSION_B])
     evidence.inboxAfterWake[sessionId] = f.inboxLines(sessionId);
+  await request('GET', WATCH_PATH);
 
   slackRateLimited = true;
   f.clock.advance(IDLE_GAP_MS);
   await f.tick();
   checkpoint('429 tick');
+  await request('GET', WATCH_PATH);
   slackRateLimited = false;
   spawnsFail = false;
 
@@ -204,7 +214,7 @@ async function runScenario(t) {
   await request('POST', '/api/slack/watch/resume');
   checkpoint('resume');
 
-  await request('GET', '/api/slack/watch');
+  await request('GET', WATCH_PATH);
   await request('GET', PICKER_PATH);
   checkpoint('list and picker');
   for (const sessionId of [SESSION_A, SESSION_B])
@@ -213,7 +223,7 @@ async function runScenario(t) {
   await request('POST', '/api/slack/watch/detach', { link, sessionId: SESSION_A });
   await request('POST', '/api/slack/watch/detach', { link, sessionId: SESSION_B });
   checkpoint('detach');
-  await request('GET', '/api/slack/watch');
+  await request('GET', WATCH_PATH);
 
   // The scenario must have exercised every planted path, or a clean scan proves nothing.
   const authorizations = f.slackFetch.calls.map(({ init }) => new Headers(init.headers));
@@ -300,4 +310,40 @@ test('leak: the session label is in the picker reply and in no other route reply
       assert.ok(!text.includes(label), `${method} ${pathname} must not carry a session label`);
   for (const name of NEEDLE_NAMES.filter((name) => !(name in LABELS)))
     assert.ok(!picker[0].text.includes(ALL_NEEDLES[name]), `the picker must not carry ${name}`);
+});
+
+function assertIsoOrNull(value, label) {
+  assert.ok(value === null || (typeof value === 'string' && ISO_TIMESTAMP.test(value)), label);
+}
+
+function assertIntegerOrNull(value, label) {
+  assert.ok(value === null || Number.isInteger(value), label);
+}
+
+test('leak: the next check and step fields hold only timestamps and integers and nothing else is added', async (t) => {
+  const { watchPayloads } = await runScenario(t);
+  assert.ok(watchPayloads.length >= 4, 'the list was read at several steps');
+  const deliveries = [];
+  for (const payload of watchPayloads) {
+    assert.deepEqual(Object.keys(payload).sort(), WATCH_PAYLOAD_KEYS);
+    assertIsoOrNull(payload.nextCheckAt, 'nextCheckAt is an ISO time or null');
+    for (const { sessions } of payload.links)
+      for (const { delivery } of sessions) {
+        if (delivery === null) continue;
+        assert.deepEqual(Object.keys(delivery).sort(), DELIVERY_KEYS);
+        assertIntegerOrNull(delivery.step, 'step is an integer or null');
+        assertIntegerOrNull(delivery.steps, 'steps is an integer or null');
+        assertIsoOrNull(delivery.nextStepAt, 'nextStepAt is an ISO time or null');
+        deliveries.push(delivery);
+      }
+  }
+  assert.ok(
+    watchPayloads.some((payload) => payload.nextCheckAt !== null),
+    'the scenario read an armed next check',
+  );
+  for (const step of [1, 2])
+    assert.ok(
+      deliveries.some((delivery) => delivery.step === step && delivery.steps === 3),
+      `the scenario read a waiting session at step ${step} of 3`,
+    );
 });

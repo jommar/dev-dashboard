@@ -911,13 +911,13 @@ underlying endpoints — including the `thread_ts === ts` root marker and the
 The Slack tab can also watch Slack threads and wake the Claude Code sessions that
 are working on them. You paste thread links on the **Watch threads** card, a session
 attaches its own id to a link over HTTP, and a watcher inside the dashboard server
-reads each watched thread on an interval. When the newest message in a thread is
-somebody else's and newer than the last one already announced, the watcher appends
-one plain-text line to an inbox file for every session attached to that link. A
-session that follows its inbox with the Monitor tool wakes on that line and reads the
-live thread. An idle background session that does not wake on its own is stopped and
-resumed under the same session id by the watcher, after a settle gap, and a session
-that has finished is resumed too. Delivery below gives the steps, the latencies and the
+reads each watched thread on a poll paced by the interval (a poll is called a tick below).
+When the newest message in a thread is somebody else's and newer than the last one already
+announced, the watcher appends one plain-text line to an inbox file for every session
+attached to that link. A session that follows its inbox with the Monitor tool wakes on that
+line and reads the live thread. An idle background session that does not wake on its own is
+stopped and resumed under the same session id by the watcher, after a settle gap, and a session
+that has finished is resumed too. Delivery below gives the steps, their schedule and the
 sessions that are never stopped. In Slack, the watcher only reads: it never posts,
 reacts or edits.
 
@@ -959,20 +959,20 @@ one notice it should read its whole inbox once first.
 **Live wake.** A session gets a wake when its inbox line is appended and the CLI lists it
 as a background process (`kind: background`) with a numeric `pid` and a status of `idle`
 or `busy`. A busy session is never stopped. If a later listing shows it busy after it was
-seen idle, it woke on its own (`woke_itself`). If it is still idle on a tick after the one
-that opened the wake, and at least 60 seconds after the line, the watcher stops it with
+seen idle, it woke on its own (`woke_itself`). If it is still idle when its stop is due,
+60 seconds after the line, the watcher stops it with
 `claude stop` on its 8-character id, which keeps the conversation. It first lists again to
 check that this exact session is idle and that no other listed session shares the 8
-characters (`ambiguous_id` otherwise). The stop never shares a tick with the line that
-opened the wake, so a session that follows its inbox with a Monitor gets a tick to wake
-first; a line that joins a wake already open does not postpone the stop. The resume then
-waits for a settle gap of 90 seconds, measured on the wall clock from the moment the stop
-returns, and runs on the first tick at or after it. It never runs inside the gap,
-whatever starts the tick, the Resume button included. The stopped session loses its
+characters (`ambiguous_id` otherwise). The stop is never due sooner than 60 seconds after
+the line, so a session that follows its inbox with a Monitor has that long to wake first;
+a line that joins a wake already open does not postpone the stop. The resume is due 90
+seconds after the stop, measured on the wall clock from the moment the stop returns, and
+its own timer runs it then. It never runs inside the gap, whatever runs the step, the
+Resume button included. The stopped session loses its
 Monitor and the resumed one starts without any, so it has to arm one again. If a stopped
 session is live again when the resume runs, the wake goes back to awaiting with the same
 deadline. A session that finishes on its own during a wake is treated as stopped from the
-tick that first sees it finished. A wake still awaiting 2 hours after its line ends
+first listing that shows it finished. A wake still awaiting 2 hours after its line ends
 `failed-permanent` with `never_idle`. One wake serves a session however many links it is
 attached to. Detaching a session from its last link drops its wake, unless the watcher
 has already stopped it, because a stopped session is still resumed. Interactive sessions,
@@ -994,13 +994,27 @@ line arrives is resumed on that tick with no settle gap, because the listing has
 time; if someone else stopped it only seconds earlier, that resume can start a copy
 under a new id, recorded `resume_forked`.
 
-Wake latency is counted from the tick that sees the message: a stop on the first tick at
-least 60 seconds after the line, then a resume on the first tick at least 90 seconds
-after the stop. At the default 180 seconds that is two ticks, about 6 minutes, and up to
-9 minutes after the post. At the 30-second minimum it is about 150 seconds, and up to 3
-minutes after the post. CLI call time adds to both, and because the gap is measured from
-the moment the stop returns, a resume that falls a moment short of it waits for the next
-tick. A busy session waits until it goes idle, which can take up to the 2-hour deadline.
+**Step schedule.** The wake steps run on their own timers, not on the poll. The stop is due
+60 seconds after the notice line is written (the design constant `WAKE_GRACE_MS`), and the
+resume is due 90 seconds after the stop (`SETTLE_MS`). Both are fixed constants in the code,
+not settings. They are design constants, not measured timings: measured figures come only
+from a later verification. The interval paces only the Slack poll, so it does not move either
+step. The poll tick is the backstop: it advances a step that is overdue, which happens after a
+restart and whenever a step could not run when it came due (the session was busy, the listing
+or the CLI call failed, or the session came back live), so in those cases a step can run late
+by up to one poll interval. A busy session waits until it goes idle, which can take up to the
+2-hour deadline.
+
+Each session's `delivery` carries its step, shown in the [HTTP](#http) table:
+
+- `awaiting_wake` (`waiting`) is step 1 of 3; `nextStepAt` is when its stop is due.
+- `settling` (`waiting`) is step 2 of 3; `nextStepAt` is the stop time plus 90 seconds, or
+  for a session found finished after a restart, when the watcher started plus 90 seconds.
+- `resumed` (`delivered`) is step 3 of 3; `nextStepAt` is null.
+
+Every other status and reason has `step`, `steps` and `nextStepAt` all null, and `steps` is 3
+whenever `step` is set. The values are integers and ISO-8601 timestamps only. `nextStepAt`
+stays in the past while a step that came due has not yet run, until the next poll tick.
 
 Every session's last delivery for a link has a status: `delivered`, `waiting` while a
 wake runs, `failed-transient` while retries remain, or `failed-permanent`, with a reason
@@ -1059,8 +1073,10 @@ a thread that got a new message from someone else during the pause wakes its ses
 once. Even when the Resume button runs a tick, a stopped session is not resumed inside
 its settle gap.
 
-**Interval and notice.** The interval is whole seconds, 180 by default, from 30 to
-3600; a saved change takes effect at once. The notice is one line of at most 200
+**Interval and notice.** The interval is whole seconds, 180 by default, from 30 to 3600.
+It paces only the Slack poll, which finds new replies and writes the notice line; the wake
+steps run on their own timers and are not paced by it. A saved change takes effect at once
+and re-measures `nextCheckAt` from the last poll. The notice is one line of at most 200
 characters, `There's a new message on {link}` by default. `{link}` is the only
 placeholder and every occurrence is replaced by the stored link, so a notice holds
 only the template and the link, never Slack text. Line breaks and other control
@@ -1106,8 +1122,14 @@ a link.
   and their reasons are listed under it
 - a table with one row per link: the link, **last checked** (`never` until it has
   been read), the last read status, the attached sessions, each with its last
-  delivery status, how long ago and its reason code and a **Detach** button, and a
-  **Remove** button
+  delivery status, how long ago, its reason code and its step (`step N of 3` for a waiting
+  or resumed session, plus `next step in N s` while `nextStepAt` is set), a **Detach**
+  button and a **Remove** button
+- a countdown, **next check in N s**, ticking every second from `nextCheckAt`, with
+  **checking…** while a poll runs, shown only while the watcher is running, and a
+  **Check now** button beside it, which runs one poll at once and restarts the countdown
+  (`POST /api/slack/watch/check`); the button is disabled while paused or disabled and
+  while its own request is in flight
 - an attach form: pick a link, then a session from the picker or paste a full
   session id, then **Attach**
 - the watcher state (**Running**, **Paused**, or **Disabled** with its reason code),
@@ -1142,7 +1164,8 @@ Its limits: it is a one-time check made while building, not a standing test, and
 not part of `npm test`; its Monitor measurement is driven by a model, so it is not
 deterministic, and one run timed out on its own wait for that session to go quiet (a
 flaky step in the check, not a product failure) before a re-run passed; and it says
-nothing about later CLI versions.
+nothing about later CLI versions. It ran on the tick-paced build, so the step timers above
+are not verified against the real CLI yet.
 
 **What is not verified.** The watcher is tested with fakes for Slack and the
 `claude` CLI and has not been run against a live Slack workspace. The wake path was
@@ -1162,22 +1185,23 @@ after a server restart. The watcher never stops or removes a copy that a resume 
 
 ### HTTP
 
-| Route                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                                                                                                                                                                                                                                                                                           |
-| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected                                                                                                                                                                                                                                                                          |
-| `GET /api/slack/pending`                 | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                                                                                                                                                                                                                                                                                               |
-| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, channel, replyCount, truncated, updatedAt, names, messages[] } }`; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses                                                                                                                                                                               |
-| `POST /api/slack/connect`                | starts the sign-in window, `{ ok, connecting }`                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `POST /api/slack/disconnect`             | deletes the stored session                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `GET /api/slack/watch`                   | the [watcher](#watch) state, answered from memory, no Slack calls: `{ state, reason?, settings: { intervalSeconds, noticeTemplate, paused }, links[] }`; `state` is `running`, `paused` or `disabled`, `reason` only if disabled; each link is `{ key, link, lastCheckedAt, lastStatus, sessions[] }` and each session `{ sessionId, delivery }`; `delivery` is `{ status, reason, at }` (`status` may be `waiting`) or `null` before any attempt |
-| `GET /api/slack/watch/sessions`          | the session picker: `{ source, sessions[] }`; `source` is `claude` (from `claude agents --json --all`) or `map` (the CLI was unusable, so only the ids already attached); each session is `{ sessionId, state, activity?, name?, attached }` with `state` `live`, `finished` or `unknown` (from the CLI's `pid`) and `activity` `idle`, `busy` or `null` (not sent for `map`); `name` is a transient label, only here                             |
-| `POST /api/slack/watch/links`            | body `{ links: [...] }`, at most 50; answers `{ results[] }`, one per input in order: `{ input, ok: true, key, added }` or `{ input, ok: false, reason }`; a link already watched is accepted with `added: false`                                                                                                                                                                                                                                 |
-| `POST /api/slack/watch/remove`           | body `{ link }`; removes the link and its attachments, answers `{ ok, removed }`                                                                                                                                                                                                                                                                                                                                                                  |
-| `POST /api/slack/watch/attach`           | body `{ link, sessionId }` with a full session id (UUID); adds the link if it is unknown, makes no Slack call (also while paused), is idempotent, answers `{ ok, key, inbox }` with the inbox path to follow                                                                                                                                                                                                                                      |
-| `POST /api/slack/watch/detach`           | body `{ link, sessionId }`; answers `{ ok }`, also when the pair was not attached, and also while disabled; the session's inbox goes with its last link                                                                                                                                                                                                                                                                                           |
-| `PUT /api/slack/watch/settings`          | body `{ intervalSeconds?, noticeTemplate? }`, either may be omitted; answers `{ ok, settings }` with the stored values; `paused` is not settable here                                                                                                                                                                                                                                                                                             |
-| `POST /api/slack/watch/pause`, `/resume` | no body; answers `{ ok, state }`; both are idempotent, and `resume` reads the threads before it answers                                                                                                                                                                                                                                                                                                                                           |
+| Route                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `GET /api/slack/pending`                 | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, channel, replyCount, truncated, updatedAt, names, messages[] } }`; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST /api/slack/connect`                | starts the sign-in window, `{ ok, connecting }`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `POST /api/slack/disconnect`             | deletes the stored session                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `GET /api/slack/watch`                   | the [watcher](#watch) state, answered from memory, no Slack calls: `{ state, reason?, nextCheckAt, settings: { intervalSeconds, noticeTemplate, paused }, links[] }`; `state` is `running`, `paused` or `disabled`, `reason` only if disabled; `nextCheckAt` is the time the next timed poll fires, `null` while one runs, paused, disabled or before the start; each link is `{ key, link, lastCheckedAt, lastStatus, sessions[] }` and each session `{ sessionId, delivery }`; `delivery` is `{ status, reason, at, step, steps, nextStepAt }` (`status` may be `waiting`; `step`, `steps` and `nextStepAt` are `null` outside a wake step) or `null` before any attempt |
+| `GET /api/slack/watch/sessions`          | the session picker: `{ source, sessions[] }`; `source` is `claude` (from `claude agents --json --all`) or `map` (the CLI was unusable, so only the ids already attached); each session is `{ sessionId, state, activity?, name?, attached }` with `state` `live`, `finished` or `unknown` (from the CLI's `pid`) and `activity` `idle`, `busy` or `null` (not sent for `map`); `name` is a transient label, only here                                                                                                                                                                                                                                                      |
+| `POST /api/slack/watch/links`            | body `{ links: [...] }`, at most 50; answers `{ results[] }`, one per input in order: `{ input, ok: true, key, added }` or `{ input, ok: false, reason }`; a link already watched is accepted with `added: false`                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `POST /api/slack/watch/remove`           | body `{ link }`; removes the link and its attachments, answers `{ ok, removed }`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `POST /api/slack/watch/attach`           | body `{ link, sessionId }` with a full session id (UUID); adds the link if it is unknown, makes no Slack call (also while paused), is idempotent, answers `{ ok, key, inbox }` with the inbox path to follow                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `POST /api/slack/watch/detach`           | body `{ link, sessionId }`; answers `{ ok }`, also when the pair was not attached, and also while disabled; the session's inbox goes with its last link                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `PUT /api/slack/watch/settings`          | body `{ intervalSeconds?, noticeTemplate? }`, either may be omitted; answers `{ ok, settings }` with the stored values; `paused` is not settable here                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `POST /api/slack/watch/check`            | no body; runs one poll now, the same poll a timed tick runs (so an overdue step also advances), then restarts the countdown, so the next timed poll is one full interval later; answers `{ ok: true, state, checked }`, with `checked` false when a poll was already running; `409 WATCH_PAUSED` while paused, reading nothing from Slack, and `409 WATCH_DISABLED` while disabled; it never bypasses a rate-limit or link backoff                                                                                                                                                                                                                                         |
+| `POST /api/slack/watch/pause`, `/resume` | no body; answers `{ ok, state }`; both are idempotent, and `resume` reads the threads before it answers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 `status` verifies the session with `auth.test` at most once a minute.
 `verified: false` means the token exists but Slack could not be reached — still

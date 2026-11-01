@@ -13,6 +13,8 @@ import {
   SESSION_A,
   SESSION_B,
   SESSION_C,
+  SESSION_D,
+  SESSION_E,
   ME,
   OTHER,
 } from './slack-watch-fixture.mjs';
@@ -32,6 +34,17 @@ const CONCURRENT_READS = 3;
 const LINES_PER_TICK = 20;
 const PRUNE_INTERVAL_MS = 600_000;
 const WRITE_METHODS = /^(append|write|rename|unlink|rm|mkdir|copy|truncate)/;
+const NO_STEP = { step: null, steps: null, nextStepAt: null };
+// START_MS is 2026-10-28T13:01:40.000Z; each key is a number of seconds after it.
+const ISO_AT = {
+  180: '2026-10-28T13:04:40.000Z',
+  240: '2026-10-28T13:05:40.000Z',
+  280: '2026-10-28T13:06:20.000Z',
+  300: '2026-10-28T13:06:40.000Z',
+  330: '2026-10-28T13:07:10.000Z',
+  360: '2026-10-28T13:07:40.000Z',
+  780: '2026-10-28T13:14:40.000Z',
+};
 
 function post(f, key, user, offsetSeconds, micro = 0) {
   const ts = tsAt(offsetSeconds, micro);
@@ -363,6 +376,7 @@ test('delivery: a permanently failing session is recorded once and never repeats
     status: 'failed-permanent',
     reason: 'untrusted_workspace',
     at: new Date(START_MS + TICK_GAP_MS).toISOString(),
+    ...NO_STEP,
   });
   assert.equal(
     f.fakeSessions.resumeCalls.filter(({ sessionId }) => sessionId === SESSION_C).length,
@@ -594,6 +608,7 @@ test('delivery: a session absent from a good listing is delivered with its line 
     status: 'delivered',
     reason: 'not_listed',
     at: new Date(START_MS + TICK_GAP_MS).toISOString(),
+    ...NO_STEP,
   });
   assert.deepEqual(f.fakeSessions.resumeCalls, [], 'no resume for a session nobody listed');
   assert.equal(f.entry(key).lastNotifiedTs, messageTs);
@@ -1250,4 +1265,250 @@ test('wake cap: forty due links write twenty lines a tick, none dropped, none re
   await tickAfterGap(f);
   assert.equal(f.totalLines(), 2 * LINES_PER_TICK, 'a third tick writes none');
   sessionIds.forEach((_, index) => assert.equal(linesOf(index), 1, `lines of session ${index}`));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Next check: the time the armed poll timer will fire
+
+const nextCheckAt = (f) => f.watcher.list().nextCheckAt;
+
+test('next check: state: list() carries the armed poll time, and null before start, while polling, paused or disabled', async (t) => {
+  const { f } = await baselinedLink(t);
+  assert.equal(nextCheckAt(f), null, 'null before start');
+
+  await f.watcher.start();
+  assert.equal(nextCheckAt(f), ISO_AT[180], 'one interval after start');
+
+  const gate = f.fakeReader.hold();
+  const polling = f.timers.advance(TICK_GAP_MS);
+  await flush();
+  assert.equal(nextCheckAt(f), null, 'null while a poll is running');
+  gate.release();
+  await polling;
+  assert.equal(nextCheckAt(f), ISO_AT[360], 'armed again one interval after the poll');
+
+  await f.watcher.pause();
+  assert.equal(nextCheckAt(f), null, 'null while paused');
+
+  await f.watcher.resume();
+  assert.equal(nextCheckAt(f), ISO_AT[360], 'armed again once resumed');
+
+  f.claudeHome.readable = false;
+  assert.equal(nextCheckAt(f), null, 'null once the Claude home is unreadable');
+
+  const disabled = await watchFixture(t, { claudeHome: false });
+  await disabled.watcher.start();
+  assert.equal(nextCheckAt(disabled), null, 'null while disabled');
+});
+
+test('next check: interval: a saved interval re-measures nextCheckAt from the last poll', async (t) => {
+  const { f } = await baselinedLink(t);
+  await f.watcher.start();
+  await f.timers.advance(180_000);
+  await f.timers.advance(60_000);
+
+  f.settings.slackWatch.intervalSeconds = 120;
+  await f.watcher.refreshSchedule();
+  assert.equal(nextCheckAt(f), ISO_AT[300], 'the last poll ran at 180 s, so 180 + 120 s');
+
+  f.settings.slackWatch.intervalSeconds = 600;
+  await f.watcher.refreshSchedule();
+  assert.equal(nextCheckAt(f), ISO_AT[780], 'a longer interval is measured from that poll too');
+
+  f.settings.slackWatch.intervalSeconds = 30;
+  await f.watcher.refreshSchedule();
+  assert.equal(nextCheckAt(f), ISO_AT[240], 'an interval already over is due now');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Wake step: which of the three steps a session's wake is on
+
+const stepFields = ({ step, steps, nextStepAt }) => ({ step, steps, nextStepAt });
+
+test('wake step: a waiting session reports step 1 or 2 of 3, a resumed one 3 of 3, every other delivery none', async (t) => {
+  const woke = sessionUuid(1);
+  const sessionIds = [SESSION_A, SESSION_B, SESSION_C, SESSION_D, SESSION_E, woke];
+  const { f, key } = await baselinedLink(t, { sessionIds });
+  const listed = (wokeActivity) => [
+    { sessionId: SESSION_A, state: 'live', activity: 'idle' },
+    { sessionId: SESSION_B, state: 'live' },
+    { sessionId: SESSION_D, state: 'finished' },
+    { sessionId: SESSION_E, state: 'finished' },
+    { sessionId: woke, state: 'live', activity: wokeActivity },
+  ];
+  f.fakeSessions.setSessions(listed('idle'));
+  f.fakeSessions.onResume(SESSION_A, { status: 'delivered', reason: 'resumed' });
+  f.fakeSessions.onResume(SESSION_D, { status: 'failed-transient', reason: 'spawn_failed' });
+  post(f, key, OTHER, 10);
+  const fieldsOf = (sessionId) => stepFields(f.delivery(key, sessionId));
+
+  await tickAfterGap(f);
+  assert.deepEqual(
+    fieldsOf(SESSION_A),
+    { step: 1, steps: 3, nextStepAt: ISO_AT[240] },
+    'awaiting_wake is step 1, due 60 s after the line',
+  );
+  assert.deepEqual(fieldsOf(woke), { step: 1, steps: 3, nextStepAt: ISO_AT[240] });
+  assertDelivery(f, key, SESSION_B, { status: 'delivered', reason: 'inbox_only' });
+  assertDelivery(f, key, SESSION_C, { status: 'delivered', reason: 'not_listed' });
+  assertDelivery(f, key, SESSION_D, { status: 'failed-transient', reason: 'spawn_failed' });
+  assertDelivery(f, key, SESSION_E, { status: 'delivered' });
+  for (const sessionId of [SESSION_B, SESSION_C, SESSION_D, SESSION_E])
+    assert.deepEqual(fieldsOf(sessionId), NO_STEP, `no step for ${sessionId.slice(0, 8)}`);
+
+  f.fakeSessions.setSessions(listed('busy'));
+  f.clock.set(START_MS + 240_000);
+  await f.tick();
+  assert.deepEqual(
+    fieldsOf(SESSION_A),
+    { step: 2, steps: 3, nextStepAt: ISO_AT[330] },
+    'settling is step 2, due 90 s after the stop',
+  );
+  assertDelivery(f, key, woke, { status: 'delivered', reason: 'woke_itself' });
+  assert.deepEqual(fieldsOf(woke), NO_STEP, 'a session that woke itself has no step');
+
+  f.clock.set(START_MS + 330_000);
+  await f.tick();
+  assertDelivery(f, key, SESSION_A, { status: 'delivered', reason: 'resumed' });
+  assert.deepEqual(
+    fieldsOf(SESSION_A),
+    { step: 3, steps: 3, nextStepAt: null },
+    'a resumed session is on step 3 and has no next step',
+  );
+  assertDelivery(f, key, SESSION_D, { status: 'failed-permanent', reason: 'spawn_failed' });
+  assert.deepEqual(fieldsOf(SESSION_D), NO_STEP, 'a permanent failure has no step');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Force check: one full poll now
+
+async function forceCheckQuietly(f) {
+  assert.equal(typeof f.watcher.checkNow, 'function', 'the watcher offers a forced check');
+  await (async () => f.watcher.checkNow())().catch(() => {});
+}
+
+test('force check: runs one poll now, restarts the countdown from that moment and adds no poll on top', async (t) => {
+  const { f, key } = await baselinedLink(t);
+  await f.watcher.start();
+  await f.timers.advance(100_000);
+  post(f, key, OTHER, 10);
+  const readsBefore = f.fakeReader.calls.length;
+
+  assert.equal(typeof f.watcher.checkNow, 'function', 'the watcher offers a forced check');
+  await f.watcher.checkNow();
+  assert.equal(f.fakeReader.calls.length, readsBefore + 1, 'one read of the one link, now');
+  assert.equal(f.totalLines(), 1, 'the notice line was written by the check');
+  assert.equal(nextCheckAt(f), ISO_AT[280], 'the countdown restarts from the check');
+  assert.equal(f.timers.pending(), 1, 'one poll timer, none added');
+
+  await f.timers.advance(179_999);
+  assert.equal(f.fakeReader.calls.length, readsBefore + 1, 'no poll before the new countdown ends');
+  await f.timers.advance(1);
+  assert.equal(f.fakeReader.calls.length, readsBefore + 2, 'the next poll is one interval later');
+  assert.deepEqual(f.timers.escapes, []);
+});
+
+test('force check: advances an overdue wake step through the same tick as a timed poll', async (t) => {
+  const f = await watchFixture(t, { sessions: 'real' });
+  f.cli.add(SESSION_A);
+  const key = await f.watch({
+    sessionIds: [SESSION_A],
+    messages: [{ user: OTHER, ts: tsAt(-120) }],
+  });
+  f.threads.post(key, { user: OTHER, ts: tsAt(60) });
+  await f.watcher.start();
+  await f.tick();
+  assertDelivery(f, key, SESSION_A, { status: 'waiting', reason: 'awaiting_wake' });
+  f.clock.set(START_MS + 60_000);
+
+  assert.equal(typeof f.watcher.checkNow, 'function', 'the watcher offers a forced check');
+  await f.watcher.checkNow();
+  assert.equal(f.cli.stops.length, 1, 'the check stopped the wake that was overdue');
+  assertDelivery(f, key, SESSION_A, { status: 'waiting', reason: 'settling' });
+});
+
+test('force check: never doubles a poll that is already running', async (t) => {
+  const { f } = await baselinedLink(t);
+  await f.watcher.start();
+  const readsBefore = f.fakeReader.calls.length;
+  const gate = f.fakeReader.hold();
+  const running = f.timers.advance(TICK_GAP_MS);
+  await flush();
+  assert.equal(f.fakeReader.calls.length, readsBefore + 1, 'the timed poll waits on its read');
+
+  assert.equal(typeof f.watcher.checkNow, 'function', 'the watcher offers a forced check');
+  const forced = f.watcher.checkNow();
+  await flush();
+  assert.equal(f.fakeReader.calls.length, readsBefore + 1, 'the check starts no second poll');
+
+  gate.release();
+  await running;
+  await forced;
+  assert.equal(f.fakeReader.calls.length, readsBefore + 1, 'one read in all');
+  assert.equal(f.fakeReader.maxInFlight, 1, 'never two reads at once');
+});
+
+test('force check: guards: reads nothing while paused or disabled and never bypasses a rate limit or a link backoff', async (t) => {
+  const paused = await baselinedLink(t);
+  paused.f.settings.slackWatch.paused = true;
+  post(paused.f, paused.key, OTHER, 10);
+  const pausedReads = paused.f.fakeReader.calls.length;
+  await forceCheckQuietly(paused.f);
+  assert.equal(paused.f.fakeReader.calls.length, pausedReads, 'a paused check reads nothing');
+  assert.equal(paused.f.totalLines(), 0, 'and writes no line');
+  assert.equal(paused.f.entry(paused.key).lastNotifiedTs, BASELINE_TS, 'and keeps the cursor');
+
+  const disabled = await baselinedLink(t);
+  disabled.f.claudeHome.readable = false;
+  post(disabled.f, disabled.key, OTHER, 10);
+  const disabledReads = disabled.f.fakeReader.calls.length;
+  await forceCheckQuietly(disabled.f);
+  assert.equal(disabled.f.fakeReader.calls.length, disabledReads, 'a disabled check reads nothing');
+  assert.equal(disabled.f.totalLines(), 0, 'and writes no line');
+
+  const limited = await baselinedLink(t);
+  post(limited.f, limited.key, OTHER, 10);
+  limited.f.fakeReader.script(() => ({
+    ok: false,
+    reason: 'rate_limited',
+    retryAfterSeconds: 3600,
+  }));
+  const limitedReads = limited.f.fakeReader.calls.length;
+  await forceCheckQuietly(limited.f);
+  assert.equal(limited.f.fakeReader.calls.length, limitedReads + 1, 'the first check reads once');
+  await forceCheckQuietly(limited.f);
+  assert.equal(limited.f.fakeReader.calls.length, limitedReads + 1, 'a rate limit is not bypassed');
+  limited.f.fakeReader.script(() => undefined);
+  limited.f.clock.advance(3_600_000);
+  await forceCheckQuietly(limited.f);
+  assert.equal(limited.f.fakeReader.calls.length, limitedReads + 2, 'it reads again once over');
+  assert.equal(limited.f.totalLines(), 1, 'and delivers the notice');
+
+  const backedOff = await baselinedLink(t, { sessionIds: [SESSION_A, SESSION_B] });
+  const secondKey = await backedOff.f.watch({
+    threadTs: OTHER_THREAD_TS,
+    sessionIds: [SESSION_B],
+    messages: [{ user: OTHER, ts: BASELINE_TS }],
+  });
+  await backedOff.f.tick();
+  const readsOfSecond = () =>
+    backedOff.f.fakeReader.calls.filter((call) => call.threadTs === OTHER_THREAD_TS).length;
+  const readsOfFirst = () => backedOff.f.fakeReader.calls.length - readsOfSecond();
+  backedOff.f.fakeReader.script((params) =>
+    params.threadTs === OTHER_THREAD_TS ? { ok: false, reason: 'too_long' } : undefined,
+  );
+  const [secondBefore, firstBefore] = [readsOfSecond(), readsOfFirst()];
+  await forceCheckQuietly(backedOff.f);
+  assert.equal(readsOfSecond(), secondBefore + 1, 'the failing link is read once');
+  await forceCheckQuietly(backedOff.f);
+  assert.equal(readsOfSecond(), secondBefore + 1, 'its backoff is not bypassed');
+  assert.equal(readsOfFirst(), firstBefore + 2, 'the healthy link is read by both checks');
+  backedOff.f.clock.advance(60_000);
+  await forceCheckQuietly(backedOff.f);
+  assert.equal(
+    readsOfSecond(),
+    secondBefore + 2,
+    'the link is read again once its backoff is over',
+  );
+  assert.ok(backedOff.f.entry(secondKey));
 });

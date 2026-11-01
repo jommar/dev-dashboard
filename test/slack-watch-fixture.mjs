@@ -119,13 +119,20 @@ export function createTimers(clock) {
   const timers = {
     escapes,
     setTimeout(callback, delay) {
+      let referenced = true;
       const handle = {
         id: nextId++,
-        unref: () => handle,
-        ref: () => handle,
-        hasRef: () => true,
+        unref() {
+          referenced = false;
+          return handle;
+        },
+        ref() {
+          referenced = true;
+          return handle;
+        },
+        hasRef: () => referenced,
       };
-      scheduled.set(handle.id, { callback, delay, due: clock.now() + delay });
+      scheduled.set(handle.id, { callback, delay, due: clock.now() + delay, handle });
       return handle;
     },
     clearTimeout(handle) {
@@ -133,6 +140,8 @@ export function createTimers(clock) {
       else scheduled.delete(handle);
     },
     pending: () => scheduled.size,
+    // How many pending timers would keep a real process alive: those never unref'ed.
+    referenced: () => [...scheduled.values()].filter(({ handle }) => handle.hasRef()).length,
     delays: () => [...scheduled.values()].map((timer) => timer.delay),
     clear: () => scheduled.clear(),
     async advance(milliseconds) {

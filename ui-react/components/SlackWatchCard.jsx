@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Card, LoadingState } from './Primitives.jsx';
 import { actionErrorText } from './slack-watch/actionErrorText.js';
 import { AttachForm } from './slack-watch/AttachForm.jsx';
+import { Countdown } from './slack-watch/Countdown.jsx';
 import { RelativeTime } from './slack-watch/RelativeTime.jsx';
 import { SessionDelivery } from './slack-watch/SessionDelivery.jsx';
 import { WatchSettingsForm } from './slack-watch/WatchSettingsForm.jsx';
@@ -9,6 +10,7 @@ import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { SLACK_WATCH_POLL_MS } from '../../ui/polling.js';
 
 const STATE_LABELS = { running: 'Running', paused: 'Paused', disabled: 'Disabled' };
+const CHECKING_TEXT = 'checking…';
 
 const linesOf = (text) =>
   text
@@ -26,6 +28,7 @@ export function SlackWatchCard({ active }) {
   const [linksText, setLinksText] = useState('');
   const [rejections, setRejections] = useState([]);
   const [actionError, setActionError] = useState('');
+  const [checking, setChecking] = useState(false);
 
   const load = useCallback(async () => {
     const next = await api.getSlackWatch();
@@ -66,6 +69,15 @@ export function SlackWatchCard({ active }) {
     await settle(response);
   };
 
+  const checkNow = async () => {
+    setChecking(true);
+    try {
+      await settle(await api.checkSlackWatchNow());
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const state = watch?.state;
   const disabled = state === 'disabled';
   const links = watch?.links ?? [];
@@ -89,6 +101,26 @@ export function SlackWatchCard({ active }) {
                 {watch.reason}
               </span>
             )}
+            {state === 'running' &&
+              (watch.nextCheckAt ? (
+                <Countdown
+                  className="slack-watch-countdown"
+                  iso={watch.nextCheckAt}
+                  label="next check in"
+                  dueText={CHECKING_TEXT}
+                  onDue={load}
+                />
+              ) : (
+                <span className="slack-watch-countdown">{CHECKING_TEXT}</span>
+              ))}
+            <Button
+              data-testid="slack-watch-check"
+              disabled={state !== 'running' || checking}
+              aria-busy={checking}
+              onClick={checkNow}
+            >
+              Check now
+            </Button>
             {state === 'running' && (
               <Button
                 data-testid="slack-watch-pause"
@@ -200,6 +232,7 @@ export function SlackWatchCard({ active }) {
                                 linkKey={entry.key}
                                 sessionId={sessionId}
                                 delivery={delivery}
+                                onDue={load}
                                 onDetach={async () =>
                                   settle(await api.detachSlackWatchSession(entry.link, sessionId), {
                                     refreshPicker: true,

@@ -444,6 +444,14 @@ export function watchSession(sessionId, delivery = null) {
   return { sessionId, delivery };
 }
 
+const WATCH_WAKE_STEPS = 3;
+
+// `step` is the 1-based position in the wake and `nextStepAt` the ISO time that step is due. A
+// delivery outside the wake has no step, so all three fields are null, as the server sends them.
+export function watchDelivery(status, reason, at, { step = null, nextStepAt = null } = {}) {
+  return { status, reason, at, step, steps: step === null ? null : WATCH_WAKE_STEPS, nextStepAt };
+}
+
 export function watchLink(channelId, threadTs, overrides = {}) {
   return {
     key: `${channelId}:${threadTs}`,
@@ -463,6 +471,7 @@ export function slackWatchData(overrides = {}) {
       noticeTemplate: WATCH_DEFAULT_TEMPLATE,
       paused: false,
     },
+    nextCheckAt: null,
     links: [],
     pickerSource: 'claude',
     pickerSessions: [],
@@ -571,6 +580,7 @@ function slackResponse(url, method, { slack }, body) {
           state: watchState(watch),
           reason: watch.disabledReason,
           settings: structuredClone(watch.settings),
+          nextCheckAt: watchState(watch) === 'running' ? watch.nextCheckAt : null,
           links: structuredClone(watch.links),
         },
       };
@@ -605,6 +615,10 @@ function slackResponse(url, method, { slack }, body) {
   if (action === 'pause' || action === 'resume') {
     watch.settings.paused = action === 'pause';
     return { json: { state: watchState(watch) } };
+  }
+  if (action === 'check') {
+    if (watch.disabledReason) return disabled;
+    return { json: { ok: true, state: watchState(watch), checked: true } };
   }
   if (action === 'links') {
     if (watch.disabledReason) return disabled;
