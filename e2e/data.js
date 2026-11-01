@@ -452,12 +452,9 @@ export function watchSession(sessionId, delivery = null) {
   return { sessionId, delivery };
 }
 
-const WATCH_WAKE_STEPS = 3;
-
-// `step` is the 1-based position in the wake and `nextStepAt` the ISO time that step is due. A
-// delivery outside the wake has no step, so all three fields are null, as the server sends them.
-export function watchDelivery(status, reason, at, { step = null, nextStepAt = null } = {}) {
-  return { status, reason, at, step, steps: step === null ? null : WATCH_WAKE_STEPS, nextStepAt };
+// A delivery as the server sends it: the status, the reason and the time of the last change.
+export function watchDelivery(status, reason, at) {
+  return { status, reason, at };
 }
 
 export function watchLink(channelId, threadTs, overrides = {}) {

@@ -17,6 +17,7 @@ import {
   listingEntry,
   permalinkFor,
   rateLimitedResponse,
+  returnsWithoutTimers,
   threadKey,
   tsAt,
   wakeConstants,
@@ -51,7 +52,8 @@ const WATCH_PATH = '/api/slack/watch';
 const PICKER_PATH = '/api/slack/watch/sessions';
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const WATCH_PAYLOAD_KEYS = ['links', 'nextCheckAt', 'settings', 'state'];
-const DELIVERY_KEYS = ['at', 'nextStepAt', 'reason', 'status', 'step', 'steps'];
+const DELIVERY_KEYS = ['at', 'reason', 'status'];
+const REASON_CODE = /^[a-z]+(?:_[a-z]+)*$/;
 const STORED_THREAD_KEYS = [
   'key',
   'link',
@@ -66,6 +68,7 @@ const DEFAULT_NOTICE_PREFIX = "There's a new message on ";
 const LIVE_PID = 4242;
 const SLACK_RATE_LIMIT_SECONDS = 30;
 const IDLE_GAP_MS = 1_000_000;
+const SETTLE_GAP_MS = 15_000;
 const { SETTLE_MS } = await wakeConstants();
 
 function needlesIn(text, allowedValues = []) {
@@ -77,7 +80,8 @@ function needlesIn(text, allowedValues = []) {
 // Runs add link, attach, baseline, wake (with a failing resume spawn), 429, pause, resume, list,
 // picker and detach through the real handler, scanning every sink after each step. Directories
 // are scanned at each step because a detach removes an inbox for good. The live session is an idle
-// background one, so its wake is waiting at the wake step and settling after the 429 step.
+// background one, so its wake is waiting out its settle gap right after the wake step and back to
+// awaiting once the gap has ended on a listing that still shows it live.
 async function runScenario(t) {
   const consoleLines = captureConsole(t);
   const f = await watchFixture(t, { http: true, reader: 'real', sessions: 'real' });
@@ -187,20 +191,25 @@ async function runScenario(t) {
   await request('POST', '/api/slack/watch/attach', { link, sessionId: SESSION_B });
   checkpoint('attach');
 
-  await f.tick();
+  const poll = () => returnsWithoutTimers(() => f.tick());
+  await poll();
   checkpoint('baseline tick');
 
   f.clock.advance(SETTLE_MS + 1_000);
   f.threads.post(key, { ts: tsAt(30), user: OTHER, text: SENTINELS.messageText });
-  await f.tick();
+  await poll();
   checkpoint('wake');
   for (const sessionId of [SESSION_A, SESSION_B])
     evidence.inboxAfterWake[sessionId] = f.inboxLines(sessionId);
   await request('GET', WATCH_PATH);
 
+  await f.timers.advance(SETTLE_GAP_MS);
+  checkpoint('settle gap end');
+  await request('GET', WATCH_PATH);
+
   slackRateLimited = true;
   f.clock.advance(IDLE_GAP_MS);
-  await f.tick();
+  await poll();
   checkpoint('429 tick');
   await request('GET', WATCH_PATH);
   slackRateLimited = false;
@@ -209,7 +218,7 @@ async function runScenario(t) {
   await request('POST', '/api/slack/watch/pause');
   checkpoint('pause');
   f.clock.advance(IDLE_GAP_MS);
-  await f.tick();
+  await poll();
   checkpoint('paused tick');
   await request('POST', '/api/slack/watch/resume');
   checkpoint('resume');
@@ -316,11 +325,7 @@ function assertIsoOrNull(value, label) {
   assert.ok(value === null || (typeof value === 'string' && ISO_TIMESTAMP.test(value)), label);
 }
 
-function assertIntegerOrNull(value, label) {
-  assert.ok(value === null || Number.isInteger(value), label);
-}
-
-test('leak: the next check and step fields hold only timestamps and integers and nothing else is added', async (t) => {
+test('wake flow: payload: the next check and delivery fields hold only timestamps and reason codes, and no step is added', async (t) => {
   const { watchPayloads } = await runScenario(t);
   assert.ok(watchPayloads.length >= 4, 'the list was read at several steps');
   const deliveries = [];
@@ -331,9 +336,11 @@ test('leak: the next check and step fields hold only timestamps and integers and
       for (const { delivery } of sessions) {
         if (delivery === null) continue;
         assert.deepEqual(Object.keys(delivery).sort(), DELIVERY_KEYS);
-        assertIntegerOrNull(delivery.step, 'step is an integer or null');
-        assertIntegerOrNull(delivery.steps, 'steps is an integer or null');
-        assertIsoOrNull(delivery.nextStepAt, 'nextStepAt is an ISO time or null');
+        assertIsoOrNull(delivery.at, 'at is an ISO time or null');
+        assert.ok(
+          delivery.reason === null || REASON_CODE.test(delivery.reason),
+          'a fixed reason code',
+        );
         deliveries.push(delivery);
       }
   }
@@ -341,9 +348,9 @@ test('leak: the next check and step fields hold only timestamps and integers and
     watchPayloads.some((payload) => payload.nextCheckAt !== null),
     'the scenario read an armed next check',
   );
-  for (const step of [1, 2])
+  for (const reason of ['settling', 'awaiting_wake'])
     assert.ok(
-      deliveries.some((delivery) => delivery.step === step && delivery.steps === 3),
-      `the scenario read a waiting session at step ${step} of 3`,
+      deliveries.some((delivery) => delivery.status === 'waiting' && delivery.reason === reason),
+      `the scenario read a session waiting with ${reason}`,
     );
 });

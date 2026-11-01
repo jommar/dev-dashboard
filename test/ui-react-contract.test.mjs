@@ -492,7 +492,7 @@ test('delivery statuses and reasons are pinned against the backend sources, the 
   assert.deepEqual(problems, []);
 });
 
-test('wake steps: the check route, the step fields and the three-step table are pinned across the backend, the UI and the README', () => {
+test('wake flow: the check route and the poll countdown stay, the step fields and the grace wait are gone, and the 15 s settle gap is named once', () => {
   const watcher = readRepoFile('backend/slack-watcher.mjs');
   const httpApp = readRepoFile('backend/http-app.mjs');
   const api = read('lib/api.js');
@@ -507,38 +507,58 @@ test('wake steps: the check route, the step fields and the three-step table are 
   const checkRoute = '/api/slack/watch/check';
   const hasLiteral = (source, text) =>
     [`'${text}'`, `"${text}"`, `\`${text}\``].some((literal) => source.includes(literal));
-  const stepTable = [
-    ['awaiting_wake', 1],
-    ['settling', 2],
-    ['resumed', 3],
+  const names = (source, name) => new RegExp(`\\b${name}\\b`).test(source);
+  const retiredBackendNames = ['nextStepAt', 'WAKE_STEPS', 'stepOf', 'WAKE_GRACE_MS'];
+  const retiredUiPatterns = [
+    ['nextStepAt', /\bnextStepAt\b/],
+    ['delivery.step or delivery.steps', /\bdelivery\??\.steps?\b/],
+    ['the next step countdown label', /next step in/],
+    ['the step row test id', /slack-watch-step/],
   ];
-  const readmeLines = readme.split('\n');
+  const retiredReadmePatterns = [
+    ['`nextStepAt`', /`nextStepAt`/],
+    ['`step`', /`step`/],
+    ['`steps`', /`steps`/],
+    ['WAKE_GRACE_MS', /\bWAKE_GRACE_MS\b/],
+    ['a step count such as 1 of 3', /\b\d of 3\b/],
+    ['the next step countdown', /next step in/],
+  ];
+  const settleGapLiterals = watcher.match(/\b15_000\b/g) ?? [];
+  const readmeParagraphs = readme.split(/\n\s*\n/);
 
   const problems = [
-    ...['nextCheckAt', 'nextStepAt', 'steps', 'checkNow']
-      .filter((name) => !new RegExp(`\\b${name}\\b`).test(watcher))
+    ...['nextCheckAt', 'checkNow', 'SETTLE_MS', 'WAKE_DEADLINE_MS']
+      .filter((name) => !names(watcher, name))
       .map((name) => `the watcher source does not name ${name}`),
+    ...retiredBackendNames
+      .filter((name) => names(watcher, name))
+      .map((name) => `the watcher source still names ${name}`),
+    ...(/export const SETTLE_MS = 15_000;/.test(watcher)
+      ? []
+      : ['the watcher does not export SETTLE_MS as 15_000']),
+    ...(settleGapLiterals.length === 1
+      ? []
+      : [`the watcher names 15_000 ${settleGapLiterals.length} times, not once`]),
+    ...(/\b90_000\b/.test(watcher) ? ['the watcher still names the old 90_000 gap'] : []),
     ...(hasLiteral(httpApp, `POST ${checkRoute}`)
       ? []
       : [`http-app.mjs has no POST ${checkRoute}`]),
     ...(hasLiteral(api, checkRoute) ? [] : [`api.js has no literal ${checkRoute}`]),
-    ...['nextCheckAt', 'nextStepAt', 'steps', 'Check now']
-      .filter((text) => !new RegExp(`\\b${text}\\b`).test(uiSource))
+    ...['nextCheckAt', 'Check now']
+      .filter((text) => !names(uiSource, text))
       .map((text) => `the Watch threads card sources do not use ${text}`),
+    ...retiredUiPatterns
+      .filter(([, pattern]) => pattern.test(uiSource))
+      .map(([label]) => `the Watch threads card sources still use ${label}`),
     ...(readme.includes(checkRoute) ? [] : [`the README does not name ${checkRoute}`]),
-    ...['nextCheckAt', 'nextStepAt', 'step', 'steps']
-      .filter((field) => !readme.includes(`\`${field}\``))
-      .map((field) => `the README does not name \`${field}\``),
+    ...(readme.includes('`nextCheckAt`') ? [] : ['the README does not name `nextCheckAt`']),
     ...(readme.includes('Check now') ? [] : ['the README does not name the Check now button']),
-    ...stepTable
-      .filter(
-        ([reason, number]) =>
-          !readmeLines.some(
-            (line) =>
-              line.includes(`\`${reason}\``) && new RegExp(`\\b${number} of 3\\b`).test(line),
-          ),
-      )
-      .map(([reason, number]) => `no README line pairs \`${reason}\` with step ${number} of 3`),
+    ...(readmeParagraphs.some((text) => text.includes('`SETTLE_MS`') && /\b15 s/.test(text))
+      ? []
+      : ['no README paragraph pairs `SETTLE_MS` with the 15 s settle gap']),
+    ...retiredReadmePatterns
+      .filter(([, pattern]) => pattern.test(readme))
+      .map(([label]) => `the README still names ${label}`),
   ];
   assert.deepEqual(problems, []);
 });

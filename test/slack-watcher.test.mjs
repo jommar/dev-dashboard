@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import {
   watchFixture,
   flush,
+  returnsWithoutTimers,
   tsAt,
   listingEntry,
   permalinkFor,
@@ -34,14 +35,12 @@ const CONCURRENT_READS = 3;
 const LINES_PER_TICK = 20;
 const PRUNE_INTERVAL_MS = 600_000;
 const WRITE_METHODS = /^(append|write|rename|unlink|rm|mkdir|copy|truncate)/;
-const NO_STEP = { step: null, steps: null, nextStepAt: null };
 // START_MS is 2026-10-28T13:01:40.000Z; each key is a number of seconds after it.
 const ISO_AT = {
   180: '2026-10-28T13:04:40.000Z',
   240: '2026-10-28T13:05:40.000Z',
   280: '2026-10-28T13:06:20.000Z',
   300: '2026-10-28T13:06:40.000Z',
-  330: '2026-10-28T13:07:10.000Z',
   360: '2026-10-28T13:07:40.000Z',
   780: '2026-10-28T13:14:40.000Z',
 };
@@ -376,7 +375,6 @@ test('delivery: a permanently failing session is recorded once and never repeats
     status: 'failed-permanent',
     reason: 'untrusted_workspace',
     at: new Date(START_MS + TICK_GAP_MS).toISOString(),
-    ...NO_STEP,
   });
   assert.equal(
     f.fakeSessions.resumeCalls.filter(({ sessionId }) => sessionId === SESSION_C).length,
@@ -608,7 +606,6 @@ test('delivery: a session absent from a good listing is delivered with its line 
     status: 'delivered',
     reason: 'not_listed',
     at: new Date(START_MS + TICK_GAP_MS).toISOString(),
-    ...NO_STEP,
   });
   assert.deepEqual(f.fakeSessions.resumeCalls, [], 'no resume for a session nobody listed');
   assert.equal(f.entry(key).lastNotifiedTs, messageTs);
@@ -1321,62 +1318,62 @@ test('next check: interval: a saved interval re-measures nextCheckAt from the la
 });
 
 // ---------------------------------------------------------------------------------------------
-// Wake step: which of the three steps a session's wake is on
+// Wake flow: a session's delivery carries a status, a reason and a time, and no step
 
-const stepFields = ({ step, steps, nextStepAt }) => ({ step, steps, nextStepAt });
+const SETTLE_GAP_MS = 15_000;
+const DELIVERY_KEYS = ['at', 'reason', 'status'];
 
-test('wake step: a waiting session reports step 1 or 2 of 3, a resumed one 3 of 3, every other delivery none', async (t) => {
+const deliveryKeys = (delivery) => Object.keys(delivery).sort();
+
+test('wake flow: payload: every delivery carries only a status, a reason and a time, whatever its wake is doing', async (t) => {
   const woke = sessionUuid(1);
-  const sessionIds = [SESSION_A, SESSION_B, SESSION_C, SESSION_D, SESSION_E, woke];
+  const busy = sessionUuid(2);
+  const sessionIds = [SESSION_A, SESSION_B, SESSION_C, SESSION_D, SESSION_E, woke, busy];
   const { f, key } = await baselinedLink(t, { sessionIds });
-  const listed = (wokeActivity) => [
-    { sessionId: SESSION_A, state: 'live', activity: 'idle' },
+  const listed = (settlingActivity) => [
+    {
+      sessionId: SESSION_A,
+      state: settlingActivity ? 'live' : 'finished',
+      activity: settlingActivity,
+    },
     { sessionId: SESSION_B, state: 'live' },
     { sessionId: SESSION_D, state: 'finished' },
     { sessionId: SESSION_E, state: 'finished' },
-    { sessionId: woke, state: 'live', activity: wokeActivity },
+    { sessionId: woke, state: 'live', activity: 'idle' },
+    { sessionId: busy, state: 'live', activity: 'busy' },
   ];
   f.fakeSessions.setSessions(listed('idle'));
   f.fakeSessions.onResume(SESSION_A, { status: 'delivered', reason: 'resumed' });
   f.fakeSessions.onResume(SESSION_D, { status: 'failed-transient', reason: 'spawn_failed' });
+  f.fakeSessions.onStop(woke, { status: 'not_idle' });
   post(f, key, OTHER, 10);
-  const fieldsOf = (sessionId) => stepFields(f.delivery(key, sessionId));
 
-  await tickAfterGap(f);
-  assert.deepEqual(
-    fieldsOf(SESSION_A),
-    { step: 1, steps: 3, nextStepAt: ISO_AT[240] },
-    'awaiting_wake is step 1, due 60 s after the line',
-  );
-  assert.deepEqual(fieldsOf(woke), { step: 1, steps: 3, nextStepAt: ISO_AT[240] });
+  f.clock.advance(TICK_GAP_MS);
+  await returnsWithoutTimers(() => f.tick());
+  for (const sessionId of sessionIds)
+    assert.deepEqual(
+      deliveryKeys(f.delivery(key, sessionId)),
+      DELIVERY_KEYS,
+      `no step field on ${sessionId.slice(0, 8)}`,
+    );
+
+  assertDelivery(f, key, SESSION_A, { status: 'waiting', reason: 'settling' });
+  assertDelivery(f, key, busy, { status: 'waiting', reason: 'awaiting_wake' });
   assertDelivery(f, key, SESSION_B, { status: 'delivered', reason: 'inbox_only' });
   assertDelivery(f, key, SESSION_C, { status: 'delivered', reason: 'not_listed' });
   assertDelivery(f, key, SESSION_D, { status: 'failed-transient', reason: 'spawn_failed' });
   assertDelivery(f, key, SESSION_E, { status: 'delivered' });
-  for (const sessionId of [SESSION_B, SESSION_C, SESSION_D, SESSION_E])
-    assert.deepEqual(fieldsOf(sessionId), NO_STEP, `no step for ${sessionId.slice(0, 8)}`);
-
-  f.fakeSessions.setSessions(listed('busy'));
-  f.clock.set(START_MS + 240_000);
-  await f.tick();
-  assert.deepEqual(
-    fieldsOf(SESSION_A),
-    { step: 2, steps: 3, nextStepAt: ISO_AT[330] },
-    'settling is step 2, due 90 s after the stop',
-  );
   assertDelivery(f, key, woke, { status: 'delivered', reason: 'woke_itself' });
-  assert.deepEqual(fieldsOf(woke), NO_STEP, 'a session that woke itself has no step');
 
-  f.clock.set(START_MS + 330_000);
-  await f.tick();
+  f.fakeSessions.setSessions(listed(null));
+  await f.timers.advance(SETTLE_GAP_MS);
   assertDelivery(f, key, SESSION_A, { status: 'delivered', reason: 'resumed' });
+  assert.deepEqual(deliveryKeys(f.delivery(key, SESSION_A)), DELIVERY_KEYS);
   assert.deepEqual(
-    fieldsOf(SESSION_A),
-    { step: 3, steps: 3, nextStepAt: null },
-    'a resumed session is on step 3 and has no next step',
+    Object.keys(f.watcher.list()).sort(),
+    ['links', 'nextCheckAt', 'settings', 'state'],
+    'nextCheckAt stays beside the links',
   );
-  assertDelivery(f, key, SESSION_D, { status: 'failed-permanent', reason: 'spawn_failed' });
-  assert.deepEqual(fieldsOf(SESSION_D), NO_STEP, 'a permanent failure has no step');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1406,25 +1403,6 @@ test('force check: runs one poll now, restarts the countdown from that moment an
   await f.timers.advance(1);
   assert.equal(f.fakeReader.calls.length, readsBefore + 2, 'the next poll is one interval later');
   assert.deepEqual(f.timers.escapes, []);
-});
-
-test('force check: advances an overdue wake step through the same tick as a timed poll', async (t) => {
-  const f = await watchFixture(t, { sessions: 'real' });
-  f.cli.add(SESSION_A);
-  const key = await f.watch({
-    sessionIds: [SESSION_A],
-    messages: [{ user: OTHER, ts: tsAt(-120) }],
-  });
-  f.threads.post(key, { user: OTHER, ts: tsAt(60) });
-  await f.watcher.start();
-  await f.tick();
-  assertDelivery(f, key, SESSION_A, { status: 'waiting', reason: 'awaiting_wake' });
-  f.clock.set(START_MS + 60_000);
-
-  assert.equal(typeof f.watcher.checkNow, 'function', 'the watcher offers a forced check');
-  await f.watcher.checkNow();
-  assert.equal(f.cli.stops.length, 1, 'the check stopped the wake that was overdue');
-  assertDelivery(f, key, SESSION_A, { status: 'waiting', reason: 'settling' });
 });
 
 test('force check: never doubles a poll that is already running', async (t) => {

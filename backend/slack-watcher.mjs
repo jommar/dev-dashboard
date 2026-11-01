@@ -1,9 +1,9 @@
 // slack-watcher.mjs — polls each watched Slack thread and appends one plain notice line to the
 // inbox of every session attached to it when the newest message is somebody else's and new.
 //
-// A session that stays idle with the line unread is woken by the watcher itself: it is stopped a
-// grace after the line and, after a settle gap, resumed under its own session id. Each step runs on
-// its own timer; the poll tick advances a step that is overdue.
+// A session that stays idle with the line unread is woken by the watcher itself: the pass that
+// writes the line stops it, and a flow of its own resumes it under the same session id once the
+// settle gap has passed. A busy session is left alone until a later pass finds it idle.
 //
 // Only keys, ids, timestamps and fixed reason codes are kept; no message text, name or error
 // text is held, logged or returned. The watcher reads Slack and never writes to it.
@@ -16,9 +16,7 @@ import { shouldWake } from './slack-model.mjs';
 export const MAX_DELIVERY_ATTEMPTS = 3;
 // Wall-clock time between a watcher stop and the resume that continues the same session; a resume
 // sooner than this forks a copy under a new id.
-export const SETTLE_MS = 90_000;
-// How long an idle session has to read its line before the watcher stops it.
-export const WAKE_GRACE_MS = 60_000;
+export const SETTLE_MS = 15_000;
 // How long a wake waits for an idle session before it ends as never_idle.
 export const WAKE_DEADLINE_MS = 2 * 60 * 60_000;
 const CONCURRENT_READS = 3;
@@ -33,8 +31,6 @@ const PER_LINK_FAILURES = new Set(['too_long', 'thread_unreadable']);
 const WAITING_AWAITING = { status: 'waiting', reason: 'awaiting_wake' };
 const WAITING_SETTLING = { status: 'waiting', reason: 'settling' };
 const LISTING_UNAVAILABLE = { status: 'failed-transient', reason: 'listing_unavailable' };
-const WAKE_STEPS = 3;
-const NO_STEP = { step: null, steps: null, nextStepAt: null };
 
 export function claudeHomeReadable(home = os.homedir()) {
   try {
@@ -153,14 +149,13 @@ export function createSlackWatcher({
   function start() {
     started = true;
     arm();
-    for (const [sessionId, wake] of wakes) armStep(sessionId, wake);
   }
 
   function stop() {
     started = false;
     generation += 1;
     clearTimer();
-    for (const wake of wakes.values()) clearStepTimer(wake);
+    for (const wake of wakes.values()) cancelResumeFlow(wake);
   }
 
   // A saved interval takes effect at once, measured from the last tick.
@@ -318,42 +313,99 @@ export function createSlackWatcher({
     }
   }
 
-  // A wake's stop falls a grace after its line, and its resume a settle gap after the stop.
-  function stepDueAtMs(wake) {
-    return wake.phase === 'stopped'
-      ? wake.stoppedAtMs + SETTLE_MS
-      : wake.appendedAtMs + WAKE_GRACE_MS;
-  }
-
-  function clearStepTimer(wake) {
-    if (wake.timer !== null) timers.clearTimeout(wake.timer);
-    wake.timer = null;
-  }
-
-  // A step already due gets no timer: the poll tick advances it. Arming replaces any earlier timer.
-  function armStep(sessionId, wake) {
-    clearStepTimer(wake);
-    const delayMs = stepDueAtMs(wake) - now();
-    if (!started || delayMs <= 0) return;
-    wake.timer = timers.setTimeout(() => onStepTimer(sessionId, wake), delayMs);
-    wake.timer.unref?.();
-  }
-
   function forgetWake(sessionId) {
-    const wake = wakes.get(sessionId);
-    if (wake) clearStepTimer(wake);
     wakes.delete(sessionId);
   }
 
-  // A delivered or permanent outcome ends the wake; a waiting or transient one leaves it open, and
-  // its next step is timed from here.
+  // A delivered or permanent outcome ends the wake; a waiting or transient one leaves it open for
+  // the next pass.
   function setWakeOutcome(sessionId, wake, outcome) {
     const next = countAttempt(wake.attempts, outcome);
     wake.attempts = next.attempts;
     wake.outcome = { status: next.status, reason: next.reason };
     if (next.status === 'delivered' || next.status === 'failed-permanent') forgetWake(sessionId);
-    else armStep(sessionId, wake);
     mirrorWake(sessionId, wake);
+  }
+
+  function settleGapLeftMs(wake) {
+    return Math.max(0, wake.stoppedAtMs + SETTLE_MS - now());
+  }
+
+  // The settle gap waited on the injected timers, unref'd like the poll's. Cancelling it settles
+  // `completed` as false, so the flow ends without a resume.
+  function waitSettleGap(waitMs) {
+    let settle;
+    const completed = new Promise((resolve) => {
+      settle = resolve;
+    });
+    const handle = timers.setTimeout(() => settle(true), waitMs);
+    handle.unref?.();
+    return {
+      completed,
+      cancel() {
+        timers.clearTimeout(handle);
+        settle(false);
+      },
+    };
+  }
+
+  // One flow per stopped session: it waits out the gap, then resumes under the same id through the
+  // queue, so no pass interleaves with it. Nothing else waits on the gap.
+  function launchResumeFlow(sessionId, wake) {
+    const flowGeneration = generation;
+    const gap = waitSettleGap(settleGapLeftMs(wake));
+    const flow = { cancel: gap.cancel };
+    wake.flow = flow;
+    const resumeAfterGap = async () => {
+      try {
+        if (generation !== flowGeneration) return;
+        await resumeStopped(sessionId, wake);
+        if (generation === flowGeneration)
+          await settleWakeCursors(
+            sessionId,
+            tickStateFor(() => generation === flowGeneration),
+          );
+      } catch {
+        // The next pass retries a resume that failed; nothing may escape a timer callback.
+      } finally {
+        if (wake.flow === flow) wake.flow = null;
+      }
+    };
+    gap.completed.then((completed) => completed && queued(resumeAfterGap));
+  }
+
+  function cancelResumeFlow(wake) {
+    wake.flow?.cancel();
+    wake.flow = null;
+  }
+
+  // A stopped wake is owed its resume from this moment. Its flow is armed only while the pass that
+  // stopped the session is still current, so a stop() that lands during the stop call arms nothing.
+  function beginSettleGap(sessionId, wake, tickState) {
+    wake.phase = 'stopped';
+    wake.stoppedAtMs = now();
+    setWakeOutcome(sessionId, wake, WAITING_SETTLING);
+    if (tickState.isCurrent()) launchResumeFlow(sessionId, wake);
+  }
+
+  // A session the watcher did not stop is resumed only while it is attached and the watcher runs.
+  // Otherwise its wake waits again, and a later running pass decides.
+  async function resumeStopped(sessionId, wake) {
+    const mayResume =
+      wake.stoppedByWatcher || (attachedSessionIds().has(sessionId) && state() === 'running');
+    if (!mayResume) {
+      wake.phase = 'awaiting';
+      setWakeOutcome(sessionId, wake, WAITING_AWAITING);
+      return;
+    }
+    const result = await resumeSession(sessionId, wake.notice);
+    if (result.status === 'waiting') {
+      // Someone else woke the session during the gap, so the wake awaits it again.
+      wake.phase = 'awaiting';
+      setWakeOutcome(sessionId, wake, WAITING_AWAITING);
+      return;
+    }
+    setWakeOutcome(sessionId, wake, result);
   }
 
   async function resumeSession(sessionId, notice) {
@@ -384,7 +436,7 @@ export function createSlackWatcher({
   }
 
   // The outcome of a line that is in the inbox and has no wake yet. An idle or busy session opens
-  // a wake, which later ticks advance.
+  // a wake, which the same pass advances after its reads.
   async function classify(sessionId, notice, record, tickState) {
     const { source, sessions: listedSessions } = await tickState.listing();
     if (source !== 'claude') return LISTING_UNAVAILABLE;
@@ -397,19 +449,18 @@ export function createSlackWatcher({
       phase: 'awaiting',
       notice,
       appendedAtMs: record.appendedAtMs,
-      openedBy: tickState,
       idleSeen: listed.activity === 'idle',
       stoppedAtMs: null,
+      stoppedByWatcher: false,
       attempts: 0,
       outcome: WAITING_AWAITING,
-      timer: null,
+      flow: null,
     };
     wakes.set(sessionId, wake);
-    armStep(sessionId, wake);
     return WAITING_AWAITING;
   }
 
-  // The inbox line is written once per notice; a retry repeats only the step that failed.
+  // The inbox line is written once per notice; a retry repeats only the write that failed.
   async function attemptDelivery(entry, sessionId, record, notice, tickState) {
     let outcome;
     if (!record.appended) {
@@ -501,28 +552,27 @@ export function createSlackWatcher({
     if (noticeTs) await deliver(entry, noticeTs, tickState);
   }
 
-  // A stop needs an idle session that has had the grace to wake by itself, on a tick after the one
-  // that opened its wake, while the watcher is running and still current.
-  function mayStop(wake, tickState) {
-    return (
-      wake.openedBy !== tickState &&
-      now() - wake.appendedAtMs >= WAKE_GRACE_MS &&
-      state() === 'running' &&
-      tickState.isCurrent()
-    );
+  // A stop needs a running, still current watcher. The pass that opened a wake may stop it: the
+  // line is already in the inbox, and stopSession lists the session again before it acts.
+  function mayStop(tickState) {
+    return state() === 'running' && tickState.isCurrent();
   }
 
-  async function stopWake(sessionId, wake) {
+  async function stopWake(sessionId, wake, tickState) {
     const result = await stopSession(sessionId);
     if (result.status === 'stopped') {
-      wake.phase = 'stopped';
-      wake.stoppedAtMs = now();
-      setWakeOutcome(sessionId, wake, WAITING_SETTLING);
+      wake.stoppedByWatcher = true;
+      beginSettleGap(sessionId, wake, tickState);
     } else if (result.status === 'not_listed') {
       setWakeOutcome(sessionId, wake, { status: 'delivered', reason: 'not_listed' });
     } else if (result.status === 'not_idle') {
-      // Busy since the listing: it woke by itself, and a later tick reports woke_itself.
-      setWakeOutcome(sessionId, wake, WAITING_AWAITING);
+      // Only a session the stop listed busy woke by itself; any other listing keeps its notice owed
+      // for the next pass.
+      const outcome =
+        result.activity === null
+          ? WAITING_AWAITING
+          : { status: 'delivered', reason: 'woke_itself' };
+      setWakeOutcome(sessionId, wake, outcome);
     } else {
       setWakeOutcome(sessionId, wake, result);
     }
@@ -549,10 +599,8 @@ export function createSlackWatcher({
       return;
     }
     if (listed.state === 'finished') {
-      // Finished without a stop by the watcher, so someone else stopped it; the gap starts now.
-      wake.phase = 'stopped';
-      wake.stoppedAtMs = now();
-      setWakeOutcome(sessionId, wake, WAITING_SETTLING);
+      // Someone else stopped it: the gap starts now, and the resume waits for an attached watcher.
+      beginSettleGap(sessionId, wake, tickState);
       return;
     }
     if (listed.activity === 'busy') {
@@ -567,65 +615,23 @@ export function createSlackWatcher({
       return;
     }
     wake.idleSeen = true;
-    if (mayStop(wake, tickState)) await stopWake(sessionId, wake);
+    if (mayStop(tickState)) await stopWake(sessionId, wake, tickState);
     else setWakeOutcome(sessionId, wake, WAITING_AWAITING);
   }
 
-  async function advanceStopped(sessionId, wake) {
-    if (now() - wake.stoppedAtMs < SETTLE_MS) {
-      setWakeOutcome(sessionId, wake, WAITING_SETTLING);
-      return;
-    }
-    const result = await resumeSession(sessionId, wake.notice);
-    if (result.status === 'waiting') {
-      // Someone else woke the session during the gap, so the wake awaits it again.
-      wake.phase = 'awaiting';
-      setWakeOutcome(sessionId, wake, WAITING_AWAITING);
-      return;
-    }
-    setWakeOutcome(sessionId, wake, result);
-  }
-
-  async function advanceWake(sessionId, wake, tickState, { resumeOnly }) {
-    if (wake.phase === 'stopped') await advanceStopped(sessionId, wake);
-    else if (!resumeOnly) await advanceAwaiting(sessionId, wake, tickState);
-    await settleWakeCursors(sessionId, tickState);
-  }
-
-  // Runs after a tick's reads. A paused or unavailable watcher runs only the resume of a session it
-  // already stopped, since the settle gap must still end.
+  // Runs after a pass's reads. A stopped session belongs to its flow while the flow is in flight;
+  // one whose resume failed is retried here once its gap has passed. A paused or unavailable
+  // watcher still retries the resume of a session it stopped, since that gap must still end.
   async function advanceWakes(tickState, { resumeOnly }) {
     for (const sessionId of [...wakes.keys()]) {
       const wake = wakes.get(sessionId);
       if (!wake) continue;
       if (!tickState.isCurrent()) return;
-      await advanceWake(sessionId, wake, tickState, { resumeOnly });
+      if (wake.phase === 'stopped') {
+        if (!wake.flow && settleGapLeftMs(wake) === 0) await resumeStopped(sessionId, wake);
+      } else if (!resumeOnly) await advanceAwaiting(sessionId, wake, tickState);
+      await settleWakeCursors(sessionId, tickState);
     }
-  }
-
-  // A step's own timer. Firing early re-arms for the rest of the wait, and a wake replaced or
-  // forgotten meanwhile is left alone.
-  async function advanceDueStep(sessionId, wake, isCurrent) {
-    if (wakes.get(sessionId) !== wake || !isCurrent()) return;
-    if (stepDueAtMs(wake) > now()) {
-      armStep(sessionId, wake);
-      return;
-    }
-    const tickState = tickStateFor(isCurrent);
-    await advanceWake(sessionId, wake, tickState, { resumeOnly: state() !== 'running' });
-  }
-
-  function onStepTimer(sessionId, wake) {
-    wake.timer = null;
-    const tickGeneration = generation;
-    const isCurrent = () => tickGeneration === generation;
-    return queued(async () => {
-      try {
-        await advanceDueStep(sessionId, wake, isCurrent);
-      } catch {
-        // As for a poll tick, the next pass retries; nothing may escape a timer callback.
-      }
-    });
   }
 
   function tickStateFor(isCurrent) {
@@ -653,7 +659,8 @@ export function createSlackWatcher({
     if (isCurrent()) await pruneIfDue(tickState.listing, isCurrent);
   }
 
-  // Ticks and step passes take turns on one queue, so neither acts on a wake the other is advancing.
+  // Poll passes and resume flows take turns on one queue, so neither acts on a wake the other is
+  // advancing.
   function queued(task) {
     const run = queue.then(task);
     queue = run.catch(() => {});
@@ -685,23 +692,6 @@ export function createSlackWatcher({
     }
   }
 
-  // A settling session has a wake that knows its stop time. One found finished after a restart has
-  // none, and its resume waits out the gap from this watcher's start.
-  function settleEndMs(sessionId) {
-    return (wakes.get(sessionId)?.stoppedAtMs ?? builtAtMs) + SETTLE_MS;
-  }
-
-  // Which of a wake's three steps a delivery is on. Every other delivery has none.
-  function stepOf(sessionId, record) {
-    if (record.status === 'waiting' && record.reason === 'awaiting_wake')
-      return { step: 1, steps: WAKE_STEPS, nextStepAt: isoAt(record.appendedAtMs + WAKE_GRACE_MS) };
-    if (record.status === 'waiting' && record.reason === 'settling')
-      return { step: 2, steps: WAKE_STEPS, nextStepAt: isoAt(settleEndMs(sessionId)) };
-    if (record.status === 'delivered' && record.reason === 'resumed')
-      return { step: 3, steps: WAKE_STEPS, nextStepAt: null };
-    return NO_STEP;
-  }
-
   function list() {
     const reason = isDisabled() ? DISABLED_REASON : null;
     return {
@@ -726,7 +716,6 @@ export function createSlackWatcher({
                     status: record.status,
                     reason: record.reason,
                     at: record.at,
-                    ...stepOf(sessionId, record),
                   }
                 : null,
             };

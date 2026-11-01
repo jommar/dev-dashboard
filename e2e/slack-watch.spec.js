@@ -52,7 +52,6 @@ const checkCalls = ({ data }) => data.slack.watch.calls.filter(({ path }) => pat
 const watchCard = (page) => page.getByTestId('slack-watch-card');
 const checkNowButton = (page) => watchCard(page).getByRole('button', { name: 'Check now' });
 const nextCheckText = (seconds) => `next check in ${seconds} s`;
-const nextStepText = (seconds) => `next step in ${seconds} s`;
 
 // The page clock stops at FROZEN_AT before the page loads, so every countdown reads an exact
 // number of seconds and only `tickSeconds` moves it.
@@ -587,31 +586,41 @@ test.describe('watch schedule', () => {
     await expect(checking).toHaveCount(0);
   });
 
-  test('wake step: shows step N of 3 with its own countdown for waiting and resumed sessions only', async ({
+  test('wake flow: card: shows no step text for any session, even from a payload that still carries step fields, and keeps the poll countdown and Check now', async ({
     page,
     dashboard,
   }) => {
+    // The retired step fields, as an older server sent them: the card must show none of them.
+    const withRetiredStep = (delivery, step, nextStepAt) => ({
+      ...delivery,
+      step,
+      steps: 3,
+      nextStepAt,
+    });
     dashboard.data.slack.watch = slackWatchData({
+      nextCheckAt: isoAfter(12_000),
       links: [
         watchLink(CHANNEL, THREAD_A, {
           sessions: [
             watchSession(
               SESSION_BILLING,
-              watchDelivery('waiting', 'awaiting_wake', isoAfter(-5_000), {
-                step: 1,
-                nextStepAt: isoAfter(45_000),
-              }),
+              withRetiredStep(
+                watchDelivery('waiting', 'awaiting_wake', isoAfter(-5_000)),
+                1,
+                isoAfter(45_000),
+              ),
             ),
             watchSession(
               SESSION_SETTLING,
-              watchDelivery('waiting', 'settling', isoAfter(-65_000), {
-                step: 2,
-                nextStepAt: isoAfter(100_000),
-              }),
+              withRetiredStep(
+                watchDelivery('waiting', 'settling', isoAfter(-65_000)),
+                2,
+                isoAfter(100_000),
+              ),
             ),
             watchSession(
               SESSION_RESUMED,
-              watchDelivery('delivered', 'resumed', isoAfter(-155_000), { step: 3 }),
+              withRetiredStep(watchDelivery('delivered', 'resumed', isoAfter(-155_000)), 3, null),
             ),
             watchSession(SESSION_IDLE, watchDelivery('delivered', 'woke_itself', isoAfter(-5_000))),
             watchSession(
@@ -629,6 +638,7 @@ test.describe('watch schedule', () => {
     await freezeClock(page);
     await openSlackTab(page);
 
+    const card = watchCard(page);
     const row = (sessionId) => page.getByTestId(`slack-watch-session-${KEY_A}-${sessionId}`);
     const part = (sessionId) => (name) => page.getByTestId(sessionTestId(name, KEY_A, sessionId));
     const awaitingWake = part(SESSION_BILLING);
@@ -636,24 +646,32 @@ test.describe('watch schedule', () => {
     const resumed = part(SESSION_RESUMED);
     await expect(awaitingWake('status')).toHaveText('waiting');
     await expect(awaitingWake('reason')).toHaveText('awaiting_wake');
-
-    await expect(row(SESSION_BILLING).getByText('step 1 of 3')).toBeVisible();
-    await expect(row(SESSION_BILLING).getByText(nextStepText(45))).toBeVisible();
-    await expect(row(SESSION_SETTLING).getByText('step 2 of 3')).toBeVisible();
-    await expect(row(SESSION_SETTLING).getByText(nextStepText(100))).toBeVisible();
-    await expect(row(SESSION_RESUMED).getByText('step 3 of 3')).toBeVisible();
-    await expect(row(SESSION_RESUMED)).not.toContainText('next step');
-
-    await tickSeconds(page, 1);
-    await expect(row(SESSION_BILLING).getByText(nextStepText(44))).toBeVisible();
-    await expect(row(SESSION_SETTLING).getByText(nextStepText(99))).toBeVisible();
-    await expect(row(SESSION_RESUMED)).not.toContainText('next step');
-
-    for (const sessionId of [SESSION_IDLE, SESSION_MANUAL, SESSION_FLAKY]) {
-      await expect(part(sessionId)('status')).toBeVisible();
-      await expect(row(sessionId)).not.toContainText(/step/i);
-    }
+    await expect(settling('status')).toHaveText('waiting');
+    await expect(settling('reason')).toHaveText('settling');
+    await expect(resumed('status')).toHaveText('delivered');
+    await expect(resumed('reason')).toHaveText('resumed');
+    await expect(part(SESSION_IDLE)('reason')).toHaveText('woke_itself');
+    await expect(part(SESSION_MANUAL)('reason')).toHaveText('inbox_only');
+    await expect(part(SESSION_FLAKY)('status')).toHaveText('failed-permanent');
     await expect(part(SESSION_FLAKY)('reason')).toHaveText('untrusted_workspace');
+
+    for (const sessionId of [
+      SESSION_BILLING,
+      SESSION_SETTLING,
+      SESSION_RESUMED,
+      SESSION_IDLE,
+      SESSION_MANUAL,
+      SESSION_FLAKY,
+    ])
+      await expect(row(sessionId)).not.toContainText(/step/i);
+    await expect(card.getByText(/next step in/)).toHaveCount(0);
+    await expect(page.getByTestId(/^slack-watch-step-/)).toHaveCount(0);
+
+    await expect(card.getByText(nextCheckText(12))).toBeVisible();
+    await tickSeconds(page, 1);
+    await expect(card.getByText(nextCheckText(11))).toBeVisible();
+    await expect(checkNowButton(page)).toBeEnabled();
+    await expect(card.getByText(/next step in/)).toHaveCount(0);
 
     const mutedColor = await colorOf(awaitingWake('time'));
     const failureReasonColor = await colorOf(part(SESSION_FLAKY)('reason'));
@@ -744,41 +762,6 @@ test.describe('watch schedule', () => {
 
     await expect(actionError).toHaveText(WATCH_DISABLED_SENTENCE);
     expect(lastCall(dashboard)).toMatchObject({ method: 'POST', path: CHECK_ROUTE });
-  });
-
-  test('countdown due: a session step left in the past refetches the watch list once, however many seconds pass', async ({
-    page,
-    dashboard,
-  }) => {
-    // A busy session or a paused watcher: the server never moves the step time on.
-    dashboard.data.slack.watch = slackWatchData({
-      links: [
-        watchLink(CHANNEL, THREAD_A, {
-          sessions: [
-            watchSession(
-              SESSION_BILLING,
-              watchDelivery('waiting', 'awaiting_wake', isoAfter(-57_000), {
-                step: 1,
-                nextStepAt: isoAfter(3_000),
-              }),
-            ),
-          ],
-        }),
-      ],
-    });
-    await freezeClock(page);
-    await openSlackTab(page);
-    const row = page.getByTestId(`slack-watch-session-${KEY_A}-${SESSION_BILLING}`);
-    await expect(row.getByText(nextStepText(3))).toBeVisible();
-
-    await tickSeconds(page, 2);
-    await expect(row.getByText(nextStepText(1))).toBeVisible();
-    const baseline = watchListReads(dashboard);
-    await tickSeconds(page, 1);
-    await expect(row.getByText('step 1 of 3')).toBeVisible();
-    await expect(row.getByText(/next step in/)).toHaveCount(0);
-
-    await expectOneReadWhileStillPastDue(page, dashboard, baseline);
   });
 
   test('countdown due: a check time left in the past refetches the watch list once, however many seconds pass', async ({

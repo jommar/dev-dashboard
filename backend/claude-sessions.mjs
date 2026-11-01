@@ -117,7 +117,8 @@ export function createClaudeSessions({ execFileImpl = execFile, store }) {
     if (sharedShortId) return failure('failed-permanent', 'ambiguous_id');
     const entry = entries.find((candidate) => candidate.sessionId === sessionId);
     if (!entry || entry.id !== shortId) return { status: 'not_listed' };
-    if (activityOf(entry) !== 'idle') return { status: 'not_idle' };
+    const activity = activityOf(entry);
+    if (activity !== 'idle') return { status: 'not_idle', activity };
 
     const { error } = await run(['stop', shortId], {
       timeout: STOP_TIMEOUT_MS,

@@ -9,11 +9,14 @@
   it there. Every thread the server hands the dialog (`GET /api/slack/threads` and
   `GET /api/slack/thread`) now carries `watchKey`, the key the watch list files that
   thread under.
-- The Slack watcher's interval now paces only the Slack poll. Each wake step runs on its
-  own timer: the stop is due 60 seconds after the notice line and the resume 90 seconds
-  after the stop, as design constants. Each session's `delivery` gains `step`, `steps`
-  and `nextStepAt`, the watch list gains a top-level `nextCheckAt`, and the new
-  `POST /api/slack/watch/check` route runs one poll now behind a Check now button.
+- The Slack watcher's interval now paces only the Slack poll. A wake is one awaited
+  flow: the poll that finds a notice owed for an idle attached session writes the line,
+  stops the session at once with no grace wait, waits a 15 s settle gap (a design
+  constant, not a measured timing) and resumes it under the same session id, without
+  holding up the poll, a forced check or another session. The watch list gains a
+  top-level `nextCheckAt`, the card shows a next-check countdown with no step display,
+  and the new `POST /api/slack/watch/check` route runs one poll now behind a Check now
+  button.
 - Added a Slack thread watcher. Paste Slack thread links on the Slack tab, attach
   Claude Code sessions to them, and the dashboard server appends a one-line notice to
   each attached session's inbox file when someone else posts in a watched thread;
@@ -22,14 +25,14 @@
   30 to 3600 seconds and an editable notice. Host only: without a `.claude`
   directory, as in the Docker image, the watcher is disabled.
 - The Slack watcher now wakes an attached idle background session when the notice does
-  not: it stops the session with `claude stop` at least 60 seconds after the line and
-  resumes the same session id after a 90-second settle gap, never inside it. Busy and
+  not: it stops the session with `claude stop` in the pass that writes the line and
+  resumes the same session id after a 15 s settle gap, never inside it. Busy and
   interactive sessions are never stopped; a session that never lists idle, as one with
   a Monitor armed on its inbox does not, stays `waiting` and ends as `never_idle` 2
   hours after the notice. Delivery gains the `waiting` status and new reason codes
   (shown muted on the Slack tab), a resume that finds the session live now waits
   (`live_at_resume`) instead of failing permanently, no finished session is resumed in
-  the first 90 seconds after the server starts, and the session picker reports each
+  the first 15 s after the server starts, and the session picker reports each
   session's `activity`. A restart in the middle of a wake can append the same notice
   line a second time.
 - Migrated the dashboard shell to React, MUI and Vite while preserving the

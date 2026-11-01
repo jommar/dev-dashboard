@@ -22,9 +22,10 @@ export const DEFAULT_SLACK_WATCH = {
   noticeTemplate: DEFAULT_TEMPLATE,
   paused: false,
 };
-// The fake CLI forks a resume issued this soon after a stop; the real minimum is not measured, so
-// the fake uses the worst case seen.
-export const TRAP_WINDOW_MS = 60_000;
+// The fake CLI forks a resume issued this soon after a stop. Measured against the real CLI: a resume
+// 3 s after a stop forked a copy and one 10 s after it continued the same session, so the fake
+// forks anything under 10 s, the first gap seen to be safe, and keeps the worst case on the table.
+export const TRAP_WINDOW_MS = 10_000;
 export const FORK_SENTENCE = 'is already running in the background, so this started a copy as';
 export const CLI_OUTPUT_SENTINELS = {
   stop: 'sentinel-stop-output-5c2e',
@@ -36,10 +37,9 @@ export const CLI_OUTPUT_SENTINELS = {
 // test fails on the missing behavior and not on a missing export; `exported` says which it is.
 export async function wakeConstants() {
   const watcher = await import('../backend/slack-watcher.mjs');
-  const names = ['SETTLE_MS', 'WAKE_GRACE_MS', 'WAKE_DEADLINE_MS'];
+  const names = ['SETTLE_MS', 'WAKE_DEADLINE_MS'];
   return {
-    SETTLE_MS: watcher.SETTLE_MS ?? 90_000,
-    WAKE_GRACE_MS: watcher.WAKE_GRACE_MS ?? 60_000,
+    SETTLE_MS: watcher.SETTLE_MS ?? 15_000,
     WAKE_DEADLINE_MS: watcher.WAKE_DEADLINE_MS ?? 7_200_000,
     exported: names.every((name) => typeof watcher[name] === 'number'),
   };
@@ -83,6 +83,22 @@ export function deferred() {
 export async function flush(rounds = 25) {
   for (let round = 0; round < rounds; round++)
     await new Promise((resolve) => setImmediate(resolve));
+}
+
+// Runs `operation` and checks it came back without any timer firing and before the event loop went
+// idle: a settle gap may be pending when a poll or a forced check returns, but neither may wait for
+// it. A watcher that did would hang a test on a timer that only the test moves.
+export async function returnsWithoutTimers(operation) {
+  let outcome;
+  let returned = false;
+  const running = operation().then((value) => {
+    outcome = value;
+    returned = true;
+  });
+  await flush(100);
+  assert.equal(returned, true, 'returns while the settle gap is still pending');
+  await running;
+  return outcome;
 }
 
 export function mulberry32(seed) {

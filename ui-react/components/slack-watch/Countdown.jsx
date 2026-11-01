@@ -4,7 +4,7 @@ const TICK_MS = 1000;
 
 // The only 1 s tick for the watch card's countdowns. Reaching zero asks the owner for one refetch
 // per due time: the server moves its time on only when its timer runs; the card's poll catches up.
-export function Countdown({ iso, label, dueText = null, onDue, ...props }) {
+export function Countdown({ iso, label, dueText, onDue, ...props }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);
@@ -17,6 +17,5 @@ export function Countdown({ iso, label, dueText = null, onDue, ...props }) {
     if (due) onDue?.();
   }, [due, iso, onDue]);
 
-  if (due && dueText === null) return null;
   return <span {...props}>{due ? dueText : `${label} ${seconds} s`}</span>;
 }

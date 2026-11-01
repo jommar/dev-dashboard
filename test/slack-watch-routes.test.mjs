@@ -15,6 +15,7 @@ import {
   THREAD_TS,
   flush,
   permalinkFor,
+  returnsWithoutTimers,
   threadKey,
   tsAt,
   wakeConstants,
@@ -32,9 +33,8 @@ const APP_THREAD_LINK = `https://app.slack.com/client/T024BE7LD/${CHANNEL}/threa
 const SETTINGS_BODY = { intervalSeconds: 60, noticeTemplate: 'Ping {link}' };
 const POLL_INTERVAL_MS = 180_000;
 const PARTWAY_MS = 100_000;
-const STOP_AFTER_LINE_MS = 60_000;
-const RESUME_AFTER_STOP_MS = 90_000;
-const NO_STEP = { step: null, steps: null, nextStepAt: null };
+const SETTLE_GAP_MS = 15_000;
+const DELIVERY_KEYS = ['at', 'reason', 'status'];
 const REFUSAL_KEYS = ['code', 'error', 'errors'];
 const FIXED_CODE = /^[A-Z]+(?:_[A-Z]+)+$/;
 
@@ -715,19 +715,14 @@ async function deliveryOf(f, key, sessionId) {
   return link.sessions.find((session) => session.sessionId === sessionId).delivery;
 }
 
-// A delivery without its own timestamp: the status, the reason and the three step fields.
-function stepView(delivery) {
-  if (delivery === null) return null;
-  const { status, reason, step, steps, nextStepAt } = delivery;
-  return { status, reason, step, steps, nextStepAt };
-}
-
-async function stepViewOf(f, key, sessionId) {
-  return stepView(await deliveryOf(f, key, sessionId));
+// What a delivery holds: a status, a reason and a time, and nothing else.
+function assertDeliveryPayload(delivery, expected) {
+  assert.deepEqual(Object.keys(delivery).sort(), DELIVERY_KEYS);
+  assert.deepEqual({ status: delivery.status, reason: delivery.reason }, expected);
 }
 
 // Background sessions of the stateful fake CLI on one link whose newest message is new.
-async function watchStepFixture(t, sessionOptions) {
+async function watchWakeFixture(t, sessionOptions) {
   const f = await watchFixture(t, { http: true, sessions: 'real' });
   for (const [sessionId, options] of Object.entries(sessionOptions)) f.cli.add(sessionId, options);
   const key = await watchWithNewMessage(f, Object.keys(sessionOptions));
@@ -774,44 +769,27 @@ test('next check: state is null while paused and while disabled', async (t) => {
   assert.equal(await nextCheckAtOf(disabled), null, 'no next check while disabled');
 });
 
-test('wake step: a woken session reports step 1 of 3, then 2 of 3, then 3 of 3 with the next step time', async (t) => {
-  const { f, key } = await watchStepFixture(t, { [SESSION_A]: {} });
+test('wake flow: payload: a woken session reports waiting then delivered with a status, a reason and a time, and no step', async (t) => {
+  const { f, key } = await watchWakeFixture(t, { [SESSION_A]: {} });
   assert.equal(await deliveryOf(f, key, SESSION_A), null, 'no delivery before the first poll');
 
-  await f.tick();
-  assert.deepEqual(await stepViewOf(f, key, SESSION_A), {
-    status: 'waiting',
-    reason: 'awaiting_wake',
-    step: 1,
-    steps: 3,
-    nextStepAt: isoAt(STOP_AFTER_LINE_MS),
-  });
-
-  f.clock.advance(STOP_AFTER_LINE_MS);
-  await f.tick();
-  assert.deepEqual(await stepViewOf(f, key, SESSION_A), {
+  await returnsWithoutTimers(() => f.tick());
+  assertDeliveryPayload(await deliveryOf(f, key, SESSION_A), {
     status: 'waiting',
     reason: 'settling',
-    step: 2,
-    steps: 3,
-    nextStepAt: isoAt(STOP_AFTER_LINE_MS + RESUME_AFTER_STOP_MS),
   });
 
-  f.clock.advance(RESUME_AFTER_STOP_MS);
-  await f.tick();
-  assert.deepEqual(await stepViewOf(f, key, SESSION_A), {
+  await f.timers.advance(SETTLE_GAP_MS);
+  assertDeliveryPayload(await deliveryOf(f, key, SESSION_A), {
     status: 'delivered',
     reason: 'resumed',
-    step: 3,
-    steps: 3,
-    nextStepAt: null,
   });
 });
 
-test('wake step: a session that woke itself, an inbox-only session and a session with no delivery carry no step', async (t) => {
-  const { f, key } = await watchStepFixture(t, {
+test('wake flow: payload: an awaiting, an inbox-only and an absent delivery carry no step', async (t) => {
+  const { f, key } = await watchWakeFixture(t, {
     [SESSION_B]: { kind: 'interactive', status: 'idle' },
-    [SESSION_C]: {},
+    [SESSION_C]: { status: 'busy' },
   });
   const quietKey = await f.watch({
     threadTs: SECOND_THREAD_TS,
@@ -819,35 +797,26 @@ test('wake step: a session that woke itself, an inbox-only session and a session
     messages: [{ ts: SECOND_THREAD_TS, user: OTHER }],
   });
 
-  await f.tick();
-  assert.deepEqual(await stepViewOf(f, key, SESSION_B), {
+  await returnsWithoutTimers(() => f.tick());
+  assertDeliveryPayload(await deliveryOf(f, key, SESSION_B), {
     status: 'delivered',
     reason: 'inbox_only',
-    ...NO_STEP,
+  });
+  assertDeliveryPayload(await deliveryOf(f, key, SESSION_C), {
+    status: 'waiting',
+    reason: 'awaiting_wake',
   });
   assert.equal(await deliveryOf(f, quietKey, SESSION_D), null, 'nothing was owed to this session');
-
-  f.cli.setStatus(SESSION_C, 'busy');
-  f.clock.advance(1_000);
-  await f.tick();
-  assert.deepEqual(await stepViewOf(f, key, SESSION_C), {
-    status: 'delivered',
-    reason: 'woke_itself',
-    ...NO_STEP,
-  });
-  assert.equal((await stepViewOf(f, key, SESSION_B)).step, null, 'still no step');
-  assert.equal(await deliveryOf(f, quietKey, SESSION_D), null);
 });
 
-test('wake step: a failed delivery carries no step', async (t) => {
-  const { f, key } = await watchStepFixture(t, { [SESSION_A]: {} });
+test('wake flow: payload: a failed delivery carries no step', async (t) => {
+  const { f, key } = await watchWakeFixture(t, { [SESSION_A]: {} });
   f.cli.failNext('listing', { exitCode: 1, stderr: 'listing refused' });
 
   await f.tick();
-  assert.deepEqual(await stepViewOf(f, key, SESSION_A), {
+  assertDeliveryPayload(await deliveryOf(f, key, SESSION_A), {
     status: 'failed-transient',
     reason: 'listing_unavailable',
-    ...NO_STEP,
   });
 });
 

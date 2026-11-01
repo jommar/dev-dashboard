@@ -43,10 +43,10 @@ function idleSessionCli() {
   return { clock, cli };
 }
 
-test('fake cli: a resume 59 s after a stop forks a copy under a new id with the real wording', async () => {
+test('fake cli: a resume 9 s after a stop forks a copy under a new id with the real wording', async () => {
   const { clock, cli } = idleSessionCli();
   await stopSession(cli, SESSION_A);
-  clock.advance(59_000);
+  clock.advance(9_000);
 
   const { error, stdout } = await resumeSession(cli, SESSION_A);
 
@@ -66,7 +66,7 @@ test('fake cli: a resume 59 s after a stop forks a copy under a new id with the 
   );
 });
 
-test('fake cli: a resume 60 s after a stop continues the same id with a new pid and no new entry', async () => {
+test('fake cli: a resume 10 s after a stop continues the same id with a new pid and no new entry', async () => {
   const { clock, cli } = idleSessionCli();
   const pidBefore = cli.session(SESSION_A).pid;
   await stopSession(cli, SESSION_A);
@@ -240,11 +240,11 @@ test('fake cli: watchFixture with real sessions runs the CLI on the fixture cloc
   assert.equal(f.exec, f.cli.exec, 'the fixture exec is the one the CLI answers');
 
   await stopSession(f.cli, SESSION_A);
-  f.clock.advance(59_000);
+  f.clock.advance(9_000);
   await resumeSession(f.cli, SESSION_A);
   assert.equal(f.cli.forks.length, 1, 'inside the window on the fixture clock');
 
-  f.clock.advance(61_000);
+  f.clock.advance(11_000);
   await resumeSession(f.cli, SESSION_A);
   assert.equal(f.cli.forks.length, 1, 'after the window the same id continues');
   assert.deepEqual(

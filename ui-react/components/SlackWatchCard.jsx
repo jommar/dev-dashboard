@@ -232,7 +232,6 @@ export function SlackWatchCard({ active }) {
                                 linkKey={entry.key}
                                 sessionId={sessionId}
                                 delivery={delivery}
-                                onDue={load}
                                 onDetach={async () =>
                                   settle(await api.detachSlackWatchSession(entry.link, sessionId), {
                                     refreshPicker: true,

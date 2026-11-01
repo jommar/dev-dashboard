@@ -446,8 +446,7 @@
   font-size: var(--fs-xs);
 }
 
-.slack-watch-countdown,
-.slack-watch-step {
+.slack-watch-countdown {
   color: var(--muted);
   font-family: var(--mono);
   font-size: var(--fs-xs);

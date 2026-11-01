@@ -1,10 +1,9 @@
 import { Button } from '../Primitives.jsx';
-import { Countdown } from './Countdown.jsx';
 import { RelativeTime } from './RelativeTime.jsx';
 
 const NO_DELIVERY_LABEL = 'no delivery yet';
 
-export function SessionDelivery({ linkKey, sessionId, delivery, onDetach, onDue }) {
+export function SessionDelivery({ linkKey, sessionId, delivery, onDetach }) {
   const idSuffix = `${linkKey}-${sessionId}`;
   return (
     <li className="slack-watch-session" data-testid={`slack-watch-session-${idSuffix}`}>
@@ -31,19 +30,6 @@ export function SessionDelivery({ linkKey, sessionId, delivery, onDetach, onDue 
         >
           {delivery.reason}
         </span>
-      )}
-      {delivery?.step != null && (
-        <span className="slack-watch-step" data-testid={`slack-watch-step-${idSuffix}`}>
-          {`step ${delivery.step} of ${delivery.steps}`}
-        </span>
-      )}
-      {delivery?.nextStepAt && (
-        <Countdown
-          className="slack-watch-countdown"
-          iso={delivery.nextStepAt}
-          label="next step in"
-          onDue={onDue}
-        />
       )}
       <Button data-testid={`slack-watch-detach-${idSuffix}`} onClick={onDetach}>
         Detach
