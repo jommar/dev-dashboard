@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../ui-react/', import.meta.url));
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
+const readRepoFile = (file) =>
+  fs.readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), 'utf8');
 
 test('the React entry mounts a themed shell with one shared ready-mode SSE hook', () => {
   assert.match(read('main.jsx'), /createRoot\(document\.getElementById\('root'\)\)/);
@@ -428,6 +430,66 @@ test('the Slack watch card composes the shared primitives, lists links in a tabl
   assert.match(card, /<table\b/);
   assert.match(card, /<thead\b/);
   assert.match(card, /<th\b/);
+});
+
+test('delivery statuses and reasons are pinned against the backend sources, the stylesheet and the README', () => {
+  const statuses = ['delivered', 'waiting', 'failed-transient', 'failed-permanent'];
+  const deliveryReasons = [
+    'woke_itself',
+    'resumed',
+    'inbox_only',
+    'not_listed',
+    'awaiting_wake',
+    'settling',
+    'live_at_resume',
+    'append_failed',
+    'listing_unavailable',
+    'spawn_failed',
+    'timed_out',
+    'stop_failed',
+    'untrusted_workspace',
+    'resume_forked',
+    'never_idle',
+    'ambiguous_id',
+  ];
+  // Stop results are not delivery reasons; `unavailable` is how a failed Slack read is recorded.
+  const tolerableCodes = ['stopped', 'not_idle', 'unavailable'];
+
+  const backend = ['backend/slack-watcher.mjs', 'backend/claude-sessions.mjs'].map(readRepoFile);
+  const reasonProperty = /\breason:\s*'([a-z_]+)'/g;
+  const outcomeCall = /\b(?:failure|delivered|waiting)\(\s*'([a-z_-]+)'(?:\s*,\s*'([a-z_-]+)')?/g;
+  const reasonLiterals = backend.flatMap((source) => [
+    ...[...source.matchAll(reasonProperty)].map(([, reason]) => reason),
+    ...[...source.matchAll(outcomeCall)].flatMap(([, first, second]) => [first, second]),
+  ]);
+  const unexpectedReasons = new Set(
+    reasonLiterals.filter(
+      (literal) =>
+        literal && ![...statuses, ...deliveryReasons, ...tolerableCodes].includes(literal),
+    ),
+  );
+
+  const stylesheet = read('styles/slack.css');
+  const hasStatusRule = (status) =>
+    new RegExp(`\\.slack-watch-delivery\\[data-status=(['"])${status}\\1\\]`).test(stylesheet);
+  const readme = readRepoFile('README.md');
+
+  const problems = [
+    ...(reasonLiterals.length ? [] : ['the reason scan found no literal in either backend source']),
+    ...deliveryReasons
+      .filter((reason) => !backend.some((source) => source.includes(`'${reason}'`)))
+      .map((reason) => `no backend source names the reason '${reason}'`),
+    ...[...unexpectedReasons].map(
+      (reason) => `a backend source uses the unpinned reason '${reason}'`,
+    ),
+    ...statuses
+      .filter((status) => !hasStatusRule(status))
+      .map((status) => `slack.css has no rule for the status '${status}'`),
+    ...[...statuses, ...deliveryReasons]
+      .filter((code) => !readme.includes(`\`${code}\``))
+      .map((code) => `the README does not name \`${code}\``),
+  ];
+  assert.deepEqual(problems, []);
 });
 
 test('the Slack panel mounts the watch card as an active-aware section', () => {

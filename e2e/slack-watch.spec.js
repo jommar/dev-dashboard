@@ -18,6 +18,8 @@ const SESSION_BILLING = '11111111-1111-4111-8111-111111111111';
 const SESSION_FLAKY = '22222222-2222-4222-8222-222222222222';
 const SESSION_IDLE = '33333333-3333-4333-8333-333333333333';
 const SESSION_MANUAL = '44444444-4444-4444-8444-444444444444';
+const SESSION_SETTLING = '55555555-5555-4555-8555-555555555555';
+const SESSION_RESUMED = '66666666-6666-4666-8666-666666666666';
 const CHECKED_AT = '2026-10-31T08:55:00.000Z';
 
 const SETTINGS_ROUTE = '/api/slack/watch/settings';
@@ -36,6 +38,7 @@ const openSlackTab = async (page) => {
   await expect(page.getByTestId('slack-watch-state')).toBeVisible();
 };
 const sessionTestId = (part, key, sessionId) => `slack-watch-session-${part}-${key}-${sessionId}`;
+const colorOf = (locator) => locator.evaluate((node) => getComputedStyle(node).color);
 
 test.describe('watch card', () => {
   test('is mounted for a connected Slack and gone once Slack is not connected', async ({
@@ -151,6 +154,51 @@ test.describe('watch card', () => {
       );
     for (const key of [KEY_A, KEY_B])
       await expect(page.getByTestId(`slack-watch-remove-${key}`)).toHaveText('Remove');
+  });
+
+  test('mutes the waiting status and the reasons of delivered and waiting sessions, not failures', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.slack.watch = slackWatchData({
+      links: [
+        watchLink(CHANNEL, THREAD_A, {
+          sessions: [
+            watchSession(SESSION_FLAKY, {
+              status: 'failed-permanent',
+              reason: 'untrusted_workspace',
+              at: CHECKED_AT,
+            }),
+            watchSession(SESSION_SETTLING, {
+              status: 'waiting',
+              reason: 'settling',
+              at: CHECKED_AT,
+            }),
+            watchSession(SESSION_RESUMED, {
+              status: 'delivered',
+              reason: 'resumed',
+              at: CHECKED_AT,
+            }),
+          ],
+        }),
+      ],
+    });
+    await openSlackTab(page);
+
+    const part = (sessionId) => (name) => page.getByTestId(sessionTestId(name, KEY_A, sessionId));
+    const waiting = part(SESSION_SETTLING);
+    const resumed = part(SESSION_RESUMED);
+    await expect(waiting('status')).toHaveText('waiting');
+    await expect(waiting('reason')).toHaveText('settling');
+    await expect(resumed('status')).toHaveText('delivered');
+    await expect(resumed('reason')).toHaveText('resumed');
+
+    const mutedColor = await colorOf(waiting('time'));
+    const failureReasonColor = await colorOf(part(SESSION_FLAKY)('reason'));
+    expect(mutedColor).not.toBe(failureReasonColor);
+    expect.soft(await colorOf(waiting('status'))).toBe(mutedColor);
+    expect.soft(await colorOf(waiting('reason'))).toBe(mutedColor);
+    expect.soft(await colorOf(resumed('reason'))).toBe(mutedColor);
   });
 
   test('attaches a picked session and then a manually entered id to a link', async ({

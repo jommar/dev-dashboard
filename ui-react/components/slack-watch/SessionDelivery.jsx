@@ -25,6 +25,7 @@ export function SessionDelivery({ linkKey, sessionId, delivery, onDetach }) {
       {delivery?.reason && (
         <span
           className="slack-watch-session-reason"
+          data-status={delivery.status}
           data-testid={`slack-watch-session-reason-${idSuffix}`}
         >
           {delivery.reason}

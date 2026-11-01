@@ -10,6 +10,7 @@ export const SESSION_A = '11111111-1111-4111-8111-111111111111';
 export const SESSION_B = '22222222-2222-4222-8222-222222222222';
 export const SESSION_C = '33333333-3333-4333-8333-333333333333';
 export const SESSION_D = '44444444-4444-4444-8444-444444444444';
+export const SESSION_E = '55555555-5555-4555-8555-555555555555';
 export const ME = 'U_ME';
 export const OTHER = 'U_OTHER';
 export const CHANNEL = 'C024BE91L';
@@ -21,6 +22,28 @@ export const DEFAULT_SLACK_WATCH = {
   noticeTemplate: DEFAULT_TEMPLATE,
   paused: false,
 };
+// The fake CLI forks a resume issued this soon after a stop; the real minimum is not measured, so
+// the fake uses the worst case seen.
+export const TRAP_WINDOW_MS = 60_000;
+export const FORK_SENTENCE = 'is already running in the background, so this started a copy as';
+export const CLI_OUTPUT_SENTINELS = {
+  stop: 'sentinel-stop-output-5c2e',
+  forkName: 'sentinel-fork-name-91ab',
+  resumeName: 'sentinel-resume-name-3d70',
+};
+
+// The watcher's wake timings. Until the watcher exports them this answers the planned values, so a
+// test fails on the missing behavior and not on a missing export; `exported` says which it is.
+export async function wakeConstants() {
+  const watcher = await import('../backend/slack-watcher.mjs');
+  const names = ['SETTLE_MS', 'WAKE_GRACE_MS', 'WAKE_DEADLINE_MS'];
+  return {
+    SETTLE_MS: watcher.SETTLE_MS ?? 90_000,
+    WAKE_GRACE_MS: watcher.WAKE_GRACE_MS ?? 60_000,
+    WAKE_DEADLINE_MS: watcher.WAKE_DEADLINE_MS ?? 7_200_000,
+    exported: names.every((name) => typeof watcher[name] === 'number'),
+  };
+}
 
 export function tsAt(offsetSeconds, micro = 0) {
   const seconds = Math.floor(START_MS / 1000) + offsetSeconds;
@@ -269,39 +292,44 @@ export function createFakeReader({ threads = createThreadModel(), me = ME } = {}
 }
 
 // Listing entry in the shape `claude agents --json --all` prints. A live
-// session has a numeric `pid`; a finished one has none.
+// session has a numeric `pid`; a finished one has none. `status` (idle, busy or null) is present
+// only when given, so an entry built without it stays the status-less live entry of older tests.
 export function listingEntry({
   sessionId,
   pid,
   cwd = '/work/example',
   name = 'example session',
   state = 'done',
+  status,
+  kind = 'background',
 }) {
   return {
     id: sessionId.slice(0, 8),
     sessionId,
     name,
     cwd,
-    kind: 'background',
+    kind,
     startedAt: START_MS,
     state,
     ...(pid !== undefined ? { pid } : {}),
+    ...(status !== undefined ? { status } : {}),
   };
 }
 
 // An `execFile` double with Node's callback shape. Outcomes:
 // { stdout }, { exitCode, stdout, stderr }, { spawnError: 'ENOENT' }, { timeout: true },
-// or a promise of any of those.
+// or a promise of any of those. A call is a listing (`agents`), a stop (`stop`) or a resume.
 export function createFakeExec() {
   const calls = [];
   const handlers = {
     listing: () => ({ stdout: '[]' }),
+    stop: () => ({ stdout: 'stopped' }),
     resume: () => ({ stdout: 'backgrounded' }),
   };
   function execFileImpl(file, args, options, callback) {
     const call = { file, args, options };
     calls.push(call);
-    const kind = args[0] === 'agents' ? 'listing' : 'resume';
+    const kind = args[0] === 'agents' ? 'listing' : args[0] === 'stop' ? 'stop' : 'resume';
     let outcome;
     try {
       outcome = handlers[kind](call);
@@ -339,6 +367,7 @@ export function createFakeExec() {
     execFileImpl,
     calls,
     listings: () => calls.filter((call) => call.args[0] === 'agents'),
+    stops: () => calls.filter((call) => call.args[0] === 'stop'),
     spawns: () => calls.filter((call) => call.args.includes('--resume')),
     setListing(entries) {
       handlers.listing = () => ({ stdout: JSON.stringify(entries) });
@@ -346,20 +375,201 @@ export function createFakeExec() {
     onListing(handler) {
       handlers.listing = handler;
     },
+    onStop(handler) {
+      handlers.stop = handler;
+    },
     onResume(handler) {
       handlers.resume = handler;
     },
   };
 }
 
-// Sessions double with the shape of the real claude-sessions module.
+function copyIdFor(index) {
+  return `ffffffff-ffff-4fff-8fff-${index.toString(16).padStart(12, '0')}`;
+}
+
+// A stateful `claude` CLI behind a fake exec, on the shared clock. A session has a pid, a kind
+// and a status while it is live; `stop` clears the pid and records the time; a resume forks a copy
+// under a new id (exit 0, the real wording) while the session is live or within `trapWindowMs`
+// of a stop, and otherwise continues the same id with a new pid. A session this CLI was never
+// given is answered like the plain exec double, so older tests keep their static listings.
+//   add(sessionId, { kind, status, name, cwd })  status idle | busy, or null for a finished session
+//   setStatus / finish / revive / remove         change a session the way the world would
+//   override(sessionId, patch)                   change only what the listing prints (drop `status`)
+//   failNext(kind, outcome, times) / hold(kind)  kind is listing, stop or resume
+//   stops, resumes, forks                        effective calls, in order
+export function createFakeCli({ clock, exec = createFakeExec() }) {
+  const sessions = new Map();
+  const listingOverrides = new Map();
+  const failures = { listing: [], stop: [], resume: [] };
+  const gates = {};
+  const stops = [];
+  const resumes = [];
+  const forks = [];
+  let nextPid = 5000;
+
+  const isLive = (session) => session.pid !== undefined;
+  const requireSession = (sessionId) => {
+    const session = sessions.get(sessionId);
+    assert.ok(session, 'the fake CLI was never given this session');
+    return session;
+  };
+  const byShortId = (shortId) =>
+    [...sessions.values()].find((session) => session.sessionId.slice(0, 8) === shortId);
+
+  function entryOf(session) {
+    const live = isLive(session);
+    return {
+      ...listingEntry({
+        sessionId: session.sessionId,
+        pid: session.pid,
+        cwd: session.cwd,
+        name: session.name,
+        kind: session.kind,
+        state: session.status === 'busy' ? 'working' : 'done',
+        status: live ? session.status : null,
+      }),
+      ...listingOverrides.get(session.sessionId),
+    };
+  }
+
+  function addSession(
+    sessionId,
+    { kind = 'background', status = 'idle', name = 'example session', cwd = '/work/example' } = {},
+  ) {
+    const session = {
+      sessionId,
+      kind,
+      name,
+      cwd,
+      status,
+      pid: status === null ? undefined : nextPid++,
+      stoppedAtMs: undefined,
+    };
+    sessions.set(sessionId, session);
+    return session;
+  }
+
+  async function beforeCall(kind) {
+    if (gates[kind]) await gates[kind].promise;
+    return failures[kind].shift();
+  }
+
+  function forkOf(session) {
+    const copyId = copyIdFor(forks.length + 1);
+    addSession(copyId, { name: CLI_OUTPUT_SENTINELS.forkName, cwd: session.cwd });
+    forks.push({ sessionId: session.sessionId, copyId, atMs: clock.now() });
+    resumes.push({ sessionId: session.sessionId, outcome: 'forked', atMs: clock.now() });
+    return {
+      stdout:
+        `session ${session.sessionId.slice(0, 8)} ${FORK_SENTENCE} ${copyId.slice(0, 8)}\n` +
+        `${CLI_OUTPUT_SENTINELS.forkName}\n`,
+    };
+  }
+
+  exec.onListing(async () => {
+    const failure = await beforeCall('listing');
+    if (failure) return failure;
+    return { stdout: JSON.stringify([...sessions.values()].map(entryOf)) };
+  });
+
+  exec.onStop(async (call) => {
+    const failure = await beforeCall('stop');
+    if (failure) return failure;
+    const session = byShortId(call.args[1]);
+    if (!session || !isLive(session)) return { exitCode: 1, stderr: 'no running session matches' };
+    session.pid = undefined;
+    session.status = null;
+    session.stoppedAtMs = clock.now();
+    stops.push({ sessionId: session.sessionId, atMs: clock.now() });
+    return { stdout: `stopped ${session.sessionId.slice(0, 8)}\n${CLI_OUTPUT_SENTINELS.stop}\n` };
+  });
+
+  exec.onResume(async (call) => {
+    const failure = await beforeCall('resume');
+    if (failure) return failure;
+    const session = sessions.get(call.args[call.args.indexOf('--resume') + 1]);
+    if (!session) return { stdout: 'backgrounded' };
+    const sinceStop =
+      session.stoppedAtMs === undefined ? Infinity : clock.now() - session.stoppedAtMs;
+    if (isLive(session) || sinceStop < cli.trapWindowMs) return forkOf(session);
+    session.pid = nextPid++;
+    session.status = 'busy';
+    session.stoppedAtMs = undefined;
+    resumes.push({ sessionId: session.sessionId, outcome: 'continued', atMs: clock.now() });
+    return {
+      stdout:
+        `woke session ${session.sessionId.slice(0, 8)} with its saved options (--model)\n` +
+        `${CLI_OUTPUT_SENTINELS.resumeName}\n`,
+    };
+  });
+
+  const cli = {
+    exec,
+    execFileImpl: exec.execFileImpl,
+    trapWindowMs: TRAP_WINDOW_MS,
+    stops,
+    resumes,
+    forks,
+    add: addSession,
+    setStatus(sessionId, status) {
+      const session = requireSession(sessionId);
+      assert.ok(isLive(session), 'only a live session has a status');
+      session.status = status;
+    },
+    finish(sessionId) {
+      Object.assign(requireSession(sessionId), { pid: undefined, status: null });
+    },
+    revive(sessionId, status = 'busy') {
+      Object.assign(requireSession(sessionId), { pid: nextPid++, status });
+    },
+    remove: (sessionId) => sessions.delete(sessionId),
+    override(sessionId, patch) {
+      listingOverrides.set(sessionId, { ...listingOverrides.get(sessionId), ...patch });
+    },
+    session(sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session) return undefined;
+      return { sessionId, pid: session.pid, status: session.status, live: isLive(session) };
+    },
+    entries: () => [...sessions.values()].map(entryOf),
+    entryCount: () => sessions.size,
+    failNext(kind, outcome, times = 1) {
+      for (let count = 0; count < times; count++) failures[kind].push(outcome);
+    },
+    hold(kind) {
+      const gate = deferred();
+      gates[kind] = gate;
+      return {
+        release() {
+          gate.resolve();
+          if (gates[kind] === gate) delete gates[kind];
+        },
+      };
+    },
+  };
+  return cli;
+}
+
+// Sessions double with the shape of the real claude-sessions module. An entry's `activity` (idle,
+// busy) passes through to the listing; an entry without one lists `null`, a live session that
+// is not known to be idle.
 export function createFakeSessions() {
   const state = { entries: [], source: 'claude' };
-  const outcomes = new Map();
+  const resumeOutcomes = new Map();
+  const stopOutcomes = new Map();
   const resumeCalls = [];
+  const stopCalls = [];
   let listingCalls = 0;
+  const scripted = (outcomes, sessionId, args, fallback) => {
+    const outcome = outcomes.get(sessionId);
+    if (typeof outcome === 'function') return outcome(args);
+    if (Array.isArray(outcome)) return outcome.length > 1 ? outcome.shift() : outcome[0];
+    return outcome || fallback;
+  };
   const sessions = {
     resumeCalls,
+    stopCalls,
     get listingCalls() {
       return listingCalls;
     },
@@ -372,7 +582,10 @@ export function createFakeSessions() {
     },
     // `outcome` is one result, an array consumed one per call (the last repeats), or a function.
     onResume(sessionId, outcome) {
-      outcomes.set(sessionId, outcome);
+      resumeOutcomes.set(sessionId, outcome);
+    },
+    onStop(sessionId, outcome) {
+      stopOutcomes.set(sessionId, outcome);
     },
     async listSessions() {
       listingCalls += 1;
@@ -383,15 +596,17 @@ export function createFakeSessions() {
           state: state.source === 'map' ? 'unknown' : entry.state,
           name: state.source === 'map' ? undefined : (entry.name ?? 'label'),
           attached: true,
+          ...(state.source === 'claude' ? { activity: entry.activity ?? null } : {}),
         })),
       };
     },
     async resume({ sessionId, notice }) {
       resumeCalls.push({ sessionId, notice });
-      const outcome = outcomes.get(sessionId);
-      if (typeof outcome === 'function') return outcome({ sessionId, notice });
-      if (Array.isArray(outcome)) return outcome.length > 1 ? outcome.shift() : outcome[0];
-      return outcome || { status: 'delivered' };
+      return scripted(resumeOutcomes, sessionId, { sessionId, notice }, { status: 'delivered' });
+    },
+    async stop({ sessionId }) {
+      stopCalls.push({ sessionId });
+      return scripted(stopOutcomes, sessionId, { sessionId }, { status: 'stopped' });
     },
   };
   return sessions;
@@ -521,7 +736,8 @@ function httpRequest(base, method, pathname, { body, headers = {} } = {}) {
 // The whole watch stack over one temp home, with every boundary injected:
 // Slack reader, session listing and resume, clock and timers. Options:
 //   settings: 'fake' | 'real'      real = the production settings store over the home
-//   sessions: 'fake' | 'real'      real = claude-sessions over a fake execFile
+//   sessions: 'fake' | 'real'      real = claude-sessions over a fake execFile, the stateful fake
+//                                  CLI on the fixture clock (`f.cli`), sharing `f.exec`
 //   reader: 'fake' | 'real'        real = the Slack integration over a fake fetch
 //   http: true                     also serves the handler on a loopback port (forces real settings)
 //   claudeHome: boolean            what claudeHomeReadable() answers
@@ -570,6 +786,7 @@ export async function watchFixture(t, options = {}) {
   const slackFetch = createFakeSlackFetch({ threads });
   const fakeReader = createFakeReader({ threads });
   const exec = createFakeExec();
+  const cli = sessionsMode === 'real' ? createFakeCli({ clock, exec }) : null;
   const fakeSessions = createFakeSessions();
   const paths = {
     watchDirectory: path.join(home, '.config/dev-dashboard/slack-watch'),
@@ -586,6 +803,7 @@ export async function watchFixture(t, options = {}) {
     threads,
     recorder,
     exec,
+    cli,
     slackFetch,
     claudeHome: claudeHomeState,
     settingsFixture: settingsFixtureHandle,

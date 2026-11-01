@@ -915,8 +915,11 @@ reads each watched thread on an interval. When the newest message in a thread is
 somebody else's and newer than the last one already announced, the watcher appends
 one plain-text line to an inbox file for every session attached to that link. A
 session that follows its inbox with the Monitor tool wakes on that line and reads the
-live thread; a session that has finished is also resumed. The watcher only reads
-Slack: it never posts, reacts or edits.
+live thread. An idle background session that does not wake on its own is stopped and
+resumed under the same session id by the watcher, after a settle gap, and a session
+that has finished is resumed too. Delivery below gives the steps, the latencies and the
+sessions that are never stopped. In Slack, the watcher only reads: it never posts,
+reacts or edits.
 
 **Links.** A pasted Slack link is the only input. The watcher parses the channel and
 the thread out of it, so any channel works and there is no channel setting. It
@@ -953,24 +956,92 @@ not a full session id. A resumed session starts without a Monitor, so it has to 
 one on its inbox again to hear the next line, and because the resume carries only
 one notice it should read its whole inbox once first.
 
-Every session's last delivery for a link has a status: `delivered`,
-`failed-transient` while retries remain, or `failed-permanent`, with a reason code
-and the time of the attempt. The reasons are `append_failed`, `spawn_failed`,
-`timed_out` and `listing_unavailable` (the session listing could not be read), all
-transient, and `untrusted_workspace` and `live_at_resume`, both permanent.
-`delivered` with reason `not_listed` means the session is absent from a good listing,
-as an interactive session attached by hand may be; it gets the inbox line only and
-counts as delivered.
+**Live wake.** A session gets a wake when its inbox line is appended and the CLI lists it
+as a background process (`kind: background`) with a numeric `pid` and a status of `idle`
+or `busy`. A busy session is never stopped. If a later listing shows it busy after it was
+seen idle, it woke on its own (`woke_itself`). If it is still idle on a tick after the one
+that opened the wake, and at least 60 seconds after the line, the watcher stops it with
+`claude stop` on its 8-character id, which keeps the conversation. It first lists again to
+check that this exact session is idle and that no other listed session shares the 8
+characters (`ambiguous_id` otherwise). The stop never shares a tick with the line that
+opened the wake, so a session that follows its inbox with a Monitor gets a tick to wake
+first; a line that joins a wake already open does not postpone the stop. The resume then
+waits for a settle gap of 90 seconds, measured on the wall clock from the moment the stop
+returns, and runs on the first tick at or after it. It never runs inside the gap,
+whatever starts the tick, the Resume button included. The stopped session loses its
+Monitor and the resumed one starts without any, so it has to arm one again. If a stopped
+session is live again when the resume runs, the wake goes back to awaiting with the same
+deadline. A session that finishes on its own during a wake is treated as stopped from the
+tick that first sees it finished. A wake still awaiting 2 hours after its line ends
+`failed-permanent` with `never_idle`. One wake serves a session however many links it is
+attached to. Detaching a session from its last link drops its wake, unless the watcher
+has already stopped it, because a stopped session is still resumed. Interactive sessions,
+sessions with no idle or busy status, sessions with an unknown pid, and every session
+while the watcher is paused are never stopped; a live session with no idle or busy status
+gets its line only (`inbox_only`). The timings are constants in the code, not settings.
+
+A session that follows its inbox with a Monitor lists `busy` even while it is idle
+(measured, see Checked against the real CLI below), so it is never stopped and keeps its
+Monitor. The watcher cannot see that such a session read its line, so its record stays
+`waiting` with `awaiting_wake` and the link's `lastNotifiedTs` stays put until the
+session lists idle, when the stop rule above applies, or the 2 hours end the wake as
+`never_idle`. Claude's own daemon retires an idle background session after about 66
+minutes (its log, `~/.claude/daemon.log`, showed `bg retire <id>: settled, idle 66m` on
+2026-11-01; this is observed behavior, not something the dashboard reads or sets). A
+retired session lists as finished and the ordinary resume wakes it, so only a session
+idle for less than that needs the stop. A session that is already listed finished when its
+line arrives is resumed on that tick with no settle gap, because the listing has no end
+time; if someone else stopped it only seconds earlier, that resume can start a copy
+under a new id, recorded `resume_forked`.
+
+Wake latency is counted from the tick that sees the message: a stop on the first tick at
+least 60 seconds after the line, then a resume on the first tick at least 90 seconds
+after the stop. At the default 180 seconds that is two ticks, about 6 minutes, and up to
+9 minutes after the post. At the 30-second minimum it is about 150 seconds, and up to 3
+minutes after the post. CLI call time adds to both, and because the gap is measured from
+the moment the stop returns, a resume that falls a moment short of it waits for the next
+tick. A busy session waits until it goes idle, which can take up to the 2-hour deadline.
+
+Every session's last delivery for a link has a status: `delivered`, `waiting` while a
+wake runs, `failed-transient` while retries remain, or `failed-permanent`, with a reason
+code and the time of the attempt. `delivered` means the session was woken, or got only
+its inbox line and the reason says why. The reasons for `delivered` are `woke_itself`
+(it woke on its own), `resumed` (the watcher resumed it), `inbox_only` (it is live but
+neither idle nor busy in the listing, as an interactive session is, so it is never
+stopped; it gets the inbox line only) and `not_listed` (it is absent from a good listing,
+or the stop's fresh listing did not match it; as an interactive session attached by hand
+may be, it gets the inbox line only). The reasons for `waiting` are `awaiting_wake` (idle
+or busy, not yet woken or stopped; also a stopped session found live again when its
+resume ran), `settling` (inside the settle gap after a stop, or in the first 90 seconds
+after the watcher starts) and `live_at_resume` (a session listed finished was live when
+the resume ran, as when something woke it just before; the next tick looks at it again).
+The transient failures are `append_failed`, `listing_unavailable` (the session listing
+could not be read), `spawn_failed`, `timed_out` and `stop_failed`. The permanent failures
+are `untrusted_workspace`, `resume_forked` (the resume started a copy under a new id,
+which is left alone and never cleaned up), `never_idle` (the wake was still awaiting 2
+hours after its line) and `ambiguous_id` (another listed session shares the first 8
+characters of the session id).
 
 A transient failure is retried once per tick, repeating only the step that failed
-(the inbox line is never appended twice for one notice), up to 3 attempts, then it
-is recorded `failed-permanent`. A permanent failure is never retried for that
-notice. `lastNotifiedTs` moves forward only once every attached session is
-delivered or has failed permanently, so one session that can never be resumed does
-not make the others hear the notice again. The next new message tries every session
-afresh. Delivery is at least once: a restart or a message that lands mid-tick can
-repeat a line, but a session that has not failed permanently is never skipped
-silently. Delivery statuses are kept in memory and a restart clears them. At most 20
+(within one server run the inbox line is never appended twice for one notice), up to 3
+attempts, then it is recorded `failed-permanent`, with its last reason. The failed
+listings, stops and resumes of a wake count the same way across the whole wake, so a
+session that is already stopped when the third attempt fails stays stopped. A permanent
+failure is never retried for that notice. A `waiting` record costs no attempt.
+`lastNotifiedTs` moves forward only once every attached session is delivered or has
+failed permanently, so a `waiting` session holds it back, and one session that can never
+be resumed does not make the others hear the notice again. The next new message tries
+every session afresh.
+
+Delivery is at least once. Statuses and wakes are kept in memory, and a `waiting` session
+holds `lastNotifiedTs` back, so a server restart in the middle of a wake loses the wake,
+delivers the notice again and appends the same inbox line a second time: the session can
+read that line twice. Saving the stop state on disk would avoid it and was decided
+against. A message that lands mid-tick can repeat a line too, but a session that has not
+failed permanently is never skipped silently. The restart also loses the stop time of a
+session the watcher had stopped, so for 90 seconds after the watcher starts no finished
+session is resumed (its record shows `waiting` with `settling`); a session stopped just
+before a restart is therefore not resumed inside its settle gap. At most 20
 inbox lines are written per tick; the rest wait for the next tick. Every 10 minutes
 the watcher detaches a session that was listed earlier since the server started but
 is absent from two listings in a row, and deletes its inbox; a session never seen in
@@ -979,8 +1050,14 @@ a listing is kept.
 **Pause and resume.** One switch pauses the whole watcher. It is saved in the
 settings, so a restart does not resume. While paused there are no Slack calls and no
 inbox lines, every `lastNotifiedTs` is kept, and links and sessions can still be
-added and attached. Resume reads the threads at once, so a thread that got a new
-message from someone else during the pause wakes its sessions once.
+added and attached. No session is stopped while paused, and a wake that is still awaiting
+waits, its 2-hour deadline still running. A session the watcher stopped before the pause
+is still resumed once its settle gap has passed, and link backoff does not hold that
+resume back. A pause or a detach that lands while a stop is already running does not
+undo it, and the session is then resumed as above. Resume reads the threads at once, so
+a thread that got a new message from someone else during the pause wakes its sessions
+once. Even when the Resume button runs a tick, a stopped session is not resumed inside
+its settle gap.
 
 **Interval and notice.** The interval is whole seconds, 180 by default, from 30 to
 3600; a saved change takes effect at once. The notice is one line of at most 200
@@ -1014,7 +1091,7 @@ notice are in `settings.json`. To roll back, stop the dashboard and delete the
 drops it on its next Settings save.
 
 **Host only.** The watcher needs the `.claude` directory under your home and the
-`claude` CLI on `PATH` for the session picker and the resume. Without the
+`claude` CLI on `PATH` for the session picker, the stop and the resume. Without the
 directory, as in the Docker image, its state is `disabled` with the reason
 `claude_home_unreadable`: no timer runs and adding, attaching and removing links is
 refused with `409 WATCH_DISABLED` (detach still works, so inboxes can be cleaned
@@ -1040,7 +1117,32 @@ a link.
 While the state is disabled, Add, Attach and Remove are disabled. The card polls only
 the server's in-memory list, every 30 seconds, only while the Slack tab is open and
 the page is visible, so it makes no Slack calls itself. Reason codes are shown as
-the server sends them.
+the server sends them. A `waiting` status, and the reason under `delivered` or
+`waiting`, are muted; the reason under a failure stays red.
+
+**Checked against the real CLI.** The live wake was checked while it was built, against
+the real `claude` CLI, on throwaway background sessions that the check created itself,
+then stopped and removed; the session count was the same afterwards. The check script is
+not part of this repository, so there is nothing here to re-run. What it did and saw:
+
+- A real resume continued the same session id when it ran 10 seconds after a stop, and
+  no copy appeared. The check starts at 10 seconds and stops at the first gap that
+  continues, so 10 seconds is the smallest gap it probed, not a proven minimum.
+- An earlier manual experiment (2026-11-01) saw a resume 3 seconds after a stop start a
+  copy under a new id. Nothing between 3 and 10 seconds was measured.
+- An idle background session with a Monitor armed on its inbox listed `status: busy`
+  over a 30-second window, so the watcher never stops it.
+- The shipped settle gap is 90 seconds. It is a margin over the 10 seconds that worked,
+  not a measured minimum.
+- The watcher itself, driven on a real throwaway session with a fake Slack reader and
+  manual ticks, went `awaiting_wake`, then `settling` (an early tick resumed nothing),
+  then `resumed` under the same session id, with zero copies and one inbox line.
+
+Its limits: it is a one-time check made while building, not a standing test, and it is
+not part of `npm test`; its Monitor measurement is driven by a model, so it is not
+deterministic, and one run timed out on its own wait for that session to go quiet (a
+flaky step in the check, not a product failure) before a re-run passed; and it says
+nothing about later CLI versions.
 
 **What is not verified.** The watcher is tested with fakes for Slack and the
 `claude` CLI and has not been run against a live Slack workspace. The wake path was
@@ -1053,7 +1155,10 @@ the session side has to arm it again on every expiry and every wake), and what S
 answers when a reply timestamp is used as a thread timestamp (a message permalink
 without `thread_ts` is keyed by its own timestamp). The session-side skill that
 attaches, follows the inbox and re-arms the Monitor is not part of this repository
-and is not built yet.
+and is not built yet. Also unchecked: the smallest settle gap that continues the same
+session id (only 3 seconds, which forked, and 10 seconds, which continued, were
+observed), and whether a session the watcher stopped and then detached stays finished
+after a server restart. The watcher never stops or removes a copy that a resume starts.
 
 ### HTTP
 
@@ -1065,8 +1170,8 @@ and is not built yet.
 | `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, channel, replyCount, truncated, updatedAt, names, messages[] } }`; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses                                                                                                                                                                               |
 | `POST /api/slack/connect`                | starts the sign-in window, `{ ok, connecting }`                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST /api/slack/disconnect`             | deletes the stored session                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `GET /api/slack/watch`                   | the [watcher](#watch) state, answered from memory with no Slack call: `{ state, reason?, settings: { intervalSeconds, noticeTemplate, paused }, links[] }`; `state` is `running`, `paused` or `disabled`, `reason` is present only when disabled; each link is `{ key, link, lastCheckedAt, lastStatus, sessions[] }` and each session `{ sessionId, delivery }`, where `delivery` is `{ status, reason, at }` or `null` before the first attempt |
-| `GET /api/slack/watch/sessions`          | the session picker: `{ source, sessions[] }`; `source` is `claude` (from `claude agents --json --all`) or `map` (the CLI was unusable, so only the ids already attached); each session is `{ sessionId, state, name?, attached }` with `state` `live`, `finished` or `unknown` (from the CLI's `pid`); `name` is a transient label, only here                                                                                                     |
+| `GET /api/slack/watch`                   | the [watcher](#watch) state, answered from memory, no Slack calls: `{ state, reason?, settings: { intervalSeconds, noticeTemplate, paused }, links[] }`; `state` is `running`, `paused` or `disabled`, `reason` only if disabled; each link is `{ key, link, lastCheckedAt, lastStatus, sessions[] }` and each session `{ sessionId, delivery }`; `delivery` is `{ status, reason, at }` (`status` may be `waiting`) or `null` before any attempt |
+| `GET /api/slack/watch/sessions`          | the session picker: `{ source, sessions[] }`; `source` is `claude` (from `claude agents --json --all`) or `map` (the CLI was unusable, so only the ids already attached); each session is `{ sessionId, state, activity?, name?, attached }` with `state` `live`, `finished` or `unknown` (from the CLI's `pid`) and `activity` `idle`, `busy` or `null` (not sent for `map`); `name` is a transient label, only here                             |
 | `POST /api/slack/watch/links`            | body `{ links: [...] }`, at most 50; answers `{ results[] }`, one per input in order: `{ input, ok: true, key, added }` or `{ input, ok: false, reason }`; a link already watched is accepted with `added: false`                                                                                                                                                                                                                                 |
 | `POST /api/slack/watch/remove`           | body `{ link }`; removes the link and its attachments, answers `{ ok, removed }`                                                                                                                                                                                                                                                                                                                                                                  |
 | `POST /api/slack/watch/attach`           | body `{ link, sessionId }` with a full session id (UUID); adds the link if it is unknown, makes no Slack call (also while paused), is idempotent, answers `{ ok, key, inbox }` with the inbox path to follow                                                                                                                                                                                                                                      |

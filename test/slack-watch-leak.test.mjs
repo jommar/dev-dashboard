@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   CHANNEL,
+  FORK_SENTENCE,
   OTHER,
   SESSION_A,
   SESSION_B,
@@ -18,6 +19,7 @@ import {
   rateLimitedResponse,
   threadKey,
   tsAt,
+  wakeConstants,
   watchFixture,
   writeSlackSession,
 } from './slack-watch-fixture.mjs';
@@ -33,6 +35,8 @@ const SENTINELS = {
   cwdFinished: '/work/SENTINEL-CWD-FINISHED-3c5d',
   cwdLive: '/work/SENTINEL-CWD-LIVE-6e92',
   spawnFailure: 'SENTINEL-SPAWN-FAILURE-1e6c',
+  stopOutput: 'SENTINEL-STOP-OUTPUT-4b9d',
+  forkSessionName: 'SENTINEL-FORK-NAME-c2e8',
 };
 const LABELS = {
   finishedName: 'SENTINEL-NAME-FINISHED-b7a4',
@@ -58,6 +62,7 @@ const DEFAULT_NOTICE_PREFIX = "There's a new message on ";
 const LIVE_PID = 4242;
 const SLACK_RATE_LIMIT_SECONDS = 30;
 const IDLE_GAP_MS = 1_000_000;
+const { SETTLE_MS } = await wakeConstants();
 
 function needlesIn(text, allowedValues = []) {
   return NEEDLE_NAMES.filter(
@@ -86,6 +91,7 @@ async function runScenario(t) {
     repliesServed: 0,
     rateLimitedServed: 0,
     spawnFailuresServed: 0,
+    forkOutputsServed: 0,
   };
 
   const record = (step, sink, names) =>
@@ -131,8 +137,12 @@ async function runScenario(t) {
     }),
   ]);
   let spawnsFail = true;
+  f.exec.onStop(() => ({ stdout: `stopped ${SENTINELS.stopOutput}` }));
   f.exec.onResume(() => {
-    if (!spawnsFail) return { stdout: 'backgrounded' };
+    if (!spawnsFail) {
+      evidence.forkOutputsServed += 1;
+      return { stdout: `session x ${FORK_SENTENCE} y ${SENTINELS.forkSessionName}` };
+    }
     evidence.spawnFailuresServed += 1;
     return { exitCode: 1, stderr: `${SENTINELS.spawnFailure} failure text` };
   });
@@ -172,7 +182,7 @@ async function runScenario(t) {
   await f.tick();
   checkpoint('baseline tick');
 
-  f.clock.advance(60_000);
+  f.clock.advance(SETTLE_MS + 1_000);
   f.threads.post(key, { ts: tsAt(30), user: OTHER, text: SENTINELS.messageText });
   await f.tick();
   checkpoint('wake');
@@ -218,6 +228,7 @@ async function runScenario(t) {
   assert.ok(evidence.repliesServed >= 1, 'Slack answered with message text and display names');
   assert.ok(evidence.rateLimitedServed >= 1, 'a 429 was served');
   assert.ok(evidence.spawnFailuresServed >= 1, 'a spawn failure message was produced');
+  assert.ok(evidence.forkOutputsServed >= 1, 'a resume output naming a session was produced');
   assert.ok(
     f.exec.spawns().some((spawn) => spawn.options.cwd === SENTINELS.cwdFinished),
     'the finished session was resumed from its listed cwd',

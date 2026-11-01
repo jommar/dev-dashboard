@@ -9,6 +9,17 @@
   check and each session's delivery status, with pause and resume, an interval of
   30 to 3600 seconds and an editable notice. Host only: without a `.claude`
   directory, as in the Docker image, the watcher is disabled.
+- The Slack watcher now wakes an attached idle background session when the notice does
+  not: it stops the session with `claude stop` at least 60 seconds after the line and
+  resumes the same session id after a 90-second settle gap, never inside it. Busy and
+  interactive sessions are never stopped; a session that never lists idle, as one with
+  a Monitor armed on its inbox does not, stays `waiting` and ends as `never_idle` 2
+  hours after the notice. Delivery gains the `waiting` status and new reason codes
+  (shown muted on the Slack tab), a resume that finds the session live now waits
+  (`live_at_resume`) instead of failing permanently, no finished session is resumed in
+  the first 90 seconds after the server starts, and the session picker reports each
+  session's `activity`. A restart in the middle of a wake can append the same notice
+  line a second time.
 - Migrated the dashboard shell to React, MUI and Vite while preserving the
   existing panels, API boundary, setup gate, hash navigation, live service
   updates, dark theme, and responsive card layouts.

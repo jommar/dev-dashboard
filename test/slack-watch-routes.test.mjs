@@ -12,6 +12,7 @@ import {
   permalinkFor,
   threadKey,
   tsAt,
+  wakeConstants,
   watchFixture,
 } from './slack-watch-fixture.mjs';
 
@@ -192,24 +193,27 @@ test('links routes list answers from memory with state, settings and a delivery 
 });
 
 test('links routes list carries the last check and each session delivery status after a tick', async (t) => {
+  const { SETTLE_MS } = await wakeConstants();
+  const tickedAt = new Date(START_MS + SETTLE_MS + 1_000).toISOString();
   const f = await watchFixture(t, { http: true });
   const key = await watchWithNewMessage(f, [SESSION_A, SESSION_B]);
   f.fakeSessions.setSessions([{ sessionId: SESSION_A, state: 'finished' }]);
   f.fakeSessions.onResume(SESSION_A, { status: 'failed-permanent', reason: 'untrusted_workspace' });
+  f.clock.advance(SETTLE_MS + 1_000);
   await f.tick();
 
   const [link] = (await listOf(f)).links;
   assert.equal(link.key, key);
   assert.equal(link.lastStatus, 'ok');
-  assert.equal(link.lastCheckedAt, new Date(START_MS).toISOString());
+  assert.equal(link.lastCheckedAt, tickedAt);
   const delivery = Object.fromEntries(
     link.sessions.map((session) => [session.sessionId, session.delivery]),
   );
   assert.equal(delivery[SESSION_A].status, 'failed-permanent');
   assert.equal(delivery[SESSION_A].reason, 'untrusted_workspace');
-  assert.equal(delivery[SESSION_A].at, new Date(START_MS).toISOString());
+  assert.equal(delivery[SESSION_A].at, tickedAt);
   assert.equal(delivery[SESSION_B].status, 'delivered');
-  assert.equal(delivery[SESSION_B].at, new Date(START_MS).toISOString());
+  assert.equal(delivery[SESSION_B].at, tickedAt);
 });
 
 test('links routes remove drops the link, its sessions and its inbox', async (t) => {

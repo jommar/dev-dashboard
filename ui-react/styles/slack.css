@@ -537,6 +537,7 @@
 }
 
 .slack-watch-delivery[data-status='none'],
+.slack-watch-delivery[data-status='waiting'],
 .slack-watch-session-time {
   color: var(--muted);
 }
@@ -545,6 +546,11 @@
   color: var(--red);
   font-family: var(--mono);
   font-size: var(--fs-xs);
+}
+
+.slack-watch-session-reason[data-status='delivered'],
+.slack-watch-session-reason[data-status='waiting'] {
+  color: var(--muted);
 }
 
 .slack-watch-attach,

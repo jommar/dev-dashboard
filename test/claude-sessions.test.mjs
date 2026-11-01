@@ -1,4 +1,5 @@
-// claude-sessions.test.mjs — the session picker listing and the resume fallback for finished sessions.
+// claude-sessions.test.mjs — the session picker listing, the stop of an idle background session and
+// the resume fallback for finished sessions.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,11 +7,13 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   CHANNEL,
+  FORK_SENTENCE,
   OTHER,
   SESSION_A,
   SESSION_B,
   SESSION_C,
   SESSION_D,
+  SESSION_E,
   THREAD_TS,
   captureConsole,
   createClock,
@@ -22,8 +25,12 @@ import {
   permalinkFor,
   threadKey,
   tsAt,
+  wakeConstants,
   watchFixture,
 } from './slack-watch-fixture.mjs';
+
+const { SETTLE_MS } = await wakeConstants();
+const SETTLE_GAP_SECONDS = Math.ceil(SETTLE_MS / 1000) + 1;
 
 const NAME_SENTINEL = 'sentinel-session-name-4d1c';
 const CWD_SENTINEL = '/work/sentinel-cwd-8e2b';
@@ -84,6 +91,23 @@ const bySessionId = (sessions) =>
 const sortedById = (sessions) =>
   [...sessions].sort((left, right) => left.sessionId.localeCompare(right.sessionId));
 
+// A result is a failure `{ status, reason }` or an answer whose code is the status or the reason.
+const codeOf = (result) => result.reason ?? result.status;
+const idleBackgroundEntry = (sessionId = SESSION_A, extra = {}) =>
+  listingEntry({ sessionId, pid: 4242, status: 'idle', ...extra });
+const callKinds = (exec) => exec.calls.map((call) => call.args[0]);
+const FORK_OUTPUT = `session 11111111 ${FORK_SENTENCE} ffffffff\n${ERROR_SENTINEL}\n`;
+const SHARED_PREFIX_SESSION = '11111111-2222-4222-8222-222222222222';
+
+async function attemptStop(sessions, sessionId) {
+  assert.equal(typeof sessions.stop, 'function', 'the sessions module exposes stop');
+  try {
+    return await sessions.stop({ sessionId });
+  } catch {
+    return null;
+  }
+}
+
 const LISTING_FAILURES = {
   'a missing CLI': { spawnError: 'ENOENT' },
   'a timeout': { timeout: true },
@@ -92,7 +116,7 @@ const LISTING_FAILURES = {
   'JSON that is not an array': { stdout: JSON.stringify({ sessions: [] }) },
 };
 
-test('listing returns source claude with only sessionId, state, name and attached', async (t) => {
+test('listing returns source claude with only sessionId, state, name, attached and activity', async (t) => {
   const env = await sessionsEnvironment(t);
   await attachSessions(env.store, [SESSION_A, SESSION_C]);
   env.exec.setListing([
@@ -109,21 +133,53 @@ test('listing returns source claude with only sessionId, state, name and attache
   assert.equal(result.source, 'claude');
   assert.equal(result.sessions.length, 4, 'entries without a UUID sessionId are dropped');
   const expected = {
-    [SESSION_A]: { state: 'live', name: 'live session', attached: true },
-    [SESSION_B]: { state: 'finished', name: 'finished session', attached: false },
-    [SESSION_C]: { state: 'unknown', name: 'string pid session', attached: true },
-    [SESSION_D]: { state: 'unknown', name: 'null pid session', attached: false },
+    [SESSION_A]: { state: 'live', name: 'live session', attached: true, activity: null },
+    [SESSION_B]: { state: 'finished', name: 'finished session', attached: false, activity: null },
+    [SESSION_C]: { state: 'unknown', name: 'string pid session', attached: true, activity: null },
+    [SESSION_D]: { state: 'unknown', name: 'null pid session', attached: false, activity: null },
   };
   const listed = bySessionId(result.sessions);
   assert.deepEqual(Object.keys(listed).sort(), Object.keys(expected).sort());
   for (const [sessionId, fields] of Object.entries(expected)) {
     assert.deepEqual(
       Object.keys(listed[sessionId]).sort(),
-      ['attached', 'name', 'sessionId', 'state'],
+      ['activity', 'attached', 'name', 'sessionId', 'state'],
       'cwd, pid, id and kind never leak',
     );
     assert.deepStrictEqual(listed[sessionId], { sessionId, ...fields });
   }
+});
+
+test('listing carries activity idle, busy or null by kind, pid and status', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([
+    listingEntry({ sessionId: SESSION_A, pid: 4242, status: 'idle' }),
+    listingEntry({ sessionId: SESSION_B, pid: 4243, status: 'busy', state: 'working' }),
+    listingEntry({ sessionId: SESSION_C, pid: 4244, status: 'idle', kind: 'interactive' }),
+    listingEntry({ sessionId: SESSION_D, pid: 4245 }),
+    listingEntry({ sessionId: SESSION_E, pid: 4246, status: null }),
+  ]);
+
+  const result = await env.sessions.listSessions();
+
+  assert.equal(result.source, 'claude');
+  const listed = bySessionId(result.sessions);
+  const activityById = Object.fromEntries(
+    Object.entries(listed).map(([sessionId, session]) => [sessionId, session.activity]),
+  );
+  assert.deepStrictEqual(activityById, {
+    [SESSION_A]: 'idle',
+    [SESSION_B]: 'busy',
+    [SESSION_C]: null,
+    [SESSION_D]: null,
+    [SESSION_E]: null,
+  });
+  for (const session of result.sessions)
+    assert.deepEqual(
+      Object.keys(session).sort(),
+      ['activity', 'attached', 'name', 'sessionId', 'state'],
+      'activity is the only new key',
+    );
 });
 
 for (const [label, outcome] of Object.entries(LISTING_FAILURES))
@@ -252,7 +308,13 @@ test('picker route answers 200 with the picker data and keeps the name to itself
   const body = picker.json();
   assert.equal(body.source, 'claude');
   assert.deepStrictEqual(body.sessions, [
-    { sessionId: SESSION_A, state: 'finished', name: NAME_SENTINEL, attached: false },
+    {
+      sessionId: SESSION_A,
+      state: 'finished',
+      name: NAME_SENTINEL,
+      attached: false,
+      activity: null,
+    },
   ]);
   assert.equal(picker.text.includes(NAME_SENTINEL), true, 'the picker reply carries the name');
   assert.equal(picker.text.includes(CWD_SENTINEL), false, 'and never the cwd');
@@ -287,6 +349,184 @@ test('picker route still answers 200 with source map when the CLI fails', async 
   });
 });
 
+test('picker route carries activity for live background sessions and none from the map', async (t) => {
+  const f = await watchFixture(t, { http: true, sessions: 'real' });
+  await f.watch({ sessionIds: [SESSION_A] });
+  f.exec.setListing([
+    idleBackgroundEntry(SESSION_A),
+    listingEntry({ sessionId: SESSION_B, pid: 4243, status: 'busy', state: 'working' }),
+  ]);
+
+  const fromClaude = (await f.http.raw('GET', '/api/slack/watch/sessions')).json();
+
+  assert.equal(fromClaude.source, 'claude');
+  assert.deepStrictEqual(
+    Object.fromEntries(fromClaude.sessions.map((session) => [session.sessionId, session.activity])),
+    { [SESSION_A]: 'idle', [SESSION_B]: 'busy' },
+  );
+
+  f.exec.onListing(() => ({ exitCode: 1, stderr: 'listing failed' }));
+  const fromMap = (await f.http.raw('GET', '/api/slack/watch/sessions')).json();
+
+  assert.equal(fromMap.source, 'map');
+  assert.equal(fromMap.sessions.length, 1, 'the attached session is still listed');
+  for (const session of fromMap.sessions)
+    assert.equal('activity' in session, false, 'a map entry carries no activity');
+});
+
+test('stop runs claude stop with the short id of an idle background session and answers stopped', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([idleBackgroundEntry(SESSION_A)]);
+
+  const result = await env.sessions.stop({ sessionId: SESSION_A });
+
+  assert.equal(codeOf(result), 'stopped');
+  assert.equal(env.exec.stops().length, 1);
+  assert.deepStrictEqual(env.exec.stops()[0].args, ['stop', '11111111']);
+});
+
+const NOT_IDLE = {
+  'a busy background session': listingEntry({
+    sessionId: SESSION_A,
+    pid: 4242,
+    status: 'busy',
+    state: 'working',
+  }),
+  'an idle interactive session': idleBackgroundEntry(SESSION_A, { kind: 'interactive' }),
+  'a live session with no status key': listingEntry({ sessionId: SESSION_A, pid: 4242 }),
+  'a live session with a null status': listingEntry({
+    sessionId: SESSION_A,
+    pid: 4242,
+    status: null,
+  }),
+  'a live session with a text pid': idleBackgroundEntry(SESSION_A, { pid: '4242' }),
+  'a finished session': listingEntry({ sessionId: SESSION_A, status: null }),
+};
+
+for (const [label, entry] of Object.entries(NOT_IDLE))
+  test(`stop answers not_idle and runs nothing for ${label}`, async (t) => {
+    const env = await sessionsEnvironment(t);
+    env.exec.setListing([entry]);
+
+    const result = await env.sessions.stop({ sessionId: SESSION_A });
+
+    assert.equal(codeOf(result), 'not_idle');
+    assert.equal(env.exec.stops().length, 0, 'no stop call');
+  });
+
+test('stop answers not_listed and runs nothing when a good listing lacks the session', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([idleBackgroundEntry(SESSION_B)]);
+
+  const result = await env.sessions.stop({ sessionId: SESSION_A });
+
+  assert.equal(codeOf(result), 'not_listed');
+  assert.equal(env.exec.stops().length, 0, 'no stop call');
+});
+
+test('stop fails permanently as ambiguous_id when another listed session shares the short id', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([
+    idleBackgroundEntry(SESSION_A),
+    listingEntry({ sessionId: SHARED_PREFIX_SESSION }),
+  ]);
+
+  const result = await env.sessions.stop({ sessionId: SESSION_A });
+
+  assert.equal(result.status, 'failed-permanent');
+  assert.equal(codeOf(result), 'ambiguous_id');
+  assert.equal(env.exec.stops().length, 0, 'no stop call');
+});
+
+test('stop does not stop an entry whose short id disagrees with its session id', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([{ ...idleBackgroundEntry(SESSION_A), id: '99999999' }]);
+
+  const result = await env.sessions.stop({ sessionId: SESSION_A });
+
+  assert.notEqual(codeOf(result), 'stopped');
+  assert.equal(env.exec.stops().length, 0, 'no stop call');
+});
+
+const STOP_FAILURES = {
+  'exit code 1': { outcome: { exitCode: 1, stderr: 'stop failed' }, reason: 'stop_failed' },
+  'a spawn error': { outcome: { spawnError: 'ENOENT' }, reason: 'stop_failed' },
+  'a timeout': { outcome: { timeout: true }, reason: 'timed_out' },
+};
+
+for (const [label, { outcome, reason }] of Object.entries(STOP_FAILURES))
+  test(`stop fails transiently as ${reason} on ${label} and is not retried`, async (t) => {
+    const env = await sessionsEnvironment(t);
+    env.exec.setListing([idleBackgroundEntry(SESSION_A)]);
+    env.exec.onStop(() => outcome);
+
+    const result = await env.sessions.stop({ sessionId: SESSION_A });
+
+    assert.equal(result.status, 'failed-transient');
+    assert.equal(codeOf(result), reason);
+    assert.equal(env.exec.stops().length, 1, 'the stop was attempted once');
+  });
+
+for (const [label, outcome] of Object.entries(LISTING_FAILURES))
+  test(`stop fails transiently as listing_unavailable when the fresh listing has ${label}`, async (t) => {
+    const env = await sessionsEnvironment(t);
+    env.exec.onListing(() => outcome);
+
+    const result = await env.sessions.stop({ sessionId: SESSION_A });
+
+    assert.equal(result.status, 'failed-transient');
+    assert.equal(codeOf(result), 'listing_unavailable');
+    assert.equal(env.exec.stops().length, 0, 'no stop call');
+  });
+
+test('stop takes a fresh listing before the stop call', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([idleBackgroundEntry(SESSION_A)]);
+
+  await env.sessions.stop({ sessionId: SESSION_A });
+
+  assert.deepStrictEqual(callKinds(env.exec), ['agents', 'stop']);
+  assertListingArgv(env.exec.calls[0]);
+});
+
+test('stop argv is a fixed claude stop with eight lowercase hex characters and no shell', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([idleBackgroundEntry(SESSION_A)]);
+
+  await env.sessions.stop({ sessionId: SESSION_A });
+
+  assert.equal(env.exec.stops().length, 1);
+  const [call] = env.exec.stops();
+  assert.equal(path.basename(call.file), 'claude');
+  assert.equal(call.args.length, 2, 'no element besides the subcommand and the id');
+  assert.equal(call.args[0], 'stop');
+  assert.match(call.args[1], /^[0-9a-f]{8}$/);
+  assert.ok(!call.options.shell, 'no shell');
+  assert.ok(Number.isFinite(call.options.timeout) && call.options.timeout > 0, 'a timeout');
+  assert.ok(Number.isFinite(call.options.maxBuffer) && call.options.maxBuffer > 0, 'an output cap');
+});
+
+const INVALID_STOP_IDS = {
+  'a string that is not a UUID': 'not-a-uuid',
+  'an empty string': '',
+  'a flag': '--help',
+  'an uppercase UUID': 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+  'a UUID followed by a shell command': `${SESSION_A}; rm -rf /`,
+  undefined: undefined,
+  'a number': 42,
+};
+
+for (const [label, sessionId] of Object.entries(INVALID_STOP_IDS))
+  test(`stop argv never reaches the CLI for ${label}`, async (t) => {
+    const env = await sessionsEnvironment(t);
+    env.exec.setListing([idleBackgroundEntry(SESSION_A)]);
+
+    const result = await attemptStop(env.sessions, sessionId);
+
+    assert.equal(env.exec.calls.length, 0, 'not even a listing is taken');
+    if (result) assert.notEqual(codeOf(result), 'stopped');
+  });
+
 test('resume fallback spawns once with the exact argv from the listed cwd', async (t) => {
   const env = await sessionsEnvironment(t);
   const notice = `${NOTICE_PREFIX}${permalinkFor()}`;
@@ -294,7 +534,7 @@ test('resume fallback spawns once with the exact argv from the listed cwd', asyn
 
   const result = await env.sessions.resume({ sessionId: SESSION_A, notice });
 
-  assert.deepStrictEqual(result, { status: 'delivered' });
+  assert.deepStrictEqual(result, { status: 'delivered', reason: 'resumed' });
   assert.equal(env.exec.spawns().length, 1);
   assertSpawn(env.exec.spawns()[0], { sessionId: SESSION_A, notice, cwd: FINISHED_CWD });
   assert.ok(
@@ -322,7 +562,7 @@ for (const notice of ['-dash-leading notice', '--help', '-- x; rm -rf / $(id) "q
 
     const result = await env.sessions.resume({ sessionId: SESSION_A, notice });
 
-    assert.deepStrictEqual(result, { status: 'delivered' });
+    assert.deepStrictEqual(result, { status: 'delivered', reason: 'resumed' });
     assertSpawn(env.exec.spawns()[0], { sessionId: SESSION_A, notice, cwd: FINISHED_CWD });
   });
 
@@ -336,7 +576,7 @@ test('resume fallback delivers with reason not_listed and spawns nothing when a 
   assert.equal(env.exec.spawns().length, 0);
 });
 
-test('resume fallback fails permanently as live_at_resume when the listing now shows a pid', async (t) => {
+test('resume fallback waits as live_at_resume when the listing now shows a pid', async (t) => {
   const env = await sessionsEnvironment(t);
   env.exec.setListing([finishedEntry(SESSION_A)]);
   const earlier = await env.sessions.listSessions();
@@ -345,8 +585,56 @@ test('resume fallback fails permanently as live_at_resume when the listing now s
 
   const result = await env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
 
-  assert.deepStrictEqual(result, { status: 'failed-permanent', reason: 'live_at_resume' });
+  assert.deepStrictEqual(result, { status: 'waiting', reason: 'live_at_resume' });
   assert.equal(env.exec.spawns().length, 0);
+});
+
+for (const status of ['idle', 'busy'])
+  test(`resume fallback waits as live_at_resume without a spawn or a stop for a ${status} pid`, async (t) => {
+    const env = await sessionsEnvironment(t);
+    env.exec.setListing([finishedEntry(SESSION_A, { pid: 4242, status })]);
+
+    const result = await env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
+
+    assert.deepStrictEqual(result, { status: 'waiting', reason: 'live_at_resume' });
+    assert.equal(env.exec.spawns().length, 0, 'nothing is spawned');
+    assert.equal(env.exec.stops().length, 0, 'nothing is stopped');
+  });
+
+for (const [stream, outcome] of [
+  ['stdout', { stdout: FORK_OUTPUT }],
+  ['stderr', { stderr: FORK_OUTPUT }],
+])
+  test(`resume fallback fails permanently as resume_forked when ${stream} says it started a copy`, async (t) => {
+    const lines = captureConsole(t);
+    const env = await sessionsEnvironment(t);
+    await attachSessions(env.store, [SESSION_A]);
+    env.exec.setListing([finishedEntry(SESSION_A)]);
+    env.exec.onResume(() => outcome);
+
+    const result = await env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
+
+    assert.deepStrictEqual(result, { status: 'failed-permanent', reason: 'resume_forked' });
+    assert.equal(env.exec.spawns().length, 1, 'the spawn was attempted once and not retried');
+    assert.deepStrictEqual(callKinds(env.exec), ['agents', '--bg'], 'the copy is left alone');
+    assert.equal(JSON.stringify(result).includes(ERROR_SENTINEL), false, 'not returned');
+    assert.deepEqual(
+      lines.filter((line) => line.includes(ERROR_SENTINEL)),
+      [],
+      'not logged',
+    );
+    assert.deepEqual(findInTree(env.home, [ERROR_SENTINEL]), [], 'not stored');
+  });
+
+test('resume fallback delivers with reason resumed when the CLI says it woke the session', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A)]);
+  env.exec.onResume(() => ({ stdout: 'woke session 11111111 with its saved options' }));
+
+  const result = await env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
+
+  assert.deepStrictEqual(result, { status: 'delivered', reason: 'resumed' });
+  assert.equal(env.exec.spawns().length, 1);
 });
 
 for (const [label, outcome] of Object.entries(LISTING_FAILURES))
@@ -441,6 +729,8 @@ async function wakeFixture(t, { listing, sessionIds = [SESSION_A] }) {
   f.exec.setListing(listing);
   const key = await f.watch({ sessionIds, messages: [{ user: OTHER, ts: tsAt(-120) }] });
   f.threads.post(key, { user: OTHER, ts: tsAt(60) });
+  // The watcher holds a finished session's first resume until the settle gap has passed.
+  f.clock.advance(SETTLE_GAP_SECONDS * 1000);
   return { f, key };
 }
 
@@ -465,7 +755,8 @@ test('resume fallback runs one spawn per session per tick when two links wake it
     sessionIds: [SESSION_A],
     messages: [{ user: OTHER, ts: tsAt(-90) }],
   });
-  f.threads.post(secondKey, { user: OTHER, ts: tsAt(70) });
+  // This link baselines after the settle advance, so its new message must be later still.
+  f.threads.post(secondKey, { user: OTHER, ts: tsAt(SETTLE_GAP_SECONDS + 70) });
 
   await f.tick();
 
@@ -482,25 +773,28 @@ test('resume fallback runs one spawn per session per tick when two links wake it
   assert.equal(f.exec.spawns()[0].options.cwd, FINISHED_CWD);
 });
 
-const NEVER_RESUMED = {
-  'a numeric pid': { listing: [finishedEntry(SESSION_A, { pid: 4242 })], delivered: true },
-  'a non-numeric pid': { listing: [finishedEntry(SESSION_A, { pid: '4242' })], delivered: true },
-  'a null pid': { listing: [finishedEntry(SESSION_A, { pid: null })], delivered: true },
+const INBOX_ONLY = {
+  'a numeric pid': { listing: [finishedEntry(SESSION_A, { pid: 4242 })], listedLive: true },
+  'a non-numeric pid': { listing: [finishedEntry(SESSION_A, { pid: '4242' })], listedLive: true },
+  'a null pid': { listing: [finishedEntry(SESSION_A, { pid: null })], listedLive: true },
   'only a short id': {
     listing: [{ id: SESSION_A.slice(0, 8), name: 'short only', cwd: FINISHED_CWD, state: 'done' }],
-    delivered: false,
+    listedLive: false,
   },
 };
 
-for (const [label, { listing, delivered }] of Object.entries(NEVER_RESUMED))
-  test(`resume fallback spawns nothing for a session listed with ${label} but still appends the line`, async (t) => {
+for (const [label, { listing, listedLive }] of Object.entries(INBOX_ONLY))
+  test(`a live session with no idle status gets only its line: ${label}`, async (t) => {
     const { f, key } = await wakeFixture(t, { listing });
 
     await f.tick();
 
     assert.equal(f.exec.spawns().length, 0, 'zero spawns');
     assert.deepEqual(f.inboxLines(SESSION_A), [noticeFor(f, key)], 'the line is appended');
-    if (delivered) assert.equal(f.delivery(key, SESSION_A)?.status, 'delivered');
+    if (listedLive) {
+      assert.equal(f.delivery(key, SESSION_A)?.status, 'delivered');
+      assert.equal(f.delivery(key, SESSION_A)?.reason, 'inbox_only');
+    }
   });
 
 test('resume fallback never spawns again for a session shown with a pid after its resume', async (t) => {
@@ -516,6 +810,7 @@ test('resume fallback never spawns again for a session shown with a pid after it
 
   assert.equal(f.exec.spawns().length, 1, 'no further spawn');
   assert.equal(f.inboxLines(SESSION_A).length, 2, 'the new message still appends a line');
+  assert.equal(f.delivery(key, SESSION_A)?.reason, 'inbox_only');
 });
 
 test('resume fallback records an untrusted workspace as failed-permanent and never retries it', async (t) => {

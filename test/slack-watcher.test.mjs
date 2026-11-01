@@ -44,6 +44,7 @@ async function tickAfterGap(f, gapMs = TICK_GAP_MS) {
   await f.tick();
 }
 
+// An entry with no `activity` is a live session with no idle status: it gets only its line.
 function listSessions(f, sessionIds, states = {}) {
   f.fakeSessions.setSessions(
     sessionIds.map((sessionId) => ({ sessionId, state: states[sessionId] ?? 'live' })),
@@ -51,8 +52,8 @@ function listSessions(f, sessionIds, states = {}) {
 }
 
 // A link with its sessions attached and its first tick done: the cursor sits on the message that
-// predates the attach and nothing has been written. Sessions are listed live unless told otherwise,
-// so no pruning or resume step interferes.
+// predates the attach and nothing has been written. Sessions are listed live with no idle status
+// unless told otherwise, so they get only their line and no pruning, stop or resume step interferes.
 async function baselinedLink(t, { sessionIds = [SESSION_A], states = {}, ...options } = {}) {
   const f = await watchFixture(t, options);
   const key = await f.watch({ sessionIds, messages: [{ user: OTHER, ts: BASELINE_TS }] });
@@ -356,8 +357,8 @@ test('delivery: a permanently failing session is recorded once and never repeats
   assert.equal(f.inboxLines(SESSION_A).length, 1);
   assert.equal(f.inboxLines(SESSION_B).length, 1);
   assert.equal(f.totalLines(), linesAfterFirstTick, 'no later tick writes a line');
-  assertDelivery(f, key, SESSION_A, { status: 'delivered' });
-  assertDelivery(f, key, SESSION_B, { status: 'delivered' });
+  assertDelivery(f, key, SESSION_A, { status: 'delivered', reason: 'inbox_only' });
+  assertDelivery(f, key, SESSION_B, { status: 'delivered', reason: 'inbox_only' });
   assert.deepEqual(f.delivery(key, SESSION_C), {
     status: 'failed-permanent',
     reason: 'untrusted_workspace',
@@ -371,7 +372,7 @@ test('delivery: a permanently failing session is recorded once and never repeats
   assert.deepEqual(
     f.fakeSessions.resumeCalls.filter(({ sessionId }) => sessionId !== SESSION_C),
     [],
-    'a live session needs only its line',
+    'a live session with no idle status gets only its line',
   );
 });
 
