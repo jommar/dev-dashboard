@@ -5,6 +5,7 @@
 // a thrown error.
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import { Button, LoadingState } from './Primitives.jsx';
+import { ThreadSession } from './ThreadSession.jsx';
 import { getSlackThread } from '../lib/api.js';
 import { parseSlackText } from '../../ui/slack-mrkdwn.js';
 import { ticketKeyFromThread } from '../../ui/slack-ticket-links.js';
@@ -190,6 +191,11 @@ export function SlackThreadDialog({ thread, onClose }) {
   useEffect(() => () => clearTimeout(copyTimer.current), []);
 
   const url = load.data?.url || thread?.url || '';
+  // The row and the thread read carry the same watch key; the row's is used when present
+  // so the section can list sessions while the thread read is still in flight.
+  const watchKey = thread?.watchKey || load.data?.watchKey || '';
+  const watchKeyPending =
+    !thread?.watchKey && load.status !== 'ready' && load.status !== 'unavailable';
 
   const copyLink = async () => {
     if (!url) return;
@@ -313,6 +319,8 @@ export function SlackThreadDialog({ thread, onClose }) {
         })}
         {data?.truncated && <p className="slack-note">Showing the most recent replies.</p>}
       </div>
+
+      <ThreadSession ts={ts} url={url} watchKey={watchKey} keyPending={watchKeyPending} />
 
       <footer className="slack-thread-dialog-foot">
         <Button data-testid="slack-thread-open" {...openProps}>

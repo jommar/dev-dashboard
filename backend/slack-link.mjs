@@ -11,8 +11,14 @@ const SLACK_TS = /^\d{10}\.\d{6}$/;
 
 const reject = (reason) => ({ reason });
 
+// The watch list files a thread under this key and the thread dialog matches its entry by it, so
+// the format has one home: a thread's link and its watch key cannot drift apart.
+export function threadWatchKey(channelId, threadTs) {
+  return `${channelId}:${threadTs}`;
+}
+
 const thread = (channelId, threadTs, link) => ({
-  key: `${channelId}:${threadTs}`,
+  key: threadWatchKey(channelId, threadTs),
   channelId,
   threadTs,
   link,

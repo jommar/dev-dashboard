@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../Primitives.jsx';
 import { useDashboardApi } from '../../hooks/useDashboardApi.js';
-
-const sessionOptionLabel = ({ sessionId, name, state, attached }) =>
-  [name || sessionId, state, attached ? 'attached' : null].filter(Boolean).join(' · ');
+import { sessionOptionLabel } from './sessionOptionLabel.js';
 
 export function AttachForm({ links, pickerSessions, disabled, onSettled }) {
   const api = useDashboardApi();

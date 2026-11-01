@@ -434,10 +434,18 @@ const WATCH_TEMPLATE_MAX_LENGTH = 200;
 const WATCH_PERMALINK =
   /^https:\/\/[a-z0-9-]+\.slack\.com\/archives\/(C[A-Z0-9]+)\/p(\d{10})(\d{6})$/;
 const WATCH_ARCHIVE_MESSAGE_PATH = /^\/archives\/[CDG][A-Z0-9]{8,}\/[^/]+$/;
+const WATCH_APP_THREAD =
+  /^https:\/\/[a-z0-9-]+\.slack\.com\/client\/[A-Z][A-Z0-9]{8,}\/(C[A-Z0-9]+)\/thread\/\1-(\d{10}\.\d{6})$/;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function watchPermalink(channelId, threadTs) {
   return `https://example.slack.com/archives/${channelId}/p${threadTs.replace('.', '')}`;
+}
+
+// The link the server's thread read hands the dialog: the app form, not the archive permalink a
+// person pastes into the watch card, though both name the same thread key.
+export function slackAppThreadLink(teamId, channelId, threadTs) {
+  return `https://app.slack.com/client/${teamId}/${channelId}/thread/${channelId}-${threadTs}`;
 }
 
 export function watchSession(sessionId, delivery = null) {
@@ -508,8 +516,9 @@ function watchState({ disabledReason, settings }) {
 const isSlackHost = ({ hostname, port }) =>
   port === '' && (hostname === 'slack.com' || hostname.endsWith('.slack.com'));
 
-// The reason codes and their order are the server's. Only the top-level message permalink is
-// accepted here, so the other forms the server accepts read as `not_a_thread_link`.
+// The reason codes and their order are the server's. Only the top-level message permalink and the
+// app thread link are accepted here, so the other forms the server accepts read as
+// `not_a_thread_link`.
 function watchLinkRejection(link) {
   let url;
   try {
@@ -528,6 +537,8 @@ function parseWatchLink(text) {
   const link = text.trim();
   const match = WATCH_PERMALINK.exec(link);
   if (match) return { key: `${match[1]}:${match[2]}.${match[3]}`, link };
+  const appThread = WATCH_APP_THREAD.exec(link);
+  if (appThread) return { key: `${appThread[1]}:${appThread[2]}`, link };
   return { reason: watchLinkRejection(link) };
 }
 
@@ -574,6 +585,12 @@ function slackResponse(url, method, { slack }, body) {
     if (pathname === '/api/slack/status') return { json: slack.status };
     if (pathname === '/api/slack/threads') return { json: slack.threads };
     if (pathname === '/api/slack/pending') return { json: slack.pending };
+    if (pathname === '/api/slack/thread') {
+      const thread = slack.threadReads?.[url.searchParams.get('ts')];
+      return {
+        json: thread ? { available: true, thread: structuredClone(thread) } : { available: false },
+      };
+    }
     if (pathname === '/api/slack/watch')
       return {
         json: {
@@ -633,7 +650,9 @@ function slackResponse(url, method, { slack }, body) {
   }
   if (action === 'remove') {
     if (watch.disabledReason) return disabled;
-    watch.links = watch.links.filter((entry) => entry.link !== body.link);
+    const parsed = parseWatchLink(body.link);
+    if (parsed.reason) return watchFailure(400, 'INVALID_LINK');
+    watch.links = watch.links.filter((entry) => entry.key !== parsed.key);
     return { json: { ok: true } };
   }
   if (action === 'attach' || action === 'detach') {
@@ -641,7 +660,7 @@ function slackResponse(url, method, { slack }, body) {
     const parsed = parseWatchLink(body.link);
     if (parsed.reason) return watchFailure(400, 'INVALID_LINK');
     if (!SESSION_ID.test(body.sessionId)) return watchFailure(400, 'INVALID_SESSION');
-    let entry = watch.links.find(({ link }) => link === body.link);
+    let entry = watch.links.find(({ key }) => key === parsed.key);
     if (action === 'attach') {
       if (!entry) watch.links.push((entry = watchLinkFromParsed(parsed)));
       if (!entry.sessions.some(({ sessionId }) => sessionId === body.sessionId))

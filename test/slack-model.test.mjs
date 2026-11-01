@@ -13,6 +13,7 @@ import {
   threadKey,
   threadUrl,
 } from '../backend/slack-model.mjs';
+import { parseSlackLink } from '../backend/slack-link.mjs';
 
 const users = { U1: 'Patrick Rivera', U2: 'Yuliia Palamarchuk' };
 
@@ -246,4 +247,77 @@ test('wake rule: timestamps compare as seconds and microseconds, not as text or 
     'ten digits of seconds beat nine, though "9" sorts after "1"',
   );
   assert.equal(wakes('999999999.999999', '1000000000.000000'), false, 'and not the reverse');
+});
+
+const WATCH_KEY_TEAM = 'T0EXAMPLE1';
+const WATCH_KEY_THREAD_TS = '1793192214.548389';
+
+const listEntryFor = ({ channelId, teamId, ts }) =>
+  buildThread({
+    root: { ts, user: 'U1', text: 'TAP-1: invented subject', reply_count: 1 },
+    channelId,
+    teamId,
+    me: 'U9',
+    users,
+  });
+
+test('thread watch key: a list entry carries the key the watch list files its own link under', () => {
+  const thread = listEntryFor({
+    channelId: 'C0EXAMPLE1',
+    teamId: WATCH_KEY_TEAM,
+    ts: WATCH_KEY_THREAD_TS,
+  });
+  assert.equal(thread.watchKey, 'C0EXAMPLE1:1793192214.548389');
+  assert.equal(parseSlackLink(thread.url).key, thread.watchKey);
+});
+
+test('thread watch key: a mention row is keyed by its thread root, not by the mention', () => {
+  const thread = buildThread({
+    root: { ts: WATCH_KEY_THREAD_TS, user: 'U1', text: 'TAP-1: invented subject', reply_count: 2 },
+    mention: { ts: '1793192300.000200', user: 'U2', text: 'ping <@U9> about this' },
+    channelId: 'C0EXAMPLE1',
+    teamId: WATCH_KEY_TEAM,
+    me: 'U9',
+    users,
+  });
+  assert.equal(thread.watchKey, 'C0EXAMPLE1:1793192214.548389');
+  assert.equal(parseSlackLink(thread.url).key, thread.watchKey);
+});
+
+test('thread watch key: a list entry without a team, channel or ts has no link and an empty key', () => {
+  const incomplete = [
+    { channelId: 'C0EXAMPLE1', teamId: '', ts: WATCH_KEY_THREAD_TS },
+    { channelId: '', teamId: WATCH_KEY_TEAM, ts: WATCH_KEY_THREAD_TS },
+    { channelId: 'C0EXAMPLE1', teamId: WATCH_KEY_TEAM, ts: '' },
+  ];
+  for (const parts of incomplete) {
+    const thread = listEntryFor(parts);
+    assert.equal(thread.url, '', `no link for ${JSON.stringify(parts)}`);
+    assert.equal(thread.watchKey, '', `no key for ${JSON.stringify(parts)}`);
+  }
+});
+
+test('thread watch key: parity with the key a pasted archive permalink files the same thread under', () => {
+  const cases = [
+    {
+      channelId: 'C024BE91L',
+      permalink: 'https://example.slack.com/archives/C024BE91L/p1793192214548389',
+      key: 'C024BE91L:1793192214.548389',
+    },
+    {
+      channelId: 'G0EXAMPLE12',
+      permalink: 'https://example.slack.com/archives/G0EXAMPLE12/p1793192214548389',
+      key: 'G0EXAMPLE12:1793192214.548389',
+    },
+  ];
+  for (const { channelId, permalink, key } of cases) {
+    const thread = listEntryFor({
+      channelId,
+      teamId: WATCH_KEY_TEAM,
+      ts: WATCH_KEY_THREAD_TS,
+    });
+    assert.equal(thread.watchKey, key, `${channelId}: the key a list entry carries`);
+    assert.equal(parseSlackLink(permalink).key, key, `${channelId}: the key a pasted link gets`);
+    assert.equal(parseSlackLink(thread.url).key, key, `${channelId}: the key its own link gets`);
+  }
 });

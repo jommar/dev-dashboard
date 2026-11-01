@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createSlackIntegration, slackPaths } from '../backend/slack.mjs';
+import { parseSlackLink } from '../backend/slack-link.mjs';
 
 function setup(t, { fetchImpl, spawnImpl, now } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'slack-test-'));
@@ -1098,4 +1099,79 @@ test('reader failure: an HTTP 5xx from either call is unavailable', async (t) =>
       assert.equal(result.reason, 'unavailable', `HTTP ${status} from ${location}`);
     }
   }
+});
+
+// --- the key the watch list files a thread under, handed out with every thread ---------------
+
+// The fakes above use short ids that the link parser rightly refuses, so the key parity checks
+// run against workspace and channel ids shaped like Slack's own.
+function realShapedSlack({ teamId, channelId, ts }) {
+  const answers = {
+    'auth.test': {
+      ok: true,
+      user: 'example_user',
+      user_id: 'U9',
+      team: 'Example Workspace',
+      ...(teamId && { team_id: teamId }),
+    },
+    'search.messages': {
+      ok: true,
+      messages: { total: 1, matches: [{ channel: { id: channelId, name: 'example_channel' } }] },
+    },
+    'users.list': { ok: true, members: [{ id: 'U1', real_name: 'Sam Example' }] },
+    'conversations.replies': {
+      ok: true,
+      messages: [{ ts, thread_ts: ts, user: 'U9', text: 'TAP-1: invented root' }],
+      response_metadata: {},
+    },
+  };
+  const fetchImpl = async (url) => {
+    const method = new URL(url).pathname.split('/').pop();
+    return new Response(JSON.stringify(answers[method] ?? { ok: false }));
+  };
+  return { fetchImpl };
+}
+
+test('thread watch key: the thread read carries the key derived from its own link', async (t) => {
+  const ts = '1793192214.548389';
+  const slack = realShapedSlack({ teamId: 'T0EXAMPLE1', channelId: 'C0EXAMPLE1', ts });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  const { thread } = await integration.thread(ts);
+  assert.equal(
+    thread.url,
+    'https://app.slack.com/client/T0EXAMPLE1/C0EXAMPLE1/thread/C0EXAMPLE1-1793192214.548389',
+  );
+  assert.equal(thread.watchKey, 'C0EXAMPLE1:1793192214.548389');
+  assert.equal(parseSlackLink(thread.url).key, thread.watchKey);
+});
+
+test('thread watch key: a thread read without a workspace id has no link and an empty key', async (t) => {
+  const ts = '1793192214.548389';
+  const slack = realShapedSlack({ teamId: '', channelId: 'C0EXAMPLE1', ts });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths, { teamId: '' });
+
+  const result = await integration.thread(ts);
+  assert.equal(result.available, true);
+  assert.equal(result.thread.url, '');
+  assert.equal(result.thread.watchKey, '');
+});
+
+test('thread watch key: every started and mentions row carries the key of its own thread', async (t) => {
+  const slack = fakeSlack();
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  writeSession(paths);
+
+  const result = await integration.threads();
+  assert.deepEqual(
+    result.started.map((row) => row.watchKey),
+    ['C1:100.0001'],
+  );
+  assert.deepEqual(
+    result.mentions.map((row) => row.watchKey),
+    ['C1:600.0006', 'C1:200.0002'],
+  );
+  await settle();
 });

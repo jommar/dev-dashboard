@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The Slack thread dialog, opened from a My Tickets glyph or a Slack tab row, has a
+  "Claude session" section that lists the Claude Code sessions attached to that thread
+  and attaches and detaches them on the same watcher as the Watch threads card. Attach
+  also puts a thread that is not yet watched on the Watch threads list; detach leaves
+  it there. Every thread the server hands the dialog (`GET /api/slack/threads` and
+  `GET /api/slack/thread`) now carries `watchKey`, the key the watch list files that
+  thread under.
 - The Slack watcher's interval now paces only the Slack poll. Each wake step runs on its
   own timer: the stop is due 60 seconds after the notice line and the resume 90 seconds
   after the stop, as design constants. Each session's `delivery` gains `step`, `steps`

@@ -558,7 +558,9 @@ rendered from its own mrkdwn, plus **Copy link** and **Open in Slack** actions.
 Only the thread's subject line is consulted, so the key must start it. Old
 `TRIPS-NNNN` threads match `TAP-NNNN` because Jira's rename carried the numbers
 over. The glyphs reuse the Slack tab's cached thread list, so they simply do not
-appear — never an error — when Slack is not connected.
+appear — never an error — when Slack is not connected. The dialog also has a
+**Claude session** section that attaches and detaches Claude Code sessions for the
+thread on the [watcher](#watch).
 
 ### Sprints
 
@@ -880,7 +882,8 @@ Two lists over `#ezat_claudio`, both ordered by latest activity and both flagged
   grouped to one row per thread with the mentioning message as the preview.
 
 A click on a row opens the thread's full conversation in the same in-app dialog
-My Tickets uses, with **Open in Slack** and **Copy link** in its footer; the
+My Tickets uses, with **Open in Slack** and **Copy link** in its footer and the same
+**Claude session** section ([Watch](#watch)); the
 conversation is fetched on demand and cached for a minute. The lists paint as
 soon as the two thread lists have been read; the **Needs reply** flags fill in a
 moment later, one `conversations.replies` call per listed thread, because that is
@@ -1142,6 +1145,26 @@ the page is visible, so it makes no Slack calls itself. Reason codes are shown a
 the server sends them. A `waiting` status, and the reason under `delivered` or
 `waiting`, are muted; the reason under a failure stays red.
 
+**The thread dialog.** The dialog that opens from a My Tickets glyph or a Slack tab
+row has a **Claude session** section for the thread it shows, on the same watcher as
+the Watch threads card, so both screens behave the same. It lists the sessions
+attached to that thread, each with a **Detach** button, or says "No session
+attached". Its picker offers the sessions the card's picker offers
+(`GET /api/slack/watch/sessions`), with the same labels, minus those already
+attached to this thread; **Attach** stays disabled until one is chosen, and pasting a
+session id stays on the card. **Attach** also puts a thread that is not yet watched on
+the Watch threads list, because it uses the same attach route. **Detach** leaves the
+thread on that list; removing a thread stays on the card. The thread is matched to
+its watch entry by the `watchKey` the server hands the dialog, never by a link string.
+A failed attach or detach shows the card's words for that error in the section and
+leaves it as it was, and the buttons are disabled while a request is in flight. The
+section reads the watch list and the picker once when the dialog opens and the watch
+list once more after each successful attach or detach; it never polls, so it can lag
+behind the card until the dialog is reopened. When the watcher is disabled or its list
+cannot be read, the section says so in one sentence and offers neither picker nor
+buttons; when the thread has no link, attaching is disabled and the section says "No
+link to attach to".
+
 **Checked against the real CLI.** The live wake was checked while it was built, against
 the real `claude` CLI, on throwaway background sessions that the check created itself,
 then stopped and removed; the session count was the same afterwards. The check script is
@@ -1188,9 +1211,9 @@ after a server restart. The watcher never stops or removes a copy that a resume 
 | Route                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected; each thread carries `url` and `watchKey`, the `<channelId>:<ts>` string the watch list uses as `key` for that thread, both empty when the thread has no link                                                                                                                                                                                                                                                                                                                                     |
 | `GET /api/slack/pending`                 | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, channel, replyCount, truncated, updatedAt, names, messages[] } }`; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, watchKey, channel, replyCount, truncated, updatedAt, names, messages[] } }`; `watchKey` is as for the thread lists; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses                                                                                                                                                                                                                                                                                                                                                       |
 | `POST /api/slack/connect`                | starts the sign-in window, `{ ok, connecting }`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `POST /api/slack/disconnect`             | deletes the stored session                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `GET /api/slack/watch`                   | the [watcher](#watch) state, answered from memory, no Slack calls: `{ state, reason?, nextCheckAt, settings: { intervalSeconds, noticeTemplate, paused }, links[] }`; `state` is `running`, `paused` or `disabled`, `reason` only if disabled; `nextCheckAt` is the time the next timed poll fires, `null` while one runs, paused, disabled or before the start; each link is `{ key, link, lastCheckedAt, lastStatus, sessions[] }` and each session `{ sessionId, delivery }`; `delivery` is `{ status, reason, at, step, steps, nextStepAt }` (`status` may be `waiting`; `step`, `steps` and `nextStepAt` are `null` outside a wake step) or `null` before any attempt |

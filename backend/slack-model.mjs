@@ -6,6 +6,8 @@
 // for "this message is a thread root". Everything here is DOM-free and
 // side-effect-free so it can be tested without a browser or a network.
 
+import { threadWatchKey } from './slack-link.mjs';
+
 function decodeEntities(text) {
   return text
     .replace(/&lt;/g, '<')
@@ -45,6 +47,13 @@ export function threadUrl({ teamId, channelId, ts }) {
   return `https://app.slack.com/client/${teamId}/${channelId}/thread/${channelId}-${ts}`;
 }
 
+// A thread's link and the key its watch entry is filed under, derived from the same ids so the
+// key is empty exactly when there is no link.
+export function threadLinkFields({ teamId, channelId, ts }) {
+  const url = threadUrl({ teamId, channelId, ts });
+  return { url, watchKey: url ? threadWatchKey(channelId, ts) : '' };
+}
+
 // Every message that belongs to the same thread maps to the same key.
 //
 // `search.messages` matches carry no `thread_ts` (a whole page of them can omit
@@ -78,7 +87,7 @@ export function buildThread({ root, mention, channelId, teamId, me, users }) {
   const source = mention || root;
   return {
     ts: root.ts,
-    url: threadUrl({ teamId, channelId, ts: root.ts }),
+    ...threadLinkFields({ teamId, channelId, ts: root.ts }),
     text: cleanText(source.text, users),
     author: person(source.user, me, users),
     starter: person(root.user, me, users),

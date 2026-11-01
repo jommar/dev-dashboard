@@ -188,6 +188,41 @@
   margin-left: auto;
 }
 
+/* The Claude session section sits below the scrolling message list, so its
+   attach controls stay in view however long the thread is. */
+.slack-thread-session {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3) var(--s5);
+  border-top: 1px solid var(--border);
+}
+.slack-thread-session-title {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-md);
+}
+.slack-thread-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.slack-thread-session-item,
+.slack-thread-session-attach {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+.slack-thread-session-attach select {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
 /* One message: a fixed avatar column and a content column, so every reply
    lines up with the root above it. */
 .slack-message {

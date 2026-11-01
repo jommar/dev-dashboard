@@ -29,7 +29,7 @@ import {
   person,
   sortByActivity,
   threadKey,
-  threadUrl,
+  threadLinkFields,
 } from './slack-model.mjs';
 
 const API_URL = 'https://app.slack.com/api';
@@ -521,7 +521,7 @@ export function createSlackIntegration({
         available: true,
         thread: {
           ts: key,
-          url: threadUrl({ teamId, channelId: target.id, ts: key }),
+          ...threadLinkFields({ teamId, channelId: target.id, ts: key }),
           channel: { id: target.id, name: target.name },
           replyCount: Math.max(0, messages.length - 1),
           truncated,
