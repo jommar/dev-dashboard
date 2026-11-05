@@ -36,6 +36,13 @@ test('production HTTP handler gates every operation, unlocks setup, closes revok
     integrations: {
       fetchOpenPRs: spy('prs', { prs: [], groups: {}, total: 0 }),
       fetchMyTickets: spy('tickets', { tickets: [], total: 0 }),
+      fetchTicketPrs: spy('ticketPrs', {
+        available: true,
+        login: 'qa',
+        total: 0,
+        truncated: false,
+        byTicket: {},
+      }),
       fetchUatPromoteCandidates: spy('uat', { prs: [] }),
       fetchReviewData: spy('review', { available: true, reviews: {} }),
       fetchTicketStatuses: spy('statuses', {}),
@@ -85,6 +92,7 @@ test('production HTTP handler gates every operation, unlocks setup, closes revok
     ['/api/services/app/restart', 'POST'],
     ['/api/prs'],
     ['/api/my-tickets'],
+    ['/api/ticket-prs'],
     ['/api/pr-diff?repo=ExampleOrg/app&number=1'],
     ['/api/releases'],
   ];

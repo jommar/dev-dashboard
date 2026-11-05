@@ -28,6 +28,7 @@ test('the shared API boundary retains every existing endpoint and payload operat
     '/api/services',
     '/api/prs',
     '/api/my-tickets',
+    '/api/ticket-prs',
     '/api/releases',
     '/api/pr-diff',
     '/api/slack/status',
@@ -78,6 +79,7 @@ test('React panels own structural rendering and compose shared React components'
     'Listbox.jsx',
     'Spinner.jsx',
     'SlackThreadLink.jsx',
+    'TicketBoard.jsx',
   ];
   for (const name of components)
     assert.ok(fs.existsSync(path.join(root, 'components', name)), `${name} exists`);
@@ -119,7 +121,10 @@ test('React panels own structural rendering and compose shared React components'
   assert.match(read('components/PrCard.jsx'), /export function TicketPrCard/);
   assert.match(read('components/HomeCards.jsx'), /export function HomeSprintCard/);
   assert.match(read('components/HomeCards.jsx'), /export function ServiceStrip/);
-  assert.match(read('components/WorkTicket.jsx'), /export function MyTicketsGroups/);
+  // The My Tickets board replaced the category/status groups; the row stays for Home.
+  assert.match(read('components/TicketBoard.jsx'), /export function TicketBoard/);
+  assert.doesNotMatch(read('components/WorkTicket.jsx'), /MyTicketsGroups/);
+  assert.match(read('components/WorkTicket.jsx'), /export function WorkTicketRow/);
   assert.match(read('components/ReleaseCards.jsx'), /export function ReleaseGroups/);
   assert.match(read('components/Terminal.jsx'), /useState/);
   assert.match(read('components/Listbox.jsx'), /listboxMove/);
@@ -215,14 +220,21 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
   assert.ok(ticketsAwait > -1, 'the ticket load awaits the ticket request');
   assert.ok(slackCall < ticketsAwait, 'Slack is loaded before the ticket request is awaited');
   assert.doesNotMatch(panel, /await loadSlack\(/, 'Slack is never awaited on the ticket path');
+  // PR status is optional the same way: fired before the ticket request is
+  // awaited, never awaited itself, so tickets render without waiting for GitHub.
+  const prsCall = panel.indexOf('loadPrs();');
+  assert.ok(prsCall > -1, 'the ticket load fires a PR load');
+  assert.ok(prsCall < ticketsAwait, 'PRs are loaded before the ticket request is awaited');
+  assert.doesNotMatch(panel, /await loadPrs\(/, 'PRs are never awaited on the ticket path');
+  assert.match(panel, /api\.getTicketPrs\(/);
   // A failed Slack call must leave the ticket list alone rather than reject the
   // unawaited promise.
   assert.match(panel, /catch \{\s*setSlackStarted\(\[\]\);/);
 
-  // The row renders the links inside the key cell, so it stays one account of
-  // the ticket; the group resolves the same normalised key the matcher produced
+  // The card renders the links on its first line, so it stays one account of
+  // the ticket; the board resolves the same normalised key the matcher produced
   // and forwards the dialog opener unchanged.
-  const row = read('components/WorkTicket.jsx');
+  const row = read('components/TicketBoard.jsx');
   assert.match(row, /from '\.\/SlackThreadLink\.jsx'/);
   assert.match(row, /normalizeTicketKey/);
   assert.match(row, /slackLinks = \[\]/);
@@ -581,4 +593,111 @@ test('production and build contract tests isolate or serialize all access to dis
   assert.match(production, /acquireDistTestLock/);
   assert.match(build, /--outDir.*buildRoot/);
   assert.match(build, /mkdtempSync/);
+});
+
+const readUiFile = (file) =>
+  fs.readFileSync(fileURLToPath(new URL(`../ui/${file}`, import.meta.url)), 'utf8');
+
+test('My Tickets is a focusable ticket board built on the DOM-free board helper', () => {
+  assert.ok(
+    fs.existsSync(fileURLToPath(new URL('../ui/ticket-board.js', import.meta.url))),
+    'ui/ticket-board.js exists',
+  );
+  const helper = readUiFile('ticket-board.js');
+  for (const name of ['boardColumns', 'ciSummaryText', 'reviewText']) {
+    assert.match(helper, new RegExp(`export function ${name}\\b`), `${name} is exported`);
+  }
+  assert.doesNotMatch(helper, /\b(?:document|window)\./, 'the helper is DOM-free');
+  assert.doesNotMatch(helper, /backend\//, 'the helper ships in the browser bundle');
+
+  const board = read('components/TicketBoard.jsx');
+  assert.match(board, /from '\.\.\/\.\.\/ui\/ticket-board\.js'/);
+  assert.match(board, /ciSummaryText\(/, 'the PR line words its CI through the helper');
+  assert.match(board, /reviewText\(/, 'the PR line words its review through the helper');
+  // A scroll region of its own, reachable and scrollable from the keyboard.
+  assert.match(board, /data-testid="my-tickets-board"/);
+  assert.match(board, /role="region"/);
+  assert.match(board, /aria-label="Ticket board"/);
+  assert.match(board, /tabIndex=\{0\}/);
+  for (const part of ['my-tickets-column-', 'my-tickets-pr-']) {
+    assert.ok(board.includes(part), `${part}<…> test ids are rendered`);
+  }
+  assert.match(board, /data-ci-state=/);
+  assert.match(board, /data-in-current-sprint=/);
+  // A PR line is a link out, and a link to a new tab never hands over the opener.
+  assert.match(board, /target="_blank"/);
+  assert.match(board, /rel="noopener noreferrer"/);
+  assert.doesNotMatch(board, /innerHTML|dangerouslySetInnerHTML|<Markup\b/);
+  assert.doesNotMatch(board, /\p{Extended_Pictographic}|\p{Emoji_Presentation}/u, 'no emoji');
+
+  const panel = read('panels/MyTicketsPanel.jsx');
+  assert.match(panel, /import \{ TicketBoard \} from '\.\.\/components\/TicketBoard\.jsx';/);
+  assert.match(panel, /<TicketBoard\b/);
+  assert.doesNotMatch(panel, /MyTicketsGroups/);
+  assert.match(`${panel}\n${board}`, /boardColumns\(/);
+  assert.match(`${panel}\n${board}`, /usePreservedInteraction/, 'scroll survives poll re-renders');
+  // The note that tells the user PR status is stale lives in the toolbar.
+  assert.match(panel, /data-testid="my-tickets-prs-note"/);
+  // Kept for the existing specs and for loading, error and empty states.
+  for (const id of ['my-tickets-section', 'my-tickets-list', 'my-tickets-error']) {
+    assert.ok(panel.includes(`data-testid="${id}"`), `${id} is kept`);
+  }
+});
+
+test('the My Tickets masonry is gone while Home, PR-tab and Slack rules stay', () => {
+  const css = read('styles/my-tickets.css');
+  const rootCss = read('styles.css');
+  for (const selector of [
+    '.my-ticket-groups',
+    '.my-ticket-status-group',
+    '.my-ticket-category-head',
+    '.my-ticket-status-head',
+  ]) {
+    assert.ok(!css.includes(selector), `${selector} is removed from my-tickets.css`);
+    assert.ok(!rootCss.includes(selector), `${selector} is removed from styles.css`);
+  }
+  // Still used by Home's sprint rows, the PR tab's sprint pill and the Slack glyph.
+  for (const kept of ['.my-ticket', '.my-ticket-key', '.ticket-sprint', '.my-ticket-slack']) {
+    assert.ok(css.includes(`${kept} {`) || css.includes(`${kept}[`), `${kept} is kept`);
+  }
+  assert.match(rootCss, /\.release-ticket-groups/, 'the Releases masonry is untouched');
+});
+
+test('the board scrolls inside itself, snaps, clamps the summary and scopes the compact toolbar', () => {
+  const css = read('styles/my-tickets.css');
+  assert.match(css, /overflow-x:\s*auto/);
+  assert.match(css, /scroll-snap-type:\s*x\b/);
+  assert.match(css, /overscroll-behavior-x:\s*contain/);
+  assert.match(css, /-webkit-line-clamp:\s*2\b/, 'a summary shows two lines');
+  assert.match(css, /\.my-tickets-toolbar\b/, 'the compact filters are scoped to the toolbar');
+  assert.doesNotMatch(
+    css,
+    /(?<![\w-])columns:\s*\d/,
+    'columns are board tracks, never multi-column masonry',
+  );
+});
+
+test('the board stylesheet uses tokens only, short transitions and honours reduced motion', () => {
+  const css = read('styles/my-tickets.css');
+  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, 'colours come from tokens, never a hex literal');
+  // Every transition is short and names its properties: colour and background only.
+  const declarations = [...css.matchAll(/transition(?:-duration|-property)?\s*:\s*([^;}]+)/g)];
+  for (const [, value] of declarations) {
+    for (const [, amount, unit] of value.matchAll(/(\d*\.?\d+)\s*(ms|s)\b/g)) {
+      const ms = unit === 's' ? Number(amount) * 1000 : Number(amount);
+      assert.ok(ms <= 200, `transition "${value.trim()}" stays within 200 ms`);
+    }
+    assert.doesNotMatch(value, /\ball\b/, 'transition names its properties');
+  }
+  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+  assert.match(css, /tabular-nums/, 'counts and numbers do not jiggle');
+  // Radii come from the tokens (10 px card) or a literal of at most 12 px.
+  const tokens = read('styles/tokens.css');
+  const radius = Number(tokens.match(/--radius:\s*(\d+)px/)?.[1]);
+  assert.ok(radius <= 12, 'the shared card radius token is at most 12 px');
+  for (const [, value] of css.matchAll(/border-radius\s*:\s*([^;}]+)/g)) {
+    for (const [, px] of value.matchAll(/(\d*\.?\d+)px/g)) {
+      assert.ok(Number(px) <= 12, `border-radius "${value.trim()}" is at most 12 px`);
+    }
+  }
 });

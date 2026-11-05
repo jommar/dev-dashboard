@@ -4,7 +4,7 @@
 // PR list is never blocked by a review-fetch problem.
 import { captureConfiguration } from './settings.mjs';
 
-function headers(tokenStr) {
+export function headers(tokenStr) {
   return {
     Authorization: `Bearer ${tokenStr}`,
     'Content-Type': 'application/json',

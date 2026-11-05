@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canonicalTicketKey,
   normalizeTicketKey,
   threadsByTicket,
   ticketKeyFromThread,
@@ -47,6 +48,16 @@ test('keys normalise to the renamed TAP project and reject everything else', () 
   assert.equal(normalizeTicketKey(null), '');
   assert.equal(normalizeTicketKey(undefined), '');
   assert.equal(normalizeTicketKey(2254), '');
+});
+
+test('canonical keys fold TRIPS onto TAP and keep every other project key as typed', () => {
+  assert.equal(canonicalTicketKey('TAP-12'), 'TAP-12');
+  assert.equal(canonicalTicketKey('TRIPS-12'), 'TAP-12');
+  assert.equal(canonicalTicketKey('PRT-1543'), 'PRT-1543');
+  assert.equal(canonicalTicketKey('  PRT-1543  '), 'PRT-1543');
+  assert.equal(canonicalTicketKey(null), '');
+  assert.equal(canonicalTicketKey(undefined), '');
+  assert.equal(canonicalTicketKey(1543), '');
 });
 
 test('only a key that starts the thread text names the thread', () => {

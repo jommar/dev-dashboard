@@ -98,6 +98,19 @@ export async function getMyTickets(includeDone = false) {
   return res.json();
 }
 
+// PR status is optional: any failure reads as unavailable and never throws, so the
+// board keeps its tickets. Deliberately not checkResponse, which would also fire
+// the setup listeners for a PR-only failure.
+export async function getTicketPrs() {
+  try {
+    const res = await fetch('/api/ticket-prs');
+    if (!res.ok) return { available: false };
+    return await res.json();
+  } catch {
+    return { available: false };
+  }
+}
+
 export function getReleases({ version, scope, refresh } = {}) {
   const params = new URLSearchParams();
   if (version) params.set('version', version);

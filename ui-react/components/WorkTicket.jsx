@@ -1,7 +1,6 @@
 import { inSprints } from '../../ui/home-data.js';
 import { slug, timeAgo } from '../../ui/dom.js';
 import { jiraStatusKind } from '../../ui/components/pr-card.js';
-import { normalizeTicketKey } from '../../ui/slack-ticket-links.js';
 import { SprintPill } from './SprintPill.jsx';
 import { SlackThreadLinks } from './SlackThreadLink.jsx';
 
@@ -68,79 +67,4 @@ export function WorkTicketRow({
       </div>
     </div>
   );
-}
-
-export function MyTicketsGroups({ groups, jiraBase, currentSprints, linksByTicket, onOpenThread }) {
-  const entries = Object.entries(groups || {});
-  if (!entries.length)
-    return (
-      <div className="pr-empty" data-testid="my-tickets-empty">
-        No tickets assigned to you.
-      </div>
-    );
-  return entries.map(([category, tickets]) => {
-    const categoryKey = slug(category);
-    const byStatus = {};
-    for (const ticket of tickets) (byStatus[ticket.status || 'Unknown'] ||= []).push(ticket);
-    const sameStatus = Object.keys(byStatus).length === 1 && Object.keys(byStatus)[0] === category;
-    return (
-      <section
-        className="my-ticket-category"
-        data-testid={`my-tickets-category-${categoryKey}`}
-        key={category}
-      >
-        <h4
-          className="my-ticket-category-head"
-          data-testid={`my-tickets-category-head-${categoryKey}`}
-        >
-          {category}
-          <span className="pr-count" data-testid={`my-tickets-category-count-${categoryKey}`}>
-            {tickets.length}
-          </span>
-        </h4>
-        <div className="my-ticket-groups">
-          {Object.entries(byStatus)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([status, list]) => {
-              const statusKey = slug(status);
-              const kind = jiraStatusKind(status);
-              return (
-                <div
-                  className="my-ticket-status-group"
-                  data-jira-status-kind={kind}
-                  data-testid={`my-tickets-status-${categoryKey}-${statusKey}`}
-                  key={status}
-                >
-                  <div
-                    className="my-ticket-status-head"
-                    hidden={sameStatus}
-                    data-testid={`my-tickets-status-head-${categoryKey}-${statusKey}`}
-                  >
-                    {status}
-                    <span
-                      className="pr-count"
-                      data-testid={`my-tickets-status-count-${categoryKey}-${statusKey}`}
-                    >
-                      {list.length}
-                    </span>
-                  </div>
-                  <div className="my-ticket-rows">
-                    {list.map((ticket) => (
-                      <WorkTicketRow
-                        key={ticket.key}
-                        ticket={ticket}
-                        jiraBase={jiraBase}
-                        currentSprints={currentSprints}
-                        slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
-                        onOpenThread={onOpenThread}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-        </div>
-      </section>
-    );
-  });
 }

@@ -1,8 +1,9 @@
-// SlackThreadLink.jsx — the icon-only Slack entry point on a My Tickets row.
-// A row shows just a glyph per matching thread (never a label or a count), so
-// the tooltip and accessible name carry the whole description. Presentational
-// only: matching lives in ui/slack-ticket-links.js, and the click hands the
-// thread to the in-app dialog instead of navigating away.
+// SlackThreadLink.jsx — the Slack entry point on a My Tickets card. A chip is the
+// speech bubble, its reply count beside it, and a filled dot when the thread
+// needs a reply. The count and the dot are shown but hidden from assistive tech:
+// the tooltip and accessible name carry the words. Presentational only: matching
+// lives in ui/slack-ticket-links.js, and the click hands the thread to the in-app
+// dialog instead of navigating away.
 import { timeAgo } from '../../ui/dom.js';
 
 // Slack's own snapshot can arrive cold, without a reply count, and a thread
@@ -26,6 +27,7 @@ export function SlackThreadLinks({ links = [], onOpen }) {
     <span className="my-ticket-slack">
       {links.map((thread) => {
         const label = threadLabel(thread);
+        const replies = Number.isFinite(thread.replyCount) ? thread.replyCount : 0;
         return (
           <button
             key={thread.ts}
@@ -52,6 +54,18 @@ export function SlackThreadLinks({ links = [], onOpen }) {
             >
               <path d="M21 11.6a8.4 8.4 0 0 1-8.5 8.2 9.2 9.2 0 0 1-3.3-.6L4.2 20.6l1.3-4.3a8 8 0 0 1-1.6-4.7A8.4 8.4 0 0 1 12.5 3.3 8.4 8.4 0 0 1 21 11.6Z" />
             </svg>
+            {replies > 0 && (
+              <span className="slack-thread-count" aria-hidden="true">
+                {replies}
+              </span>
+            )}
+            {thread.needsReply && (
+              <span
+                className="slack-thread-needs"
+                aria-hidden="true"
+                data-testid={`slack-thread-needs-reply-${thread.ts}`}
+              />
+            )}
           </button>
         );
       })}

@@ -167,7 +167,7 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
       await expect(tickets.getByTestId('my-tickets-item-DEMO-3')).toHaveCount(0);
       await expect(tickets.getByTestId('my-tickets-item-DEMO-4')).toHaveCount(0);
       await expect(tickets.getByTestId('my-tickets-filter-count')).toHaveText('1 of 4');
-      await expect(tickets.getByTestId('my-tickets-category-count-In-Progress')).toHaveText('1');
+      await expect(tickets.getByTestId('my-tickets-column-count-In-Progress')).toHaveText('1');
       await expect(tickets.getByTestId('my-tickets-truncated')).toContainText('incomplete');
       await mine.search.focus();
       await mine.search.fill('impossible');

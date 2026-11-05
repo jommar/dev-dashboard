@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { Button, Card, LoadingState } from '../components/Primitives.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
-import { MyTicketsGroups } from '../components/WorkTicket.jsx';
+import { TicketBoard } from '../components/TicketBoard.jsx';
 import { SlackThreadDialog } from '../components/SlackThreadDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
@@ -30,6 +30,17 @@ function sprintHtml(sprints) {
   ));
 }
 
+function prNoteText(prs) {
+  if (!prs) return 'PR status unavailable. Tickets show without PR lines.';
+  const when = prs.updatedAt ? ` ${new Date(prs.updatedAt).toLocaleTimeString()}` : '';
+  return `PR status could not refresh. Showing the last update${when}.`;
+}
+
+const PR_TRUNCATED_NOTE = 'Not all open PRs were fetched, so some tickets may show no PR lines.';
+
+// One shared empty map until the first PR answer, so the board's props stay equal between ticks.
+const NO_PR_LINES = Object.freeze({});
+
 export function MyTicketsPanel({ config, active }) {
   const api = useDashboardApi();
   const [includeDone, setIncludeDone] = useState(false);
@@ -38,6 +49,8 @@ export function MyTicketsPanel({ config, active }) {
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState('');
   const [slackStarted, setSlackStarted] = useState([]);
+  const [prs, setPrs] = useState(null);
+  const [prStale, setPrStale] = useState(false);
   const [openThread, setOpenThread] = useState(null);
   const [filters, setFilters] = useState({
     search: '',
@@ -48,6 +61,7 @@ export function MyTicketsPanel({ config, active }) {
   });
   const dataRef = useRef(data);
   dataRef.current = data;
+  const prRequest = useRef(0);
   // Slack is optional and often slow. The request degrades to "no threads" on
   // its own, and the catch is there because this runs without being awaited:
   // anything thrown would otherwise become an unhandled rejection with nowhere
@@ -60,12 +74,29 @@ export function MyTicketsPanel({ config, active }) {
       setSlackStarted([]);
     }
   }, [api]);
+  // PR status is optional in the same way. The last good map stays on screen when
+  // a refresh fails, and only the newest request may change the state.
+  const loadPrs = useCallback(async () => {
+    const request = ++prRequest.current;
+    try {
+      const result = await api.getTicketPrs();
+      if (request !== prRequest.current) return;
+      if (result?.available) {
+        setPrs(result);
+        setPrStale(false);
+      } else setPrStale(true);
+    } catch {
+      if (request === prRequest.current) setPrStale(true);
+    }
+  }, [api]);
   const load = useCallback(
-    async ({ silent = false, include = includeDone } = {}) => {
-      // Fired, never awaited: the ticket list must not wait on Slack, and a
-      // Slack outage must not turn into a failed refresh. The icons appear on
-      // their own once the threads arrive.
+    async ({ silent = false, include = includeDone, skipPrs = false } = {}) => {
+      // Fired, never awaited: the ticket list must not wait on Slack or on GitHub,
+      // and neither outage may turn into a failed refresh. Cards and PR lines fill
+      // in on their own once their answers arrive. Include Done passes skipPrs: it
+      // changes which tickets come back, not which PRs exist.
       loadSlack();
+      if (!skipPrs) loadPrs();
       setLoading(true);
       if (!silent) setMeta(dataRef.current ? 'Refreshing…' : 'loading…');
       try {
@@ -92,7 +123,7 @@ export function MyTicketsPanel({ config, active }) {
         setLoading(false);
       }
     },
-    [api, includeDone, loadSlack],
+    [api, includeDone, loadSlack, loadPrs],
   );
   const { countdown } = useActivePolling({
     active,
@@ -100,16 +131,28 @@ export function MyTicketsPanel({ config, active }) {
     load,
     loaded: !!data,
   });
-  const rows = data?.tickets || Object.values(data?.groupsByCategory || {}).flat();
-  const filtered = useMemo(() => filterTickets(rows, filters), [rows, filters]);
-  const keep = new Set(filtered.map((ticket) => ticket.key));
-  const groups = Object.fromEntries(
-    Object.entries(data?.groupsByCategory || {})
-      .map(([category, tickets]) => [category, tickets.filter((ticket) => keep.has(ticket.key))])
-      .filter(([, tickets]) => tickets.length),
+  const rows = useMemo(
+    () => data?.tickets || Object.values(data?.groupsByCategory || {}).flat(),
+    [data],
   );
+  const filtered = useMemo(() => filterTickets(rows, filters), [rows, filters]);
   const options = ticketFilterOptions(rows, data?.allSprints);
   const linksByTicket = useMemo(() => threadsByTicket(slackStarted), [slackStarted]);
+  // The board is memoized as an element: the countdown re-renders this panel every second,
+  // and an identical element lets React skip the board and its card-wide DOM scan.
+  const board = useMemo(
+    () => (
+      <TicketBoard
+        tickets={filtered}
+        jiraBase={config.jiraBase}
+        currentSprints={data?.activeSprints}
+        linksByTicket={linksByTicket}
+        prsByTicket={prs?.byTicket || NO_PR_LINES}
+        onOpenThread={setOpenThread}
+      />
+    ),
+    [filtered, config.jiraBase, data?.activeSprints, linksByTicket, prs?.byTicket],
+  );
   return (
     <section
       id="panel-my-tickets"
@@ -118,49 +161,56 @@ export function MyTicketsPanel({ config, active }) {
       hidden={!active}
       aria-busy={loading}
     >
-      <header className="page-intro">
-        <p className="eyebrow">Assigned to you</p>
-        <h2>My Tickets</h2>
-        <p>Assigned Jira tickets, grouped by status.</p>
-      </header>
       <Card className="my-tickets-section" data-testid="my-tickets-section">
-        <div className="pr-open-heading" data-testid="my-tickets-title">
-          <span className="section-label">Work queue</span>
-          <span className="pr-open-count" data-testid="my-tickets-meta" role="status">
-            {meta}
-          </span>
-          <label className="my-tickets-toggle" data-testid="my-tickets-toggle-wrap">
-            <input
-              type="checkbox"
-              data-testid="my-tickets-include-done"
-              checked={includeDone}
-              disabled={loading}
-              onChange={(event) => {
-                const checked = event.target.checked;
-                setIncludeDone(checked);
-                load({ include: checked });
-              }}
-            />{' '}
-            Include Done
-          </label>
-          <Button data-testid="my-tickets-refresh" disabled={loading} onClick={() => load()}>
-            Refresh
-          </Button>
-          <span className="pr-next" data-testid="my-tickets-next">
-            {countdown}
-          </span>
+        <div className="my-tickets-toolbar">
+          <div className="my-tickets-bar">
+            <h2 className="my-tickets-title" data-testid="my-tickets-title">
+              My Tickets
+            </h2>
+            <div className="my-tickets-sprint" data-testid="my-tickets-sprint" hidden={!data}>
+              {data && sprintHtml(data.activeSprints)}
+            </div>
+            <span className="my-tickets-meta" data-testid="my-tickets-meta" role="status">
+              {meta}
+            </span>
+            <div className="my-tickets-controls">
+              <label className="my-tickets-toggle" data-testid="my-tickets-toggle-wrap">
+                <input
+                  type="checkbox"
+                  data-testid="my-tickets-include-done"
+                  checked={includeDone}
+                  disabled={loading}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setIncludeDone(checked);
+                    load({ include: checked, skipPrs: true });
+                  }}
+                />{' '}
+                Include Done
+              </label>
+              <Button data-testid="my-tickets-refresh" disabled={loading} onClick={() => load()}>
+                Refresh
+              </Button>
+              <span className="my-tickets-next" data-testid="my-tickets-next">
+                {countdown}
+              </span>
+            </div>
+          </div>
+          <WorkFilters
+            id="my-tickets-filter"
+            view="tickets"
+            options={options}
+            total={rows.length}
+            shown={filtered.length}
+            onChange={setFilters}
+            collapsible
+          />
+          {(prStale || prs?.truncated) && (
+            <p className="my-tickets-prs-note" data-testid="my-tickets-prs-note">
+              {prStale ? prNoteText(prs) : PR_TRUNCATED_NOTE}
+            </p>
+          )}
         </div>
-        <div className="my-tickets-sprint" data-testid="my-tickets-sprint" hidden={!data}>
-          {data && sprintHtml(data.activeSprints)}
-        </div>
-        <WorkFilters
-          id="my-tickets-filter"
-          view="tickets"
-          options={options}
-          total={rows.length}
-          shown={filtered.length}
-          onChange={setFilters}
-        />
         <div className="my-tickets-list" data-testid="my-tickets-list">
           {!data ? (
             <>
@@ -179,18 +229,16 @@ export function MyTicketsPanel({ config, active }) {
                   Not all tickets were fetched — this list and its totals may be incomplete.
                 </p>
               )}
-              {filtered.length === 0 && rows.length ? (
+              {rows.length === 0 ? (
+                <div className="pr-empty" data-testid="my-tickets-empty">
+                  No tickets assigned to you.
+                </div>
+              ) : filtered.length === 0 ? (
                 <div className="pr-empty" data-testid="my-tickets-no-matches">
                   No matches. Try changing or clearing filters.
                 </div>
               ) : (
-                <MyTicketsGroups
-                  groups={groups}
-                  jiraBase={config.jiraBase}
-                  currentSprints={data.activeSprints}
-                  linksByTicket={linksByTicket}
-                  onOpenThread={setOpenThread}
-                />
+                board
               )}
             </>
           )}

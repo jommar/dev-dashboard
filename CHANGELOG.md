@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The My Tickets tab is now a kanban board: one column per Jira status in workflow
+  order (blocked work first, Done last), each column scrolling on its own inside a
+  board that scrolls sideways and fills the viewport. A card shows the Jira key,
+  priority, points, update age and Slack chips with a reply count and a needs-reply
+  mark, and one line per open PR of yours naming the ticket: a CI glyph, the repo
+  and number, the review state and a draft tag. At narrow widths the filters fold
+  behind a Filters button. The new `GET /api/ticket-prs` route supplies the PR lines
+  (your open PRs keyed by ticket, with review state and a CI summary); it is gated
+  by setup like the other data routes, always answers 200 afterwards and degrades
+  to `available: false` or a `null` review or CI instead of failing. The tab never
+  waits on it. The status sub-groups and masonry of the old My Tickets list are
+  gone.
 - The Slack thread dialog, opened from a My Tickets glyph or a Slack tab row, has a
   "Claude session" section that lists the Claude Code sessions attached to that thread
   and attaches and detaches them on the same watcher as the Watch threads card. Attach

@@ -67,10 +67,11 @@ validation details. Once setup is ready, the navigation contains:
 - **Services** — one card per service, each showing its status and a log
   viewport that tails the last 40 lines (_Show full_ reveals everything).
 - **Pull Requests** — your open and draft PRs in separate sections, grouped by ticket.
-- **My Tickets** — Jira tickets assigned to you (`assignee = currentUser()`),
-  grouped by status category with status-name sub-groups, each ticket showing
-  the sprint it is in and a header line naming the current active sprint. An
-  _include Done_ checkbox controls whether Done tickets are shown.
+- **My Tickets** — Jira tickets assigned to you (`assignee = currentUser()`) as a
+  kanban board with one column per status, each card carrying your open PRs
+  with their CI and review state and any Slack threads, under a header line
+  naming the current active sprint. An _include Done_ checkbox controls whether
+  Done tickets are shown. See [My Tickets](#my-tickets).
 - **Releases** — the tickets of one Jira fix version (the picker defaults to the
   earliest unreleased EZAT version), each with its GitHub PRs, grouped by
   whether the work reached `ops/development`. It opens on your own tickets;
@@ -359,6 +360,7 @@ An agent can read the same logs three ways:
    - `GET /api/events` (SSE live status)
    - `GET /api/prs`
    - `GET /api/my-tickets?includeDone=0|1`
+   - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review and CI state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
 
@@ -396,8 +398,8 @@ nothing is lost.
 
 Click any legend item to **expand the tickets behind it** in place — key,
 summary, status, type and its points, linked to Jira. Bands expand
-independently and stay open across refreshes; the rows are the same
-`ticketRowHtml` the My Tickets tab uses, so a ticket looks the same everywhere.
+independently and stay open across refreshes; the rows are Home's own compact
+ticket rows (`WorkTicketRow`), not the cards the [My Tickets](#my-tickets) board uses.
 
 Two honesty rules, because a progress bar is easy to lie with:
 
@@ -542,44 +544,161 @@ make this section unavailable while the rest of the PR tab remains usable.
 ## My Tickets
 
 The dashboard shows Jira tickets assigned to you (`assignee = currentUser()`
-in JQL) — as sections grouped by status category (**To Do**, **In Progress**,
-**Done**), with sub-groups per status name sorted A→Z and tickets newest-first
-within each status. Available in the **My Tickets** tab, via
-`node backend/cli.mjs my-tickets` / `GET /api/my-tickets`. Rows show the ticket key
-(linked to Jira), summary, status pill (same color mapping as PR ticket
-status), sprint pill, priority, issue type, and relative update time.
+in JQL) as a **kanban board**: one column per Jira status among your tickets,
+with the most recently updated ticket first in each column. Available in the
+**My Tickets** tab, via `node backend/cli.mjs my-tickets` / `GET /api/my-tickets`.
+Each card also carries your open PRs with their CI and review state, and any
+Slack threads for the ticket.
+
+**Columns** — left to right in workflow order, in four bands. Attention statuses
+(`Blocked`, `Impediment`, `Rejected`, `Active Incident`, `CS Escalation`) come
+first so blocked work shows without scrolling, then queued statuses (`To Do`,
+`Backlog`, …), then active ones (`In Progress`, `Code Review`, `Ready For
+Testing`, …), then done ones. Inside a band the known statuses keep their
+workflow order. A status the dashboard does not know goes after the known ones
+of its band, A→Z; its band is the one Jira's status category implies (`To Do`
+queued, `Done` done, anything else active). A status with no tickets has no
+column. A column's header shows the status name and a count, over a 2px rule
+coloured by the status colour mapping under [Ticket status](#ticket-status). The
+order lives in [`ui/ticket-board.js`](ui/ticket-board.js), which is DOM-free and
+pinned by [`test/ticket-board.test.mjs`](test/ticket-board.test.mjs).
+
+**Cards** — the Jira key (a link that opens Jira in a new tab), a priority mark
+(chevrons or bars; the priority's name is its tooltip and accessible name), story
+points (`5 pt`, absent when unestimated), time since the last update, and the
+[Slack chips](#slack-threads) at the right end. Below are the summary, clamped to
+two lines with the full text in its tooltip, and one line per open PR. The status
+and the issue type are not on the card: the column names the status, and Type
+stays a filter.
+
+**PR lines** — one link per PR, opening it in a new tab: a CI glyph, `repo #number`
+(the repository name without its owner), the review state in words and a `Draft`
+tag for a draft. The glyph differs in shape as well as colour: a check for passing
+CI, a cross for failing, an open ring for pending and a dash for no checks or
+unreadable ones. Hover a line for the CI summary, for example `CI failing: lint,
+unit-tests (2 of 9 failed)` (at most three failing checks are named); the same
+text is in the line's accessible name. The review state reads `approved`,
+`changes requested` or `awaiting`, and `review unknown` when it could not be read.
+A ticket with two open PRs shows two lines, a PR whose title names two tickets
+shows on both cards, and a ticket without a PR shows none.
+
+**PR data** — the lines come from `GET /api/ticket-prs`, which the tab calls on its
+first load, on every 90 second poll and on **Refresh**. It lists **your** open PRs
+(authored by the GitHub user the saved token belongs to) in the watched
+repositories from Settings, drafts included and whatever their ticket's Jira status, unlike the Open PRs section,
+which keeps only Code Review groups. A PR is filed under every ticket key in its
+title (`[TAP-1665]`, bare `PRT-1221`): `TRIPS-n` keys are filed under `TAP-n`,
+any other project's key as written, and a PR whose title has no ticket key is
+left out (the Pull Requests tab still lists it). A key repeated in one title
+counts once, and each key's list is newest update first. Only the newest PRs up
+to **GitHub maximum results** (1 to 100) in Settings are fetched; `truncated`
+says there were more, and the tab then notes that some tickets may show no PR
+lines.
+
+```
+200 { available, login, total, truncated, updatedAt,
+      byTicket: { "<KEY>": [{ repo, number, title, url, draft, updatedAt,
+                              review, ci }] } }
+
+review: { state: 'approved' | 'changes_requested' | 'awaiting', approvals } | null
+ci:     { state: 'passing' | 'failing' | 'pending' | 'none',
+          passed, failed, pending, failing: [name, …] } | null
+```
+
+`login` is the GitHub user, `total` GitHub's count of matching open PRs and
+`updatedAt` the time the server answered; `repo` is `owner/name`. `review.state`
+is the newest approval or change request on the PR, the same rule as
+[Review status](#review-status) (an approval after a change request wins), and
+`awaiting` when there is neither; `approvals` counts the reviewers whose latest
+review approves. `ci.state` summarises the PR's latest commit: `passing` for a
+success, `failing` for a failure or error, `pending` for pending, expected or any
+state the dashboard does not recognise, and `none` when the commit has no checks.
+`passed`, `failed` and `pending` count the first 100 checks and commit statuses,
+and `failing` names the failed ones, each name once. A `null` `review` or `ci`
+means GitHub's answer was unreadable, which is different from `awaiting` or
+`none`; the card shows `review unknown` or a dash with `CI status unavailable`.
+
+The route is behind the [setup gate](#setup-gate-and-apis): `409 SETUP_REQUIRED`
+before setup, and `200` after it whatever GitHub does. A GitHub problem never
+becomes an error, it only narrows what the answer reports: with no token, or
+when GitHub fails `/user` or the search, the answer is `{ available: false,
+login: null, total: 0, truncated: false, byTicket: {} }` plus `updatedAt`; when
+one GraphQL batch of up to 50 PRs fails, those PRs are listed with
+`review: null, ci: null` and the other batches are unaffected; when GitHub
+reports an error on one PR's checks, that PR gets `ci: null` and keeps its
+review. A token that cannot read checks and commit statuses is expected to show
+up that way, as CI unknown on each PR while reviews still work; how GitHub
+reports a refused field has not been checked against the live API, and Settings
+validation does not probe for it. A poll costs one `GET /user`, one search and
+one GraphQL request per 50 PRs, sent one after another; each call times out
+after 15 seconds, and a timeout counts as that call failing. Requests made
+while a load is running, with the same saved settings revision, share that
+load. Nothing is cached: once it finishes the result is dropped, so the next
+poll or **Refresh** asks GitHub again. The answer carries no tokens, no
+upstream error text and no settings. There is no CLI command for it: `prs` and
+`my-tickets` call their modules directly, so an agent reads this route over
+HTTP.
+
+The tab never waits on it. The cards render as soon as `/api/my-tickets`
+answers, and PR lines fill in when the PR answer arrives. They load on the first
+load, on every 90 second poll and on **Refresh**, but not when **Include Done**
+is toggled: that changes which tickets come back, not which of your PRs are open,
+so the lines already loaded stay. If a later PR refresh fails, the lines from the
+last good answer stay and a note says so; if none has ever loaded, the tickets show without PR lines and say `PR status
+unavailable`. A slow or failing PR route never shows the ticket error state. The
+GitHub reads are in [`backend/ticket-prs.mjs`](backend/ticket-prs.mjs), and the
+board's `data-testid` names are pinned by `e2e/my-tickets-board.spec.js`; treat
+them as a contract.
+
+**Filters and layout** — the filters are the ones under
+[Local work filters](#local-work-filters) and apply to the board, so a Status
+filter leaves one column and a column with no matching ticket disappears. Below
+600px the toolbar folds Status, Sprint, Priority, Type and Clear behind a
+**Filters** button beside Search (it says `N active` while any is set).
+The board scrolls sideways inside itself and the page never does: columns are
+280px wide, or 82% of the viewport below 600px so the next column peeks in and
+snaps into place. Each column scrolls down on its own with its header in view,
+and the board fills the rest of the viewport under the toolbar. The board's
+sideways position and each column's scroll position survive a refresh, and the
+board is keyboard-focusable (arrow keys scroll it).
 
 ### Slack threads
 
 A ticket whose key heads a thread you started in `#ezat_claudio` gets a small
-Slack glyph next to its key — one per matching thread, newest activity first —
-that opens a dialog with the full conversation: every message in Slack order,
-rendered from its own mrkdwn, plus **Copy link** and **Open in Slack** actions.
+Slack chip at the right end of its card's top line — one per matching thread,
+newest activity first. The chip is a speech bubble with the thread's reply count
+beside it, and a filled dot when the thread needs a reply (its accessible name
+says so in words). Clicking it opens a dialog with the full conversation: every
+message in Slack order, rendered from its own mrkdwn, plus **Copy link** and
+**Open in Slack** actions.
 Only the thread's subject line is consulted, so the key must start it. Old
 `TRIPS-NNNN` threads match `TAP-NNNN` because Jira's rename carried the numbers
-over. The glyphs reuse the Slack tab's cached thread list, so they simply do not
+over. The chips reuse the Slack tab's cached thread list, so they simply do not
 appear — never an error — when Slack is not connected. The dialog also has a
 **Claude session** section that attaches and detaches Claude Code sessions for the
 thread on the [watcher](#watch).
 
 ### Sprints
 
-Each row carries a sprint pill next to its status pill: accent-colored for the
-**active** sprint, dashed for a **future** one, struck through when the ticket
-has only been in **closed** sprints, and `No sprint` for backlog tickets. A
-ticket carried across sprints shows the most relevant one (active → future →
-last closed); the full list is in `sprints` on the JSON payload.
+A ticket carried across sprints shows the most relevant one (active → future →
+last closed); the full list is in `sprints` on the JSON payload. The sprint pill
+(accent-colored for the **active** sprint, dashed for a **future** one, struck
+through when the ticket has only been in **closed** sprints) is on the Pull
+Requests tab's ticket group headers; a My Tickets card has no pill and prints
+the sprint's name in muted text under its summary only when the ticket is not in
+a current sprint (nothing for a backlog ticket).
 
-A ticket in one of the current **active** sprints also gets an accent rail and a
-faint tint on its row (`data-in-current-sprint`), so the current sprint's work
-reads as a scan rather than a read of every pill. The status pill keeps its own
-color — the two signals are independent, since a Done ticket can still belong to
-the active sprint. The rail is an inset box-shadow rather than a border, so the
-3px does not shift the row's content out of alignment with the rows below it.
+A ticket in one of the current **active** sprints gets an accent rail on its
+card's left edge (`data-in-current-sprint`) and visually hidden text `In current
+sprint`, so the current sprint's work reads as a scan rather than a read of
+every card. A Done ticket can still belong to the active sprint. The rail is an
+inset box-shadow rather than a border, so the 2px does not shift the card's
+content out of alignment with the cards beside it.
 
-Above the list, a header line names the **current active sprint** with its
+In the toolbar, a header line names the **current active sprint** with its
 dates and days remaining (e.g. `Nexus Sprint 17 · Aug 24 – Sep 6 · 2 days
-left`). It is derived from the sprint field of your own tickets rather than
+left`), on one line that is cut off at the end when it does not fit. It is
+derived from the sprint field of your own tickets rather than
 from a board — no extra Jira call — so if none of your tickets are in the
 active sprint it reads `No active sprint among your tickets`, and if your
 tickets span several boards every active sprint is listed.
@@ -587,7 +706,8 @@ tickets span several boards every active sprint is listed.
 Sprint is a Greenhopper custom field whose id is instance-specific
 (`customfield_10020` on `pathwise.atlassian.net`). Edit **Jira sprint field** in
 Settings to override it. New/changed connections must pass field metadata checks;
-at rendering time, absent sprint data produces `No sprint`.
+at rendering time, absent sprint data means the ticket has no sprint (a sprint
+pill reads `No sprint`; a My Tickets card shows no sprint name).
 
 Story points are likewise instance-specific, and worth checking rather than
 assuming: this instance uses `customfield_10058` ("Story Points") and leaves
@@ -1334,6 +1454,7 @@ ui/
   home-data.js          Home's counting / sprint scoping / urgency ordering (DOM-free)
   work-filters.js       shared PR, ticket and action filtering (DOM-free)
   releases-data.js      release grouping and remembered version (DOM-free)
+  ticket-board.js       My Tickets column order and CI / review wording (DOM-free)
   components/           domain-free helpers and tested card/diff data rendering
 
 ui-react/styles/        app-owned bespoke styles, imported by the Vite entry
@@ -1345,7 +1466,9 @@ cards, filters, listboxes, terminal output and status; domain-free selectors
 and established card/diff helpers preserve existing calculations, escaping
 and data-testid contracts. Masonry uses CSS multi-column packing with intact
 cards and sibling spacing at 760px and 1700px; Services retains an explicit
-CSS grid and Home blocks remain indivisible. Legacy DOM panel controllers,
+CSS grid, Home blocks remain indivisible and My Tickets is a horizontally
+scrolling board of columns that scroll on their own (see
+[My Tickets](#my-tickets)). Legacy DOM panel controllers,
 entry points, stylesheet tree and the API compatibility re-export have been
 retired.
 

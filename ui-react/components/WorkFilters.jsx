@@ -69,8 +69,19 @@ function saveView(view, filters) {
   }
 }
 
-export function WorkFilters({ id, view, options = {}, total = 0, shown = total, onChange }) {
+export function WorkFilters({
+  id,
+  view,
+  options = {},
+  total = 0,
+  shown = total,
+  onChange,
+  collapsible = false,
+}) {
   const schema = SCHEMAS[view];
+  // Opt-in: the narrow My Tickets toolbar folds its selects behind a Filters button.
+  // Elsewhere the row is always open and the DOM carries no disclosure attributes.
+  const [open, setOpen] = useState(false);
   const [filters, setFilters] = useState(() => {
     const saved = readViews()[view] || {};
     return Object.fromEntries(
@@ -96,24 +107,17 @@ export function WorkFilters({ id, view, options = {}, total = 0, shown = total, 
       return next;
     });
 
-  return (
-    <div className="work-filters" id={id} role="group" aria-label="List filters">
-      <label className="work-filter-search">
-        Search
-        <input
-          type="search"
-          data-filter="search"
-          placeholder="Search fetched items"
-          value={filters.search}
-          onChange={(event) => change('search', event.target.value)}
-        />
-      </label>
+  const activeFields = SELECTS[view].filter(([field]) => filters[field]).length;
+  // The selects and Clear. A collapsible row wraps them in one region that the Filters
+  // button controls; any other row renders them as direct children, as it always has.
+  const fieldControls = (
+    <>
       {SELECTS[view].map(([field, label]) => {
         const values = new Map(choices[field].filter(([value]) => value));
         if (filters[field] && !values.has(filters[field]))
           values.set(filters[field], `${filters[field]} (not in fetched data)`);
         return (
-          <label key={field}>
+          <label key={field} className="work-filter-field">
             {label}
             <select
               data-filter={field}
@@ -132,6 +136,7 @@ export function WorkFilters({ id, view, options = {}, total = 0, shown = total, 
       })}
       <Button
         type="button"
+        className="work-filter-clear"
         onClick={() => {
           const next = Object.fromEntries(Object.keys(schema).map((key) => [key, '']));
           saveView(view, next);
@@ -140,6 +145,51 @@ export function WorkFilters({ id, view, options = {}, total = 0, shown = total, 
       >
         Clear filters
       </Button>
+    </>
+  );
+  return (
+    <div
+      className="work-filters"
+      id={id}
+      role="group"
+      aria-label="List filters"
+      data-collapsible={collapsible ? 'true' : undefined}
+      data-expanded={collapsible ? String(open) : undefined}
+    >
+      <label className="work-filter-search">
+        Search
+        <input
+          type="search"
+          data-filter="search"
+          placeholder="Search fetched items"
+          value={filters.search}
+          onChange={(event) => change('search', event.target.value)}
+        />
+      </label>
+      {collapsible && (
+        <Button
+          type="button"
+          className="work-filter-toggle"
+          aria-expanded={open}
+          aria-controls={`${id}-fields`}
+          data-testid={`${id}-toggle`}
+          onClick={() => setOpen((value) => !value)}
+        >
+          Filters
+          {activeFields > 0 && (
+            <span className="work-filter-active" data-testid={`${id}-active`}>
+              {activeFields} active
+            </span>
+          )}
+        </Button>
+      )}
+      {collapsible ? (
+        <div className="work-filter-fields" id={`${id}-fields`}>
+          {fieldControls}
+        </div>
+      ) : (
+        fieldControls
+      )}
       <span className="work-filter-count" data-testid={`${id}-count`} role="status">
         {shown} of {total}
       </span>

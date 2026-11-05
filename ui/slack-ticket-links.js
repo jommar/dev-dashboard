@@ -23,6 +23,12 @@ export function normalizeTicketKey(value) {
   return match ? `TAP-${match[1]}` : '';
 }
 
+// The key a ticket is known by everywhere on the board: TAP and TRIPS fold to TAP,
+// any other project key is kept as typed (trimmed), and a non-string gives "".
+export function canonicalTicketKey(value) {
+  return normalizeTicketKey(value) || (typeof value === 'string' ? value.trim() : '');
+}
+
 // The ticket a thread belongs to, or "" when its text does not open with a key.
 export function ticketKeyFromThread(text) {
   if (typeof text !== 'string') return '';

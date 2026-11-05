@@ -19,7 +19,11 @@ function headers(tokenStr) {
 }
 
 async function getLogin(tokenStr, config) {
-  const res = await fetch(`${config.api}/user`, { headers: headers(tokenStr), redirect: 'error' });
+  const res = await fetch(`${config.api}/user`, {
+    headers: headers(tokenStr),
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  });
   if (!res.ok) throw new Error(`github /user failed: ${res.status}`);
   const data = await res.json();
   return data.login;
@@ -153,7 +157,11 @@ export async function fetchOpenPRs({ mine = true, snapshot } = {}) {
     `${GITHUB.api}/search/issues?q=${encodeURIComponent(query)}` +
     `&sort=updated&order=desc&per_page=${GITHUB.maxResults}`;
 
-  const res = await fetch(url, { headers: headers(tokenStr), redirect: 'error' });
+  const res = await fetch(url, {
+    headers: headers(tokenStr),
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  });
   if (!res.ok) {
     throw new Error(`github search failed: ${res.status}`);
   }

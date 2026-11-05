@@ -87,19 +87,14 @@ body {
 .pr-open-groups,
 .pr-draft-groups,
 .pr-approval-groups,
-.my-ticket-groups,
 .release-ticket-groups {
   columns: 1;
   column-gap: 20px;
-}
-.my-ticket-groups {
-  column-gap: 16px;
 }
 @media (min-width: 760px) {
   .pr-open-groups,
   .pr-draft-groups,
   .pr-approval-groups,
-  .my-ticket-groups,
   .release-ticket-groups {
     columns: 2;
   }
@@ -108,27 +103,21 @@ body {
   .pr-open-groups,
   .pr-draft-groups,
   .pr-approval-groups,
-  .my-ticket-groups,
   .release-ticket-groups {
     columns: 3;
   }
 }
 .ticket-card,
 .pr-approval-ticket,
-.my-ticket-status-group,
 .release-ticket {
   break-inside: avoid;
 }
 .ticket-card + .ticket-card,
 .pr-approval-ticket + .pr-approval-ticket,
-.my-ticket-status-group + .my-ticket-status-group,
 .release-ticket + .release-ticket {
   margin-top: 20px;
 }
 .pr-approval-ticket {
-  margin-bottom: 12px;
-}
-.my-ticket-status-group {
   margin-bottom: 12px;
 }
 .release-ticket + .release-ticket {

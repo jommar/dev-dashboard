@@ -381,6 +381,14 @@ export function dashboardData() {
       allSprints: [sprint, previousSprint],
       truncated: false,
     },
+    ticketPrs: {
+      available: true,
+      login: 'me',
+      total: 0,
+      truncated: false,
+      byTicket: {},
+      updatedAt: '2026-10-08T09:00:00.000Z',
+    },
     logs: Object.fromEntries(
       services.map((service) => [
         service.id,
@@ -394,6 +402,246 @@ export function dashboardData() {
     releases: releasesData(),
     slack: slackData(),
   };
+}
+
+// The Slack threads the board fixture attaches to TAP-9002 (needs a reply) and TAP-9005.
+export const BOARD_THREAD_TS = { needsReply: '1761900000.000100', quiet: '1761900200.000100' };
+
+const BOARD_TEAM = 'T0EXAMPLE1';
+const BOARD_CHANNEL = 'C0EXAMPLE1';
+const BOARD_FAILING_CHECKS = ['lint', 'unit-tests'];
+
+// The board's fixture matrix, laid over any `dashboardData()`. It
+// replaces the tickets and the ticket-to-PR map and gives two Slack threads. Done tickets stay in
+// the list: the mocked /api/my-tickets drops them unless Include Done is on. Pass
+// `{ available: false }` for the answer GitHub gives when the PR search failed. Invented data only.
+//
+//   ticket          status              PRs                                          Slack
+//   TAP-9001        In Progress         one, CI failing (lint, unit-tests)           -
+//   TAP-9002        Code Review         one, CI passing, approved                    4 replies, needs reply
+//   TAP-9003        In Progress         one draft, CI pending                        -
+//   TAP-9004        To Do               none (sprint: not the current one)           -
+//   TAP-9005        Code Review         two: changes requested; ci null (unreadable) 1 reply
+//   TAP-9006/9007   In Progress/Blocked the same PR names both                       -
+//   TAP-9008        Ready For Testing   one, no checks; a ~160 character summary     -
+//   TAP-9100..9119  To Do               none (twenty tickets in one column)          -
+//   TAP-9200        Weird Custom Gate   none (unknown status, category In Progress)  -
+//   TAP-9300        Done                none                                         -
+export function ticketBoardData(data, { available = true } = {}) {
+  const hoursAgo = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
+  const [current] = data.tickets.activeSprints;
+  const next = {
+    id: 3,
+    name: 'Following Sprint',
+    state: 'future',
+    startDate: '2026-09-15',
+    endDate: '2026-09-28',
+  };
+  const ticket = (key, status, statusCategory, overrides = {}) => ({
+    key,
+    summary: `Invented work item ${key}`,
+    status,
+    statusCategory,
+    priority: 'Medium',
+    issueType: 'Task',
+    storyPoints: null,
+    sprints: [current],
+    sprint: current,
+    updated: hoursAgo(2),
+    ...overrides,
+  });
+  const longSummary =
+    'Invented ticket whose summary keeps going well past two lines so the card has to clamp it and still show the whole text in a tooltip for anyone who needs it';
+  data.tickets.allSprints = [current, next, ...data.tickets.allSprints.slice(1)];
+  data.tickets.tickets = [
+    ticket('TAP-9001', 'In Progress', 'In Progress', {
+      summary: 'Invented fix for the failing export job',
+      priority: 'High',
+      storyPoints: 5,
+    }),
+    ticket('TAP-9002', 'Code Review', 'In Progress', {
+      summary: 'Invented review of the retry policy',
+      priority: 'Highest',
+      storyPoints: 3,
+      updated: hoursAgo(5),
+    }),
+    ticket('TAP-9003', 'In Progress', 'In Progress', { storyPoints: 2, updated: hoursAgo(26) }),
+    ticket('TAP-9004', 'To Do', 'To Do', {
+      priority: 'Low',
+      sprints: [next],
+      sprint: next,
+    }),
+    ticket('TAP-9005', 'Code Review', 'In Progress', { priority: 'High', storyPoints: 8 }),
+    ticket('TAP-9006', 'In Progress', 'In Progress', { storyPoints: 1 }),
+    ticket('TAP-9007', 'Blocked', 'In Progress', { priority: 'Highest' }),
+    ticket('TAP-9008', 'Ready For Testing', 'To Do', {
+      summary: longSummary,
+      priority: 'Low',
+      storyPoints: 13,
+    }),
+    ...Array.from({ length: 20 }, (_, index) =>
+      ticket(`TAP-${9100 + index}`, 'To Do', 'To Do', {
+        summary: `Invented queued item number ${index + 1}`,
+        priority: 'Low',
+      }),
+    ),
+    ticket('TAP-9200', 'Weird Custom Gate', 'In Progress'),
+    ticket('TAP-9300', 'Done', 'Done', { updated: hoursAgo(72) }),
+  ];
+
+  const ci = (state, passed, failed, pending, failing = []) => ({
+    state,
+    passed,
+    failed,
+    pending,
+    failing,
+  });
+  const review = (state, approvals = 0) => ({ state, approvals });
+  const pr = (repo, number, title, overrides = {}) => ({
+    repo,
+    number,
+    title,
+    url: `https://github.com/${repo}/pull/${number}`,
+    draft: false,
+    updatedAt: hoursAgo(1),
+    review: review('awaiting'),
+    ci: ci('passing', 9, 0, 0),
+    ...overrides,
+  });
+  const failing = pr('ExampleOrg/example-api', 812, 'TAP-9001 Repair the export retry', {
+    review: review('awaiting'),
+    ci: ci('failing', 7, 2, 0, BOARD_FAILING_CHECKS),
+  });
+  const passing = pr('ExampleOrg/example-web', 904, 'TAP-9002 Cap the retry count', {
+    review: review('approved', 2),
+    ci: ci('passing', 9, 0, 0),
+  });
+  const pending = pr('ExampleOrg/example-api', 815, 'TAP-9003 Add the audit trail', {
+    draft: true,
+    review: review('awaiting'),
+    ci: ci('pending', 6, 0, 3),
+  });
+  const changesRequested = pr('ExampleOrg/example-api', 820, 'TAP-9005 Rework the queue', {
+    review: review('changes_requested'),
+    ci: ci('passing', 9, 0, 0),
+  });
+  const unreadable = pr('ExampleOrg/example-web', 821, 'TAP-9005 Rework the queue view', {
+    review: review('awaiting'),
+    ci: null,
+  });
+  const shared = pr('ExampleOrg/example-web', 931, 'TAP-9006 TAP-9007 Split the settings form', {
+    review: review('approved', 1),
+    ci: ci('passing', 4, 0, 0),
+  });
+  const noChecks = pr('ExampleOrg/example-api', 840, 'TAP-9008 Document the retention rules', {
+    review: review('approved', 2),
+    ci: ci('none', 0, 0, 0),
+  });
+  const byTicket = {
+    'TAP-9001': [failing],
+    'TAP-9002': [passing],
+    'TAP-9003': [pending],
+    'TAP-9005': [unreadable, changesRequested],
+    'TAP-9006': [shared],
+    'TAP-9007': [shared],
+    'TAP-9008': [noChecks],
+  };
+  data.ticketPrs = available
+    ? {
+        available: true,
+        login: 'me',
+        total: 7,
+        truncated: false,
+        byTicket,
+        updatedAt: new Date().toISOString(),
+      }
+    : {
+        available: false,
+        login: null,
+        total: 0,
+        truncated: false,
+        byTicket: {},
+        updatedAt: new Date().toISOString(),
+      };
+
+  const person = (id, name) => ({ id, name });
+  const sam = person('U0EXAMPLE1', 'Sam Example');
+  const riley = person('U0EXAMPLE2', 'Riley Sample');
+  const threadRow = (ts, key, replyCount, needsReply) => ({
+    ts,
+    url: slackAppThreadLink(BOARD_TEAM, BOARD_CHANNEL, ts),
+    watchKey: `${BOARD_CHANNEL}:${ts}`,
+    text: `${key}: Invented subject for the thread`,
+    author: sam,
+    starter: sam,
+    replyCount,
+    activityAt: hoursAgo(1),
+    latestReplyBy: riley,
+    needsReply,
+  });
+  const threadRead = (row) => ({
+    ts: row.ts,
+    url: row.url,
+    watchKey: row.watchKey,
+    channel: { id: BOARD_CHANNEL, name: 'example_channel' },
+    replyCount: row.replyCount,
+    truncated: false,
+    updatedAt: new Date().toISOString(),
+    names: { [sam.id]: sam.name, [riley.id]: riley.name },
+    messages: [
+      { ts: row.ts, at: hoursAgo(2), author: sam, text: row.text, mrkdwn: row.text },
+      {
+        ts: `${Number(row.ts.split('.')[0]) + 60}.000300`,
+        at: hoursAgo(1),
+        author: riley,
+        text: 'Invented reply asking for an answer.',
+        mrkdwn: 'Invented reply asking for an answer.',
+      },
+    ],
+  });
+  const needsReply = threadRow(BOARD_THREAD_TS.needsReply, 'TAP-9002', 4, true);
+  const quiet = threadRow(BOARD_THREAD_TS.quiet, 'TAP-9005', 1, false);
+  data.slack.threads.started = [needsReply, quiet];
+  data.slack.threadReads = {
+    [needsReply.ts]: threadRead(needsReply),
+    [quiet.ts]: threadRead(quiet),
+  };
+  return data;
+}
+
+// The matrix plus one ticket from another Jira project, PRT-901, with an open PR. The server
+// files a PR under its key as written when the project is neither TAP nor TRIPS, so the fixture
+// keys the PR the same way. Invented data only.
+export function withForeignProjectTicket(data) {
+  const base = data.tickets.tickets.find((ticket) => ticket.key === 'TAP-9001');
+  const [pr] = data.ticketPrs.byTicket['TAP-9001'];
+  data.tickets.tickets.push({
+    ...base,
+    key: 'PRT-901',
+    summary: 'Invented work item PRT-901',
+    status: 'In Progress',
+  });
+  data.ticketPrs.byTicket['PRT-901'] = [
+    { ...pr, number: 901, url: pr.url.replace(/\/\d+$/, '/901') },
+  ];
+  return data;
+}
+
+// The matrix plus one ticket under the renamed TRIPS project, TRIPS-901. The server folds TRIPS
+// onto TAP, so its open PR is filed under TAP-901, and the card has to find it there. Invented data only.
+export function withTripsProjectTicket(data) {
+  const base = data.tickets.tickets.find((ticket) => ticket.key === 'TAP-9001');
+  const [pr] = data.ticketPrs.byTicket['TAP-9001'];
+  data.tickets.tickets.push({
+    ...base,
+    key: 'TRIPS-901',
+    summary: 'Invented work item TRIPS-901',
+    status: 'In Progress',
+  });
+  data.ticketPrs.byTicket['TAP-901'] = [
+    { ...pr, number: 903, url: pr.url.replace(/\/\d+$/, '/903') },
+  ];
+  return data;
 }
 
 // Mirrors the server's contract for GET /api/releases: an unknown version or scope answers the generic 400.
@@ -716,6 +964,7 @@ export function apiResponse(url, method, data, body) {
     if (url.pathname === '/api/settings') return { json: data.settings };
     if (url.pathname === '/api/services') return { json: { services: data.services } };
     if (url.pathname === '/api/prs') return { json: data.prs };
+    if (url.pathname === '/api/ticket-prs') return { json: data.ticketPrs };
     if (url.pathname === '/api/my-tickets') {
       const includeDone = url.searchParams.get('includeDone') === '1';
       const tickets = data.tickets.tickets.filter(

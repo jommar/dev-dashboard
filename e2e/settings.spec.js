@@ -9,7 +9,7 @@ test('Settings-only navigation and keyboard edits preserve errors/conflicts, rel
   test.setTimeout(90_000);
   const operational = () =>
     dashboard.requests.filter(({ path }) =>
-      /^\/api\/(services|events|logs|prs|my-tickets|releases|pr-diff)/.test(path),
+      /^\/api\/(services|events|logs|prs|my-tickets|ticket-prs|releases|pr-diff)/.test(path),
     );
   const settings = () => page.getByTestId('panel-settings');
   for (const mode of ['fresh', 'migration', 'invalid']) {

@@ -223,7 +223,7 @@ test('approval card never splits across columns @regression', async ({ page, das
   ).toBe('2');
 });
 
-test('my-tickets groups column-pack across breakpoints @regression', async ({
+test('my-tickets columns share one top edge and scroll inside the board @regression', async ({
   page,
   dashboard,
 }) => {
@@ -239,29 +239,32 @@ test('my-tickets groups column-pack across breakpoints @regression', async ({
     priority: 'Medium',
     issueType: 'Task',
   });
-  // Two categories, one status group apiece: `.my-ticket-groups` is rendered
-  // once per statusCategory section, so the fix must hold for every instance.
+  // Two statuses, one column apiece: the board lays every column on one row, so they must start
+  // at the same height at any width and the page itself must never scroll sideways.
   dashboard.data.tickets.tickets = [ticket('group-a', 'To Do'), ticket('group-b', 'In Progress')];
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/#/my-tickets');
-  await expect(page.getByTestId('my-tickets-item-group-a')).toBeVisible();
-  const columnCounts = () =>
-    page.evaluate(() =>
-      [...document.querySelectorAll('.my-ticket-groups')].map(
-        (el) => getComputedStyle(el).columnCount,
-      ),
+  for (const width of [390, 1440, 1700]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/#/my-tickets');
+    await expect(page.getByTestId('my-tickets-item-group-a')).toBeVisible();
+    const board = page.getByTestId('my-tickets-board');
+    await expect(board).toBeVisible();
+    const queued = await page.getByTestId('my-tickets-column-To-Do').boundingBox();
+    const active = await page.getByTestId('my-tickets-column-In-Progress').boundingBox();
+    expect(active.y, `columns share a top edge at ${width}`).toBe(queued.y);
+    expect(active.x).toBeGreaterThan(queued.x);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
     );
-  expect(await columnCounts()).toEqual(['1', '1']);
-
-  await page.setViewportSize({ width: 1440, height: 900 });
-  expect(await columnCounts()).toEqual(['2', '2']);
-
-  await page.setViewportSize({ width: 1700, height: 900 });
-  expect(await columnCounts()).toEqual(['3', '3']);
+    // The board is the scroller: it, not the page, would take any overflow.
+    expect(await board.evaluate((el) => getComputedStyle(el).overflowX)).toMatch(/auto|scroll/);
+  }
 });
 
-test('ticket group never splits across columns @regression', async ({ page, dashboard }) => {
+test('a tall column keeps its tickets in one column and scrolls inside itself @regression', async ({
+  page,
+  dashboard,
+}) => {
   const ticket = (key, status) => ({
     key,
     summary: `Ticket ${key}`,
@@ -274,9 +277,8 @@ test('ticket group never splits across columns @regression', async ({ page, dash
     priority: 'Medium',
     issueType: 'Task',
   });
-  // Asymmetric split (20 vs 4) within one statusCategory, so both status
-  // groups share a single `.my-ticket-groups` column context — same
-  // rationale as the approval-card test above.
+  // Asymmetric split (20 vs 4) within one statusCategory: the tall status keeps all its tickets in
+  // one column, and that column's body scrolls while its header stays put.
   const tall = Array.from({ length: 20 }, (_, index) => ticket(`tall-${index}`, 'In Progress'));
   const short = Array.from({ length: 4 }, (_, index) => ticket(`short-${index}`, 'In Review'));
   dashboard.data.tickets.tickets = [...tall, ...short];
@@ -286,11 +288,20 @@ test('ticket group never splits across columns @regression', async ({ page, dash
   const top = page.getByTestId('my-tickets-item-tall-0');
   const bottom = page.getByTestId('my-tickets-item-tall-19');
   await expect(top).toBeVisible();
+  await expect(page.getByTestId('my-tickets-board')).toBeVisible();
   expect((await top.boundingBox()).x).toBe((await bottom.boundingBox()).x);
   expect((await top.boundingBox()).y).toBeLessThan((await bottom.boundingBox()).y);
-  expect(
-    await page.evaluate(
-      () => getComputedStyle(document.querySelector('.my-ticket-groups')).columnCount,
-    ),
-  ).toBe('2');
+  const body = page.getByTestId('my-tickets-column-body-In-Progress');
+  const head = page.getByTestId('my-tickets-column-head-In-Progress');
+  await expect(head).toBeVisible();
+  const headTop = (await head.boundingBox()).y;
+  expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await body.evaluate((el) => el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }));
+  await expect(head).toBeVisible();
+  expect(Math.abs((await head.boundingBox()).y - headTop)).toBeLessThanOrEqual(1);
+  const bodyBox = await body.boundingBox();
+  const lastBox = await bottom.boundingBox();
+  expect(lastBox.y).toBeGreaterThanOrEqual(bodyBox.y - 1);
+  expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(bodyBox.y + bodyBox.height + 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

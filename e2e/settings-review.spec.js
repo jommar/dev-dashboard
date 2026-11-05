@@ -104,7 +104,7 @@ for (const malformed of ['repository-string', 'service-object', 'null-service'])
     expect(await page.evaluate(() => window.__dashboardMock.streams.length)).toBe(0);
     expect(
       dashboard.requests.filter(({ path }) =>
-        /^\/api\/(services|events|prs|my-tickets|releases)/.test(path),
+        /^\/api\/(services|events|prs|my-tickets|ticket-prs|releases)/.test(path),
       ),
     ).toEqual([]);
   });

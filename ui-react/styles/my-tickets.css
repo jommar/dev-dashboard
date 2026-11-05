@@ -1,120 +1,609 @@
-/* my-tickets.css — "My Tickets" tab: category sections with status sub-groups.
-   Ticket rows reuse the .pill / .ticket-status / .jira-link visuals from prs.css. */
+/* my-tickets.css — My Tickets: a compact kanban board (ui-react/components/TicketBoard.jsx)
+   under a one-row toolbar. The Home sprint rows (.my-ticket*), the PR tab's sprint pill
+   (.ticket-sprint) and the Slack chips share the rules at the top and bottom of this sheet.
+   Tokens only: no literal colours, no multi-column masonry, transitions of at most 150 ms,
+   radii of at most 10 px. */
 
 .my-tickets-section {
   margin: 0;
 }
-.my-tickets-toggle {
-  display: inline-flex;
+
+/* Toolbar: title, sprint line and controls on one wrapping row, filters beneath. */
+.my-tickets-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4) var(--s4) var(--s3);
+}
+.my-tickets-bar {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--s1);
+  gap: var(--s2) var(--s3);
+}
+.my-tickets-title {
+  margin-right: var(--s2);
+  color: var(--strong);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+/* The sprint is one line: the name, the dates and the countdown, truncated at the end. */
+.my-tickets-sprint {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: var(--fs-sm);
-  font-weight: 400;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Active-sprint line: derived from the sprint field of your own tickets, so it
-   can name several sprints (one per board) or none at all. */
-.my-tickets-sprint {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--s2);
-  margin: 0 0 var(--s3);
-  padding: var(--s2) var(--s3);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
-  color: var(--muted);
-  font-size: var(--fs-sm);
+.my-tickets-sprint[hidden] {
+  display: none;
 }
 .my-tickets-sprint-name {
   color: var(--text);
   font-weight: 600;
 }
 .my-tickets-sprint-sep {
-  color: var(--border);
+  margin: 0 var(--s2);
+  color: var(--border-strong);
 }
-.my-tickets-sprint:has(.my-tickets-sprint-none) {
-  border-left-color: var(--border);
-  background: var(--panel);
+.my-tickets-sprint-when {
+  margin-left: var(--s2);
+  font-variant-numeric: tabular-nums;
 }
+.my-tickets-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Include Done, Refresh and the countdown wrap as one group, pushed to the right. */
+.my-tickets-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  margin-left: auto;
+}
+.my-tickets-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  min-height: 36px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.my-tickets-next {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.my-tickets-toolbar .work-filters {
+  align-items: center;
+  margin: 0;
+  gap: var(--s2) var(--s3);
+  font-size: var(--fs-sm);
+}
+/* Each field keeps its own width and wraps as a whole; none is squeezed into a
+   neighbour. The search input may shrink, so its label never spills past its box. */
+.my-tickets-toolbar .work-filters label {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--fs-sm);
+}
+.my-tickets-toolbar .work-filters .work-filter-search {
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 320px;
+}
+.my-tickets-toolbar .work-filters .work-filter-search input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+}
+.my-tickets-toolbar .work-filters input,
+.my-tickets-toolbar .work-filters select {
+  min-height: 30px;
+  padding: 0 var(--s2);
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-size: var(--fs-sm);
+}
+.my-tickets-toolbar .work-filter-count {
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+/* The region of field controls is a layout no-op on desktop: its children stay flex items of the row. */
+.my-tickets-toolbar .work-filter-fields {
+  display: contents;
+}
+.my-tickets-toolbar .work-filter-toggle {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+  min-height: 36px;
+}
+.my-tickets-toolbar .work-filter-active {
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 599px) {
+  /* The toolbar is a header, not a form: the title and the sprint each get a row,
+     the controls take the next, and the search row carries the Filters button. */
+  .my-tickets-title {
+    order: 1;
+  }
+  .my-tickets-meta {
+    order: 2;
+    flex: 1 1 0;
+    text-align: right;
+  }
+  .my-tickets-sprint {
+    order: 3;
+    flex: 1 0 100%;
+  }
+  .my-tickets-controls {
+    order: 4;
+    flex: 1 0 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+  /* The minimum keeps the search and the Filters button on one row when the fields
+     open, so Status starts the next row instead of squeezing the search input. */
+  .my-tickets-toolbar .work-filters {
+    gap: var(--s2);
+  }
+  .my-tickets-toolbar .work-filters .work-filter-search {
+    flex: 1 1 0;
+    min-width: 150px;
+    max-width: none;
+  }
+  .my-tickets-toolbar .work-filter-toggle {
+    display: inline-flex;
+  }
+  .my-tickets-toolbar .work-filters[data-expanded='false'] .work-filter-fields {
+    display: none;
+  }
+  .my-tickets-toolbar .work-filters[data-expanded='true'] .work-filter-field {
+    flex: 1 1 calc(50% - var(--s2));
+    min-width: 0;
+  }
+  .my-tickets-toolbar .work-filters input,
+  .my-tickets-toolbar .work-filters select {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+  }
+}
+.my-tickets-prs-note {
+  margin: 0;
+  color: var(--amber);
+  font-size: var(--fs-sm);
+}
+input[type='checkbox'] {
+  accent-color: var(--accent-fill);
+  width: 16px;
+  height: 16px;
+}
+
 .my-tickets-list {
   display: flex;
   flex-direction: column;
-  gap: var(--s4);
+  min-width: 0;
+  padding-bottom: var(--s1);
 }
-.my-ticket-category-head {
+.my-tickets-frame {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Fill: on My Tickets the page is exactly one viewport tall. The shell takes that
+   height, the panel and card take what the toolbar leaves, and the board grows into
+   the rest, so no pixel count is hard-coded. flex-shrink 0 on the card means nothing
+   can be clipped: only the board's 320 px minimum can push the page past the
+   viewport, and the page then scrolls. Cards without a board (loading, empty) keep
+   their natural height. */
+#root:has(#panel-my-tickets:not([hidden])) {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+#root:has(#panel-my-tickets:not([hidden])) > .panels {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+}
+#panel-my-tickets:not([hidden]) {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+#panel-my-tickets > .my-tickets-section {
+  flex: 0 0 auto;
+}
+#panel-my-tickets > .my-tickets-section:has(.my-tickets-board) {
+  flex: 1 0 auto;
+}
+.my-tickets-section:has(.my-tickets-board) > .my-tickets-list {
+  flex: 1 0 auto;
+}
+
+/* The board: one row of fixed-width status columns that scrolls sideways inside
+   itself. Its height is what the page leaves after the toolbar (see the fill rules
+   after .my-tickets-frame), so each column scrolls down inside its own body and the
+   page itself stays still. contain: size keeps the column count from setting the
+   board's own height, so the flex share alone decides it. */
+.my-tickets-board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 280px;
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 0;
+  min-height: 320px;
+  gap: var(--s3);
+  padding: 0 var(--s4) var(--s4);
+  contain: size;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--s4);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.my-tickets-board:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (max-width: 599px) {
+  .my-tickets-board {
+    grid-auto-columns: 82vw;
+    gap: var(--s2);
+    padding: 0 var(--s2) var(--s2);
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: var(--s2);
+  }
+}
+
+/* A column is a recessed well; its cards sit one level up. The status colour is a
+   2 px rule under the header, and the status name is always printed beside it. */
+.my-tickets-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  border-radius: var(--radius);
+  scroll-snap-align: start;
+}
+.my-tickets-column[data-jira-status-kind='attention'] {
+  --jira-status-color: var(--red);
+}
+.my-tickets-column[data-jira-status-kind='queued'] {
+  --jira-status-color: var(--muted);
+}
+.my-tickets-column[data-jira-status-kind='active'] {
+  --jira-status-color: var(--accent);
+}
+.my-tickets-column[data-jira-status-kind='done'] {
+  --jira-status-color: var(--green);
+}
+.my-tickets-column[data-jira-status-kind='unknown'] {
+  --jira-status-color: var(--muted);
+}
+.my-tickets-column-head {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  margin: 0 0 var(--s2);
+  min-width: 0;
+  padding: var(--s3) var(--s3) var(--s2);
+  box-shadow: inset 0 2px 0 var(--jira-status-color, var(--muted));
+}
+.my-tickets-column-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
   color: var(--text);
-  font-size: var(--fs-lg);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
-.my-ticket-groups {
-  columns: 1;
-  column-gap: 16px;
-}
-@media (min-width: 760px) {
-  .my-ticket-groups {
-    columns: 2;
-  }
-}
-@media (min-width: 1700px) {
-  .my-ticket-groups {
-    columns: 3;
-  }
-}
-.my-ticket-status-group {
-  break-inside: avoid;
-  margin: 0 0 var(--s3);
-  padding: 0;
+.my-tickets-column-count {
+  flex: none;
+  min-width: 22px;
+  margin-left: auto;
+  padding: 0 var(--s1);
+  border-radius: var(--radius-sm);
   background: var(--panel);
-  border: 0;
-  box-shadow: var(--shadow);
-  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
+}
+.my-tickets-column-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s2);
+  min-height: 0;
+  margin: 0;
+  padding: var(--s1) var(--s2) var(--s2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* A card is the one raised surface on the board: the hairline stack, no border. */
+.my-tickets-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--s1);
   min-width: 0;
+  padding: var(--s3);
+  background: var(--panel2);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
 }
-.my-ticket-status-group + .my-ticket-status-group {
-  margin-top: 16px;
+.my-tickets-card[data-in-current-sprint='true'] {
+  box-shadow:
+    var(--shadow),
+    inset 2px 0 0 color-mix(in srgb, var(--accent-fill) 60%, transparent);
 }
-.my-ticket-status-group[data-jira-status-kind='queued'] {
-  --jira-status-color: var(--muted);
-}
-.my-ticket-status-group[data-jira-status-kind='active'] {
-  --jira-status-color: var(--accent);
-}
-.my-ticket-status-group[data-jira-status-kind='done'] {
-  --jira-status-color: var(--green);
-}
-.my-ticket-status-group[data-jira-status-kind='attention'] {
-  --jira-status-color: var(--red);
-}
-.my-ticket-status-group[data-jira-status-kind='unknown'] {
-  --jira-status-color: var(--muted);
-}
-.my-ticket-status-group[data-jira-status-kind] {
-  background: var(--panel);
-}
-.my-ticket-status-head {
+.my-tickets-card-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--s2);
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--accent);
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--s1) var(--s2);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
 }
-.my-ticket-rows {
+.my-tickets-card-key {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-decoration: none;
+}
+.my-tickets-priority {
+  display: inline-flex;
+  color: var(--text);
+  line-height: 0;
+}
+.my-tickets-card-points,
+.my-tickets-card-updated {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.my-tickets-card-top .my-ticket-slack {
+  margin: 0 0 0 auto;
+}
+.my-tickets-card-summary {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--strong);
+  font-size: var(--fs-md);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.my-tickets-card-sprint {
+  margin: var(--s1) 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-tickets-prs {
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  margin: var(--s1) 0 0;
+  padding: 0;
+  list-style: none;
 }
+/* Two rows: the repo and number with any DRAFT tag, then the review words under them.
+   The CI glyph spans both rows, so a long name never pushes the review off the card. */
+.my-tickets-pr {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-areas:
+    'ci name draft'
+    'ci review review';
+  align-items: center;
+  column-gap: var(--s2);
+  min-width: 0;
+  padding: 2px var(--s2) 2px 2px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  text-decoration: none;
+  transition:
+    background-color 150ms var(--ease-out),
+    color 150ms var(--ease-out);
+}
+.my-tickets-pr-ci {
+  grid-area: ci;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+.my-tickets-pr[data-ci-state='passing'] .my-tickets-pr-ci {
+  color: var(--green);
+}
+.my-tickets-pr[data-ci-state='failing'] .my-tickets-pr-ci {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+.my-tickets-pr[data-ci-state='pending'] .my-tickets-pr-ci {
+  color: var(--amber);
+}
+.my-tickets-pr-name {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--strong);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-tickets-pr-review {
+  grid-area: review;
+  min-width: 0;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.my-tickets-pr-draft {
+  grid-area: draft;
+  justify-self: end;
+  padding: 0 var(--s1);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* One icon-only target per Slack thread that names this ticket: the bubble, its
+   reply count beside it, and a dot when the thread needs an answer. Wraps rather
+   than widening the card. */
+.my-ticket-slack {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: var(--s1);
+  vertical-align: middle;
+}
+.slack-thread-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 var(--s1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    color 150ms var(--ease-out),
+    background-color 150ms var(--ease-out);
+}
+.slack-thread-link:hover,
+.slack-thread-link:focus-visible {
+  color: var(--accent);
+  background: var(--panel);
+}
+.slack-thread-link svg {
+  width: 13px;
+  height: 13px;
+}
+.slack-thread-count {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.slack-thread-needs {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+/* Sprint pill beside .ticket-status on the PR tab; only the state colours differ. */
+.ticket-sprint {
+  font-weight: 400;
+  color: var(--sprint-color, var(--muted));
+  border-color: var(--sprint-color, var(--border));
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ticket-sprint[data-sprint-state='active'] {
+  --sprint-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.ticket-sprint[data-sprint-state='future'] {
+  border-style: dashed;
+}
+.ticket-sprint[data-sprint-state='closed'] {
+  text-decoration: line-through;
+}
+.ticket-sprint[data-sprint-state='none'] {
+  opacity: 0.7;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .my-tickets-card-key:hover {
+    color: var(--accent);
+  }
+  .my-tickets-pr:hover {
+    background: var(--panel);
+  }
+}
+.my-tickets-card-key:focus-visible,
+.my-tickets-pr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .my-tickets-board,
+  .my-tickets-column-body {
+    scroll-behavior: auto;
+  }
+  .my-tickets-pr,
+  .slack-thread-link {
+    transition: none;
+  }
+}
+
+/* Home sprint rows (WorkTicketRow): unchanged. */
 .my-ticket {
   display: flex;
   flex-direction: column;
@@ -140,108 +629,6 @@
 .my-ticket-key a {
   text-decoration: none;
 }
-/* One icon-only target per Slack thread that names this ticket, sitting beside
-   the Jira key. Wraps rather than widening the key column, so a ticket with
-   several threads still fits the 140px grid track at ≥960px. */
-.my-ticket-slack {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin-left: var(--s1);
-  vertical-align: middle;
-}
-.slack-thread-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  color: var(--muted);
-  background: transparent;
-  border-radius: var(--radius-sm);
-  text-decoration: none;
-}
-.slack-thread-link:hover,
-.slack-thread-link:focus-visible {
-  color: var(--accent);
-  background: var(--panel2);
-}
-.slack-thread-link svg {
-  width: 13px;
-  height: 13px;
-}
-.my-ticket-category-head {
-  font-size: 19px;
-  margin-block: 12px;
-}
-.my-ticket-status-head {
-  color: var(--muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.my-ticket-status-head[hidden] {
-  display: none;
-}
-@media (min-width: 960px) {
-  .my-tickets-list .my-ticket {
-    display: grid;
-    grid-template-columns: 140px minmax(0, 1fr);
-    column-gap: 24px;
-    row-gap: 8px;
-  }
-  .my-tickets-list .my-ticket-key {
-    grid-row: span 2;
-    padding-top: 2px;
-    overflow-wrap: anywhere;
-  }
-  .my-tickets-list .my-ticket-meta {
-    grid-column: 2;
-  }
-}
-.my-tickets-toggle {
-  min-height: 36px;
-}
-input[type='checkbox'] {
-  accent-color: var(--accent-fill);
-  width: 16px;
-  height: 16px;
-}
-/* A ticket in the current active sprint gets an accent rail and a faint tint,
-   so "what am I on right now" is a scan of the list rather than a read of every
-   pill. The status pill keeps its own color: the two signals are independent
-   (a done ticket can still belong to the active sprint). The rail is an inset
-   box-shadow, not a border, so the 3px does not shift the row's content —
-   a border here would misalign the keys against the non-sprint rows below. */
-.my-ticket[data-in-current-sprint='true'] {
-  box-shadow: inset 3px 0 0 var(--accent);
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
-}
-
-/* Sprint pill sits beside .ticket-status and borrows its geometry from
-   prs.css; only the state colors differ. */
-.ticket-sprint {
-  font-weight: 400;
-  color: var(--sprint-color, var(--muted));
-  border-color: var(--sprint-color, var(--border));
-  max-width: 190px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ticket-sprint[data-sprint-state='active'] {
-  --sprint-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-.ticket-sprint[data-sprint-state='future'] {
-  border-style: dashed;
-}
-.ticket-sprint[data-sprint-state='closed'] {
-  text-decoration: line-through;
-}
-.ticket-sprint[data-sprint-state='none'] {
-  opacity: 0.7;
-}
 .my-ticket-meta {
   display: flex;
   align-items: center;
@@ -252,4 +639,10 @@ input[type='checkbox'] {
 }
 .my-ticket-sub {
   color: var(--muted);
+}
+/* A ticket in the current active sprint gets an accent rail and a faint tint. The
+   rail is an inset box-shadow, not a border, so it never shifts the row's content. */
+.my-ticket[data-in-current-sprint='true'] {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }

@@ -75,8 +75,7 @@ for (const width of [390, 1440]) {
     );
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/#/my-tickets');
-    await expect(page.getByTestId('my-tickets-category-count-In-Progress')).toHaveText('13');
-    await expect(page.getByTestId('my-tickets-status-head-In-Progress-In-Progress')).toBeHidden();
+    await expect(page.getByTestId('my-tickets-column-count-In-Progress')).toHaveText('13');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
@@ -134,20 +133,21 @@ for (const route of ['home', 'prs']) {
   }
 }
 
-test('ticket groups omit only redundant status headers and retain distinct subgroups @regression', async ({
+test('the board keeps one column per status and adds one when a new status appears @regression', async ({
   page,
   dashboard,
 }) => {
   await page.goto('/#/my-tickets');
-  await expect(page.getByTestId('my-tickets-category-count-In-Progress')).toHaveText('1');
-  await expect(page.getByTestId('my-tickets-status-head-In-Progress-In-Progress')).toBeHidden();
-  await expect(page.getByTestId('my-tickets-item-status-sample-active')).toHaveText('In Progress');
+  await expect(page.getByTestId('my-tickets-column-count-In-Progress')).toHaveText('1');
+  await expect(page.getByTestId('my-tickets-column-In-Review')).toHaveCount(0);
   const base = dashboard.data.tickets.tickets[0];
   dashboard.data.tickets.tickets.push({ ...base, key: 'sample-review', status: 'In Review' });
   await page.getByTestId('my-tickets-refresh').click();
-  await expect(page.getByTestId('my-tickets-category-count-In-Progress')).toHaveText('2');
-  await expect(page.getByTestId('my-tickets-status-head-In-Progress-In-Progress')).toBeVisible();
-  await expect(page.getByTestId('my-tickets-status-head-In-Progress-In-Review')).toBeVisible();
+  await expect(page.getByTestId('my-tickets-column-count-In-Progress')).toHaveText('1');
+  await expect(page.getByTestId('my-tickets-column-count-In-Review')).toHaveText('1');
+  const progress = await page.getByTestId('my-tickets-column-In-Progress').boundingBox();
+  const review = await page.getByTestId('my-tickets-column-In-Review').boundingBox();
+  expect(review.x).toBeGreaterThan(progress.x);
 });
 
 test.describe('touch input', () => {

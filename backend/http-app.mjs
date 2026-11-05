@@ -10,6 +10,7 @@ import {
 } from './jira.mjs';
 import { fetchUatPromoteCandidates } from './uat-promote.mjs';
 import { enrichOpenPRs, filterPrsNeedingApprovals } from './review.mjs';
+import { fetchTicketPrs } from './ticket-prs.mjs';
 import { getOriginDiff } from './diff.mjs';
 import { fetchRelease } from './releases.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
@@ -77,6 +78,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     enrichOpenPRs,
     getOriginDiff,
     fetchRelease,
+    fetchTicketPrs,
     ...integrations,
   };
   const clients = new Set();
@@ -337,6 +339,19 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         const includeDone = ['1', 'true'].includes(url.searchParams.get('includeDone'));
         json(res, 200, {
           ...(await api.fetchMyTickets({ ...options, includeDone })),
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+      // Never fails the board: an unavailable result is still a 200 the board can render.
+      if (req.method === 'GET' && pathname === '/api/ticket-prs') {
+        const { available, login, total, truncated, byTicket } = await api.fetchTicketPrs(options);
+        json(res, 200, {
+          available,
+          login,
+          total,
+          truncated,
+          byTicket,
           updatedAt: new Date().toISOString(),
         });
         return;

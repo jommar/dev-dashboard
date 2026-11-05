@@ -45,10 +45,17 @@ whole app feels consistent regardless of which container a given screen width la
 - `.pr-open-groups` (`ui/styles/prs.css`) — the PR tab's main "Open PRs" list, packing `.ticket-card`.
 - `.pr-approval-groups` (`ui/styles/prs.css`) — the PR tab's "Needs approval" and "PR merge candidates
   to ops/development" sections, packing `.pr-approval-ticket`.
-- `.my-ticket-groups` (`ui/styles/my-tickets.css`) — each category's status-group list on the My
-  Tickets tab, packing `.my-ticket-status-group`.
 
 **Not masonry, intentionally:**
+- The My Tickets board (`.my-tickets-board`, `ui-react/styles/my-tickets.css`) is one row of
+  fixed-width status columns that scrolls sideways inside itself; it is not a card list, so it has no
+  `columns:` container and none of the breakpoints above. Each column's card list
+  (`.my-tickets-column-body`) scrolls vertically on its own, with the column header outside it so the
+  header stays in view. The board fills the rest of the viewport by layout, not by a fixed offset:
+  while My Tickets is the visible panel `#root` is a `100dvh` flex column, and the board is
+  `flex: 1 1 0` with a 320px floor and `contain: size` so its column count never sets its height.
+  Columns are 280px wide; at 599px and below they are 82vw with `scroll-snap-type: x mandatory`, so
+  the next column peeks in and snaps (`proximity` above that).
 - `.home-block` itself (inside `.home-cols`) is `break-inside: avoid` — it's one packed *unit*, not a
   grid of cards, so it never gets its own internal columns (that would split a single ordered action
   queue across columns, which isn't what masonry is for here).
