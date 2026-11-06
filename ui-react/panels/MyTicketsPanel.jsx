@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, LoadingState } from '../components/Primitives.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
 import { TicketBoard } from '../components/TicketBoard.jsx';
@@ -125,6 +125,17 @@ export function MyTicketsPanel({ config, active }) {
     },
     [api, includeDone, loadSlack, loadPrs],
   );
+  // The thread dialog is where a Claude session gets attached, so the threads are read again
+  // once it closes and the chip shows the attach at once. The route answers from its cache, so
+  // this costs no Slack call within the cache's lifetime.
+  const dialogWasOpen = useRef(false);
+  useEffect(() => {
+    if (openThread) dialogWasOpen.current = true;
+    else if (dialogWasOpen.current) {
+      dialogWasOpen.current = false;
+      loadSlack();
+    }
+  }, [openThread, loadSlack]);
   const { countdown } = useActivePolling({
     active,
     interval: MY_TICKETS_POLL_MS,

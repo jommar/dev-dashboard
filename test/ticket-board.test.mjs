@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boardColumns, ciSummaryText, reviewText } from '../ui/ticket-board.js';
+import {
+  allPrsApproved,
+  boardColumns,
+  ciSummaryText,
+  commentChips,
+  commentSummaryText,
+  reviewText,
+} from '../ui/ticket-board.js';
 import { jiraStatusKind } from '../ui/components/pr-card.js';
+import { deepFreeze } from '../e2e/deep-freeze.mjs';
 
 // Ranks inside each band, in workflow order (lower-cased names).
 const RANKED = {
@@ -236,4 +244,278 @@ test('reviewText says the review state in words and never throws on unreadable d
   assert.equal(reviewText({ state: 'changes_requested', approvals: 0 }), 'changes requested');
   assert.equal(reviewText({ state: 'awaiting', approvals: 0 }), 'awaiting');
   assert.equal(typeof reviewText(null), 'string');
+});
+
+// -- a card is all-approved only when every one of its open PRs reads approved ------------------------
+
+const reviewed = (state, extra = {}) => ({
+  repo: 'ExampleOrg/example-app',
+  number: 1,
+  draft: false,
+  review: state === null ? null : { state, approvals: state === 'approved' ? 1 : 0 },
+  ...extra,
+});
+const APPROVED = reviewed('approved');
+
+test('allPrsApproved follows the truth table: at least one PR and every one approved', () => {
+  const table = [
+    ['no PRs', [], false],
+    ['one approved', [APPROVED], true],
+    ['approved and awaiting', [APPROVED, reviewed('awaiting')], false],
+    ['approved and changes requested', [APPROVED, reviewed('changes_requested')], false],
+    ['approved and an unreadable review', [APPROVED, reviewed(null)], false],
+    ['an approved draft alone', [reviewed('approved', { draft: true })], true],
+    [
+      'an approved draft and an approved PR',
+      [reviewed('approved', { draft: true }), APPROVED],
+      true,
+    ],
+    [
+      'twelve approved',
+      Array.from({ length: 12 }, (_, i) => reviewed('approved', { number: i + 1 })),
+      true,
+    ],
+    ['one awaiting', [reviewed('awaiting')], false],
+    ['one changes requested', [reviewed('changes_requested')], false],
+    ['one unreadable review', [reviewed(null)], false],
+    [
+      'one approved among eleven awaiting',
+      [APPROVED, ...Array.from({ length: 11 }, () => reviewed('awaiting'))],
+      false,
+    ],
+  ];
+  for (const [name, prs, expected] of table) {
+    assert.equal(allPrsApproved(prs), expected, name);
+  }
+});
+
+// A change request outranks approvals: the backend reports a PR with a standing change request as
+// `changes_requested` whatever other reviewers said, and the card then stays plain however many of
+// its other PRs are approved.
+test('allPrsApproved is false while any one PR reads changes requested, wherever it sits among approved PRs', () => {
+  const changes = reviewed('changes_requested');
+  assert.equal(allPrsApproved([APPROVED, APPROVED, APPROVED]), true, 'the same list without it');
+  const lists = {
+    first: [changes, APPROVED, APPROVED],
+    middle: [APPROVED, changes, APPROVED],
+    last: [APPROVED, APPROVED, changes],
+    'a draft that has it': [APPROVED, reviewed('changes_requested', { draft: true })],
+  };
+  for (const [name, prs] of Object.entries(lists)) {
+    assert.equal(allPrsApproved(prs), false, name);
+  }
+});
+
+test('allPrsApproved never reads a draft as less approved, and a draft is not approved by being a draft', () => {
+  assert.equal(allPrsApproved([reviewed('awaiting', { draft: true })]), false);
+  assert.equal(
+    allPrsApproved([reviewed('approved', { draft: true }), reviewed('awaiting', { draft: true })]),
+    false,
+  );
+});
+
+test('allPrsApproved answers false for anything that is not a list of reviewed PRs, and never throws', () => {
+  for (const input of [undefined, null]) assert.equal(allPrsApproved(input), false, String(input));
+  assert.equal(
+    allPrsApproved([{ repo: 'ExampleOrg/example-app', number: 1 }]),
+    false,
+    'a PR without a review',
+  );
+  assert.equal(
+    allPrsApproved([{ review: { state: 'unknown-state' } }]),
+    false,
+    'an unrecognised state',
+  );
+});
+
+test('allPrsApproved is a pure yes or no: it answers a boolean and leaves its input alone', () => {
+  const input = Object.freeze([
+    Object.freeze(reviewed('approved')),
+    Object.freeze(reviewed('approved')),
+  ]);
+  assert.strictEqual(allPrsApproved(input), true);
+  assert.strictEqual(allPrsApproved(Object.freeze([])), false);
+  assert.deepEqual(input, [reviewed('approved'), reviewed('approved')]);
+});
+
+// -- the comment chips and the words that name them ----------------------------------------------------
+
+const bucket = (threads = 0, unresolved = 0, comments = 0) => ({ threads, unresolved, comments });
+const commentsOf = (overrides = {}) => ({
+  human: bucket(),
+  copilot: bucket(),
+  other: bucket(),
+  conversation: 0,
+  threads: 0,
+  truncated: false,
+  ...overrides,
+});
+// What a chip draws: its author's glyph, its state and its count. Its words (`summary`) have their
+// own tests.
+const shown = (chip) => ({ author: chip.author, state: chip.state, text: chip.text });
+
+const HUMAN_ONLY = commentsOf({ human: bucket(5, 2, 9), threads: 5 });
+const COPILOT_RESOLVED = commentsOf({ copilot: bucket(4, 0, 6), threads: 4 });
+const BOTH = commentsOf({ human: bucket(3, 1, 5), copilot: bucket(2, 2, 4), threads: 5 });
+const ALL_RESOLVED = commentsOf({ human: bucket(3, 0, 4), copilot: bucket(2, 0, 3), threads: 5 });
+const OTHER_BOT = commentsOf({ other: bucket(1, 1, 2), threads: 1 });
+const CONVERSATION_ONLY = commentsOf({ conversation: 3 });
+const TRUNCATED = commentsOf({ human: bucket(50, 3, 61), threads: 63, truncated: true });
+const TRUNCATED_BOTH = commentsOf({
+  human: bucket(30, 2, 40),
+  copilot: bucket(20, 0, 25),
+  threads: 63,
+  truncated: true,
+});
+
+test('commentChips draws one chip per author with threads: unresolved over total while any is open', () => {
+  assert.deepEqual(commentChips(HUMAN_ONLY).map(shown), [
+    { author: 'human', state: 'open', text: '2/5' },
+  ]);
+  assert.deepEqual(commentChips(commentsOf({ copilot: bucket(2, 2, 4), threads: 2 })).map(shown), [
+    { author: 'copilot', state: 'open', text: '2/2' },
+  ]);
+});
+
+test('commentChips reads all resolved as the resolved state with the thread total alone', () => {
+  assert.deepEqual(commentChips(COPILOT_RESOLVED).map(shown), [
+    {
+      author: 'copilot',
+      state: 'resolved',
+      text: '4',
+    },
+  ]);
+  assert.deepEqual(commentChips(ALL_RESOLVED).map(shown), [
+    { author: 'human', state: 'resolved', text: '3' },
+    {
+      author: 'copilot',
+      state: 'resolved',
+      text: '2',
+    },
+  ]);
+});
+
+test('commentChips puts the human chip before the Copilot chip whatever order the fields arrive in', () => {
+  const reversed = {
+    copilot: BOTH.copilot,
+    human: BOTH.human,
+    other: BOTH.other,
+    conversation: 0,
+    threads: 5,
+    truncated: false,
+  };
+  for (const input of [BOTH, reversed]) {
+    assert.deepEqual(
+      commentChips(input).map((chip) => chip.author),
+      ['human', 'copilot'],
+    );
+  }
+  assert.deepEqual(commentChips(BOTH).map(shown), [
+    { author: 'human', state: 'open', text: '1/3' },
+    { author: 'copilot', state: 'open', text: '2/2' },
+  ]);
+});
+
+test('commentChips draws no chip for an author with no threads, and none for other bots or conversation comments', () => {
+  assert.deepEqual(commentChips(commentsOf()), [], 'nothing at all');
+  assert.deepEqual(commentChips(OTHER_BOT), [], 'a thread started by another bot has no chip');
+  assert.deepEqual(commentChips(CONVERSATION_ONLY), [], 'conversation comments have no chip');
+  assert.deepEqual(
+    commentChips(HUMAN_ONLY).map((chip) => chip.author),
+    ['human'],
+    'the author without threads is left out',
+  );
+});
+
+test('commentChips draws nothing for unknown comments (null or missing) and never throws', () => {
+  assert.deepEqual(commentChips(null), []);
+  assert.deepEqual(commentChips(undefined), []);
+});
+
+test('commentChips marks a cut-off list with a plus and never says resolved', () => {
+  assert.deepEqual(commentChips(TRUNCATED).map(shown), [
+    { author: 'human', state: 'open', text: '3/50+' },
+  ]);
+  const [human, copilot] = commentChips(TRUNCATED_BOTH);
+  assert.equal(human.text, '2/30+');
+  assert.equal(human.state, 'open');
+  assert.equal(copilot.text, '0/20+', 'nothing read is open, but the unread threads may be');
+  assert.notEqual(copilot.state, 'resolved', 'a cut-off list is never all resolved');
+  assert.ok(commentChips(TRUNCATED_BOTH).every((chip) => chip.text.endsWith('+')));
+});
+
+test('commentChips names each chip in words and leaves its input alone', () => {
+  const [human] = commentChips(HUMAN_ONLY);
+  assert.equal(human.summary, 'Human: 2 unresolved, 3 resolved, 9 comments');
+  const [copilot] = commentChips(COPILOT_RESOLVED);
+  assert.equal(copilot.summary, 'Copilot: 0 unresolved, 4 resolved, 6 comments');
+  for (const input of [BOTH, TRUNCATED, TRUNCATED_BOTH, commentsOf()]) {
+    const frozen = deepFreeze(structuredClone(input));
+    commentChips(frozen);
+    assert.deepEqual(frozen, input);
+  }
+});
+
+test('commentSummaryText says each author in words: unresolved, resolved and comments', () => {
+  assert.equal(commentSummaryText(HUMAN_ONLY), 'Human: 2 unresolved, 3 resolved, 9 comments');
+  assert.match(
+    commentSummaryText(COPILOT_RESOLVED),
+    /Copilot: 0 unresolved, 4 resolved, 6 comments/,
+  );
+  const both = commentSummaryText(BOTH);
+  assert.match(both, /Human: 1 unresolved, 2 resolved, 5 comments/);
+  assert.match(both, /Copilot: 2 unresolved, 0 resolved, 4 comments/);
+  assert.ok(both.indexOf('Human') < both.indexOf('Copilot'), 'human first');
+});
+
+test('commentSummaryText names conversation comments and other-bot threads, which have no chip', () => {
+  assert.match(commentSummaryText(OTHER_BOT), /Other: 1 unresolved, 0 resolved, 2 comments/);
+  assert.match(commentSummaryText(CONVERSATION_ONLY), /Conversation: 3 comments/);
+  const all = commentSummaryText(
+    commentsOf({ human: bucket(5, 2, 9), other: bucket(1, 1, 2), conversation: 3, threads: 6 }),
+  );
+  for (const part of [
+    /Human: 2 unresolved, 3 resolved, 9 comments/,
+    /Other: 1 unresolved, 0 resolved, 2 comments/,
+    /Conversation: 3 comments/,
+  ]) {
+    assert.match(all, part);
+  }
+});
+
+test('commentSummaryText says when only the first threads were read', () => {
+  const text = commentSummaryText(TRUNCATED);
+  assert.match(text, /showing the first 50 of 63 threads/);
+  assert.match(text, /Human: 3 unresolved, 47 resolved, 61 comments/);
+  assert.doesNotMatch(commentSummaryText(HUMAN_ONLY), /showing the first/);
+  assert.match(commentSummaryText(TRUNCATED_BOTH), /showing the first 50 of 63 threads/);
+});
+
+test('comment counts read "1 comment" for one and plural for zero or more than one', () => {
+  const one = commentsOf({ human: bucket(1, 0, 1), threads: 1, conversation: 1 });
+  assert.equal(commentChips(one)[0].summary, 'Human: 0 unresolved, 1 resolved, 1 comment');
+  assert.equal(
+    commentSummaryText(one),
+    'Human: 0 unresolved, 1 resolved, 1 comment; Conversation: 1 comment',
+  );
+  const plural = commentsOf({ human: bucket(2, 1, 2), other: bucket(1, 0, 0), conversation: 2 });
+  assert.equal(commentChips(plural)[0].summary, 'Human: 1 unresolved, 1 resolved, 2 comments');
+  assert.equal(
+    commentSummaryText(plural),
+    'Human: 1 unresolved, 1 resolved, 2 comments; Other: 0 unresolved, 1 resolved, 0 comments; Conversation: 2 comments',
+  );
+});
+
+test('commentSummaryText says comments are unavailable for null, and stays quiet when there is nothing to say', () => {
+  assert.equal(commentSummaryText(null), 'comments unavailable');
+  // A PR that arrives without the field reads as unknown, not as zero comments, and never throws.
+  assert.equal(commentSummaryText(undefined), 'comments unavailable');
+  const none = commentSummaryText(commentsOf());
+  assert.equal(typeof none, 'string');
+  assert.doesNotMatch(none, /unavailable|Human|Copilot|Other|Conversation/);
+  for (const input of [HUMAN_ONLY, OTHER_BOT, TRUNCATED]) {
+    const frozen = deepFreeze(structuredClone(input));
+    commentSummaryText(frozen);
+    assert.deepEqual(frozen, input);
+  }
 });

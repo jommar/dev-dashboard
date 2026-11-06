@@ -369,11 +369,34 @@ input[type='checkbox'] {
   background: var(--panel2);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow);
+  transition: background-color 150ms var(--ease-out);
 }
 .my-tickets-card[data-in-current-sprint='true'] {
   box-shadow:
     var(--shadow),
     inset 2px 0 0 color-mix(in srgb, var(--accent-fill) 60%, transparent);
+}
+/* A card whose open PRs are all approved: an 8 % green mix over the card surface, which keeps
+   every text colour on it at 4.5:1 or better, and a green hairline inside the shadow stack. */
+.my-tickets-card[data-all-approved='true'] {
+  background: color-mix(in srgb, var(--green) 8%, var(--panel2));
+  box-shadow:
+    var(--shadow),
+    inset 0 0 0 1px color-mix(in srgb, var(--green) 35%, transparent);
+}
+/* The current-sprint rail keeps its place on a green card. */
+.my-tickets-card[data-in-current-sprint='true'][data-all-approved='true'] {
+  box-shadow:
+    var(--shadow),
+    inset 2px 0 0 color-mix(in srgb, var(--accent-fill) 60%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--green) 35%, transparent);
+}
+/* The seal: a check in a circle, labelled "All PRs approved" in the markup. */
+.my-tickets-approved {
+  display: inline-flex;
+  flex: none;
+  color: var(--green);
+  line-height: 0;
 }
 .my-tickets-card-top {
   display: flex;
@@ -430,14 +453,15 @@ input[type='checkbox'] {
   padding: 0;
   list-style: none;
 }
-/* Two rows: the repo and number with any DRAFT tag, then the review words under them.
-   The CI glyph spans both rows, so a long name never pushes the review off the card. */
+/* Two rows: the repo and number with any DRAFT tag, then the review words and the comment
+   chips under them. The CI glyph spans both rows. The review words give way before the chips
+   do, so a long name or review never pushes the chips off the card. */
 .my-tickets-pr {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   grid-template-areas:
     'ci name draft'
-    'ci review review';
+    'ci meta meta';
   align-items: center;
   column-gap: var(--s2);
   min-width: 0;
@@ -481,10 +505,22 @@ input[type='checkbox'] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.my-tickets-pr-review {
-  grid-area: review;
+/* The second row is one cell beside the DRAFT column: the review words, then the chips. The words
+   take the spare width and truncate; the chips keep their size. Keeping the chips out of the
+   DRAFT column leaves the name its full width on the first row. */
+.my-tickets-pr-meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
   min-width: 0;
+}
+.my-tickets-pr-review {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .my-tickets-pr-draft {
@@ -499,6 +535,43 @@ input[type='checkbox'] {
   line-height: 16px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+/* Review-comment chips sit after the review words on the second row. Each is an outline with
+   its count: amber while a thread is open, muted once every thread is resolved, with a check
+   beside the author glyph when resolved. Not interactive: the words are in the tooltip. */
+.my-tickets-pr-chips {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+}
+.my-tickets-pr-comments {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+  padding: 0 var(--s1);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+.my-tickets-pr-comments svg {
+  flex: none;
+  width: 11px;
+  height: 11px;
+}
+.my-tickets-pr-comments[data-comment-state='open'] {
+  color: var(--amber);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 45%, transparent);
+}
+.my-tickets-pr-comments[data-comment-state='resolved'] {
+  color: var(--muted);
 }
 
 /* One icon-only target per Slack thread that names this ticket: the bubble, its
@@ -535,6 +608,14 @@ input[type='checkbox'] {
 .slack-thread-link:focus-visible {
   color: var(--accent);
   background: var(--panel);
+}
+/* An attached thread: the bubble is filled at a low opacity in the support colour, and the
+   colour holds through hover and focus. */
+.slack-thread-link[data-attached='true'] {
+  color: var(--support);
+}
+.slack-thread-link[data-attached='true'] svg path {
+  fill-opacity: 0.3;
 }
 .slack-thread-link svg {
   width: 13px;

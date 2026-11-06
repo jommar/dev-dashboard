@@ -148,3 +148,77 @@ const REVIEW_WORDS = new Map([
 export function reviewText(review) {
   return REVIEW_WORDS.get(review?.state) ?? 'review unknown';
 }
+
+// Review threads by who started them. Human comes first on the line, Copilot second.
+const COMMENT_AUTHORS = [
+  { key: 'human', word: 'Human' },
+  { key: 'copilot', word: 'Copilot' },
+];
+const WORDED_AUTHORS = [...COMMENT_AUTHORS, { key: 'other', word: 'Other' }];
+
+const countOf = (value) => (Number.isFinite(value) ? value : 0);
+const commentsWord = (count) => `${count} comment${count === 1 ? '' : 's'}`;
+
+function bucketOf(bucket) {
+  return {
+    threads: countOf(bucket?.threads),
+    unresolved: countOf(bucket?.unresolved),
+    comments: countOf(bucket?.comments),
+  };
+}
+
+function authorWords(word, bucket) {
+  const resolved = Math.max(0, bucket.threads - bucket.unresolved);
+  return `${word}: ${bucket.unresolved} unresolved, ${resolved} resolved, ${commentsWord(bucket.comments)}`;
+}
+
+// One chip per author with threads, human first. A chip reads unresolved over total while any
+// thread is open and the total alone once all are resolved. A cut-off list is never resolved,
+// so its chips carry a plus. `null` (comments unknown) draws nothing.
+export function commentChips(comments) {
+  if (!comments || typeof comments !== 'object') return [];
+  const truncated = comments.truncated === true;
+  return COMMENT_AUTHORS.flatMap(({ key, word }) => {
+    const bucket = bucketOf(comments[key]);
+    if (bucket.threads === 0) return [];
+    const open = bucket.unresolved > 0 || truncated;
+    return [
+      {
+        author: key,
+        state: open ? 'open' : 'resolved',
+        text: open
+          ? `${bucket.unresolved}/${bucket.threads}${truncated ? '+' : ''}`
+          : `${bucket.threads}`,
+        summary: authorWords(word, bucket),
+      },
+    ];
+  });
+}
+
+// The same counts in words, for the PR line's accessible name and tooltip. An author with no
+// threads is left out, and conversation comments and other-bot threads are named here although
+// they have no chip.
+export function commentSummaryText(comments) {
+  if (!comments || typeof comments !== 'object') return 'comments unavailable';
+  const parts = [];
+  let read = 0;
+  for (const { key, word } of WORDED_AUTHORS) {
+    const bucket = bucketOf(comments[key]);
+    read += bucket.threads;
+    if (bucket.threads > 0) parts.push(authorWords(word, bucket));
+  }
+  const conversation = countOf(comments.conversation);
+  if (conversation > 0) parts.push(`Conversation: ${commentsWord(conversation)}`);
+  if (comments.truncated === true) {
+    parts.push(`showing the first ${read} of ${countOf(comments.threads)} threads`);
+  }
+  return parts.join('; ');
+}
+
+// A card is all-approved when it has an open PR and every one reads approved. A draft counts by
+// its review state; a PR with unreadable review data is not approved.
+export function allPrsApproved(prs) {
+  return (
+    Array.isArray(prs) && prs.length > 0 && prs.every((pr) => pr?.review?.state === 'approved')
+  );
+}

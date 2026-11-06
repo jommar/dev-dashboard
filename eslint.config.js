@@ -4,7 +4,14 @@ import react from 'eslint-plugin-react';
 
 export default [
   {
-    ignores: ['dist/**', 'logs/**', 'node_modules/**', 'test-results/**', '.playwright-mcp/**'],
+    ignores: [
+      'dist/**',
+      'logs/**',
+      'node_modules/**',
+      'test-results/**',
+      '.playwright-mcp/**',
+      '.orchestrator/**',
+    ],
   },
   js.configs.recommended,
   {

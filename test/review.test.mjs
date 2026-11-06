@@ -39,7 +39,142 @@ test('review approval count uses each reviewer latest actionable review', () => 
   ]);
   assert.deepEqual(summary.approvers, ['bob']);
   assert.deepEqual(summary.changesRequesters, ['alice']);
+  assert.equal(summary.state, 'changes_requested');
+});
+
+const reviewNode = (login, state, day) => ({
+  state,
+  submittedAt: `2026-01-0${day}T00:00:00Z`,
+  author: { login },
+});
+// A review by an author with no login (a deleted account), which no per-reviewer count can track.
+const ghostNode = (state, day) => ({ ...reviewNode('ghost', state, day), author: null });
+const IGNORED_STATES = ['COMMENTED', 'DISMISSED', 'PENDING'];
+
+test('a standing change request outranks an approval submitted after it', () => {
+  const summary = summarizeReviews([
+    reviewNode('alice', 'CHANGES_REQUESTED', 1),
+    reviewNode('bob', 'APPROVED', 2),
+  ]);
+  assert.equal(summary.state, 'changes_requested');
+  assert.deepEqual(summary.approvers, ['bob']);
+  assert.deepEqual(summary.changesRequesters, ['alice']);
+});
+
+test('a standing change request outranks an approval submitted before it', () => {
+  const summary = summarizeReviews([
+    reviewNode('bob', 'APPROVED', 1),
+    reviewNode('alice', 'CHANGES_REQUESTED', 2),
+  ]);
+  assert.equal(summary.state, 'changes_requested');
+  assert.deepEqual(summary.approvers, ['bob']);
+  assert.deepEqual(summary.changesRequesters, ['alice']);
+});
+
+test('the order the reviews arrive in does not change a standing change request', () => {
+  const reviews = [
+    reviewNode('alice', 'CHANGES_REQUESTED', 1),
+    reviewNode('bob', 'APPROVED', 2),
+    reviewNode('carol', 'APPROVED', 3),
+  ];
+  for (const ordered of [reviews, [...reviews].reverse()]) {
+    const summary = summarizeReviews(ordered);
+    assert.equal(summary.state, 'changes_requested');
+    assert.deepEqual(summary.approvers.sort(), ['bob', 'carol']);
+    assert.deepEqual(summary.changesRequesters, ['alice']);
+  }
+});
+
+test('approving after your own change request clears it', () => {
+  const summary = summarizeReviews([
+    reviewNode('alice', 'CHANGES_REQUESTED', 1),
+    reviewNode('alice', 'APPROVED', 2),
+  ]);
   assert.equal(summary.state, 'approved');
+  assert.deepEqual(summary.approvers, ['alice']);
+  assert.deepEqual(summary.changesRequesters, []);
+});
+
+test('with two change requests, one reviewer approving later leaves the other standing', () => {
+  const summary = summarizeReviews([
+    reviewNode('alice', 'CHANGES_REQUESTED', 1),
+    reviewNode('bob', 'CHANGES_REQUESTED', 2),
+    reviewNode('alice', 'APPROVED', 3),
+  ]);
+  assert.equal(summary.state, 'changes_requested');
+  assert.deepEqual(summary.approvers, ['alice']);
+  assert.deepEqual(summary.changesRequesters, ['bob']);
+});
+
+test('COMMENTED, DISMISSED and PENDING reviews neither set nor clear the state', () => {
+  for (const state of IGNORED_STATES) {
+    const afterRequest = summarizeReviews([
+      reviewNode('alice', 'CHANGES_REQUESTED', 1),
+      reviewNode('alice', state, 2),
+      reviewNode('carol', state, 3),
+    ]);
+    assert.equal(afterRequest.state, 'changes_requested', state);
+    assert.deepEqual(afterRequest.approvers, [], state);
+    assert.deepEqual(afterRequest.changesRequesters, ['alice'], state);
+
+    const afterApproval = summarizeReviews([
+      reviewNode('bob', 'APPROVED', 1),
+      reviewNode('bob', state, 2),
+      reviewNode('carol', state, 3),
+    ]);
+    assert.equal(afterApproval.state, 'approved', state);
+    assert.deepEqual(afterApproval.approvers, ['bob'], state);
+    assert.deepEqual(afterApproval.changesRequesters, [], state);
+  }
+});
+
+test('no actionable review gives a null state and no reviewers', () => {
+  const onlyIgnored = IGNORED_STATES.map((state, i) => reviewNode('alice', state, i + 1));
+  for (const nodes of [[], [null], onlyIgnored]) {
+    assert.deepEqual(
+      summarizeReviews(nodes),
+      { state: null, approvers: [], changesRequesters: [] },
+      JSON.stringify(nodes),
+    );
+  }
+});
+
+test('with no change request standing the newest actionable review sets the state', () => {
+  const approved = summarizeReviews([
+    reviewNode('alice', 'APPROVED', 1),
+    reviewNode('bob', 'APPROVED', 2),
+  ]);
+  assert.equal(approved.state, 'approved');
+  assert.deepEqual(approved.approvers, ['alice', 'bob']);
+  assert.deepEqual(approved.changesRequesters, []);
+
+  const unordered = summarizeReviews([
+    reviewNode('bob', 'APPROVED', 2),
+    reviewNode('alice', 'COMMENTED', 3),
+    reviewNode('carol', 'APPROVED', 1),
+  ]);
+  assert.equal(unordered.state, 'approved');
+});
+
+test('reviews with no login keep the newest-wins state when no named reviewer is requesting changes', () => {
+  const newerRequest = summarizeReviews([
+    reviewNode('alice', 'APPROVED', 1),
+    ghostNode('CHANGES_REQUESTED', 2),
+  ]);
+  assert.equal(newerRequest.state, 'changes_requested');
+  assert.deepEqual(newerRequest.approvers, ['alice']);
+  assert.deepEqual(newerRequest.changesRequesters, []);
+
+  const olderRequest = summarizeReviews([
+    ghostNode('CHANGES_REQUESTED', 1),
+    reviewNode('alice', 'APPROVED', 2),
+  ]);
+  assert.equal(olderRequest.state, 'approved');
+  assert.deepEqual(olderRequest.changesRequesters, []);
+
+  const onlyApproval = summarizeReviews([ghostNode('APPROVED', 1)]);
+  assert.equal(onlyApproval.state, 'approved');
+  assert.deepEqual(onlyApproval.approvers, []);
 });
 
 test('approval filter is strict and excludes unavailable review data', () => {
@@ -124,6 +259,42 @@ test('review fetch paginates review history before counting approvals', async ()
     const result = await fetchReviewData(prs);
     assert.equal(calls, 2);
     assert.deepEqual(result.reviews['owner/repo#1'].approvers, ['alice']);
+  } finally {
+    if (previousToken === undefined) delete process.env.GH_TOKEN;
+    else process.env.GH_TOKEN = previousToken;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('review fetch reads a standing change request as changes_requested beside a later approval', async () => {
+  const previousToken = process.env.GH_TOKEN;
+  const previousFetch = globalThis.fetch;
+  process.env.GH_TOKEN = 'test-token';
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        data: {
+          a0: {
+            pullRequest: {
+              reviewDecision: null,
+              reviews: {
+                nodes: [
+                  reviewNode('alice', 'CHANGES_REQUESTED', 1),
+                  reviewNode('bob', 'APPROVED', 2),
+                ],
+              },
+            },
+          },
+        },
+      }),
+    });
+    const result = await fetchReviewData([{ repo: 'owner/repo', number: 1 }]);
+    const summary = result.reviews['owner/repo#1'];
+    assert.equal(summary.state, 'changes_requested');
+    assert.deepEqual(summary.approvers, ['bob']);
+    assert.deepEqual(summary.changesRequesters, ['alice']);
+    assert.equal(summary.available, true);
   } finally {
     if (previousToken === undefined) delete process.env.GH_TOKEN;
     else process.env.GH_TOKEN = previousToken;

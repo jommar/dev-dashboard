@@ -16,11 +16,15 @@ import { fetchRelease } from './releases.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
 import { slackIntegration } from './slack.mjs';
 import { parseSlackLink } from './slack-link.mjs';
+import { withAttachedSessions } from './slack-model.mjs';
 import { createSlackWatchStore, isSessionId } from './slack-watch-store.mjs';
 import { createClaudeSessions } from './claude-sessions.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
 
 const MAX_LINKS_PER_REQUEST = 50;
+// The `Sec-Fetch-Site` values of a request that another site's page made. A client that sends none
+// (curl, older browsers) is not one.
+const CROSS_SITE = ['cross-site', 'same-site'];
 
 function json(res, status, value) {
   res.writeHead(status, {
@@ -104,6 +108,15 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const requireWatchEnabled = () => {
     if (slackWatcher.isDisabled())
       throw httpError('WATCH_DISABLED', 'Slack watching needs the Claude home directory.', 409);
+  };
+  // The watch store's links, for annotating thread rows. A disabled watcher, or a store that cannot
+  // be read, leaves every row unattached: the threads route never fails because of the watch list.
+  const attachedLinks = () => {
+    try {
+      return slackWatcher.isDisabled() ? {} : slackWatchStore.snapshot().links;
+    } catch {
+      return {};
+    }
   };
   const slackWatchRoutes = {
     'GET /api/slack/watch': () => slackWatcher.list(),
@@ -190,7 +203,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       if (['PUT', 'POST', 'PATCH', 'DELETE'].includes(req.method)) {
         if (
           (req.headers.origin && req.headers.origin !== authority.origin) ||
-          ['cross-site', 'same-site'].includes(req.headers['sec-fetch-site'])
+          CROSS_SITE.includes(req.headers['sec-fetch-site'])
         )
           throw Object.assign(new Error('Invalid origin.'), {
             code: 'INVALID_ORIGIN',
@@ -254,7 +267,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         return;
       }
       if (req.method === 'GET' && pathname === '/api/slack/threads') {
-        json(res, 200, await slack.threads());
+        json(res, 200, withAttachedSessions(await slack.threads(), attachedLinks()));
         return;
       }
       if (req.method === 'GET' && pathname === '/api/slack/pending') {
@@ -343,8 +356,11 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         });
         return;
       }
-      // Never fails the board: an unavailable result is still a 200 the board can render.
+      // Never fails the board: an unavailable result is still a 200 the board can render. A load
+      // costs many GitHub calls and is never cached, so another site's page may not trigger one.
       if (req.method === 'GET' && pathname === '/api/ticket-prs') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
         const { available, login, total, truncated, byTicket } = await api.fetchTicketPrs(options);
         json(res, 200, {
           available,

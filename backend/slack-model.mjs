@@ -166,3 +166,24 @@ function isNewerTs(ts, referenceTs) {
 export function shouldWake(last, me, lastNotifiedTs) {
   return isNotMine(last, me) && isNewerTs(last.ts, lastNotifiedTs);
 }
+
+// How many sessions the watch store has attached to one thread. `links` is the store's map keyed
+// by the watch key every thread row carries, so a row with no key, or a key with no entry, has none.
+function attachedCount(links, watchKey) {
+  if (!links || !watchKey || !Object.hasOwn(links, watchKey)) return 0;
+  const { sessionIds } = links[watchKey] ?? {};
+  return Array.isArray(sessionIds) ? sessionIds.length : 0;
+}
+
+// The thread lists with `attachedSessions` on every row of `started`, the threads the My Tickets
+// cards link to. The rows are copied, so the input (the Slack integration's cached listing) is left
+// alone; `mentions` and every other field come through as they were. An unavailable result passes
+// through unchanged.
+export function withAttachedSessions(result, links) {
+  if (!result?.available) return result;
+  const started = (result.started ?? []).map((row) => ({
+    ...row,
+    attachedSessions: attachedCount(links, row.watchKey),
+  }));
+  return { ...result, started };
+}

@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+- Each PR line on a My Tickets card now shows review-comment chips: up to two small
+  chips counting the PR's GitHub review threads, one for threads a person started
+  and one for Copilot's. A chip reads unresolved over total, amber while any thread
+  is open and muted with a check once all are resolved, with a plus past GitHub's
+  first 50 threads. Threads from other bots and the PR's conversation comments are
+  named in the line's accessible name only. `GET /api/ticket-prs` entries gain
+  `comments` (counts only, `null` when unreadable), read in a GraphQL batch of its
+  own, so a failure in one never blanks the other. The
+  query's field names and the Copilot reviewer login were checked against GitHub's
+  documentation only, not the live API; if GitHub rejects the query, the chips just
+  do not appear.
+- A Slack chip on a My Tickets card is now filled, in the support colour, with
+  `Claude session attached` in its label when a Claude session is attached to that
+  thread through the Slack watcher. Each `started` row of `GET /api/slack/threads`
+  gains `attachedSessions` (a count, `0` when the watcher is disabled or its store
+  cannot be read; `mentions` rows are unchanged), and the board reads the thread
+  list once more when the thread dialog closes. It still never reads
+  `GET /api/slack/watch`.
+- A My Tickets card turns green, with a seal named `All PRs approved`, when it has
+  at least one open PR and every PR reads approved. A PR with unknown review is not
+  approved, and CI and drafts are not looked at.
+- Changed: a change request that still stands now outranks approvals. When any
+  reviewer's latest approval or change request is a change request, the PR reads
+  `changes requested` even if another reviewer approved after it (before, the newest
+  review decided and a later approval read `approved`). A reviewer's own later
+  approval clears their request, and with none standing the newest decides, as
+  before; a change request from an account with no login keeps the newest-wins
+  rule. The rule is shared, so it also changes the Pull Requests tab badge and
+  Home's groups, not only the My Tickets board. Approval counts and the approval
+  threshold are unchanged.
+- On the My Tickets board a PR's review now reads `review unknown`, never
+  `approved`, when GitHub reports reviews older than the newest 100 the board reads
+  (`review` is `null` in `GET /api/ticket-prs`), because an older change request
+  could still stand there; its card is never green. The Pull Requests tab pages
+  through every review and is unaffected.
+- `GET /api/ticket-prs` now answers `403` to a browser request whose
+  `Sec-Fetch-Site` is `cross-site` or `same-site`, before anything is sent to
+  GitHub: a load costs many GitHub calls and nothing is cached. The dashboard's own
+  page, a typed address, `curl` and requests without the header are unaffected.
 - The My Tickets tab is now a kanban board: one column per Jira status in workflow
   order (blocked work first, Done last), each column scrolling on its own inside a
   board that scrolls sideways and fills the viewport. A card shows the Jira key,

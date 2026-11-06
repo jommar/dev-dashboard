@@ -212,6 +212,35 @@ test('actionQueue orders tiers by urgency and each tier stalest-first', () => {
   );
 });
 
+test('a PR with a standing change request and approvers is in the changes-requested tier only', () => {
+  // A change request outranks approvals, so a reviewer's request stays the state when another approved.
+  const split = pr(30, {
+    reviews: {
+      state: 'changes_requested',
+      approvers: ['bob'],
+      changesRequesters: ['alice'],
+      available: true,
+    },
+  });
+  const waiting = pr(31);
+  const approved = pr(32, {
+    reviews: { state: 'approved', approvers: ['bob'], changesRequesters: [], available: true },
+  });
+  const prs = {
+    login: 'jommar',
+    approvalThreshold: 1,
+    prs: [split, waiting, approved],
+    prsNeedingApprovals: [],
+  };
+  const tiers = actionQueue(prs, ticketsPayload([]));
+  const numbersIn = (id) => tiers.find((tier) => tier.id === id).items.map((item) => item.number);
+
+  assert.deepEqual(numbersIn('changes-requested'), [30]);
+  assert.deepEqual(numbersIn('awaiting-approval'), [31], 'not also waiting on approval');
+  const listed = tiers.filter((tier) => tier.kind === 'pr').flatMap((tier) => numbersIn(tier.id));
+  assert.equal(new Set(listed).size, listed.length, 'no PR is in two tiers');
+});
+
 test('capTiers spends the budget in tier order and counts the remainder', () => {
   const tiers = [
     { id: 'a', items: [1, 2, 3] },

@@ -1,9 +1,10 @@
 // ticket-prs.mjs — the signed-in user's open PRs keyed by every ticket they name,
-// each with its review state and CI summary. One search, then one GraphQL batch
-// per 50 PRs, sent one after another so a poll never holds two GitHub requests
-// open. Never throws: a failed search gives { available: false }, and a
-// failed batch or an unreadable field only blanks that PR's review or CI, so the
-// My Tickets board never waits on or fails because of this data.
+// each with its review state, CI summary and review-thread counts. One search, then
+// one GraphQL batch per 50 PRs for review and CI, then one per 50 PRs for the
+// comment counts. The batches are sent one after another, so a poll never holds two
+// GitHub requests open. Never throws: a failed search gives { available: false }, and
+// a failed batch or an unreadable field only blanks that PR's review, CI or comments,
+// so the My Tickets board never waits on or fails because of this data.
 import { captureConfiguration } from './settings.mjs';
 import { fetchOpenPRs } from './github.mjs';
 import { headers, summarizeReviews } from './review.mjs';
@@ -11,6 +12,13 @@ import { canonicalTicketKey } from '../ui/slack-ticket-links.js';
 
 const BATCH_SIZE = 50;
 const TIMEOUT_MS = 15_000;
+// Review threads read per PR. A PR with more reports `truncated`, so its counts are partial.
+const THREAD_CAP = 50;
+// Logins of the Copilot reviewer, lower-cased and without a trailing `[bot]`. GitHub's docs name
+// `copilot-pull-request-reviewer[bot]`; the bare `copilot` is unverified. The docs do not state
+// the account type, so the match is by login alone. A wrong login shows that PR's threads under
+// `other` and never fails the batch.
+const COPILOT_LOGINS = new Set(['copilot-pull-request-reviewer', 'copilot']);
 const ROLLUP_STATE = new Map([
   ['SUCCESS', 'passing'],
   ['FAILURE', 'failing'],
@@ -27,9 +35,15 @@ const FAILED_CONCLUSIONS = new Set([
 ]);
 const FAILED_STATUSES = new Set(['FAILURE', 'ERROR']);
 const CI_PATH_SEGMENTS = new Set(['commits', 'statusCheckRollup']);
-const REVIEWS_FIELD = 'reviews(last: 100) { nodes { state submittedAt author { login } } }';
+// The last 100 reviews, and whether older ones exist outside that window.
+const REVIEWS_FIELD =
+  'reviews(last: 100) { nodes { state submittedAt author { login } } pageInfo { hasPreviousPage } }';
 const CHECKS_FIELD =
   'commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } }';
+const DETAIL_SELECTION = `${REVIEWS_FIELD}\n  ${CHECKS_FIELD}`;
+// The conversation comment count, and each review thread with its resolution and the author of
+// its first comment, which decides the bucket the thread counts under.
+const COMMENTS_SELECTION = `comments(first: 1) { totalCount } reviewThreads(first: ${THREAD_CAP}) { totalCount nodes { isResolved comments(first: 1) { totalCount nodes { author { __typename login } } } } }`;
 
 function unavailable() {
   return { available: false, login: null, total: 0, truncated: false, byTicket: {} };
@@ -73,8 +87,11 @@ export function summarizeChecks(rollup) {
   return summary;
 }
 
+// A review list that cannot be read, or that may have older reviews outside the window (an older
+// change request could still stand there), is unknown rather than approved. A window that does not
+// say whether older reviews exist is unreadable in the same way.
 function reviewOf(reviews) {
-  if (!Array.isArray(reviews?.nodes)) return null;
+  if (!Array.isArray(reviews?.nodes) || reviews.pageInfo?.hasPreviousPage !== false) return null;
   const { state, approvers } = summarizeReviews(reviews.nodes);
   return { state: state || 'awaiting', approvals: approvers.length };
 }
@@ -102,26 +119,74 @@ function detailOf(json, alias) {
   return { review: reviewOf(pr.reviews), ci: ciOf(pr.commits, alias, errors) };
 }
 
+const emptyBucket = () => ({ threads: 0, unresolved: 0, comments: 0 });
+
+// The bucket of a thread, from the author of its first comment. A deleted account (null
+// author) and a thread with no readable first comment are `other`.
+function bucketOf(author) {
+  const login = String(author?.login ?? '')
+    .toLowerCase()
+    .replace(/\[bot\]$/, '');
+  if (COPILOT_LOGINS.has(login)) return 'copilot';
+  return author?.__typename === 'User' ? 'human' : 'other';
+}
+
+// Review threads by who started them, with counts over the threads read, and the conversation
+// comment count. Null when the PR's thread or conversation counts cannot be read.
+export function summarizeThreads(pullRequest) {
+  const nodes = pullRequest?.reviewThreads?.nodes;
+  const threads = pullRequest?.reviewThreads?.totalCount;
+  const conversation = pullRequest?.comments?.totalCount;
+  if (!Array.isArray(nodes) || !Number.isInteger(threads) || !Number.isInteger(conversation)) {
+    return null;
+  }
+  const summary = {
+    human: emptyBucket(),
+    copilot: emptyBucket(),
+    other: emptyBucket(),
+    conversation,
+    threads,
+    truncated: threads > nodes.length,
+  };
+  for (const thread of nodes) {
+    if (!thread) continue;
+    const bucket = summary[bucketOf(thread.comments?.nodes?.[0]?.author)];
+    bucket.threads += 1;
+    if (!thread.isResolved) bucket.unresolved += 1;
+    const comments = thread.comments?.totalCount;
+    bucket.comments += Number.isInteger(comments) ? comments : 0;
+  }
+  return summary;
+}
+
+// The comment counts of one PR alias. An error entry on the alias means the counts may be
+// partial, so the PR gets null rather than counts that look complete.
+function commentsOf(json, alias) {
+  const errors = Array.isArray(json?.errors) ? json.errors : [];
+  if (errors.some((error) => error?.path?.[0] === alias)) return null;
+  return summarizeThreads(json?.data?.[alias]?.pullRequest);
+}
+
 // One alias per PR, so each PR's failure stays inside its own alias.
-function batchQuery(batch) {
+function batchQuery(batch, selection) {
   const aliases = batch.map((pr, index) => {
     const [owner, name] = pr.repo.split('/');
     return (
       `a${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {\n` +
-      `pullRequest(number: ${pr.number}) {\n  ${REVIEWS_FIELD}\n  ${CHECKS_FIELD}\n}\n}`
+      `pullRequest(number: ${pr.number}) {\n  ${selection}\n}\n}`
     );
   });
   return `query {\n${aliases.join('\n')}\n}`;
 }
 
 // The parsed response, or null when the request failed or returned no data.
-async function postBatch(batch, config) {
+async function postBatch(batch, selection, config) {
   try {
     const res = await fetch(`${config.github.api}/graphql`, {
       method: 'POST',
       redirect: 'error',
       headers: headers(config.credentials.githubToken),
-      body: JSON.stringify({ query: batchQuery(batch) }),
+      body: JSON.stringify({ query: batchQuery(batch, selection) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (!res.ok) return null;
@@ -136,22 +201,36 @@ async function postBatch(batch, config) {
 const queryable = (pr) =>
   /^[^/]+\/[^/]+$/.test(pr.repo) && Number.isSafeInteger(pr.number) && pr.number > 0;
 
-// Review and CI for each PR, in input order. A PR that is not queried, or whose
-// batch failed, gets null for both.
-async function readDetails(prs, config) {
-  const details = prs.map(() => ({ review: null, ci: null }));
+// One result per PR, in input order, from one selection read in batches of BATCH_SIZE PRs, one
+// POST at a time. `readAlias(json, alias)` reads a queried PR from its batch (json is null when
+// the batch failed), and `blank()` is the result of a PR that is not queried.
+async function readLane(prs, config, selection, readAlias, blank) {
+  const results = prs.map(() => blank());
   const indexes = prs.flatMap((pr, index) => (queryable(pr) ? [index] : []));
   for (let offset = 0; offset < indexes.length; offset += BATCH_SIZE) {
     const slice = indexes.slice(offset, offset + BATCH_SIZE);
     const json = await postBatch(
       slice.map((index) => prs[index]),
+      selection,
       config,
     );
     slice.forEach((prIndex, alias) => {
-      details[prIndex] = detailOf(json, `a${alias}`);
+      results[prIndex] = readAlias(json, `a${alias}`);
     });
   }
-  return details;
+  return results;
+}
+
+// Review and CI for each PR, in input order. A PR that is not queried, or whose
+// batch failed, gets null for both.
+function readDetails(prs, config) {
+  return readLane(prs, config, DETAIL_SELECTION, detailOf, () => ({ review: null, ci: null }));
+}
+
+// Comment counts for each PR, in input order, from a batch of their own: a failure here never
+// touches review or CI. A PR that is not queried, or whose batch failed, gets null.
+function readComments(prs, config) {
+  return readLane(prs, config, COMMENTS_SELECTION, commentsOf, () => null);
 }
 
 const newestFirst = (a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0);
@@ -173,6 +252,7 @@ async function loadTicketPrs(config) {
   try {
     const found = await fetchOpenPRs({ mine: true, snapshot: config });
     const details = await readDetails(found.prs, config);
+    const comments = await readComments(found.prs, config);
     const entries = found.prs.map((pr, index) => ({
       repo: pr.repo,
       number: pr.number,
@@ -182,6 +262,7 @@ async function loadTicketPrs(config) {
       updatedAt: pr.updatedAt,
       tickets: pr.tickets,
       ...details[index],
+      comments: comments[index],
     }));
     const total = Number.isFinite(found.total) ? found.total : found.prs.length;
     return {

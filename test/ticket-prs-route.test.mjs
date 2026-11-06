@@ -48,21 +48,30 @@ async function ticketPrsEndpoint(t, { ready, result }) {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   });
-  const request = () =>
+  const request = (headers = {}, pathname = '/api/ticket-prs') =>
     new Promise((resolve, reject) => {
-      const req = http.get(`http://127.0.0.1:${server.address().port}/api/ticket-prs`, (res) => {
-        let text = '';
-        res.on('data', (chunk) => {
-          text += chunk;
-        });
-        res.on('end', () => {
-          try {
-            resolve({ status: res.statusCode, headers: res.headers, text, json: JSON.parse(text) });
-          } catch (error) {
-            reject(error);
-          }
-        });
-      });
+      const req = http.get(
+        `http://127.0.0.1:${server.address().port}${pathname}`,
+        { headers },
+        (res) => {
+          let text = '';
+          res.on('data', (chunk) => {
+            text += chunk;
+          });
+          res.on('end', () => {
+            try {
+              resolve({
+                status: res.statusCode,
+                headers: res.headers,
+                text,
+                json: JSON.parse(text),
+              });
+            } catch (error) {
+              reject(error);
+            }
+          });
+        },
+      );
       req.setTimeout(2000, () => req.destroy(new Error('ticket-prs request timed out')));
       req.on('error', reject);
     });
@@ -116,4 +125,35 @@ test('a degraded integration result is still a 200 the board can render', async 
   assert.deepEqual(Object.keys(response.json).sort(), CONTRACT_KEYS);
   assert.equal(response.json.available, false);
   assert.deepEqual(response.json.byTicket, {});
+});
+
+test('GET /api/ticket-prs refuses a cross-site or same-site browser request with 403 before any GitHub call', async (t) => {
+  const github = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    github.push(args);
+    return new Response('{}');
+  });
+  const { request, calls } = await ticketPrsEndpoint(t, { ready: true, result: PAYLOAD });
+  for (const site of ['cross-site', 'same-site']) {
+    const response = await request({ 'sec-fetch-site': site });
+    assert.equal(response.status, 403, site);
+    assert.deepEqual(Object.keys(response.json).sort(), ['code', 'error', 'errors'], site);
+    assert.ok(!response.text.includes('TAP-1'), `${site}: no ticket data in the refusal`);
+  }
+  assert.deepEqual(calls, [], 'the integration is never reached');
+  assert.deepEqual(github, [], 'nothing is sent to GitHub');
+
+  const config = await request({ 'sec-fetch-site': 'cross-site' }, '/api/config');
+  assert.equal(config.status, 200, 'the refusal is for this one route');
+});
+
+test('GET /api/ticket-prs still answers a same-origin request, a typed address and a client with no Sec-Fetch-Site', async (t) => {
+  const { request, calls } = await ticketPrsEndpoint(t, { ready: true, result: PAYLOAD });
+  const cases = [{ 'sec-fetch-site': 'same-origin' }, { 'sec-fetch-site': 'none' }, {}];
+  for (const headers of cases) {
+    const response = await request(headers);
+    assert.equal(response.status, 200, JSON.stringify(headers));
+    assert.deepEqual(response.json.byTicket, PAYLOAD.byTicket, JSON.stringify(headers));
+  }
+  assert.equal(calls.length, cases.length, 'each one reaches the integration');
 });

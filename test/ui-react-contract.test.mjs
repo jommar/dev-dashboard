@@ -701,3 +701,95 @@ test('the board stylesheet uses tokens only, short transitions and honours reduc
     }
   }
 });
+
+// -- comment chips, the attached Slack chip and the all-approved card -------------------------------
+
+const EMOJI = /\p{Extended_Pictographic}|\p{Emoji_Presentation}/u;
+
+test('the board helper exports the comment and approval helpers and the PR line and card use them', () => {
+  const helper = readUiFile('ticket-board.js');
+  for (const name of ['commentChips', 'commentSummaryText', 'allPrsApproved']) {
+    assert.match(helper, new RegExp(`export function ${name}\\b`), `${name} is exported`);
+  }
+  assert.doesNotMatch(helper, /\b(?:document|window)\./, 'the helper stays DOM-free');
+  assert.doesNotMatch(helper, /backend\//, 'the helper ships in the browser bundle');
+
+  const board = read('components/TicketBoard.jsx');
+  const imported =
+    board.match(/import \{([^}]*)\} from '\.\.\/\.\.\/ui\/ticket-board\.js'/)?.[1] ?? '';
+  for (const name of ['commentChips', 'commentSummaryText', 'allPrsApproved']) {
+    assert.match(
+      imported,
+      new RegExp(`\\b${name}\\b`),
+      `${name} is imported from the board helper`,
+    );
+    assert.match(board, new RegExp(`\\b${name}\\(`), `${name} is called`);
+  }
+  // The states are in the markup for the stylesheet and for the specs, and each is also a word.
+  assert.match(board, /data-all-approved=/);
+  assert.match(board, /data-comment-state=/);
+  assert.ok(board.includes('my-tickets-pr-comments-'), 'the comment chips render their test ids');
+  // The card builds its ids with `testId(name)`, so the seal's id is `my-tickets-item-approved-<KEY>`.
+  assert.match(
+    board,
+    /testId\('approved'\)|my-tickets-item-approved-/,
+    'the seal renders its test id',
+  );
+  assert.match(board, /All PRs approved/, 'the seal is named in words');
+  assert.doesNotMatch(board, /innerHTML|dangerouslySetInnerHTML|<Markup\b/);
+  assert.doesNotMatch(board, EMOJI, 'no emoji: every glyph is inline SVG');
+});
+
+test('the Slack chip marks an attached session by a filled glyph and words, keeping its pinned contract', () => {
+  const link = read('components/SlackThreadLink.jsx');
+  assert.match(link, /attachedSessions/, 'the chip reads the count the threads route annotates');
+  assert.match(link, /data-attached=/);
+  assert.match(link, /Claude session attached/);
+  assert.match(link, /Claude sessions attached/, 'a count above one is worded as sessions');
+  // Shape and words carry the state; the stroke contract of the glyph is unchanged.
+  assert.ok(
+    (link.match(/currentColor/g) || []).length >= 2,
+    'a stroke and a fill take the chip colour',
+  );
+  assert.match(link, /fill="none"/, 'the SVG itself keeps fill none');
+  assert.match(link, /<button/);
+  assert.match(link, /type="button"/);
+  assert.doesNotMatch(link, /href=/);
+  assert.doesNotMatch(link, /<img\b/);
+  assert.doesNotMatch(link, /innerHTML|dangerouslySetInnerHTML/);
+  assert.doesNotMatch(link, EMOJI, 'no emoji');
+  assert.match(link, /if \(!links\.length\) return null;/, 'no thread still means no container');
+});
+
+// The declarations of every rule whose selector names `attribute`, joined.
+const rulesFor = (css, attribute) =>
+  [...css.matchAll(/([^{}]*)\{([^}]*)\}/g)]
+    .filter(([, selector]) => selector.includes(attribute))
+    .map(([, , body]) => body)
+    .join('\n');
+
+test('the green card, the comment chips and the attached chip take their colours from tokens', () => {
+  const css = read('styles/my-tickets.css');
+  assert.doesNotMatch(css, EMOJI, 'no emoji in the stylesheet');
+
+  const approved = rulesFor(css, 'data-all-approved');
+  assert.ok(approved, 'a rule styles the all-approved card');
+  // 8 % green over the card surface keeps --muted at 4.5:1 or better; 10 % does not.
+  assert.match(approved, /color-mix\(in srgb,\s*var\(--green\)\s+8%,\s*var\(--panel2\)\)/);
+  assert.match(
+    approved,
+    /var\(--green\)[^;]*inset|inset[^;]*var\(--green\)/,
+    'a green inset hairline',
+  );
+  assert.match(approved, /var\(--shadow\)/, 'the shared shadow stack is kept');
+  assert.doesNotMatch(approved, /#[0-9a-f]{3,8}\b/i, 'no hex literal');
+
+  const attached = rulesFor(css, 'data-attached');
+  assert.ok(attached, 'a rule styles the attached chip');
+  assert.match(attached, /var\(--support\)/, 'the one token that means nothing else on the card');
+
+  const open = rulesFor(css, 'data-comment-state');
+  assert.ok(open, 'the comment chips are styled by their state');
+  assert.match(open, /var\(--amber\)/, 'an open comment chip is amber');
+  assert.match(open, /var\(--muted\)/, 'a resolved comment chip is muted');
+});

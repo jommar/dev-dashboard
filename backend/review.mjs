@@ -34,8 +34,9 @@ function query(prs, cursors = {}) {
   return `query {\n${aliases.join('\n')}\n}`;
 }
 
-// Latest actionable state from an ordered review list: the newest APPROVED or
-// CHANGES_REQUESTED review wins; COMMENTED / DISMISSED / PENDING are ignored.
+// Newest actionable state from a review list: the newest APPROVED or CHANGES_REQUESTED
+// review wins; COMMENTED / DISMISSED / PENDING are ignored. summarizeReviews uses it only
+// when no reviewer has a change request standing.
 function latestState(reviews) {
   let state = null;
   let latest = 0;
@@ -51,8 +52,10 @@ function latestState(reviews) {
   return state;
 }
 
-// Summarise each reviewer's latest actionable review. A later change request
-// therefore removes that reviewer from the approval count.
+// Summarise each reviewer's latest actionable review. A later change request therefore
+// removes that reviewer from the approval count, and a change request that still stands
+// (its reviewer has not approved since) makes the state changes_requested, whoever else
+// approved later. With none standing, the newest actionable review sets the state.
 export function summarizeReviews(nodes) {
   const latestByReviewer = new Map();
   for (const n of nodes || []) {
@@ -78,7 +81,7 @@ export function summarizeReviews(nodes) {
   }
 
   return {
-    state: latestState(nodes),
+    state: changesRequesters.length ? 'changes_requested' : latestState(nodes),
     approvers,
     changesRequesters,
   };

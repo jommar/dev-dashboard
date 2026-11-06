@@ -411,6 +411,24 @@ const BOARD_TEAM = 'T0EXAMPLE1';
 const BOARD_CHANNEL = 'C0EXAMPLE1';
 const BOARD_FAILING_CHECKS = ['lint', 'unit-tests'];
 
+// A review-thread bucket and a PR's `comments` as the backend returns them: `human`, `copilot`
+// and `other` hold threads read, unresolved threads and comments in them; `threads` is the total
+// GitHub reports and `truncated` says more exist than were read.
+const commentBucket = (threads = 0, unresolved = 0, comments = 0) => ({
+  threads,
+  unresolved,
+  comments,
+});
+const prComments = (overrides = {}) => ({
+  human: commentBucket(),
+  copilot: commentBucket(),
+  other: commentBucket(),
+  conversation: 0,
+  threads: 0,
+  truncated: false,
+  ...overrides,
+});
+
 // The board's fixture matrix, laid over any `dashboardData()`. It
 // replaces the tickets and the ticket-to-PR map and gives two Slack threads. Done tickets stay in
 // the list: the mocked /api/my-tickets drops them unless Include Done is on. Pass
@@ -418,15 +436,20 @@ const BOARD_FAILING_CHECKS = ['lint', 'unit-tests'];
 //
 //   ticket          status              PRs                                          Slack
 //   TAP-9001        In Progress         one, CI failing (lint, unit-tests)           -
-//   TAP-9002        Code Review         one, CI passing, approved                    4 replies, needs reply
+//   TAP-9002        Code Review         one, CI passing, approved (green card)       4 replies, needs reply, a session attached
 //   TAP-9003        In Progress         one draft, CI pending                        -
 //   TAP-9004        To Do               none (sprint: not the current one)           -
 //   TAP-9005        Code Review         two: changes requested; ci null (unreadable) 1 reply
-//   TAP-9006/9007   In Progress/Blocked the same PR names both                       -
-//   TAP-9008        Ready For Testing   one, no checks; a ~160 character summary     -
+//   TAP-9006/9007   In Progress/Blocked the same PR names both (approved: green)     -
+//   TAP-9008        Ready For Testing   one, no checks, approved; a ~160 char summary -
 //   TAP-9100..9119  To Do               none (twenty tickets in one column)          -
 //   TAP-9200        Weird Custom Gate   none (unknown status, category In Progress)  -
 //   TAP-9300        Done                none                                         -
+//
+// Every PR carries `comments`, the field `/api/ticket-prs` returns for it (review threads split
+// into human, Copilot and other by who started them, the conversation comment count, the thread
+// total and whether the list was cut off), and every Slack thread row carries `attachedSessions`.
+// `withFollowUpCases` adds the cases the matrix has no room for.
 export function ticketBoardData(data, { available = true } = {}) {
   const hoursAgo = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
   const [current] = data.tickets.activeSprints;
@@ -506,15 +529,26 @@ export function ticketBoardData(data, { available = true } = {}) {
     updatedAt: hoursAgo(1),
     review: review('awaiting'),
     ci: ci('passing', 9, 0, 0),
+    comments: prComments(),
     ...overrides,
   });
   const failing = pr('ExampleOrg/example-api', 812, 'TAP-9001 Repair the export retry', {
     review: review('awaiting'),
     ci: ci('failing', 7, 2, 0, BOARD_FAILING_CHECKS),
+    comments: prComments({
+      human: commentBucket(5, 2, 9),
+      copilot: commentBucket(4, 0, 6),
+      threads: 9,
+    }),
   });
   const passing = pr('ExampleOrg/example-web', 904, 'TAP-9002 Cap the retry count', {
     review: review('approved', 2),
     ci: ci('passing', 9, 0, 0),
+    comments: prComments({
+      human: commentBucket(3, 1, 5),
+      copilot: commentBucket(2, 0, 3),
+      threads: 5,
+    }),
   });
   const pending = pr('ExampleOrg/example-api', 815, 'TAP-9003 Add the audit trail', {
     draft: true,
@@ -524,18 +558,30 @@ export function ticketBoardData(data, { available = true } = {}) {
   const changesRequested = pr('ExampleOrg/example-api', 820, 'TAP-9005 Rework the queue', {
     review: review('changes_requested'),
     ci: ci('passing', 9, 0, 0),
+    comments: prComments({
+      human: commentBucket(3, 2, 5),
+      copilot: commentBucket(2, 2, 4),
+      threads: 5,
+    }),
   });
   const unreadable = pr('ExampleOrg/example-web', 821, 'TAP-9005 Rework the queue view', {
     review: review('awaiting'),
     ci: null,
+    comments: null,
   });
   const shared = pr('ExampleOrg/example-web', 931, 'TAP-9006 TAP-9007 Split the settings form', {
     review: review('approved', 1),
     ci: ci('passing', 4, 0, 0),
+    comments: prComments({ conversation: 2 }),
   });
   const noChecks = pr('ExampleOrg/example-api', 840, 'TAP-9008 Document the retention rules', {
     review: review('approved', 2),
     ci: ci('none', 0, 0, 0),
+    comments: prComments({
+      human: commentBucket(4, 0, 6),
+      copilot: commentBucket(2, 0, 3),
+      threads: 6,
+    }),
   });
   const byTicket = {
     'TAP-9001': [failing],
@@ -567,7 +613,7 @@ export function ticketBoardData(data, { available = true } = {}) {
   const person = (id, name) => ({ id, name });
   const sam = person('U0EXAMPLE1', 'Sam Example');
   const riley = person('U0EXAMPLE2', 'Riley Sample');
-  const threadRow = (ts, key, replyCount, needsReply) => ({
+  const threadRow = (ts, key, replyCount, needsReply, attachedSessions = 0) => ({
     ts,
     url: slackAppThreadLink(BOARD_TEAM, BOARD_CHANNEL, ts),
     watchKey: `${BOARD_CHANNEL}:${ts}`,
@@ -578,6 +624,7 @@ export function ticketBoardData(data, { available = true } = {}) {
     activityAt: hoursAgo(1),
     latestReplyBy: riley,
     needsReply,
+    attachedSessions,
   });
   const threadRead = (row) => ({
     ts: row.ts,
@@ -599,13 +646,202 @@ export function ticketBoardData(data, { available = true } = {}) {
       },
     ],
   });
-  const needsReply = threadRow(BOARD_THREAD_TS.needsReply, 'TAP-9002', 4, true);
+  const needsReply = threadRow(BOARD_THREAD_TS.needsReply, 'TAP-9002', 4, true, 1);
   const quiet = threadRow(BOARD_THREAD_TS.quiet, 'TAP-9005', 1, false);
   data.slack.threads.started = [needsReply, quiet];
   data.slack.threadReads = {
     [needsReply.ts]: threadRead(needsReply),
     [quiet.ts]: threadRead(quiet),
   };
+  return data;
+}
+
+// The Slack threads `withFollowUpCases` adds, by what each shows on its chip.
+export const FOLLOW_UP_THREAD_TS = {
+  attached: '1761901000.000100',
+  unattached: '1761901100.000100',
+  pairTwo: '1761901200.000100',
+  pairOne: '1761901300.000100',
+  green: '1761901400.000100',
+};
+
+// The matrix plus the cases it has no room for, each on its own card in a column of its own
+// (Ready For Delivery) so the matrix counts stay as they are. Invented data only.
+//
+//   ticket          PRs                                                                    Slack
+//   TAP-9401        human threads only (2 open of 5, 9 comments)                           -
+//   TAP-9402        Copilot threads only, all resolved (4 of 4)                            -
+//   TAP-9403        both: human 1 of 3 open, Copilot 2 of 2 open                           -
+//   TAP-9404        both, all resolved                                                     -
+//   TAP-9405        comments with no threads at all                                        -
+//   TAP-9406        `comments: null` (unknown)                                             -
+//   TAP-9407        one thread started by another bot                                      -
+//   TAP-9408        63 threads, 50 read (all human, 3 open): cut off                       -
+//   TAP-9409        conversation comments only                                             -
+//   TAP-9410        the longest line: long repo, changes requested, DRAFT, both chips      -
+//   TAP-9420        two PRs, both approved                                                 -
+//   TAP-9421        approved + awaiting                                                    -
+//   TAP-9422        approved + changes requested                                           -
+//   TAP-9423        approved + `review: null`                                              -
+//   TAP-9424        one approved draft                                                     -
+//   TAP-9425        twelve approved PRs                                                    -
+//   TAP-9426        approved, open and resolved comment chips, another sprint, 3 pt        one attached thread
+//   TAP-9427        approved, in Done                                                      -
+//   TAP-9430        none                                                                   one attached, one not
+//   TAP-9431        none                                                                   two attached (2 and 1 sessions)
+export function withFollowUpCases(data) {
+  const base = data.tickets.tickets.find((ticket) => ticket.key === 'TAP-9001');
+  const [prBase] = data.ticketPrs.byTicket['TAP-9001'];
+  const [rowBase] = data.slack.threads.started;
+  const next = data.tickets.allSprints.find((sprint) => sprint.name === 'Following Sprint');
+  const ticket = (key, overrides = {}) => ({
+    ...base,
+    key,
+    summary: `Invented work item ${key}`,
+    status: 'Ready For Delivery',
+    statusCategory: 'In Progress',
+    priority: 'Medium',
+    storyPoints: null,
+    ...overrides,
+  });
+  const api = 'ExampleOrg/example-api';
+  const pr = (repo, number, overrides = {}) => ({
+    ...prBase,
+    repo,
+    number,
+    title: `Invented change ${number}`,
+    url: `https://github.com/${repo}/pull/${number}`,
+    draft: false,
+    review: { state: 'awaiting', approvals: 0 },
+    ci: { state: 'passing', passed: 9, failed: 0, pending: 0, failing: [] },
+    comments: prComments(),
+    ...overrides,
+  });
+  const approved = { state: 'approved', approvals: 2 };
+  const row = (ts, key, attachedSessions) => ({
+    ...rowBase,
+    ts,
+    url: slackAppThreadLink(BOARD_TEAM, BOARD_CHANNEL, ts),
+    watchKey: `${BOARD_CHANNEL}:${ts}`,
+    text: `${key}: Invented subject for the thread`,
+    replyCount: 2,
+    needsReply: false,
+    attachedSessions,
+  });
+
+  const cases = [
+    [
+      ticket('TAP-9401'),
+      [pr(api, 401, { comments: prComments({ human: commentBucket(5, 2, 9), threads: 5 }) })],
+    ],
+    [
+      ticket('TAP-9402'),
+      [pr(api, 402, { comments: prComments({ copilot: commentBucket(4, 0, 6), threads: 4 }) })],
+    ],
+    [
+      ticket('TAP-9403'),
+      [
+        pr(api, 403, {
+          comments: prComments({
+            human: commentBucket(3, 1, 5),
+            copilot: commentBucket(2, 2, 4),
+            threads: 5,
+          }),
+        }),
+      ],
+    ],
+    [
+      ticket('TAP-9404'),
+      [
+        pr(api, 404, {
+          comments: prComments({
+            human: commentBucket(3, 0, 4),
+            copilot: commentBucket(2, 0, 3),
+            threads: 5,
+          }),
+        }),
+      ],
+    ],
+    [ticket('TAP-9405'), [pr(api, 405)]],
+    [ticket('TAP-9406'), [pr(api, 406, { comments: null })]],
+    [
+      ticket('TAP-9407'),
+      [pr(api, 407, { comments: prComments({ other: commentBucket(1, 1, 2), threads: 1 }) })],
+    ],
+    [
+      ticket('TAP-9408'),
+      [
+        pr(api, 408, {
+          comments: prComments({ human: commentBucket(50, 3, 61), threads: 63, truncated: true }),
+        }),
+      ],
+    ],
+    [ticket('TAP-9409'), [pr(api, 409, { comments: prComments({ conversation: 3 }) })]],
+    [
+      ticket('TAP-9410'),
+      [
+        pr('ExampleOrg/example-billing', 1234, {
+          draft: true,
+          review: { state: 'changes_requested', approvals: 0 },
+          comments: prComments({
+            human: commentBucket(30, 12, 40),
+            copilot: commentBucket(20, 3, 25),
+            threads: 63,
+            truncated: true,
+          }),
+        }),
+      ],
+    ],
+    [
+      ticket('TAP-9420'),
+      [pr(api, 420, { review: approved }), pr('ExampleOrg/example-web', 421, { review: approved })],
+    ],
+    [ticket('TAP-9421'), [pr(api, 422, { review: approved }), pr(api, 423)]],
+    [
+      ticket('TAP-9422'),
+      [
+        pr(api, 424, { review: approved }),
+        pr(api, 425, { review: { state: 'changes_requested', approvals: 0 } }),
+      ],
+    ],
+    [ticket('TAP-9423'), [pr(api, 426, { review: approved }), pr(api, 427, { review: null })]],
+    [ticket('TAP-9424'), [pr(api, 428, { draft: true, review: approved })]],
+    [
+      ticket('TAP-9425'),
+      Array.from({ length: 12 }, (_, index) => pr(api, 430 + index, { review: approved })),
+    ],
+    [
+      ticket('TAP-9426', { sprints: [next], sprint: next, storyPoints: 3, priority: 'High' }),
+      [
+        pr(api, 442, {
+          review: approved,
+          comments: prComments({
+            human: commentBucket(5, 2, 9),
+            copilot: commentBucket(4, 0, 6),
+            threads: 9,
+          }),
+        }),
+      ],
+    ],
+    [
+      ticket('TAP-9427', { status: 'Done', statusCategory: 'Done' }),
+      [pr(api, 443, { review: approved })],
+    ],
+    [ticket('TAP-9430'), []],
+    [ticket('TAP-9431'), []],
+  ];
+  for (const [added, prs] of cases) {
+    data.tickets.tickets.push(added);
+    if (prs.length) data.ticketPrs.byTicket[added.key] = prs;
+  }
+  data.ticketPrs.total += cases.reduce((sum, [, prs]) => sum + prs.length, 0);
+  data.slack.threads.started.push(
+    row(FOLLOW_UP_THREAD_TS.attached, 'TAP-9430', 1),
+    row(FOLLOW_UP_THREAD_TS.unattached, 'TAP-9430', 0),
+    row(FOLLOW_UP_THREAD_TS.pairTwo, 'TAP-9431', 2),
+    row(FOLLOW_UP_THREAD_TS.pairOne, 'TAP-9431', 1),
+    row(FOLLOW_UP_THREAD_TS.green, 'TAP-9426', 1),
+  );
   return data;
 }
 

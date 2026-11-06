@@ -360,7 +360,7 @@ An agent can read the same logs three ways:
    - `GET /api/events` (SSE live status)
    - `GET /api/prs`
    - `GET /api/my-tickets?includeDone=0|1`
-   - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review and CI state; see [My Tickets](#my-tickets))
+   - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
 
@@ -547,8 +547,9 @@ The dashboard shows Jira tickets assigned to you (`assignee = currentUser()`
 in JQL) as a **kanban board**: one column per Jira status among your tickets,
 with the most recently updated ticket first in each column. Available in the
 **My Tickets** tab, via `node backend/cli.mjs my-tickets` / `GET /api/my-tickets`.
-Each card also carries your open PRs with their CI and review state, and any
-Slack threads for the ticket.
+Each card also carries your open PRs with their CI, review and review-comment
+state, and any Slack threads for the ticket. A card whose open PRs are all
+approved turns green.
 
 **Columns** — left to right in workflow order, in four bands. Attention statuses
 (`Blocked`, `Impediment`, `Rejected`, `Active Incident`, `CS Escalation`) come
@@ -572,15 +573,57 @@ and the issue type are not on the card: the column names the status, and Type
 stays a filter.
 
 **PR lines** — one link per PR, opening it in a new tab: a CI glyph, `repo #number`
-(the repository name without its owner), the review state in words and a `Draft`
-tag for a draft. The glyph differs in shape as well as colour: a check for passing
-CI, a cross for failing, an open ring for pending and a dash for no checks or
-unreadable ones. Hover a line for the CI summary, for example `CI failing: lint,
+(the repository name without its owner), the review state in words, up to two
+review-comment chips (below) and a `Draft` tag for a draft. The glyph differs in
+shape as well as colour: a check for passing CI, a cross for failing, an open
+ring for pending and a dash for no checks or unreadable ones. Hover a line for
+the CI summary, for example `CI failing: lint,
 unit-tests (2 of 9 failed)` (at most three failing checks are named); the same
 text is in the line's accessible name. The review state reads `approved`,
 `changes requested` or `awaiting`, and `review unknown` when it could not be read.
 A ticket with two open PRs shows two lines, a PR whose title names two tickets
 shows on both cards, and a ticket without a PR shows none.
+
+**Comment chips** — below the PR's name, after the review state, a line shows up
+to two small chips counting the PR's GitHub review threads: a person glyph for
+threads a person started and a sparkle glyph for Copilot's. A thread belongs to
+whoever wrote its first comment; threads started by any other bot or by a deleted
+account are in neither chip, and neither are the comments on the PR's main
+conversation. A chip reads `unresolved/threads`, for example `2/5`, in amber
+while any thread is still open, and the thread count with a check, in muted
+text, once all are resolved. A chip is absent when its author has no threads, so
+a PR with none shows no chips, and none show when the comment counts could not be
+read. GitHub is asked for the first 50 threads of a PR (`reviewThreads(first:
+50)`); a PR with more shows a plus (`3/50+`), stays amber whatever the resolved
+state, and its `unresolved` is a floor, because threads past the 50 are not
+counted. Hover a chip for its words, for example `Human: 2 unresolved, 3
+resolved, 9 comments` (the last number is every comment in those threads). The
+chips are hidden from assistive tech; the line's accessible name carries the
+same words, and also the other-bot threads (`Other: 1 unresolved, 0 resolved, 2
+comments`), the conversation comments (`Conversation: 3 comments`), `showing the
+first 50 of 63 threads` when cut off and `comments unavailable` when unreadable. Except for the plus on a cut-off
+chip, those have no mark on the screen, and the line's own hover text stays the
+CI summary.
+
+The Copilot threads are found by the account's login (`copilot-pull-request-reviewer`,
+with or without `[bot]`, or `copilot`, in any case). The query's field names and
+that login were checked against GitHub's documentation only, never against the
+live API. If chips never appear on a PR that has review comments, GitHub
+rejecting the query is the probable cause, and it degrades silently to no
+chips (the PR's `comments` is `null`, see PR data below); if Copilot's
+threads show in neither chip, the login is probably wrong and they are counted
+under other bots.
+
+**Green card** — a card turns green when it has at least one open PR and every PR
+line reads `approved`: an 8 % green tint, a green hairline and a seal (a check in
+a circle) after the key, named `All PRs approved` for assistive tech and in its
+tooltip. The card carries `data-all-approved="true"`. A PR whose review is
+unknown is not approved, and a PR that reads `changes requested` never is, so a
+card with one never turns green even when its other PRs are approved. The green
+does not look at CI or drafts: an approved draft with failing CI still counts. It
+looks only at the PR lines the card shows, so when `truncated` says some of your
+PRs were not fetched, a PR that is missing is not counted. A card with no PR is
+never green.
 
 **PR data** — the lines come from `GET /api/ticket-prs`, which the tab calls on its
 first load, on every 90 second poll and on **Refresh**. It lists **your** open PRs
@@ -598,45 +641,82 @@ lines.
 ```
 200 { available, login, total, truncated, updatedAt,
       byTicket: { "<KEY>": [{ repo, number, title, url, draft, updatedAt,
-                              review, ci }] } }
+                              review, ci, comments }] } }
 
 review: { state: 'approved' | 'changes_requested' | 'awaiting', approvals } | null
 ci:     { state: 'passing' | 'failing' | 'pending' | 'none',
           passed, failed, pending, failing: [name, …] } | null
+comments: { human, copilot, other, conversation, threads, truncated } | null
+          human, copilot, other: { threads, unresolved, comments }
 ```
 
 `login` is the GitHub user, `total` GitHub's count of matching open PRs and
 `updatedAt` the time the server answered; `repo` is `owner/name`. `review.state`
-is the newest approval or change request on the PR, the same rule as
-[Review status](#review-status) (an approval after a change request wins), and
-`awaiting` when there is neither; `approvals` counts the reviewers whose latest
-review approves. `ci.state` summarises the PR's latest commit: `passing` for a
-success, `failing` for a failure or error, `pending` for pending, expected or any
+follows the rule under [Review status](#review-status): a change request that
+still stands makes it `changes_requested` even when another reviewer approved
+later; with none standing, the newest approval or change request decides, and it
+is `awaiting` when there is neither. `approvals` counts the reviewers whose
+latest approval or change request is an approval, so it can be above 0 while the
+state is `changes_requested`. The board reads each PR's newest 100 reviews; when
+GitHub reports older ones outside that window (an older change request could
+still stand there), or does not say, `review` is `null` and the line reads
+`review unknown`, never `approved`. The Pull Requests tab pages through every
+review and has no such window. `ci.state` summarises the PR's latest commit:
+`passing` for a success, `failing` for a failure or error, `pending` for pending, expected or any
 state the dashboard does not recognise, and `none` when the commit has no checks.
 `passed`, `failed` and `pending` count the first 100 checks and commit statuses,
 and `failing` names the failed ones, each name once. A `null` `review` or `ci`
 means GitHub's answer was unreadable, which is different from `awaiting` or
 `none`; the card shows `review unknown` or a dash with `CI status unavailable`.
 
+`comments` is the count behind the comment chips. `human`, `copilot` and `other`
+each hold `{ threads, unresolved, comments }` for the review threads whose first
+comment was written by a person, by Copilot, or by anyone else (any other bot, a
+deleted account, a thread with no readable first comment): the threads read, how
+many of them are not resolved, and the sum of every comment in them, replies
+included. `conversation` is the number of comments on the PR's main conversation,
+outside any review thread. `threads` is GitHub's own count of the PR's review
+threads and `truncated` is `true` when it is larger than the threads read (the
+query reads `reviewThreads(first: 50)`), so the three buckets then hold partial
+counts. `comments` is `null` when GitHub's answer for the PR could not be read: its
+batch failed or answered without data, GitHub reported an error on that PR, a
+thread list or total came back malformed, or the PR was not asked about. That is
+different from a PR with no threads, which has zeros. It holds counts and one
+boolean only, no login, title or comment text.
+
 The route is behind the [setup gate](#setup-gate-and-apis): `409 SETUP_REQUIRED`
-before setup, and `200` after it whatever GitHub does. A GitHub problem never
+before setup, and `200` after it whatever GitHub does, except that a browser
+request from another site is refused (below). A GitHub problem never
 becomes an error, it only narrows what the answer reports: with no token, or
 when GitHub fails `/user` or the search, the answer is `{ available: false,
-login: null, total: 0, truncated: false, byTicket: {} }` plus `updatedAt`; when
-one GraphQL batch of up to 50 PRs fails, those PRs are listed with
-`review: null, ci: null` and the other batches are unaffected; when GitHub
-reports an error on one PR's checks, that PR gets `ci: null` and keeps its
-review. A token that cannot read checks and commit statuses is expected to show
-up that way, as CI unknown on each PR while reviews still work; how GitHub
+login: null, total: 0, truncated: false, byTicket: {} }` plus `updatedAt`. Review
+and CI come from one GraphQL batch per 50 PRs and the comment counts from another,
+so a failure in one lane never blanks the other: when a review and CI batch fails,
+those PRs are listed with `review: null, ci: null` and keep their `comments`; when a
+comment batch fails, those PRs get `comments: null` and keep their review and CI;
+when GitHub reports an error on one PR's checks, that PR gets `ci: null` and keeps
+its review and comments, and an error on one PR's comment fields nulls only that
+PR's `comments`. A token that cannot read checks and commit statuses is expected
+to show up that way, as CI unknown on each PR while reviews still work; how GitHub
 reports a refused field has not been checked against the live API, and Settings
-validation does not probe for it. A poll costs one `GET /user`, one search and
-one GraphQL request per 50 PRs, sent one after another; each call times out
-after 15 seconds, and a timeout counts as that call failing. Requests made
+validation does not probe for it. Neither has the comment query: its field names
+(`reviewThreads`, `isResolved`, the comment author's `__typename` and `login`, the
+PR's comment `totalCount`) and the Copilot reviewer login were checked against
+GitHub's documentation only. If GitHub rejects the query, every PR gets `comments:
+null` and the board shows no chips, with no error anywhere. A poll costs one
+`GET /user`, one search and two GraphQL requests per 50 PRs (review and CI, then
+comments), sent one after another, and the answer waits for both; each call times
+out after 15 seconds, and a timeout counts as that call failing. Requests made
 while a load is running, with the same saved settings revision, share that
 load. Nothing is cached: once it finishes the result is dropped, so the next
-poll or **Refresh** asks GitHub again. The answer carries no tokens, no
-upstream error text and no settings. There is no CLI command for it: `prs` and
-`my-tickets` call their modules directly, so an agent reads this route over
+poll or **Refresh** asks GitHub again. A load costs many GitHub calls and there is
+no result cache, so a browser request whose `Sec-Fetch-Site` is `cross-site` or
+`same-site` (a page from another site or another port) gets `403` with the
+generic `OPERATION_FAILED` body, before anything is sent to GitHub. The
+dashboard's own page (`same-origin`), a typed address (`none`), `curl` and any
+request that sends no `Sec-Fetch-Site` are answered as above. The answer carries
+no tokens, no upstream error text and no settings. There is no CLI command for
+it: `prs` and `my-tickets` call their modules directly, so an agent reads this route over
 HTTP.
 
 The tab never waits on it. The cards render as soon as `/api/my-tickets`
@@ -677,6 +757,24 @@ over. The chips reuse the Slack tab's cached thread list, so they simply do not
 appear — never an error — when Slack is not connected. The dialog also has a
 **Claude session** section that attaches and detaches Claude Code sessions for the
 thread on the [watcher](#watch).
+
+A thread with a Claude session attached through the watcher draws its chip filled
+(a low-opacity fill inside the bubble's outline) and in the support colour, and its
+label (the tooltip and accessible name) adds `Claude session attached`, or `2
+Claude sessions attached` for two. An unattached chip is unchanged, and so is
+every chip when the watcher is disabled. The count rides
+on the thread list: each row of `started` in `GET /api/slack/threads` carries
+`attachedSessions`, the number of sessions the watch list holds for that thread
+(`0` for none, and for a row with no `watchKey`). It is worked out on every
+answer from the watch list, not cached with the Slack thread list, and it is `0`
+on every row when the watcher is disabled (no Claude home directory, as in the
+Docker image) or the watch list cannot be read; the route still answers `200`.
+`mentions` rows are unchanged, and an unavailable result (Slack not connected) comes
+through as it was. The board never reads `GET /api/slack/watch`. It reads
+`/api/slack/threads` once more when the thread dialog closes, so an attach or
+detach made in the dialog shows when it closes. Two other readings of "attached" were
+not built: a chip drawn on every card, grey without a thread, and a Slack colour
+on the comment chip.
 
 ### Sprints
 
@@ -732,9 +830,22 @@ Each PR card also shows its review state via a small badge in the meta row —
 dashed). Hover a badge for a tooltip naming who approved / requested changes.
 
 Review state comes from batched GitHub **GraphQL** requests
-(`backend/review.mjs`), and reflects the **latest** review: an approval that followed an
-earlier change request wins. If the token cannot read review data, the dashboard
-can omit the badge when a runtime review fetch fails — open PRs are unaffected.
+(`backend/review.mjs`). Each reviewer's latest approval or change request counts;
+`COMMENTED`, `DISMISSED` and `PENDING` reviews are ignored. **A change request
+that still stands outranks approvals:** while any reviewer's latest approval or
+change request is a change request, the PR reads `changes requested` and never
+`approved`, even when another reviewer approved after it. A reviewer's own later
+approval clears their request. With no request standing, the newest approval or change request decides.
+The one exception is a change request from an account with no login (a deleted
+user): it cannot be tied to a reviewer, so it counts only while it is the newest
+approval or change request on the PR, and a later approval overrides it.
+`approvals` and the [approval threshold](#approval-threshold) count approvers
+only, so a PR can show `changes requested` and still have approvals. The same
+rule feeds the My Tickets board, the Pull Requests tab and Home (they share one
+function, `summarizeReviews`), so on Home a PR with a standing change request
+sits in the changes-requested group, not in the one still waiting on approval.
+If the token cannot read review data, the dashboard can omit the badge when a
+runtime review fetch fails — open PRs are unaffected.
 Fresh/changed integration setup also requires the GraphQL access probe.
 
 ### Approval threshold
@@ -1343,7 +1454,7 @@ after a server restart. The watcher never stops or removes a copy that a resume 
 | Route                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected; each thread carries `url` and `watchKey`, the `<channelId>:<ts>` string the watch list uses as `key` for that thread, both empty when the thread has no link                                                                                                                                                                                                                                           |
+| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected; each thread carries `url` and `watchKey`, the `<channelId>:<ts>` string the watch list uses as `key` for that thread, both empty when the thread has no link; each `started` row also carries `attachedSessions`, the number of Claude sessions attached to it (`0` for none, with a disabled watcher or an unreadable watch list), and `mentions` rows are unchanged                                  |
 | `GET /api/slack/pending`                 | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, watchKey, channel, replyCount, truncated, updatedAt, names, messages[] } }`; `watchKey` is as for the thread lists; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses                                                                                                                                                                                                                                                             |
 | `POST /api/slack/connect`                | starts the sign-in window, `{ ok, connecting }`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
