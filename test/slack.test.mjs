@@ -134,56 +134,95 @@ test('a session file with unexpected contents is ignored', async (t) => {
 // real I/O, so a macrotask is enough.
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
-function fakeSlack() {
+// Freeze the list and dialog tests just after their synthetic 2026 messages.
+const FIXTURE_NOW = 1_793_201_000_000;
+const MINE = '1793190100.000100';
+const THEIRS = '1793190200.000200';
+const OTHER = '1793190600.000600';
+
+function slackMicros(ts) {
+  const [seconds, fraction = ''] = ts.split('.');
+  return BigInt(seconds) * 1_000_000n + BigInt(fraction.padEnd(6, '0'));
+}
+
+function fakeSlack({ includeDialog = false, missingRootTs = '' } = {}) {
   const calls = [];
-  const replies = []; // { ts, limit } for every conversations.replies call.
-  // Slack answers limit=1 with the root plus the newest message only.
-  const threads = {
-    100.0001: [
-      { ts: '100.0001', user: 'U9' },
-      { ts: '300.0003', user: 'U1' },
-    ],
-    200.0002: [
-      { ts: '200.0002', user: 'U2' },
-      { ts: '400.0004', user: 'U9' },
-    ],
-    600.0006: [
-      { ts: '600.0006', user: 'U1' },
-      { ts: '700.0007', user: 'U1' },
-    ],
-  };
+  const replies = []; // Parameters for every conversations.replies call.
+  const roots = [
+    {
+      ts: MINE,
+      thread_ts: MINE,
+      user: 'U9',
+      text: 'TAP-1 mine',
+      reply_count: 2,
+      latest_reply: '1793190300.000300',
+    },
+    {
+      ts: THEIRS,
+      thread_ts: THEIRS,
+      user: 'U2',
+      text: 'TAP-2 theirs',
+      reply_count: 4,
+      latest_reply: '1793190400.000400',
+    },
+    {
+      ts: OTHER,
+      thread_ts: OTHER,
+      user: 'U1',
+      text: 'TAP-3 theirs',
+      reply_count: 2,
+      latest_reply: '1793190700.000700',
+    },
+  ];
   const mentions = [
     // Three matches in one thread, distinct ts, same permalink thread_ts.
     {
-      ts: '250.0002',
+      ts: '1793190250.000200',
       user: 'U1',
       channel: { id: 'C1', name: 'ezat_claudio' },
       text: 'hey <@U9> look',
-      permalink: 'https://team.slack.com/archives/C1/p2500002?thread_ts=200.0002&cid=C1',
+      permalink: `https://team.slack.com/archives/C1/p1793190250000200?thread_ts=${THEIRS}&cid=C1`,
     },
     {
-      ts: '260.0006',
+      ts: '1793190260.000600',
       user: 'U2',
       channel: { id: 'C1', name: 'ezat_claudio' },
       text: 'later <@U9>',
-      permalink: 'https://team.slack.com/archives/C1/p2600006?thread_ts=200.0002&cid=C1',
+      permalink: `https://team.slack.com/archives/C1/p1793190260000600?thread_ts=${THEIRS}&cid=C1`,
     },
     {
-      ts: '270.0007',
+      ts: '1793190270.000700',
       user: 'U1',
       channel: { id: 'C1', name: 'ezat_claudio' },
       text: 'third <@U9> ping',
-      permalink: 'https://team.slack.com/archives/C1/p2700007?thread_ts=200.0002&cid=C1',
+      permalink: `https://team.slack.com/archives/C1/p1793190270000700?thread_ts=${THEIRS}&cid=C1`,
     },
     // One match in another thread, which is also in the history page.
     {
-      ts: '650.0008',
+      ts: '1793190650.000800',
       user: 'U2',
       channel: { id: 'C1', name: 'ezat_claudio' },
       text: 'other <@U9> thread',
-      permalink: 'https://team.slack.com/archives/C1/p6500008?thread_ts=600.0006&cid=C1',
+      permalink: `https://team.slack.com/archives/C1/p1793190650000800?thread_ts=${OTHER}&cid=C1`,
     },
   ];
+  const threads = {
+    [MINE]: [
+      roots[0],
+      { ts: '1793190150.000100', thread_ts: MINE, user: 'U9', text: 'An earlier reply' },
+      { ts: '1793190300.000300', thread_ts: MINE, user: 'U1', text: 'Latest reply' },
+    ],
+    [THEIRS]: [
+      roots[1],
+      ...mentions.slice(0, 3).map((mention) => ({ ...mention, thread_ts: THEIRS })),
+      { ts: '1793190400.000400', thread_ts: THEIRS, user: 'U9', text: 'Latest reply' },
+    ],
+    [OTHER]: [
+      roots[2],
+      { ...mentions[3], thread_ts: OTHER },
+      { ts: '1793190700.000700', thread_ts: OTHER, user: 'U1', text: 'Latest reply' },
+    ],
+  };
   // The conversation a ticket glyph opens: one root authored by the signed-in
   // user that names Patrick, and two replies from him. Its timestamps are real
   // Slack ones, because `thread()` rejects anything that is not.
@@ -234,60 +273,63 @@ function fakeSlack() {
       channels: [{ id: 'C1', mention_count: 2, has_unreads: true }],
       activity_v2: { at_user: 5 },
     }),
-    'conversations.history': () => ({
+    'conversations.history': (url) => ({
       ok: true,
       messages: [
-        // thread started by me, latest reply from Patrick
-        {
-          ts: '100.0001',
-          thread_ts: '100.0001',
-          user: 'U9',
-          text: 'TAP-1 mine',
-          reply_count: 2,
-          latest_reply: '300.0003',
-        },
-        // thread started by someone else, my reply is newest
-        {
-          ts: '200.0002',
-          thread_ts: '200.0002',
-          user: 'U2',
-          text: 'TAP-2 theirs',
-          reply_count: 1,
-          latest_reply: '400.0004',
-        },
-        // a second thread I was mentioned in
-        {
-          ts: '600.0006',
-          thread_ts: '600.0006',
-          user: 'U1',
-          text: 'TAP-3 theirs',
-          reply_count: 1,
-          latest_reply: '700.0007',
-        },
-        // plain message, not a thread
-        { ts: '500.0005', user: 'U1', text: 'no replies here' },
-      ],
+        ...(missingRootTs
+          ? [{ ts: missingRootTs, thread_ts: missingRootTs, user: 'U9', reply_count: 0 }]
+          : []),
+        ...(includeDialog ? [dialog[0]] : []),
+        roots[2],
+        { ts: '1793190500.000500', user: 'U1', text: 'no replies here' },
+        roots[1],
+        roots[0],
+      ].filter((message) => {
+        const oldest = url.searchParams.get('oldest');
+        if (!oldest) return true;
+        const comparison = slackMicros(message.ts) - slackMicros(oldest);
+        return (
+          comparison > 0n || (comparison === 0n && url.searchParams.get('inclusive') === 'true')
+        );
+      }),
     }),
     'search.messages': (url) => {
       const query = url.searchParams.get('query') || '';
-      // `in:<channel>` alone names the channel; `... <@U9>` lists the mentions.
-      if (!query.includes('<@'))
+      // The one-result channel lookup is separate from the bounded list searches.
+      if (url.searchParams.get('count') === '1')
         return {
           ok: true,
           messages: { total: 1, matches: [{ channel: { id: 'C1', name: 'ezat_claudio' } }] },
         };
+      if (!query.includes('<@')) return { ok: true, messages: { total: 0, matches: [] } };
       return { ok: true, messages: { total: mentions.length, matches: mentions } };
     },
     'conversations.replies': (url) => {
-      const ts = url.searchParams.get('ts');
-      const limit = url.searchParams.get('limit');
-      replies.push({ ts, limit });
-      if (ts === dialogTs) return { ok: true, messages: dialog, response_metadata: {} };
-      const thread = threads[ts];
+      const params = Object.fromEntries(url.searchParams);
+      replies.push(params);
+      const thread = params.ts === dialogTs ? dialog : threads[params.ts];
       if (!thread) return { ok: false, error: 'thread_not_found' };
+      const inclusive = params.inclusive === 'true';
+      const filtered = thread.filter((message) => {
+        const time = slackMicros(message.ts);
+        if (params.oldest) {
+          const oldest = slackMicros(params.oldest);
+          if (time < oldest || (!inclusive && time === oldest)) return false;
+        }
+        if (params.latest) {
+          const latest = slackMicros(params.latest);
+          if (time > latest || (!inclusive && time === latest)) return false;
+        }
+        return true;
+      });
+      const offset = params.cursor ? Number(params.cursor.replace('reply-', '')) : 0;
+      const limit = Number(params.limit || 100);
+      const next = offset + limit < filtered.length ? `reply-${offset + limit}` : '';
       return {
         ok: true,
-        messages: limit === '1' ? [thread[0], thread[thread.length - 1]] : thread,
+        messages: filtered.slice(offset, offset + limit),
+        has_more: Boolean(next),
+        response_metadata: { next_cursor: next },
       };
     },
   };
@@ -300,9 +342,19 @@ function fakeSlack() {
   return { fetchImpl, calls, replies, dialogTs };
 }
 
+async function primeDialogRoot(integration, ts) {
+  const result = await integration.threads();
+  assert.equal(result.available, true, 'the shared list is available');
+  assert.ok(
+    [...result.started, ...result.mentions].some((row) => row.ts === ts),
+    'the eligible dialog root is present in the shared list',
+  );
+  await settle();
+}
+
 test('threads list only my threads and group mentions by their thread', async (t) => {
   const slack = fakeSlack();
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
 
   const result = await integration.threads();
@@ -312,13 +364,13 @@ test('threads list only my threads and group mentions by their thread', async (t
 
   assert.equal(result.started.length, 1, 'a plain message is not a thread');
   const mine = result.started[0];
-  assert.equal(mine.ts, '100.0001');
+  assert.equal(mine.ts, MINE);
   assert.equal(mine.text, 'TAP-1 mine');
   assert.equal(mine.replyCount, 2);
 
   assert.deepEqual(
     result.mentions.map((row) => row.ts),
-    ['600.0006', '200.0002'],
+    [OTHER, THEIRS],
     'one row per thread, newest activity first',
   );
 
@@ -336,37 +388,42 @@ test('threads list only my threads and group mentions by their thread', async (t
   assert.equal(slack.calls.length, after, 'the result is cached between refreshes');
 });
 
-test('mention grouping collapses four matches into two threads without re-reading them', async (t) => {
+test('mention grouping collapses four matches into two threads without treating matches as roots', async (t) => {
   const slack = fakeSlack();
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
 
   const result = await integration.threads();
   const tss = result.mentions.map((row) => row.ts);
-  assert.deepEqual(tss, ['600.0006', '200.0002']);
+  assert.deepEqual(tss, [OTHER, THEIRS]);
   assert.equal(new Set(tss).size, tss.length, 'no thread appears twice');
   assert.equal(
-    result.mentions.find((row) => row.ts === '200.0002').text,
+    result.mentions.find((row) => row.ts === THEIRS).text,
     'third @jommari ping',
     'the newest mention of a thread is its preview',
   );
 
-  // Both threads are in the history page, so no match timestamp is ever looked
-  // up: only the enrichment calls fetch replies, and always for a thread root.
+  // Both threads are in the history page. Candidate scans and enrichment must
+  // read their roots, never mistake individual match timestamps for roots.
+  await settle();
   const looked = slack.replies.map((entry) => entry.ts);
-  for (const ts of ['250.0002', '260.0006', '270.0007', '650.0008'])
+  for (const ts of [
+    '1793190250.000200',
+    '1793190260.000600',
+    '1793190270.000700',
+    '1793190650.000800',
+  ])
     assert.ok(!looked.includes(ts), `${ts} belongs to a thread the history page already has`);
   assert.ok(slack.replies.length > 0, 'the listed threads are still read for their last reply');
   assert.ok(
-    slack.replies.every((entry) => entry.limit === '1'),
-    'the last reply needs the root and the newest message, nothing more',
+    slack.replies.every((entry) => [MINE, THEIRS, OTHER].includes(entry.ts)),
+    'reply reads always target a verified root',
   );
-  await settle();
 });
 
 test('the channel is resolved by search, so conversations.list is never paged', async (t) => {
   const slack = fakeSlack();
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
 
   const result = await integration.threads();
@@ -385,6 +442,7 @@ test('a channel search cannot see falls back to the paged channel list', async (
         return new Response(JSON.stringify({ ok: true, messages: { total: 0, matches: [] } }));
       return slack.fetchImpl(url);
     },
+    now: () => FIXTURE_NOW,
   });
   writeSession(paths);
 
@@ -395,7 +453,7 @@ test('a channel search cannot see falls back to the paged channel list', async (
 });
 
 test('a snapshot past its TTL is served immediately and revalidated once', async (t) => {
-  let clock = 1_000_000;
+  let clock = FIXTURE_NOW;
   const slack = fakeSlack();
   const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => clock });
   writeSession(paths);
@@ -408,6 +466,8 @@ test('a snapshot past its TTL is served immediately and revalidated once', async
   clock += 5 * 60 * 1000 + 1;
   const stale = await integration.threads();
   assert.equal(stale, cached, 'the stale snapshot is returned without waiting for a refresh');
+  assert.equal(stale.stale, true, 'the old snapshot is labelled while refresh is in flight');
+  assert.ok(!stale.partialReasons.includes('refresh_failed'), 'a pending refresh is not a failure');
 
   await integration.threads();
   await integration.threads();
@@ -427,27 +487,46 @@ test('a failed load backs off for a minute instead of retrying on every call', a
   const slack = fakeSlack();
   const { paths, integration } = setup(t, {
     fetchImpl: async (url) => {
-      if (String(url).includes('/api/conversations.history')) throw new Error('offline');
+      const target = new URL(url);
+      if (
+        target.pathname.endsWith('/conversations.history') ||
+        (target.pathname.endsWith('/search.messages') && target.searchParams.get('count') !== '1')
+      )
+        throw new Error('offline');
       return slack.fetchImpl(url);
     },
+    now: () => FIXTURE_NOW,
   });
   writeSession(paths);
 
-  assert.deepEqual(await integration.threads(), { available: false });
+  const first = await integration.threads();
+  assert.equal(first.available, true);
+  assert.deepEqual(first.started, []);
+  assert.equal(first.partial, true);
+  assert.ok(first.partialReasons.includes('history_unavailable'));
+  assert.ok(first.continuation);
   const afterFailure = slack.calls.length;
   assert.ok(afterFailure > 0);
 
-  assert.deepEqual(await integration.threads(), { available: false });
+  const second = await integration.threads();
+  assert.equal(second.available, true);
+  assert.deepEqual(second.started, []);
+  assert.equal(second.partial, true);
+  assert.ok(second.partialReasons.includes('history_unavailable'));
   assert.equal(slack.calls.length, afterFailure, 'nothing is asked inside the backoff window');
 });
 
-test('a failed background refresh never downgrades a good snapshot', async (t) => {
-  let clock = 1_000_000;
+test('a failed background refresh removes unconfirmed rows until recovery', async (t) => {
+  let clock = FIXTURE_NOW;
   let offline = false;
+  let offlineRequests = 0;
   const slack = fakeSlack();
   const { paths, integration } = setup(t, {
     fetchImpl: async (url) => {
-      if (offline) throw new Error('offline');
+      if (offline) {
+        offlineRequests++;
+        throw new Error('offline');
+      }
       return slack.fetchImpl(url);
     },
     now: () => clock,
@@ -459,15 +538,28 @@ test('a failed background refresh never downgrades a good snapshot', async (t) =
 
   offline = true;
   clock += 5 * 60 * 1000 + 1;
-  assert.equal((await integration.threads()).available, true, 'the snapshot survives the failure');
+  assert.equal((await integration.threads()).available, true, 'the pending refresh is nonblocking');
   await settle();
   const after = await integration.threads();
   assert.equal(after.available, true);
-  assert.equal(after.started[0].ts, good.started[0].ts);
+  assert.deepEqual(after.started, []);
+  assert.deepEqual(after.mentions, []);
+  assert.equal(after.partial, true);
+  assert.ok(after.partialReasons.includes('refresh_failed'));
+  const attempts = offlineRequests;
+  await integration.threads();
+  assert.equal(offlineRequests, attempts, 'a failed refresh respects its retry backoff');
+
+  offline = false;
+  clock += 60_001;
+  const recovered = await integration.threads();
+  await settle();
+  assert.equal(recovered.available, true);
+  assert.equal(recovered.started[0].ts, good.started[0].ts);
 });
 
 test('disconnect stops a late refresh from repopulating the cache', async (t) => {
-  let clock = 1_000_000;
+  let clock = FIXTURE_NOW;
   let release;
   const held = new Promise((resolve) => {
     release = resolve;
@@ -482,7 +574,7 @@ test('disconnect stops a late refresh from repopulating the cache', async (t) =>
     now: () => clock,
   });
   writeSession(paths);
-  await integration.threads();
+  assert.equal((await integration.threads()).available, true, 'the initial snapshot must load');
   await settle();
 
   holdHistory = true;
@@ -570,15 +662,14 @@ test('disconnect clears the pending cache so the next call re-fetches', async (t
   assert.ok(slack.calls.length > before, 'the badge is fetched again after reconnecting');
 });
 
-// A fake that answers `conversations.replies` from a scripted page list, one
-// page per call, so the paging loop can be driven with a counter.
-function pagedSlack(pages) {
+// A fake that answers `conversations.replies` from a scripted page list,
+// selecting each subsequent page by the cursor returned by the previous one.
+function pagedSlack(pages, root) {
   const calls = [];
   const fetchImpl = async (url) => {
     const target = new URL(url);
     const method = target.pathname.split('/').pop();
     calls.push({ method, params: Object.fromEntries(target.searchParams) });
-    const reply = () => calls.filter((entry) => entry.method === 'conversations.replies').length;
     if (method === 'auth.test')
       return new Response(
         JSON.stringify({
@@ -589,23 +680,32 @@ function pagedSlack(pages) {
           team_id: 'T1',
         }),
       );
-    if (method === 'search.messages')
+    if (method === 'search.messages' && target.searchParams.get('count') === '1')
       return new Response(
         JSON.stringify({
           ok: true,
           messages: { total: 1, matches: [{ channel: { id: 'C1', name: 'ezat_claudio' } }] },
         }),
       );
+    if (method === 'search.messages')
+      return new Response(JSON.stringify({ ok: true, messages: { total: 0, matches: [] } }));
+    if (method === 'conversations.history')
+      return new Response(JSON.stringify({ ok: true, messages: [root] }));
     if (method === 'users.list')
       return new Response(
         JSON.stringify({ ok: true, members: [{ id: 'U1', real_name: 'Patrick Rivera' }] }),
       );
     if (method === 'conversations.replies') {
-      const page = pages[Math.min(reply() - 1, pages.length - 1)];
+      const cursor = target.searchParams.get('cursor');
+      const preceding = cursor ? pages.findIndex((page) => page.cursor === cursor) : -1;
+      if (cursor && (preceding < 0 || preceding + 1 >= pages.length))
+        return new Response(JSON.stringify({ ok: false, error: 'invalid_cursor' }));
+      const page = pages[preceding + 1];
       return new Response(
         JSON.stringify({
           ok: true,
           messages: page.messages,
+          has_more: Boolean(page.cursor),
           response_metadata: { next_cursor: page.cursor || '' },
         }),
       );
@@ -616,11 +716,15 @@ function pagedSlack(pages) {
 }
 
 test('a ticket thread comes back as the exact dialog shape', async (t) => {
-  const clock = 1_700_000_000_000;
-  const slack = fakeSlack();
+  const clock = FIXTURE_NOW;
+  const slack = fakeSlack({ includeDialog: true });
   const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => clock });
   writeSession(paths);
 
+  assert.deepEqual(await integration.thread(slack.dialogTs), { available: false });
+  assert.equal(slack.calls.length, 0, 'an unverified root never reaches Slack');
+  await primeDialogRoot(integration, slack.dialogTs);
+  const beforeDialog = slack.replies.length;
   const result = await integration.thread(slack.dialogTs);
   assert.equal(result.available, true);
   const { thread } = result;
@@ -656,17 +760,18 @@ test('a ticket thread comes back as the exact dialog shape', async (t) => {
   assert.equal('U2' in thread.names, false, 'only the ids this thread actually names travel');
   assert.equal(thread.messages[0].at, new Date(1793192214 * 1000).toISOString());
 
-  const dialogCall = slack.replies.find((entry) => entry.ts === slack.dialogTs);
+  const dialogCall = slack.replies.slice(beforeDialog).find((entry) => entry.ts === slack.dialogTs);
   assert.equal(dialogCall.limit, '200', 'the whole conversation is read in one generous page');
 });
 
 test('a thread opened twice in a minute is served from cache', async (t) => {
-  let clock = 1_700_000_000_000;
-  const slack = fakeSlack();
+  let clock = FIXTURE_NOW;
+  const slack = fakeSlack({ includeDialog: true });
   const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => clock });
   writeSession(paths);
+  await primeDialogRoot(integration, slack.dialogTs);
 
-  await integration.thread(slack.dialogTs);
+  assert.equal((await integration.thread(slack.dialogTs)).available, true);
   const before = slack.calls.length;
   const cached = await integration.thread(slack.dialogTs);
   assert.equal(cached.available, true);
@@ -688,20 +793,25 @@ test('a malformed ts is refused before Slack is asked anything', async (t) => {
 });
 
 test('a thread Slack refuses to open degrades to not available', async (t) => {
-  const slack = fakeSlack();
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const ts = '1793199999.000001';
+  const slack = fakeSlack({ missingRootTs: ts });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
+  await primeDialogRoot(integration, ts);
+  const beforeDialog = slack.replies.length;
 
-  // Well-formed, but no such thread: the fake answers `thread_not_found`.
-  const result = await integration.thread('1793199999.000001');
+  // Slack listed the root, but now refuses the conversation as unavailable.
+  const result = await integration.thread(ts);
   assert.deepEqual(result, { available: false });
   assert.equal('thread' in result, false);
+  assert.ok(slack.replies.slice(beforeDialog).some((entry) => entry.ts === ts));
 });
 
 test('disconnect clears the thread cache', async (t) => {
-  const slack = fakeSlack();
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const slack = fakeSlack({ includeDialog: true });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
+  await primeDialogRoot(integration, slack.dialogTs);
 
   assert.equal((await integration.thread(slack.dialogTs)).available, true);
   const before = slack.calls.length;
@@ -717,27 +827,45 @@ test('disconnect clears the thread cache', async (t) => {
   assert.equal(slack.calls.length, before, 'and Slack is not asked');
 
   writeSession(paths);
+  assert.deepEqual(await integration.thread(slack.dialogTs), { available: false });
+  assert.equal(slack.calls.length, before, 'a new session cannot reuse the old verified root');
+  await primeDialogRoot(integration, slack.dialogTs);
+  const beforeReopen = slack.calls.length;
   assert.equal((await integration.thread(slack.dialogTs)).available, true);
-  assert.ok(slack.calls.length > before, 'the conversation is read again after reconnecting');
+  assert.ok(slack.calls.length > beforeReopen, 'the conversation is read again after reconnecting');
 });
 
 test('a long thread is read page by page and keeps Slack order', async (t) => {
   const ts = '1793193000.000001';
-  const slack = pagedSlack([
+  const slack = pagedSlack(
+    [
+      {
+        messages: [
+          { ts, thread_ts: ts, user: 'U9', text: 'root' },
+          { ts: '1793193010.000100', thread_ts: ts, user: 'U1', text: 'first page reply' },
+        ],
+        cursor: 'page-2',
+      },
+      {
+        messages: [
+          { ts: '1793193020.000200', thread_ts: ts, user: 'U1', text: 'second page reply' },
+        ],
+        cursor: '',
+      },
+    ],
     {
-      messages: [
-        { ts, thread_ts: ts, user: 'U9', text: 'root' },
-        { ts: '1793193010.000100', thread_ts: ts, user: 'U1', text: 'first page reply' },
-      ],
-      cursor: 'page-2',
+      ts,
+      thread_ts: ts,
+      user: 'U9',
+      text: 'root',
+      reply_count: 2,
+      latest_reply: '1793193020.000200',
     },
-    {
-      messages: [{ ts: '1793193020.000200', thread_ts: ts, user: 'U1', text: 'second page reply' }],
-      cursor: '',
-    },
-  ]);
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  );
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
+  await primeDialogRoot(integration, ts);
+  const beforeDialog = slack.calls.length;
 
   const result = await integration.thread(ts);
   assert.equal(result.available, true);
@@ -747,7 +875,9 @@ test('a long thread is read page by page and keeps Slack order', async (t) => {
     ['root', 'first page reply', 'second page reply'],
   );
 
-  const reads = slack.calls.filter((entry) => entry.method === 'conversations.replies');
+  const reads = slack.calls
+    .slice(beforeDialog)
+    .filter((entry) => entry.method === 'conversations.replies');
   assert.equal(reads.length, 2, 'the cursor buys exactly one more page');
   assert.equal(reads[0].params.cursor, undefined);
   assert.equal(reads[1].params.cursor, 'page-2');
@@ -757,18 +887,35 @@ test('a long thread is read page by page and keeps Slack order', async (t) => {
 test('a thread with more than three pages is flagged as truncated', async (t) => {
   const ts = '1793193000.000001';
   const page = (n) => ({
-    messages: [{ ts: `17931930${n}0.00000${n}`, user: 'U1', text: `page ${n}` }],
+    messages: [
+      {
+        ts: n === 1 ? ts : `17931930${n}0.00000${n}`,
+        thread_ts: ts,
+        user: n === 1 ? 'U9' : 'U1',
+        text: `page ${n}`,
+      },
+    ],
     cursor: `page-${n + 1}`,
   });
-  const slack = pagedSlack([page(1), page(2), page(3)]);
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const slack = pagedSlack([page(1), page(2), page(3)], {
+    ts,
+    thread_ts: ts,
+    user: 'U9',
+    text: 'page 1',
+    reply_count: 3,
+    latest_reply: '1793193040.000004',
+  });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
+  await primeDialogRoot(integration, ts);
+  const beforeDialog = slack.calls.length;
 
   const result = await integration.thread(ts);
   assert.equal(result.available, true);
   assert.equal(result.thread.truncated, true, 'a cursor still remained after the third page');
   assert.equal(
-    slack.calls.filter((entry) => entry.method === 'conversations.replies').length,
+    slack.calls.slice(beforeDialog).filter((entry) => entry.method === 'conversations.replies')
+      .length,
     3,
     'paging stops at three pages',
   );
@@ -1106,6 +1253,7 @@ test('reader failure: an HTTP 5xx from either call is unavailable', async (t) =>
 // The fakes above use short ids that the link parser rightly refuses, so the key parity checks
 // run against workspace and channel ids shaped like Slack's own.
 function realShapedSlack({ teamId, channelId, ts }) {
+  const root = { ts, thread_ts: ts, user: 'U9', text: 'TAP-1: invented root', reply_count: 0 };
   const answers = {
     'auth.test': {
       ok: true,
@@ -1119,14 +1267,18 @@ function realShapedSlack({ teamId, channelId, ts }) {
       messages: { total: 1, matches: [{ channel: { id: channelId, name: 'example_channel' } }] },
     },
     'users.list': { ok: true, members: [{ id: 'U1', real_name: 'Sam Example' }] },
+    'conversations.history': { ok: true, messages: [root] },
     'conversations.replies': {
       ok: true,
-      messages: [{ ts, thread_ts: ts, user: 'U9', text: 'TAP-1: invented root' }],
+      messages: [root],
       response_metadata: {},
     },
   };
   const fetchImpl = async (url) => {
-    const method = new URL(url).pathname.split('/').pop();
+    const target = new URL(url);
+    const method = target.pathname.split('/').pop();
+    if (method === 'search.messages' && target.searchParams.get('count') !== '1')
+      return new Response(JSON.stringify({ ok: true, messages: { total: 0, matches: [] } }));
     return new Response(JSON.stringify(answers[method] ?? { ok: false }));
   };
   return { fetchImpl };
@@ -1135,8 +1287,9 @@ function realShapedSlack({ teamId, channelId, ts }) {
 test('thread watch key: the thread read carries the key derived from its own link', async (t) => {
   const ts = '1793192214.548389';
   const slack = realShapedSlack({ teamId: 'T0EXAMPLE1', channelId: 'C0EXAMPLE1', ts });
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
+  await primeDialogRoot(integration, ts);
 
   const { thread } = await integration.thread(ts);
   assert.equal(
@@ -1150,8 +1303,9 @@ test('thread watch key: the thread read carries the key derived from its own lin
 test('thread watch key: a thread read without a workspace id has no link and an empty key', async (t) => {
   const ts = '1793192214.548389';
   const slack = realShapedSlack({ teamId: '', channelId: 'C0EXAMPLE1', ts });
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths, { teamId: '' });
+  await primeDialogRoot(integration, ts);
 
   const result = await integration.thread(ts);
   assert.equal(result.available, true);
@@ -1161,17 +1315,17 @@ test('thread watch key: a thread read without a workspace id has no link and an 
 
 test('thread watch key: every started and mentions row carries the key of its own thread', async (t) => {
   const slack = fakeSlack();
-  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });
+  const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl, now: () => FIXTURE_NOW });
   writeSession(paths);
 
   const result = await integration.threads();
   assert.deepEqual(
     result.started.map((row) => row.watchKey),
-    ['C1:100.0001'],
+    [`C1:${MINE}`],
   );
   assert.deepEqual(
     result.mentions.map((row) => row.watchKey),
-    ['C1:600.0006', 'C1:200.0002'],
+    [`C1:${OTHER}`, `C1:${THEIRS}`],
   );
   await settle();
 });

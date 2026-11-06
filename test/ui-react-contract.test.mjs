@@ -149,15 +149,14 @@ test('the Slack tab carries a pending-count badge and chases an enriched thread 
   assert.match(app, /from '\.\/components\/SlackTabBadge\.jsx'/);
   assert.match(app, /id: 'slack', label: 'Slack', badge: <SlackTabBadge \/>/);
   const panel = read('panels/SlackPanel.jsx');
-  assert.match(panel, /notifySlackSessionChanged\(\)/);
+  assert.match(panel, /notifySlackSessionChanged\('slack'\)/);
 
   // Rows arrive immediately while the server enriches "Needs reply" in the
   // background, so the panel must chase the enriched snapshot a bounded number
   // of times and must not claim "All caught up" while the flags are still null.
   assert.match(panel, /const ENRICH_RETRY_MS = 2_000;/);
   assert.match(panel, /const ENRICH_RETRY_LIMIT = 3;/);
-  // Only an explicit false means "still checking"; a missing field stays on the
-  // old copy so a rolling start against an older backend behaves as before.
+  // An unresolved individual reply is also unknown, even when enrichment ended.
   assert.match(panel, /threads\?\.enriched === false/);
   assert.match(panel, /threads\?\.enriched !== false/);
   assert.match(panel, /setTimeout\([\s\S]*?\},\s*ENRICH_RETRY_MS,?\s*\)/);
@@ -170,15 +169,16 @@ test('the Slack tab carries a pending-count badge and chases an enriched thread 
   assert.match(panel, /setEnrichRetries\(\{[\s\S]*?loadThreads\(\);/);
   assert.equal((panel.match(/const inFlight = useRef\(false\);/g) || []).length, 1);
 
-  // Three meta states: honest "checking", the existing count, the caught-up copy.
-  assert.match(panel, /Checking replies… · updated \$\{updatedLabel\}/);
-  assert.match(panel, /`\$\{needsReply\} need a reply · updated \$\{updatedLabel\}`/);
-  assert.match(panel, /`All caught up · updated \$\{updatedLabel\}`/);
+  // Counts describe loaded threads and never claim complete coverage.
+  assert.match(panel, /items\.some\(\(thread\) => thread\.needsReply == null\)/);
+  assert.match(panel, /Checking replies… · \$\{needsReply\} loaded need a reply/);
+  assert.match(panel, /\$\{needsReply\} loaded threads need a reply/);
+  assert.doesNotMatch(panel, /All caught up/);
   const metaBlock = panel.slice(panel.indexOf('data-testid="slack-threads-meta"'));
   assert.match(
     metaBlock,
-    /checking[\s\S]*?Checking replies…[\s\S]*?need a reply[\s\S]*?All caught up/,
-    'the checking state is a third branch before the reply count and caught-up copy',
+    /checking[\s\S]*?Checking replies…[\s\S]*?loaded threads need a reply/,
+    'the checking state precedes the loaded-scope reply count',
   );
 });
 
@@ -210,7 +210,7 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
   // The panel fetches once per ticket load and groups with the shared module.
   const panel = read('panels/MyTicketsPanel.jsx');
   assert.match(panel, /getSlackThreads\(\)/);
-  assert.match(panel, /threadsByTicket\(slackStarted\)/);
+  assert.match(panel, /threadsByTicket\([\s\S]*?eligibleSlackRoot\(row\.ts, slackNow\)/);
   assert.match(panel, /linksByTicket=\{linksByTicket\}/);
   // Slack must never sit on the ticket path: its call starts before the ticket
   // request is awaited, and is never awaited itself.
@@ -229,7 +229,10 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
   assert.match(panel, /api\.getTicketPrs\(/);
   // A failed Slack call must leave the ticket list alone rather than reject the
   // unawaited promise.
-  assert.match(panel, /catch \{\s*setSlackStarted\(\[\]\);/);
+  assert.match(
+    panel,
+    /catch \{\s*if \(request === slackRequest\.current\) setSlackSnapshot\(null\);/,
+  );
 
   // The card renders the links on its first line, so it stays one account of
   // the ticket; the board resolves the same normalised key the matcher produced
@@ -264,13 +267,19 @@ test('the Slack thread dialog renders the conversation without leaving the app',
     'SlackThreadDialog.jsx exists',
   );
   const dialog = read('components/SlackThreadDialog.jsx');
-  assert.match(dialog, /export function SlackThreadDialog\(\{ thread, onClose \}\)/);
+  assert.match(
+    dialog,
+    /export function SlackThreadDialog\(\{\s*thread,\s*onClose,\s*resolveOpener,\s*isEligible,\s*sessionIdentity,\s*onSessionMismatch,\s*\}\)/,
+  );
+  assert.match(dialog, /openerResolver\.current\?\.\(ts\)/);
   assert.match(dialog, /showModal\(\)/, 'the dialog opens modally');
   assert.doesNotMatch(dialog, /dangerouslySetInnerHTML|innerHTML/, 'mrkdwn is rendered as tokens');
   assert.match(dialog, /aria-labelledby=\{titleId\}/);
   // A response that lands after the dialog closed must not repaint it.
   assert.match(dialog, /if \(!live \|\| request\.current !== id\) return;/);
   assert.match(dialog, /getSlackThread\(ts\)/);
+  assert.match(dialog, /await getSlackStatus\(\)/);
+  assert.match(dialog, /slackSessionIdentity\(status, sessionIdentity\) !== sessionIdentity/);
   assert.match(dialog, /parseSlackText/);
   assert.match(dialog, /slack-thread-dialog-title/);
   assert.match(dialog, /slack-thread-dialog-body/);
@@ -307,7 +316,7 @@ test('the Slack thread dialog renders the conversation without leaving the app',
   assert.match(panel, /onOpenThread=\{setOpenThread\}/);
   assert.match(
     panel,
-    /<SlackThreadDialog thread=\{openThread\} onClose=\{\(\) => setOpenThread\(null\)\} \/>/,
+    /<SlackThreadDialog\s+thread=\{openThread\}\s+onClose=\{\(\) => setOpenThread\(null\)\}\s+isEligible=\{threadIsEligible\}\s+sessionIdentity=\{slackIdentity\.current\}\s+onSessionMismatch=\{dialogSessionMismatch\}\s+\/>/,
   );
 
   const css = read('styles/slack.css');
@@ -345,7 +354,7 @@ test('the Slack tab opens thread conversations in the shared dialog', () => {
   // disconnect, so an open conversation is not torn down by a status change.
   assert.match(
     panel,
-    /<SlackThreadDialog thread=\{openThread\} onClose=\{\(\) => setOpenThread\(null\)\} \/>/,
+    /<SlackThreadDialog\s+thread=\{openThread\}\s+onClose=\{\(\) => setOpenThread\(null\)\}\s+resolveOpener=\{resolveOpener\}\s+isEligible=\{threadIsEligible\}\s+sessionIdentity=\{sessionIdentity\.current\}\s+onSessionMismatch=\{dialogSessionMismatch\}\s+\/>/,
   );
   const card = panel.indexOf('className="slack-section slack-threads-card"');
   const dialog = panel.indexOf('<SlackThreadDialog');
@@ -369,7 +378,7 @@ test('the Slack tab opens thread conversations in the shared dialog', () => {
   assert.match(panel, /data-testid=\{`slack-thread-\$\{thread\.ts\}`\}/);
 
   const css = read('styles/slack.css');
-  const block = css.slice(css.indexOf('.slack-thread {'), css.indexOf('.slack-thread:hover'));
+  const block = css.slice(css.indexOf('\n.slack-thread {'), css.indexOf('.slack-thread:hover'));
   assert.ok(block, 'the row block is styled');
   for (const declaration of [
     'display: block',

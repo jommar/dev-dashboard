@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The Slack tab now groups Threads I started and Mentions into five columns by
+  latest activity. The shared list includes only threads created in the last
+  rolling 28 days, so older My Tickets Slack chips disappear even after a new
+  reply. An incomplete refresh retains only rows it confirmed and warns in both
+  panels; previously verified reply information may be reused with a stale
+  warning. Ambiguous search and history matches are skipped rather than risk
+  reading an older thread, so some recent standalone mentions may be missing.
+  The separate watcher and its configured links are unchanged. Live Slack
+  behavior and API rate-limit impact have not been verified. Deploy and roll
+  back the backend and frontend session-generation changes together.
+- The main Playwright UI suite now defaults to three fully parallel workers;
+  the separate vite-proxy config is unchanged.
 - Each PR line on a My Tickets card now shows review-comment chips: up to two small
   chips counting the PR's GitHub review threads, one for threads a person started
   and one for Copilot's. A chip reads unresolved over total, amber while any thread
@@ -17,9 +29,9 @@
   `Claude session attached` in its label when a Claude session is attached to that
   thread through the Slack watcher. Each `started` row of `GET /api/slack/threads`
   gains `attachedSessions` (a count, `0` when the watcher is disabled or its store
-  cannot be read; `mentions` rows are unchanged), and the board reads the thread
-  list once more when the thread dialog closes. It still never reads
-  `GET /api/slack/watch`.
+  cannot be read; `mentions` rows do not receive that annotation), and the board
+  reads the thread list once more when the thread dialog closes. It still never
+  reads `GET /api/slack/watch`.
 - A My Tickets card turns green, with a seal named `All PRs approved`, when it has
   at least one open PR and every PR reads approved. A PR with unknown review is not
   approved, and CI and drafts are not looked at.

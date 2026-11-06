@@ -18,6 +18,7 @@ import {
 import { canonicalTicketKey, normalizeTicketKey } from '../../ui/slack-ticket-links.js';
 import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
 import { SlackThreadLinks } from './SlackThreadLink.jsx';
+import { BoardColumn } from './BoardShell.jsx';
 
 // Jira priority names mapped to a chevron step: two up, one up, bars, one down,
 // two down. The shape carries the level; the name is in the label.
@@ -300,43 +301,28 @@ export function TicketBoard({
       >
         {columns.map((column) => {
           const id = slug(column.status);
-          const titleId = `my-tickets-column-title-${id}`;
           return (
-            <section
-              className="my-tickets-column"
-              role="group"
+            <BoardColumn
               key={column.status}
-              data-jira-status-kind={column.kind}
-              data-testid={`my-tickets-column-${id}`}
-              aria-labelledby={titleId}
+              id={id}
+              label={column.status}
+              count={column.tickets.length}
+              testIdPrefix="my-tickets-column-"
+              kind={column.kind}
             >
-              {/* A div, not a header: the dashboard's `.card header` rule would lay this out as a page header. */}
-              <div className="my-tickets-column-head" data-testid={`my-tickets-column-head-${id}`}>
-                <h3 className="my-tickets-column-title" id={titleId}>
-                  {column.status}
-                </h3>
-                <span
-                  className="my-tickets-column-count"
-                  data-testid={`my-tickets-column-count-${id}`}
-                >
-                  {column.tickets.length}
-                </span>
-              </div>
-              <ul className="my-tickets-column-body" data-testid={`my-tickets-column-body-${id}`}>
-                {column.tickets.map((ticket) => (
-                  <li key={ticket.key}>
-                    <TicketCard
-                      ticket={ticket}
-                      jiraBase={jiraBase}
-                      currentSprints={currentSprints}
-                      prs={prsByTicket[canonicalTicketKey(ticket.key)] || []}
-                      slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
-                      onOpenThread={onOpenThread}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </section>
+              {column.tickets.map((ticket) => (
+                <li key={ticket.key}>
+                  <TicketCard
+                    ticket={ticket}
+                    jiraBase={jiraBase}
+                    currentSprints={currentSprints}
+                    prs={prsByTicket[canonicalTicketKey(ticket.key)] || []}
+                    slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
+                    onOpenThread={onOpenThread}
+                  />
+                </li>
+              ))}
+            </BoardColumn>
           );
         })}
       </div>

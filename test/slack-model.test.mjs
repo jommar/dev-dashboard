@@ -36,6 +36,7 @@ test('Slack epoch strings become ISO timestamps, bad input becomes empty', () =>
   assert.equal(slackTimestamp(''), '');
   assert.equal(slackTimestamp('abc'), '');
   assert.equal(slackTimestamp(undefined), '');
+  assert.equal(slackTimestamp('9999999999999.000000'), '');
 });
 
 test('a thread link points at the workspace thread, not a guessed permalink', () => {
@@ -102,6 +103,19 @@ test('a thread root becomes one list entry ordered by its latest activity', () =
   assert.equal(thread.replyCount, 3);
   assert.equal(thread.activityAt, new Date(200000).toISOString(), 'latest reply drives ordering');
   assert.equal(thread.needsReply, null, 'unknown until replies are read');
+});
+
+test('list activity ISO milliseconds agree with its full-precision Slack timestamp', () => {
+  const activityTs = '1793222863.750299';
+  const thread = buildThread({
+    root: { ts: '1793222860.000001', reply_count: 1, latest_reply: activityTs },
+    channelId: 'C1',
+    teamId: 'T1',
+    me: 'U9',
+    users,
+  });
+  assert.equal(thread.activityAt, '2026-10-28T21:27:43.750Z');
+  assert.equal(thread.activityTs, activityTs);
 });
 
 test('a thread subject is the first nonempty physical root line with Slack markup cleaned', () => {

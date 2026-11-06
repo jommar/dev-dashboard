@@ -6,8 +6,8 @@ const SLACK_SESSION_EVENT = 'slack-session-changed';
 
 // The panel announces a connect or disconnect here, so the badge stays truthful
 // without the nav holding on to panel state or reaching into the panel's hooks.
-export function notifySlackSessionChanged() {
-  window.dispatchEvent(new Event(SLACK_SESSION_EVENT));
+export function notifySlackSessionChanged(source) {
+  window.dispatchEvent(new CustomEvent(SLACK_SESSION_EVENT, { detail: { source } }));
 }
 
 // Polls the pending summary independently of the Slack panel: the badge is

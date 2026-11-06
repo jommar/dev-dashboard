@@ -86,6 +86,16 @@ async function waitLoaded(page, view) {
   await expect(page.getByTestId(`${view}-meta`)).not.toContainText(/loading|Refreshing/);
 }
 
+// Ticket readiness does not await the optional Slack list or its final session check.
+function waitForSlackListing(page) {
+  let threadsReceived = false;
+  return page.waitForResponse((response) => {
+    const path = new URL(response.url()).pathname;
+    if (path === '/api/slack/threads') threadsReceived = true;
+    return threadsReceived && path === '/api/slack/status';
+  });
+}
+
 test('work toolbars combine local filters, keep counts and warnings honest, and persist each view safely', async ({
   page,
   dashboard,
@@ -148,8 +158,10 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
   });
 
   await test.step('ticket status, full sprint history, priority and type combine without changing remote scope', async () => {
+    const slackLoaded = waitForSlackListing(page);
     await page.getByTestId('tab-my-tickets').click();
     await waitLoaded(page, 'my-tickets');
+    await slackLoaded;
     await expect(mine.search).toBeVisible();
     await expect(tickets.getByTestId('my-tickets-filter-count')).toHaveText('4 of 4');
     await expectNoFetches(dashboard, async () => {
@@ -178,10 +190,18 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
       await expect(tickets.getByTestId('my-tickets-truncated')).toBeVisible();
       await mine.search.fill('[FIX].* <IMG> &');
     });
-    await page.route('**/api/my-tickets?includeDone=1', (route) =>
-      route.fulfill({ status: 503, body: 'Unavailable' }),
-    );
+    let failedRoute;
+    let arrived;
+    const requestArrived = new Promise((resolve) => {
+      arrived = resolve;
+    });
+    await page.route('**/api/my-tickets?includeDone=1', (route) => {
+      failedRoute = route;
+      arrived();
+    });
     await tickets.getByTestId('my-tickets-include-done').check();
+    await requestArrived;
+    await failedRoute.fulfill({ status: 503, body: 'Unavailable' });
     await expect(tickets.getByTestId('my-tickets-meta')).toContainText('last update');
     await expect(tickets.getByTestId('my-tickets-include-done')).not.toBeChecked();
     await expect(mine.select('Sprint')).toHaveValue('2');
@@ -232,8 +252,10 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
     await expect(pr.search).toHaveValue('change 105');
     await expect(pr.select('Section')).toHaveValue('draft');
     await expect(pr.select('Repository')).toHaveValue('example/api');
+    const slackLoaded = waitForSlackListing(page);
     await page.getByTestId('tab-my-tickets').click();
     await waitLoaded(page, 'my-tickets');
+    await slackLoaded;
     await expect(mine.search).toHaveValue('DEMO-1');
     for (const [label, value] of [
       ['Status', 'In Progress'],
@@ -248,8 +270,10 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
       sprints: [ticket.sprint],
     }));
     dashboard.data.tickets.allSprints = [dashboard.data.tickets.activeSprints[0]];
+    const slackRefreshed = waitForSlackListing(page);
     await tickets.getByTestId('my-tickets-refresh').click();
     await waitLoaded(page, 'my-tickets');
+    await slackRefreshed;
     await expect(mine.select('Sprint')).toHaveValue('2');
     await expect(mine.select('Priority')).toHaveValue('High');
     await expect(tickets.getByTestId('my-tickets-no-matches')).toBeVisible();
@@ -308,8 +332,10 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
         return set.call(this, name, value);
       };
     }, STORAGE_KEY);
+    const blockedSlackLoaded = waitForSlackListing(blockedPage);
     await blockedPage.goto('/#/my-tickets');
     await waitLoaded(blockedPage, 'my-tickets');
+    await blockedSlackLoaded;
     const blocked = controls(blockedPage.getByTestId('panel-my-tickets'));
     await expectNoFetches(dashboard, async () => {
       await blocked.search.fill('DEMO-1');
@@ -406,6 +432,43 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
       }
     }
   });
+});
+
+test('ticket filters send no requests while the initial Slack session check is pending', async ({
+  page,
+  dashboard,
+}) => {
+  populateFilters(dashboard.data);
+  await page.clock.install();
+  let statusRequests = 0;
+  let heldStatus;
+  let arrived;
+  const statusArrived = new Promise((resolve) => {
+    arrived = resolve;
+  });
+  await page.route('**/api/slack/status', (route) => {
+    statusRequests += 1;
+    if (statusRequests !== 2) return route.fallback();
+    heldStatus = route;
+    arrived();
+  });
+  const slackLoaded = waitForSlackListing(page);
+  const badgeLoaded = page.waitForResponse('**/api/slack/pending');
+  const prsLoaded = page.waitForResponse('**/api/ticket-prs');
+  await page.goto('/#/my-tickets');
+  await waitLoaded(page, 'my-tickets');
+  await Promise.all([statusArrived, badgeLoaded, prsLoaded]);
+
+  const filters = controls(page.getByTestId('panel-my-tickets'));
+  await expectNoFetches(dashboard, async () => {
+    await filters.search.fill('DEMO-1');
+    await expect(page.getByTestId('my-tickets-filter-count')).toHaveText('1 of 4');
+    await filters.clear.click();
+    await expect(page.getByTestId('my-tickets-filter-count')).toHaveText('4 of 4');
+  });
+  await heldStatus.fallback();
+  await slackLoaded;
+  expect(statusRequests).toBe(2);
 });
 
 test('Home filters the full Needs You queue before twelve rows and only filters Sprint drilldowns, preserving aggregates', async ({

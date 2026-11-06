@@ -66,6 +66,67 @@
   gap: 8px;
 }
 
+/* The shared ticket wells stay bounded here so the independent watcher remains
+   in the page flow. Vertical scroll can chain to the page on touch and wheel. */
+.slack-board-frame {
+  min-width: 0;
+}
+.slack-board {
+  height: clamp(320px, 52vh, 500px);
+  padding: 0 0 var(--s2);
+  scroll-padding-inline: 0;
+  scroll-snap-type: none;
+}
+.slack-board .my-tickets-column-body {
+  overscroll-behavior-y: auto;
+}
+.slack-board .slack-thread,
+.slack-unknown .slack-thread {
+  background: var(--panel2);
+  box-shadow: var(--shadow);
+}
+.slack-coverage {
+  margin-bottom: var(--s2);
+}
+.slack-unknown {
+  margin-top: var(--s3);
+}
+.slack-unknown h3 {
+  margin: 0 0 var(--s2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.slack-unknown-list {
+  columns: 1;
+  column-gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.slack-unknown-list > li {
+  break-inside: avoid;
+}
+.slack-unknown-list > li + li {
+  margin-top: var(--s2);
+}
+@media (min-width: 760px) {
+  .slack-unknown-list {
+    columns: 2;
+  }
+}
+@media (min-width: 1700px) {
+  .slack-unknown-list {
+    columns: 3;
+  }
+}
+@media (max-width: 599px) {
+  .slack-board {
+    padding: 0 0 var(--s2);
+    scroll-padding-inline: 0;
+    scroll-snap-type: x mandatory;
+  }
+}
+
 /* A row used to be an anchor; as a <button> it needs the browser's own chrome
    removed — full width, left-aligned, inheriting the surrounding type — so it
    keeps the block position it had inside the column list. */

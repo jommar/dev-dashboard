@@ -7,6 +7,7 @@
 // side-effect-free so it can be tested without a browser or a network.
 
 import { threadWatchKey } from './slack-link.mjs';
+import { parseSlackTs } from '../ui/slack-timestamp.js';
 
 function decodeEntities(text) {
   return text
@@ -21,7 +22,20 @@ function decodeEntities(text) {
 // an empty string so callers sort it last instead of crashing.
 export function slackTimestamp(ts) {
   const seconds = Number(String(ts ?? '').split('.')[0]);
-  return Number.isSafeInteger(seconds) && seconds > 0 ? new Date(seconds * 1000).toISOString() : '';
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) return '';
+  const date = new Date(seconds * 1000);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : '';
+}
+
+// List activity keeps the fractional millisecond in its ISO representation;
+// activityTs retains the remaining microseconds for deterministic ordering.
+function activityTimestamp(ts) {
+  if (!validSlackTs(ts)) return '';
+  const whole = slackTimestamp(ts);
+  if (!whole) return '';
+  const fraction = String(ts).split('.')[1].padEnd(6, '0');
+  const date = new Date(Date.parse(whole) + Number(fraction.slice(0, 3)));
+  return Number.isFinite(date.getTime()) ? date.toISOString() : '';
 }
 
 // Mrkdwn to plain text: mentions and channels become names, links become their
@@ -83,7 +97,7 @@ export function person(id, me, users) {
 // One list entry from a thread root. `mention` is set for the mentions list, and
 // describes the message that named the user rather than the thread starter.
 export function buildThread({ root, mention, channelId, teamId, me, users }) {
-  const activity = root.latest_reply || root.ts;
+  const activity = root.reply_count ? root.latest_reply : root.ts;
   const source = mention || root;
   const subjectLine = String(root.text ?? '')
     .split(/\r\n|[\r\n\u2028\u2029]/)
@@ -96,7 +110,8 @@ export function buildThread({ root, mention, channelId, teamId, me, users }) {
     author: person(source.user, me, users),
     starter: person(root.user, me, users),
     replyCount: root.reply_count || 0,
-    activityAt: slackTimestamp(activity),
+    activityAt: activityTimestamp(activity),
+    activityTs: validSlackTs(activity) ? activity : null,
     latestReplyBy: null,
     needsReply: null,
   };
@@ -130,7 +145,21 @@ export function buildThreadMessages(messages, { me, users } = {}) {
 }
 
 export function sortByActivity(threads) {
-  return [...threads].sort((a, b) => Date.parse(b.activityAt) - Date.parse(a.activityAt));
+  return [...threads].sort((a, b) => {
+    const aTs = validSlackTs(a.activityTs);
+    const bTs = validSlackTs(b.activityTs);
+    if (aTs && bTs)
+      return compareSlackTs(b.activityTs, a.activityTs) || String(a.ts).localeCompare(String(b.ts));
+    if (aTs || bTs) return aTs ? -1 : 1;
+    const aTime = Date.parse(a.activityAt);
+    const bTime = Date.parse(b.activityAt);
+    if (Number.isFinite(aTime) || Number.isFinite(bTime))
+      return (
+        (Number.isFinite(bTime) ? bTime : -Infinity) -
+          (Number.isFinite(aTime) ? aTime : -Infinity) || String(a.ts).localeCompare(String(b.ts))
+      );
+    return String(a.ts).localeCompare(String(b.ts));
+  });
 }
 
 // A message is not mine when a person other than the user wrote it. A bot message has no
@@ -150,14 +179,25 @@ export function applyLastReply(thread, last, me, users) {
 
 // A Slack ts is "<seconds>.<micro6>": two integers, compared as such, never as a float or text.
 function slackTsParts(ts) {
-  const match = /^(\d+)\.(\d+)$/.exec(String(ts ?? ''));
-  return match ? [Number(match[1]), Number(match[2].padEnd(6, '0'))] : null;
+  return parseSlackTs(String(ts ?? ''));
+}
+
+export function validSlackTs(ts) {
+  return typeof ts === 'string' && Boolean(slackTsParts(ts));
 }
 
 export function compareSlackTs(a, b) {
   const [aSeconds, aMicro] = slackTsParts(a);
   const [bSeconds, bMicro] = slackTsParts(b);
-  return aSeconds - bSeconds || aMicro - bMicro;
+  return aSeconds > bSeconds
+    ? 1
+    : aSeconds < bSeconds
+      ? -1
+      : aMicro > bMicro
+        ? 1
+        : aMicro < bMicro
+          ? -1
+          : 0;
 }
 
 function isNewerTs(ts, referenceTs) {

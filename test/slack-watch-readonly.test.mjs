@@ -22,6 +22,7 @@ const NEW_MODULES = [
   'backend/slack-watch-store.mjs',
   'backend/claude-sessions.mjs',
   'backend/slack-watcher.mjs',
+  'backend/slack-board.mjs',
 ];
 const SLACK_MODULE = 'backend/slack.mjs';
 // Method names Slack's web API offers for changing something, as a literal or a URL path segment.
@@ -156,7 +157,9 @@ test('read-only: backend/slack.mjs gains only the reader and no write-capable na
   });
   assert.equal(typeof integration.lastInThread, 'function');
   assert.deepEqual(writeMethodNames(source), []);
-  const literals = [...source.matchAll(METHOD_LITERAL)].map((match) => match[1]);
+  const literals = [
+    ...`${source}\n${readSource('backend/slack-board.mjs')}`.matchAll(METHOD_LITERAL),
+  ].map((match) => match[1]);
   assert.ok(literals.length >= METHODS_BEFORE_WATCH.length, 'the method literals were found');
   const added = [...new Set(literals)].filter((name) => !METHODS_BEFORE_WATCH.includes(name));
   assert.deepEqual(added, [], 'no Slack method beyond the read-only ones in use today');

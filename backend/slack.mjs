@@ -19,16 +19,14 @@ import fsDefault from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as spawnDefault } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readTokenFile, stageTokenFile } from './credentials.mjs';
+import { createSlackBoard, eligibleRoot } from './slack-board.mjs';
 import {
-  applyLastReply,
-  buildThread,
   buildThreadMessages,
   compareSlackTs,
   mentionedUserIds,
   person,
-  sortByActivity,
-  threadKey,
   threadLinkFields,
 } from './slack-model.mjs';
 
@@ -40,13 +38,7 @@ const REQUEST_TIMEOUT_MS = 8_000;
 // refresh to a predictable number of calls.
 const CHANNEL_NAME = 'ezat_claudio';
 const USERS_TTL_MS = 10 * 60 * 1000;
-const THREADS_TTL_MS = 5 * 60 * 1000;
 const PENDING_TTL_MS = 60_000;
-const FAILURE_BACKOFF_MS = 60_000;
-const HISTORY_PAGES = 3;
-const SEARCH_PAGES = 2;
-const SECTION_LIMIT = 25;
-const ENRICH_CONCURRENCY = 5;
 
 // One conversation opened from a ticket glyph. A thread fits in one 200-message
 // page almost always; the other two pages are the ceiling, so a huge thread
@@ -111,11 +103,17 @@ export function createSlackIntegration({
 } = {}) {
   let cached = null; // { at, value } — at most one Slack call per minute.
   let child = null;
+  let sessionKey = null;
 
   function session() {
     const file = readTokenFile(paths.session, fs);
-    if (!file.token || file.unsafe) return null;
-    return parseSession(file.token);
+    const credentials = !file.token || file.unsafe ? null : parseSession(file.token);
+    const key = credentials ? JSON.stringify(credentials) : null;
+    if (key !== sessionKey) {
+      sessionKey = key;
+      clearCaches();
+    }
+    return credentials;
   }
 
   function send(method, params, credentials) {
@@ -133,11 +131,31 @@ export function createSlackIntegration({
   }
 
   async function call(method, params, credentials) {
+    if ((rateLimits.get(method) || 0) > now()) throw new Error('rate_limited');
+    const gen = generation;
     const res = await send(method, params, credentials);
-    return res.json();
+    const payload = await res.json().catch(() => null);
+    if (res.status === 429 || payload?.error === 'ratelimited') {
+      const seconds = retryAfterOf(res).retryAfterSeconds || 60;
+      if (isCurrent(gen))
+        rateLimits.set(method, Math.max(rateLimits.get(method) || 0, now() + seconds * 1000));
+      throw new Error('rate_limited');
+    }
+    if (!res.ok) {
+      if (
+        method === 'conversations.replies' &&
+        (res.status === 401 || res.status === 403) &&
+        payload?.ok === false &&
+        (REJECTED_SESSION_ERRORS.has(payload.error) || UNREADABLE_THREAD_ERRORS.has(payload.error))
+      )
+        return payload;
+      throw new Error('unavailable');
+    }
+    return payload;
   }
 
-  async function verify(credentials) {
+  async function verify(credentials, gen = generation) {
+    if (!isCurrent(gen)) return { connected: false, verified: false };
     if (cached && now() - cached.at < STATUS_TTL_MS) return cached.value;
     let value;
     try {
@@ -163,16 +181,20 @@ export function createSlackIntegration({
         teamId: credentials.teamId,
       };
     }
-    cached = { at: now(), value };
+    if (isCurrent(gen)) cached = { at: now(), value };
     return value;
   }
 
   async function status() {
     const credentials = session();
     if (!credentials) return { connected: false, connecting: Boolean(child) };
+    const gen = generation;
+    const identity = await verify(credentials, gen);
+    if (!isCurrent(gen)) return { connected: false, connecting: Boolean(child) };
     return {
-      ...(await verify(credentials)),
+      ...identity,
       connecting: Boolean(child),
+      sessionVersion,
       savedAt: credentials.savedAt,
       teamDomain: credentials.teamDomain,
     };
@@ -192,20 +214,48 @@ export function createSlackIntegration({
 
   let usersCache = null;
   let channelCache = null;
-  let threadsCache = null; // { at, value } — served even when `at` is past the TTL.
   let pendingCache = null;
-  let refreshInFlight = null; // at most one background refresh at a time.
-  let retryAt = 0; // backoff deadline after a load that produced nothing.
   let generation = 0; // bumped by disconnect(), so a late refresh cannot write back.
-  const lastReplyCache = new Map(); // "<thread ts>:<activity ts>" -> last message
+  // Random and process-local, not derived from credentials. A restart or any
+  // detected session replacement produces a different browser-visible value.
+  let sessionVersion = randomUUID();
   const threadCache = new Map(); // thread ts -> { at, value }, one dialog per thread
+  const rateLimits = new Map();
+  const board = createSlackBoard({
+    call,
+    session,
+    verify,
+    channel,
+    users,
+    now,
+    isCurrent,
+    generation: () => generation,
+  });
 
-  async function paged(credentials, method, params, pages, select) {
+  function clearCaches() {
+    generation += 1;
+    sessionVersion = randomUUID();
+    cached = null;
+    pendingCache = null;
+    usersCache = null;
+    channelCache = null;
+    threadCache.clear();
+    board.clear();
+    rateLimits.clear();
+  }
+
+  function isCurrent(gen) {
+    return Boolean(session()) && gen === generation;
+  }
+
+  async function paged(credentials, method, params, pages, select, gen = generation) {
     const out = [];
     let cursor = '';
     for (let page = 0; page < pages; page++) {
+      if (!isCurrent(gen)) break;
       const payload = await call(method, { ...params, ...(cursor ? { cursor } : {}) }, credentials);
-      if (!payload?.ok) break;
+      if (!isCurrent(gen)) break;
+      if (!payload?.ok) throw new Error('Slack page unavailable');
       out.push(...(select(payload) || []));
       cursor = payload.response_metadata?.next_cursor || '';
       if (!cursor) break;
@@ -213,14 +263,22 @@ export function createSlackIntegration({
     return out;
   }
 
-  async function users(credentials) {
+  async function users(credentials, gen = generation) {
+    if (!isCurrent(gen)) throw new Error('Session changed');
     if (usersCache && now() - usersCache.at < USERS_TTL_MS) return usersCache.value;
-    const members = await paged(credentials, 'users.list', { limit: 200 }, 5, (p) => p.members);
+    const members = await paged(
+      credentials,
+      'users.list',
+      { limit: 200 },
+      5,
+      (p) => p.members,
+      gen,
+    );
     const value = {};
     for (const member of members)
       value[member.id] =
         member.profile?.display_name || member.real_name || member.name || member.id;
-    usersCache = { at: now(), value };
+    if (isCurrent(gen)) usersCache = { at: now(), value };
     return value;
   }
 
@@ -228,7 +286,8 @@ export function createSlackIntegration({
   // `conversations.list` (ten paged calls, ~3 s), while `in:<name>` names it in
   // one call (~0.35 s). The list scan stays as the fallback for a channel
   // search cannot see.
-  async function channel(credentials) {
+  async function channel(credentials, gen = generation) {
+    if (!isCurrent(gen)) return null;
     if (channelCache && now() - channelCache.at < USERS_TTL_MS) return channelCache.value;
     let found = null;
     const payload = await call(
@@ -236,6 +295,7 @@ export function createSlackIntegration({
       { query: `in:${CHANNEL_NAME}`, count: 1 },
       credentials,
     ).catch(() => null);
+    if (!isCurrent(gen)) return null;
     const match = payload?.messages?.matches?.[0];
     if (match?.channel?.id)
       found = { id: match.channel.id, name: match.channel.name || CHANNEL_NAME };
@@ -246,220 +306,15 @@ export function createSlackIntegration({
         { types: 'public_channel,private_channel', exclude_archived: true, limit: 200 },
         10,
         (p) => p.channels,
+        gen,
       );
       found = channels.find((entry) => entry.name === CHANNEL_NAME) || null;
     }
-    channelCache = { at: now(), value: found };
+    if (isCurrent(gen)) channelCache = { at: now(), value: found };
     return found;
   }
 
-  async function history(credentials, channelId) {
-    const messages = await paged(
-      credentials,
-      'conversations.history',
-      { channel: channelId, limit: 200 },
-      HISTORY_PAGES,
-      (p) => p.messages,
-    );
-    return [...new Map(messages.map((message) => [message.ts, message])).values()];
-  }
-
-  async function searchMentions(credentials, userId) {
-    const matches = [];
-    for (let page = 1; page <= SEARCH_PAGES; page++) {
-      const payload = await call(
-        'search.messages',
-        {
-          query: `in:${CHANNEL_NAME} <@${userId}>`,
-          count: 100,
-          page,
-          sort: 'timestamp',
-          sort_dir: 'desc',
-        },
-        credentials,
-      );
-      if (!payload?.ok) break;
-      matches.push(...(payload.messages?.matches || []));
-      if (matches.length >= (payload.messages?.total || 0)) break;
-    }
-    return matches;
-  }
-
-  // Slack answers `limit=1` with the root plus the newest message and nothing
-  // else, which is exactly "who spoke last" — with far less payload than the
-  // limit=100 call it replaces.
-  async function lastMessage(credentials, channelId, ts) {
-    const payload = await call(
-      'conversations.replies',
-      { channel: channelId, ts, limit: 1 },
-      credentials,
-    );
-    const messages = payload?.ok ? payload.messages || [] : [];
-    return messages.length ? messages[messages.length - 1] : null;
-  }
-
-  // Only the listed threads are fetched, five at a time (Slack rate-limits
-  // higher fan-out), and a thread is not fetched again until its latest
-  // activity changes.
-  async function markLastReplies(credentials, channelId, me, users_, list) {
-    const queue = [...list];
-    const worker = async () => {
-      while (queue.length) {
-        const thread = queue.shift();
-        const key = `${thread.ts}:${thread.activityAt}`;
-        if (lastReplyCache.has(key)) {
-          applyLastReply(thread, lastReplyCache.get(key), me, users_);
-          continue;
-        }
-        const last = await lastMessage(credentials, channelId, thread.ts).catch(() => null);
-        if (!last) continue;
-        if (lastReplyCache.size > 500) lastReplyCache.clear();
-        lastReplyCache.set(key, last);
-        applyLastReply(thread, last, me, users_);
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(ENRICH_CONCURRENCY, list.length) }, worker));
-  }
-
-  // Everything except the reply flags. Returns null when the session cannot be
-  // used, so the caller can back off instead of asking again immediately.
-  async function loadRows(credentials) {
-    const identity = await verify(credentials);
-    if (!identity.connected || !identity.userId) return null;
-    const me = identity.userId;
-    const teamId = identity.teamId || credentials.teamId || '';
-    const target = await channel(credentials);
-    if (!target) return null;
-    const [members, messages, matches] = await Promise.all([
-      users(credentials),
-      history(credentials, target.id),
-      searchMentions(credentials, me),
-    ]);
-    // Mention text renders the signed-in user by name, not by raw id.
-    const names = { ...members, [me]: identity.user || 'you' };
-
-    const roots = messages.filter((message) => message.thread_ts === message.ts);
-    const rootByTs = new Map(roots.map((message) => [message.ts, message]));
-
-    const started = roots
-      .filter((root) => root.user === me)
-      .map((root) => buildThread({ root, channelId: target.id, teamId, me, users: names }));
-
-    // Matches carry no `thread_ts`, so `threadKey` groups them by the thread
-    // their permalink points at: many matches, one row per thread. Only the
-    // newest mention of a thread becomes its preview.
-    const newestMention = new Map();
-    for (const match of matches) {
-      const key = threadKey(match);
-      if (!key) continue;
-      const previous = newestMention.get(key);
-      if (!previous || Number(match.ts) > Number(previous.ts)) newestMention.set(key, match);
-    }
-    const mentioned = [];
-    for (const [ts, match] of newestMention) {
-      let root = rootByTs.get(ts);
-      if (!root) {
-        // Only a thread the history page missed reaches this lookup, so it is
-        // one or two calls rather than one per match.
-        const payload = await call(
-          'conversations.replies',
-          { channel: target.id, ts, limit: 1 },
-          credentials,
-        ).catch(() => null);
-        root = payload?.ok ? payload.messages?.[0] : null;
-      }
-      if (!root) continue;
-      mentioned.push(
-        buildThread({ root, mention: match, channelId: target.id, teamId, me, users: names }),
-      );
-    }
-    // Defensive: one row per thread root, even if two matches grouped apart.
-    const mentions = [...new Map(mentioned.map((thread) => [thread.ts, thread])).values()];
-
-    return {
-      me,
-      channelId: target.id,
-      names,
-      value: {
-        available: true,
-        channel: { id: target.id, name: target.name },
-        started: sortByActivity(started).slice(0, SECTION_LIMIT),
-        mentions: sortByActivity(mentions).slice(0, SECTION_LIMIT),
-        updatedAt: new Date(now()).toISOString(),
-        enriched: false,
-      },
-    };
-  }
-
-  // One background task: either fills in the flags of a snapshot the caller has
-  // already been handed, or re-reads everything once the snapshot is stale.
-  // Failure is silent and backs off, and a disconnect mid-flight wins.
-  function refresh(credentials, snapshot = null) {
-    if (refreshInFlight) return refreshInFlight;
-    const gen = generation;
-    const task = (async () => {
-      try {
-        if (!snapshot) {
-          snapshot = await loadRows(credentials);
-          if (gen !== generation) return;
-          if (!snapshot) {
-            retryAt = now() + FAILURE_BACKOFF_MS;
-            return;
-          }
-          threadsCache = { at: now(), value: snapshot.value };
-        }
-        await markLastReplies(credentials, snapshot.channelId, snapshot.me, snapshot.names, [
-          ...snapshot.value.started,
-          ...snapshot.value.mentions,
-        ]);
-        if (gen !== generation) return;
-        snapshot.value.enriched = true;
-        threadsCache = { at: now(), value: snapshot.value };
-        retryAt = 0;
-      } catch {
-        retryAt = now() + FAILURE_BACKOFF_MS;
-      }
-    })();
-    // The body never rejects; `finally` only clears the single-flight guard.
-    const guarded = task.finally(() => {
-      if (refreshInFlight === guarded) refreshInFlight = null;
-    });
-    refreshInFlight = guarded;
-    return guarded;
-  }
-
-  async function threads() {
-    const credentials = session();
-    if (!credentials) return { available: false };
-    // A snapshot is served immediately, even past its TTL: re-reading it is the
-    // background task's job, and a blocking refresh is what made this tab slow.
-    if (threadsCache) {
-      const stale = now() - threadsCache.at >= THREADS_TTL_MS;
-      const needsFlags = !threadsCache.value.enriched;
-      // One attempt at a time, and none inside a failure backoff.
-      if ((stale || needsFlags) && now() >= retryAt) refresh(credentials);
-      return threadsCache.value;
-    }
-    if (now() < retryAt) return { available: false };
-    const gen = generation;
-    try {
-      const snapshot = await loadRows(credentials);
-      // A disconnect while the rows were being read wins over this answer.
-      if (gen !== generation) return { available: false };
-      if (!snapshot) {
-        retryAt = now() + FAILURE_BACKOFF_MS;
-        return { available: false };
-      }
-      threadsCache = { at: now(), value: snapshot.value };
-      retryAt = 0;
-      // Rows first: the tab paints now and the reply flags land a moment later.
-      refresh(credentials, snapshot);
-      return snapshot.value;
-    } catch {
-      retryAt = now() + FAILURE_BACKOFF_MS;
-      return { available: false };
-    }
-  }
+  const threads = board.threads;
 
   // --- one thread, in full ------------------------------------------------
   // The ticket glyph opens a dialog, so this is the only Slack call path a
@@ -469,23 +324,26 @@ export function createSlackIntegration({
 
   async function thread(ts) {
     const key = typeof ts === 'string' ? ts.trim() : '';
-    if (!THREAD_TS.test(key)) return { available: false };
+    if (!THREAD_TS.test(key) || !eligibleRoot(key, now())) return { available: false };
+    const credentials = session();
+    if (!credentials || !board.isVerifiedRoot(key)) return { available: false };
+    const gen = generation;
     const hit = threadCache.get(key);
     if (hit && now() - hit.at < THREAD_TTL_MS) return hit.value;
-    const credentials = session();
-    if (!credentials) return { available: false };
     try {
-      const identity = await verify(credentials);
-      if (!identity.connected || !identity.userId) return { available: false };
+      const identity = await verify(credentials, gen);
+      if (!isCurrent(gen) || !board.isVerifiedRoot(key) || !identity.connected || !identity.userId)
+        return { available: false };
       const me = identity.userId;
       const teamId = identity.teamId || credentials.teamId || '';
-      const target = await channel(credentials);
+      const target = await channel(credentials, gen);
       if (!target) return { available: false };
 
       const messages = [];
       let cursor = '';
       let truncated = false;
       for (let page = 0; page < THREAD_PAGES; page++) {
+        if (!isCurrent(gen) || !board.isVerifiedRoot(key)) return { available: false };
         const payload = await call(
           'conversations.replies',
           {
@@ -496,7 +354,19 @@ export function createSlackIntegration({
           },
           credentials,
         );
-        if (!payload?.ok) return { available: false };
+        if (
+          !isCurrent(gen) ||
+          !board.isVerifiedRoot(key) ||
+          !payload?.ok ||
+          !Array.isArray(payload.messages)
+        )
+          return { available: false };
+        if (
+          page === 0 &&
+          (payload.messages[0]?.ts !== key ||
+            (payload.messages[0]?.thread_ts && payload.messages[0].thread_ts !== key))
+        )
+          return { available: false };
         messages.push(...(payload.messages || []));
         cursor = payload.response_metadata?.next_cursor || '';
         if (!cursor) {
@@ -509,7 +379,8 @@ export function createSlackIntegration({
 
       // Names cover the thread's authors and whoever it mentions — nobody else,
       // since users.list is workspace-wide and this dialog is one conversation.
-      const members = await users(credentials);
+      const members = await users(credentials, gen).catch(() => ({}));
+      if (!isCurrent(gen) || !board.isVerifiedRoot(key)) return { available: false };
       const names = {};
       for (const id of [
         ...messages.map((message) => message.user).filter(Boolean),
@@ -609,12 +480,13 @@ export function createSlackIntegration({
   async function pending() {
     const credentials = session();
     if (!credentials) return { available: false };
+    const gen = generation;
     if (pendingCache && now() - pendingCache.at < PENDING_TTL_MS) return pendingCache.value;
     try {
-      const identity = await verify(credentials);
-      if (!identity.connected) return { available: false };
-      const target = await channel(credentials);
-      if (!target) return { available: false };
+      const identity = await verify(credentials, gen);
+      if (!isCurrent(gen) || !identity.connected) return { available: false };
+      const target = await channel(credentials, gen);
+      if (!isCurrent(gen) || !target) return { available: false };
       const payload = await call('client.counts', { include_all_channels: 'true' }, credentials);
       if (!payload?.ok) return { available: false };
       const channels = Array.isArray(payload.channels) ? payload.channels : [];
@@ -631,6 +503,7 @@ export function createSlackIntegration({
         mentionsTotal: Number(payload.activity_v2?.at_user) || 0,
         updatedAt: new Date(now()).toISOString(),
       };
+      if (!isCurrent(gen)) return { available: false };
       pendingCache = { at: now(), value };
       return value;
     } catch {
@@ -685,24 +558,15 @@ export function createSlackIntegration({
     } catch {
       /* An unreadable session already means "not connected". */
     }
-    // Anything already in flight belongs to the session being dropped: the
-    // generation bump stops it writing its snapshot back afterwards.
-    generation += 1;
-    refreshInFlight = null;
-    retryAt = 0;
-    cached = null;
-    threadsCache = null;
-    pendingCache = null;
-    usersCache = null;
-    channelCache = null;
-    lastReplyCache.clear();
-    threadCache.clear();
+    sessionKey = null;
+    clearCaches();
     return { ok: true };
   }
 
   function writeSession(contents) {
     const temporary = stageTokenFile(paths.session, JSON.stringify(contents, null, 2) + '\n', fs);
     fs.renameSync(temporary, paths.session);
+    session();
   }
 
   return {

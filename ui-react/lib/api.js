@@ -141,9 +141,12 @@ export async function getSlackStatus() {
   }
 }
 
-export async function getSlackThreads() {
+export async function getSlackThreads(continuation) {
   try {
-    const res = await fetch('/api/slack/threads');
+    const url = continuation
+      ? `/api/slack/threads?continuation=${encodeURIComponent(continuation)}`
+      : '/api/slack/threads';
+    const res = await fetch(url);
     if (!res.ok) return { available: false };
     return await res.json();
   } catch {

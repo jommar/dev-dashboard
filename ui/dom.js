@@ -37,10 +37,10 @@ export function replaceRegion(el, html) {
 }
 
 // Compact relative time, e.g. "just now", "3m ago", "2h ago", "5d ago".
-export function timeAgo(iso) {
+export function timeAgo(iso, now = Date.now()) {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '';
-  const s = Math.floor((Date.now() - t) / 1000);
+  const s = Math.floor((now - t) / 1000);
   if (s < 60) return 'just now';
   const m = Math.floor(s / 60);
   if (m < 60) return m + 'm ago';

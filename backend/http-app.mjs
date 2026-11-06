@@ -267,7 +267,15 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         return;
       }
       if (req.method === 'GET' && pathname === '/api/slack/threads') {
-        json(res, 200, withAttachedSessions(await slack.threads(), attachedLinks()));
+        const continuation = url.searchParams.get('continuation');
+        json(
+          res,
+          200,
+          withAttachedSessions(
+            await slack.threads(continuation ? { continuation } : undefined),
+            attachedLinks(),
+          ),
+        );
         return;
       }
       if (req.method === 'GET' && pathname === '/api/slack/pending') {

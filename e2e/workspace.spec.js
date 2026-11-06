@@ -35,10 +35,18 @@ test('tickets keep truncation warnings and a failed filter rolls back honestly @
   await page.goto('/#/my-tickets');
   await expect(page.getByTestId('my-tickets-truncated')).toContainText('incomplete');
   await expect(page.getByTestId('my-tickets-item-sample-active')).toBeVisible();
-  await page.route('**/api/my-tickets?includeDone=1', (route) =>
-    route.fulfill({ status: 503, body: 'Unavailable' }),
-  );
+  let failedRoute;
+  let arrived;
+  const requestArrived = new Promise((resolve) => {
+    arrived = resolve;
+  });
+  await page.route('**/api/my-tickets?includeDone=1', (route) => {
+    failedRoute = route;
+    arrived();
+  });
   await page.getByTestId('my-tickets-include-done').check();
+  await requestArrived;
+  await failedRoute.fulfill({ status: 503, body: 'Unavailable' });
   await expect(page.getByTestId('my-tickets-meta')).toContainText('last update');
   await expect(page.getByTestId('my-tickets-include-done')).not.toBeChecked();
   await expect(page.getByTestId('my-tickets-item-sample-active')).toBeVisible();

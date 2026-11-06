@@ -748,15 +748,20 @@ A ticket whose key heads a thread you started in `#ezat_claudio` gets a small
 Slack chip at the right end of its card's top line — one per matching thread,
 newest activity first. The chip is a speech bubble with the thread's reply count
 beside it, and a filled dot when the thread needs a reply (its accessible name
-says so in words). Clicking it opens a dialog with the full conversation: every
-message in Slack order, rendered from its own mrkdwn, plus **Copy link** and
-**Open in Slack** actions.
+says so in words). Clicking it opens a dialog with the conversation in Slack
+order, rendered from its own mrkdwn, plus **Copy link** and **Open in Slack**
+actions. The conversation can be truncated.
 Only the thread's subject line is consulted, so the key must start it. Old
 `TRIPS-NNNN` threads match `TAP-NNNN` because Jira's rename carried the numbers
-over. The chips reuse the Slack tab's cached thread list, so they simply do not
-appear — never an error — when Slack is not connected. The dialog also has a
-**Claude session** section that attaches and detaches Claude Code sessions for the
-thread on the [watcher](#watch).
+over. The chips reuse the Slack tab's thread list: only threads created within
+the last rolling 28 days appear, even if an older thread has a new reply. A
+thread disappears when it passes the cutoff, and its open dialog closes. An
+incomplete refresh shows only rows confirmed by that refresh, with a warning on
+both My Tickets and Slack. In that listing, omitted chips return only if the
+current **Load more eligible threads** retrieves them; My Tickets picks them up
+on its next shared-list read. Chips do not appear when Slack is not connected.
+The dialog also has a **Claude session** section that attaches and detaches
+Claude Code sessions for the thread on the [watcher](#watch).
 
 A thread with a Claude session attached through the watcher draws its chip filled
 (a low-opacity fill inside the bubble's outline) and in the support colour, and its
@@ -769,7 +774,7 @@ on the thread list: each row of `started` in `GET /api/slack/threads` carries
 answer from the watch list, not cached with the Slack thread list, and it is `0`
 on every row when the watcher is disabled (no Claude home directory, as in the
 Docker image) or the watch list cannot be read; the route still answers `200`.
-`mentions` rows are unchanged, and an unavailable result (Slack not connected) comes
+`mentions` rows do not receive `attachedSessions`, and an unavailable result comes
 through as it was. The board never reads `GET /api/slack/watch`. It reads
 `/api/slack/threads` once more when the thread dialog closes, so an attach or
 detach made in the dialog shows when it closes. Two other readings of "attached" were
@@ -1065,8 +1070,8 @@ contract.
 ## Slack
 
 Optional, and deliberately the least privileged thing in the app: it holds no
-Jira/GitHub dependency, sits outside the setup gate, and every failure renders as
-"not connected" rather than an error.
+Jira/GitHub dependency and sits outside the setup gate. A listing failure can
+show an unavailable or incomplete result without blocking the rest of the app.
 
 ### Why there is no OAuth app
 
@@ -1083,8 +1088,7 @@ carries the same access as your browser session — verified against `auth.test`
 `conversations.list` and `search.messages`.
 
 Treat it as an unsupported surface: Slack can rotate or invalidate these
-credentials at any time, and when it does the tab simply flips back to
-**Connect Slack**. Nothing else in the dashboard notices.
+credentials at any time, requiring **Connect Slack** again.
 
 ### Connecting
 
@@ -1104,28 +1108,43 @@ set `SLACK_WORKSPACE` to point the window at a different workspace, or
 
 ### What it shows
 
-Two lists over `#ezat_claudio`, both ordered by latest activity and both flagged
-**Needs reply** when the newest message in the thread is not yours:
+Two tabs over `#ezat_claudio` show a board of threads created within the last
+rolling 28 days. An older thread is excluded even if it has recent activity;
+there is no older-history option:
 
 - **Threads I started** — thread roots authored by you, with reply count, who
   replied last, and how long ago.
-- **Mentions** — threads (or standalone messages) where someone wrote `<@you>`,
-  grouped to one row per thread with the mentioning message as the preview.
+- **Mentions** — threads where someone wrote `<@you>`, grouped to one row per
+  thread with the mentioning message as the preview.
 
-A click on a row opens the thread's full conversation in the same in-app dialog
-My Tickets uses, with **Open in Slack** and **Copy link** in its footer and the same
-**Claude session** section ([Watch](#watch)); the
-conversation is fetched on demand and cached for a minute. The lists paint as
-soon as the two thread lists have been read; the **Needs reply** flags fill in a
-moment later, one `conversations.replies` call per listed thread, because that is
-the only call that has to look inside a thread. A payload with `enriched: false`
-still has its flags on the way — the rows are usable and show no badge yet.
+Each tab groups eligible threads by latest known activity into **Last 3 hours**,
+**Today**, **Yesterday**, **Past week** and **Past month**, newest first. The
+three-hour group takes precedence across midnight; the other groups use local
+calendar days: Past week covers days 2–7 ago and Past month days 8–30 ago.
+Threads whose activity time cannot be verified appear separately under
+**Activity time unavailable**. A thread is flagged **Needs reply** when its
+verified newest message is by another person; reply status can also be unknown.
 
-The server caches that result for five minutes and revalidates it in the
-background: a cached copy is returned immediately, even when it is past the
-five minutes, and the refresh happens behind the response. So the tab never
-waits on Slack for a refresh, and a failed read backs off for a minute instead
-of retrying on every poll.
+A click opens the conversation in the same in-app dialog My Tickets uses, with
+**Open in Slack**, **Copy link** and the **Claude session** section
+([Watch](#watch)). The conversation is fetched on demand, cached for a minute
+and may be truncated; an open dialog closes when the thread passes the cutoff.
+
+The server caches the list for five minutes and revalidates it in the background;
+cached rows are still checked against the moving cutoff. An incomplete refresh
+replaces the old list with only rows confirmed by that refresh, and both Slack
+and My Tickets warn that results may be incomplete, even when no rows are found.
+Counts cover loaded rows only. When available, **Load more eligible threads**
+continues the current listing. Previously verified reply information can be reused
+for a confirmed row while replies are checked; a warning says it may be stale.
+Some reply states may remain unknown. A failed read backs off for a minute.
+
+Discovery uses bounded history, search and reply reads. Ambiguous search or
+history matches are skipped rather than risk reading an older thread, so some
+recent standalone mentions may be missing. Slack search date boundaries and the
+unofficial web session can also limit coverage. Live Slack behavior and the API
+rate-limit impact have not been verified; listing and the independent watcher may
+compete for Slack capacity.
 
 The Slack tab label carries a badge: the unread mention count for
 `#ezat_claudio`, or a dot when the channel has unreads but no unread mentions.
@@ -1134,8 +1153,8 @@ defensively and cached for a minute — and it is hidden when Slack is
 disconnected or when there is nothing unread.
 
 The shaping rules (mrkdwn to text, epoch to ISO, "who spoke last") are pure and
-live in [`backend/slack-model.mjs`](backend/slack-model.mjs); the Slack calls and
-budgets are in [`backend/slack.mjs`](backend/slack.mjs). Field notes on the
+live in [`backend/slack-model.mjs`](backend/slack-model.mjs); listing discovery and
+budgets are in [`backend/slack-board.mjs`](backend/slack-board.mjs). Field notes on the
 underlying endpoints — including the `thread_ts === ts` root marker and the
 `search.messages` paging quirks — are in
 [`toolkit-mcp/docs/slack-web-session.md`](../../toolkit-mcp/docs/slack-web-session.md).
@@ -1146,6 +1165,8 @@ The Slack tab can also watch Slack threads and wake the Claude Code sessions tha
 are working on them. You paste thread links on the **Watch threads** card, a session
 attaches its own id to a link over HTTP, and a watcher inside the dashboard server
 reads each watched thread on a poll paced by the interval (a poll is called a tick below).
+The watcher is separate from the board's 28-day listing cutoff: its configured
+links, including older threads, retain the same watch behavior.
 When the newest message in a thread is somebody else's and newer than the last one already
 announced, the watcher appends one plain-text line to an inbox file for every session
 attached to that link. A session that follows its inbox with the Monitor tool wakes on that
@@ -1453,10 +1474,10 @@ after a server restart. The watcher never stops or removes a copy that a resume 
 
 | Route                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified }`; never fails                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while the reply flags are still being read; `available: false` when disconnected; each thread carries `url` and `watchKey`, the `<channelId>:<ts>` string the watch list uses as `key` for that thread, both empty when the thread has no link; each `started` row also carries `attachedSessions`, the number of Claude sessions attached to it (`0` for none, with a disabled watcher or an unreadable watch list), and `mentions` rows are unchanged                                  |
+| `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified, sessionVersion }`; session fields are present when connected; never fails                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while reply checks are still running; `available: false` when disconnected or unavailable; each thread carries `url` and `watchKey`, the `<channelId>:<ts>` string the watch list uses as `key` for that thread, both empty when the thread has no link; each `started` row also carries `attachedSessions`, the number of Claude sessions attached to it (`0` for none, with a disabled watcher or an unreadable watch list) |
 | `GET /api/slack/pending`                 | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, watchKey, channel, replyCount, truncated, updatedAt, names, messages[] } }`; `watchKey` is as for the thread lists; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed `ts`, or for a thread Slack refuses                                                                                                                                                                                                                                                             |
+| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, watchKey, channel, replyCount, truncated, updatedAt, names, messages[] } }`; `watchKey` is as for the thread lists; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed or ineligible `ts`, for an unverified root, or for a thread Slack refuses                                                                                                                                                                                        |
 | `POST /api/slack/connect`                | starts the sign-in window, `{ ok, connecting }`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `POST /api/slack/disconnect`             | deletes the stored session                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `GET /api/slack/watch`                   | the [watcher](#watch) state, answered from memory, no Slack calls: `{ state, reason?, nextCheckAt, settings: { intervalSeconds, noticeTemplate, paused }, links[] }`; `state` is `running`, `paused` or `disabled`, `reason` only if disabled; `nextCheckAt` is the time the next timed poll fires, `null` while one runs, paused, disabled or before the start; each link is `{ key, link, lastCheckedAt, lastStatus, sessions[] }` and each session `{ sessionId, delivery }`; `delivery` is `{ status, reason, at }` (`status` may be `waiting`) or `null` before any attempt |
@@ -1468,6 +1489,18 @@ after a server restart. The watcher never stops or removes a copy that a resume 
 | `PUT /api/slack/watch/settings`          | body `{ intervalSeconds?, noticeTemplate? }`, either may be omitted; answers `{ ok, settings }` with the stored values; `paused` is not settable here                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `POST /api/slack/watch/check`            | no body; runs one poll now, the same poll a timed tick runs (so it also starts the wake of a notice it finds owed), then restarts the countdown, so the next timed poll is one full interval later; answers `{ ok: true, state, checked }`, with `checked` false when a poll was already running; `409 WATCH_PAUSED` while paused, reading nothing from Slack, and `409 WATCH_DISABLED` while disabled; it never bypasses a rate-limit or link backoff                                                                                                                           |
 | `POST /api/slack/watch/pause`, `/resume` | no body; answers `{ ok, state }`; both are idempotent, and `resume` reads the threads before it answers                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+
+A successful thread list also carries `serverTime`, `scope`, `partial`,
+`partialReasons`, `truncated`, `stale`, `coverageNotes` and a `continuation`
+token when more work is available. Pass that opaque token as `?continuation=` to
+continue the current list; it can expire or become invalid after a refresh or
+session change. The thread route requires a root verified in the current listing
+snapshot. Unavailable responses can contain fewer fields.
+
+`sessionVersion` is an opaque, process-local session generation used to discard
+old list and dialog data. Deploy and roll back the backend and frontend together
+so both sides use it. Detection is request-driven; an identical legacy credential
+record replaced entirely between observations cannot be distinguished.
 
 `status` verifies the session with `auth.test` at most once a minute.
 `verified: false` means the token exists but Slack could not be reached — still
@@ -1549,6 +1582,12 @@ proxies the existing `/api/*` endpoints to the local dashboard server.
 Run `npm run lint` to check JavaScript and JSX with ESLint. `npm run format`
 formats JavaScript, JSX, CSS, HTML and JSON files; use `npm run format:check`
 to verify formatting without changing files.
+
+`npm run test:ui` uses the main Playwright config, defaulting to three workers
+with full parallelism. `npm run test:ui:proxy` uses the separate, unchanged
+vite-proxy config. Some existing full-suite tests write fixed screenshots under
+`../docs/dev-dashboard-redesign/verification/screenshots/` and can overwrite
+existing files there.
 
 ```
 ui-react/

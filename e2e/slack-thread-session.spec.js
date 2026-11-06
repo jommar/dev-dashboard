@@ -4,14 +4,14 @@ import { slackAppThreadLink, slackWatchData, watchLink, watchSession } from './d
 const TEAM = 'T0EXAMPLE1';
 const CHANNEL = 'C0EXAMPLE1';
 const OTHER_CHANNEL = 'C0EXAMPLE2';
-const THREAD_TS = '1761900000.000100';
-const REPLY_TS = '1761900060.000300';
-const OTHER_TS = '1761900500.000200';
+const THREAD_TS = '1793433600.000100';
+const REPLY_TS = '1793433660.000300';
+const OTHER_TS = '1793434100.000200';
 const TICKET_KEY = 'TAP-9001';
 const ROOT_TEXT = `${TICKET_KEY}: Invented subject for the thread dialog`;
 const REPLY_TEXT = 'Invented reply that keeps the conversation going.';
 const DIALOG_LINK = slackAppThreadLink(TEAM, CHANNEL, THREAD_TS);
-const THREAD_KEY = 'C0EXAMPLE1:1761900000.000100';
+const THREAD_KEY = `${CHANNEL}:${THREAD_TS}`;
 
 const SESSION_HERE_FIRST = '77777777-7777-4777-8777-777777777777';
 const SESSION_HERE_SECOND = '88888888-8888-4888-8888-888888888888';
@@ -33,6 +33,10 @@ const UNREACHABLE_SENTENCE = 'The dashboard server could not be reached.';
 
 const FROZEN_AT = Date.parse('2026-10-31T09:00:00.000Z');
 const IDLE_MINUTES = 4;
+
+test.beforeEach(async ({ page }) => {
+  await page.clock.install({ time: FROZEN_AT });
+});
 
 const SAM = { id: 'U0EXAMPLE1', name: 'Sam Example' };
 const RILEY = { id: 'U0EXAMPLE2', name: 'Riley Sample' };
@@ -74,7 +78,7 @@ const message = (ts, author, text) => ({ ts, at: messageAt(ts), author, text, mr
 function threadRead(url, extraMessages) {
   const filler = Array.from({ length: extraMessages }, (_, index) =>
     message(
-      `${1761900100 + index}.000400`,
+      `${1793433700 + index}.000400`,
       index % 2 ? SAM : RILEY,
       `Invented filler message number ${index + 1}.`,
     ),
@@ -738,7 +742,6 @@ test('thread session: reads the watch list once on open and once after each atta
   dashboard,
 }) => {
   seedThreadScenario(dashboard.data);
-  await page.clock.install({ time: FROZEN_AT });
   await page.goto('/#/my-tickets');
   await expect(page.getByTestId(`slack-thread-link-${THREAD_TS}`)).toBeVisible();
   await advanceMinutes(page, IDLE_MINUTES);

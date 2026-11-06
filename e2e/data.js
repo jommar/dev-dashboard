@@ -404,8 +404,12 @@ export function dashboardData() {
   };
 }
 
-// The Slack threads the board fixture attaches to TAP-9002 (needs a reply) and TAP-9005.
-export const BOARD_THREAD_TS = { needsReply: '1761900000.000100', quiet: '1761900200.000100' };
+// Keep the invented roots newer than the rolling creation cutoff while their activity is 1h old.
+const boardRootSeconds = Math.floor(Date.now() / 1000) - 7200;
+export const BOARD_THREAD_TS = {
+  needsReply: `${boardRootSeconds}.000100`,
+  quiet: `${boardRootSeconds + 200}.000100`,
+};
 
 const BOARD_TEAM = 'T0EXAMPLE1';
 const BOARD_CHANNEL = 'C0EXAMPLE1';
@@ -658,11 +662,11 @@ export function ticketBoardData(data, { available = true } = {}) {
 
 // The Slack threads `withFollowUpCases` adds, by what each shows on its chip.
 export const FOLLOW_UP_THREAD_TS = {
-  attached: '1761901000.000100',
-  unattached: '1761901100.000100',
-  pairTwo: '1761901200.000100',
-  pairOne: '1761901300.000100',
-  green: '1761901400.000100',
+  attached: `${boardRootSeconds + 1000}.000100`,
+  unattached: `${boardRootSeconds + 1100}.000100`,
+  pairTwo: `${boardRootSeconds + 1200}.000100`,
+  pairOne: `${boardRootSeconds + 1300}.000100`,
+  green: `${boardRootSeconds + 1400}.000100`,
 };
 
 // The matrix plus the cases it has no room for, each on its own card in a column of its own

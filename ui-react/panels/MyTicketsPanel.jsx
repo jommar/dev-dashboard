@@ -5,10 +5,14 @@ import { TicketBoard } from '../components/TicketBoard.jsx';
 import { SlackThreadDialog } from '../components/SlackThreadDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
+import { useSlackActivityClock } from '../hooks/useSlackActivityClock.js';
+import { notifySlackSessionChanged } from '../hooks/useSlackPending.js';
 import { filterTickets, ticketFilterOptions } from '../../ui/work-filters.js';
 import { sprintDay, sprintCountdown } from '../../ui/domain-helpers.js';
 import { threadsByTicket } from '../../ui/slack-ticket-links.js';
+import { eligibleSlackRoot, slackSessionIdentity } from '../../ui/slack-activity.js';
 import { MY_TICKETS_POLL_MS } from '../../ui/polling.js';
+import { slackStaleReplyWarning, slackStandaloneMentionWarning } from '../../ui/slack-coverage.js';
 
 function sprintHtml(sprints) {
   if (!sprints?.length) return 'No active sprint among your tickets';
@@ -48,7 +52,7 @@ export function MyTicketsPanel({ config, active }) {
   const [meta, setMeta] = useState('loading…');
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState('');
-  const [slackStarted, setSlackStarted] = useState([]);
+  const [slackSnapshot, setSlackSnapshot] = useState(null);
   const [prs, setPrs] = useState(null);
   const [prStale, setPrStale] = useState(false);
   const [openThread, setOpenThread] = useState(null);
@@ -62,18 +66,102 @@ export function MyTicketsPanel({ config, active }) {
   const dataRef = useRef(data);
   dataRef.current = data;
   const prRequest = useRef(0);
+  const slackRequest = useRef(0);
+  const slackIdentity = useRef('');
+  const slackDirty = useRef(false);
+  const dialogWasOpen = useRef(false);
+  const expiredDialog = useRef(false);
+  const [slackNow, currentTime] = useSlackActivityClock(slackSnapshot, active, openThread);
+  const threadIsEligible = (ts) => eligibleSlackRoot(ts, currentTime());
+  const clearSlackData = useCallback(() => {
+    dialogWasOpen.current = false;
+    setOpenThread(null);
+    setSlackSnapshot(null);
+  }, []);
   // Slack is optional and often slow. The request degrades to "no threads" on
   // its own, and the catch is there because this runs without being awaited:
   // anything thrown would otherwise become an unhandled rejection with nowhere
   // to surface, and My Tickets has no error state for Slack by design.
   const loadSlack = useCallback(async () => {
+    const request = ++slackRequest.current;
     try {
-      const result = await api.getSlackThreads();
-      setSlackStarted(result?.available ? result.started || [] : []);
+      // One immediate retry can load a versioned replacement session without
+      // allowing changing credentials to create an unbounded request loop.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const status = await api.getSlackStatus();
+        const before = slackSessionIdentity(status, slackIdentity.current);
+        if (request !== slackRequest.current) return;
+        if (slackIdentity.current && before !== slackIdentity.current) {
+          clearSlackData();
+          notifySlackSessionChanged('my-tickets');
+        }
+        slackIdentity.current = before;
+        if (!before) {
+          clearSlackData();
+          return;
+        }
+        const requestStartedWallAt = Date.now();
+        const requestStartedAt = performance.now();
+        const result = await api.getSlackThreads();
+        const after = slackSessionIdentity(await api.getSlackStatus(), before);
+        if (request !== slackRequest.current) return;
+        if (after !== before) {
+          clearSlackData();
+          slackIdentity.current = after;
+          notifySlackSessionChanged('my-tickets');
+          // A legacy savedAt/account identity does not establish that the
+          // backend invalidated its old list cache. Discard rather than
+          // immediately re-requesting a possibly old-session snapshot.
+          if (before.startsWith('version:') && after.startsWith('version:')) continue;
+          return;
+        }
+        slackIdentity.current = after;
+        setSlackSnapshot(
+          result?.available
+            ? {
+                ...result,
+                _requestStartedAt: requestStartedAt,
+                _requestStartedWallAt: requestStartedWallAt,
+              }
+            : null,
+        );
+        return;
+      }
     } catch {
-      setSlackStarted([]);
+      if (request === slackRequest.current) setSlackSnapshot(null);
     }
-  }, [api]);
+  }, [api, clearSlackData]);
+  useEffect(() => {
+    const sessionChanged = (event) => {
+      if (event.detail?.source === 'my-tickets') return;
+      slackRequest.current += 1;
+      slackIdentity.current = '';
+      clearSlackData();
+      if (active) loadSlack();
+      else slackDirty.current = true;
+    };
+    window.addEventListener('slack-session-changed', sessionChanged);
+    return () => window.removeEventListener('slack-session-changed', sessionChanged);
+  }, [active, clearSlackData, loadSlack]);
+  useEffect(() => {
+    if (!active || !slackDirty.current) return;
+    slackDirty.current = false;
+    loadSlack();
+  }, [active, loadSlack]);
+  const dialogSessionMismatch = useCallback(() => {
+    slackRequest.current += 1;
+    slackIdentity.current = '';
+    clearSlackData();
+    notifySlackSessionChanged('my-tickets');
+    if (active) loadSlack();
+    else slackDirty.current = true;
+  }, [active, clearSlackData, loadSlack]);
+  useEffect(() => {
+    if (openThread && !eligibleSlackRoot(openThread.ts, slackNow)) {
+      expiredDialog.current = true;
+      setOpenThread(null);
+    }
+  }, [openThread, slackNow]);
   // PR status is optional in the same way. The last good map stays on screen when
   // a refresh fails, and only the newest request may change the state.
   const loadPrs = useCallback(async () => {
@@ -128,12 +216,12 @@ export function MyTicketsPanel({ config, active }) {
   // The thread dialog is where a Claude session gets attached, so the threads are read again
   // once it closes and the chip shows the attach at once. The route answers from its cache, so
   // this costs no Slack call within the cache's lifetime.
-  const dialogWasOpen = useRef(false);
   useEffect(() => {
     if (openThread) dialogWasOpen.current = true;
     else if (dialogWasOpen.current) {
       dialogWasOpen.current = false;
-      loadSlack();
+      if (!expiredDialog.current) loadSlack();
+      expiredDialog.current = false;
     }
   }, [openThread, loadSlack]);
   const { countdown } = useActivePolling({
@@ -148,7 +236,15 @@ export function MyTicketsPanel({ config, active }) {
   );
   const filtered = useMemo(() => filterTickets(rows, filters), [rows, filters]);
   const options = ticketFilterOptions(rows, data?.allSprints);
-  const linksByTicket = useMemo(() => threadsByTicket(slackStarted), [slackStarted]);
+  const linksByTicket = useMemo(
+    () =>
+      threadsByTicket(
+        (slackSnapshot?.started || []).filter((row) => eligibleSlackRoot(row.ts, slackNow)),
+      ),
+    [slackSnapshot, slackNow],
+  );
+  const staleReplyWarning = slackStaleReplyWarning(slackSnapshot);
+  const standaloneWarning = slackStandaloneMentionWarning(slackSnapshot);
   // The board is memoized as an element: the countdown re-renders this panel every second,
   // and an identical element lets React skip the board and its card-wide DOM scan.
   const board = useMemo(
@@ -221,6 +317,21 @@ export function MyTicketsPanel({ config, active }) {
               {prStale ? prNoteText(prs) : PR_TRUNCATED_NOTE}
             </p>
           )}
+          {(slackSnapshot?.partial ||
+            slackSnapshot?.truncated ||
+            slackSnapshot?.continuation ||
+            staleReplyWarning ||
+            standaloneWarning) && (
+            <p
+              className="my-tickets-prs-note"
+              role="status"
+              data-testid="my-tickets-slack-coverage"
+            >
+              Slack thread results may be incomplete. <a href="#/slack">View Slack and load more</a>
+              .{staleReplyWarning ? ` ${staleReplyWarning}` : ''}
+              {standaloneWarning ? ` ${standaloneWarning}` : ''}
+            </p>
+          )}
         </div>
         <div className="my-tickets-list" data-testid="my-tickets-list">
           {!data ? (
@@ -255,7 +366,13 @@ export function MyTicketsPanel({ config, active }) {
           )}
         </div>
       </Card>
-      <SlackThreadDialog thread={openThread} onClose={() => setOpenThread(null)} />
+      <SlackThreadDialog
+        thread={openThread}
+        onClose={() => setOpenThread(null)}
+        isEligible={threadIsEligible}
+        sessionIdentity={slackIdentity.current}
+        onSessionMismatch={dialogSessionMismatch}
+      />
     </section>
   );
 }

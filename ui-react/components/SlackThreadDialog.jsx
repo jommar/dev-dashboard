@@ -6,7 +6,8 @@
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import { Button, LoadingState } from './Primitives.jsx';
 import { ThreadSession } from './ThreadSession.jsx';
-import { getSlackThread } from '../lib/api.js';
+import { getSlackStatus, getSlackThread } from '../lib/api.js';
+import { slackSessionIdentity } from '../../ui/slack-activity.js';
 import { parseSlackText } from '../../ui/slack-mrkdwn.js';
 import { ticketKeyFromThread } from '../../ui/slack-ticket-links.js';
 
@@ -114,7 +115,14 @@ function MessageBody({ message, names }) {
   return render(tokens);
 }
 
-export function SlackThreadDialog({ thread, onClose }) {
+export function SlackThreadDialog({
+  thread,
+  onClose,
+  resolveOpener,
+  isEligible,
+  sessionIdentity,
+  onSessionMismatch,
+}) {
   const dialogRef = useRef(null);
   const opener = useRef(null);
   const copyTimer = useRef(null);
@@ -122,6 +130,9 @@ export function SlackThreadDialog({ thread, onClose }) {
   // The panel passes a fresh arrow for onClose on every render; a ref keeps the
   // Esc listener from being torn down and rebuilt on each poll.
   const close = useRef(onClose);
+  const openerResolver = useRef(resolveOpener);
+  const eligible = useRef(isEligible);
+  const sessionMismatch = useRef(onSessionMismatch);
   const titleId = useId();
   const ts = thread?.ts || '';
   const [attempt, setAttempt] = useState(0);
@@ -130,7 +141,10 @@ export function SlackThreadDialog({ thread, onClose }) {
 
   useEffect(() => {
     close.current = onClose;
-  }, [onClose]);
+    openerResolver.current = resolveOpener;
+    eligible.current = isEligible;
+    sessionMismatch.current = onSessionMismatch;
+  }, [onClose, resolveOpener, isEligible, onSessionMismatch]);
 
   // Open once per thread and restore the glyph that opened it: a modal <dialog>
   // traps focus itself, but the browser does not remember where focus came from.
@@ -141,7 +155,11 @@ export function SlackThreadDialog({ thread, onClose }) {
     if (!dialog.open) dialog.showModal();
     return () => {
       if (dialog.open) dialog.close();
-      const target = opener.current;
+      const original = opener.current;
+      const target =
+        original?.isConnected && !original.closest('[hidden]')
+          ? original
+          : openerResolver.current?.(ts);
       opener.current = null;
       if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
     };
@@ -164,6 +182,10 @@ export function SlackThreadDialog({ thread, onClose }) {
 
   useEffect(() => {
     if (!ts) return undefined;
+    if (eligible.current && !eligible.current(ts)) {
+      close.current?.();
+      return undefined;
+    }
     let live = true;
     const id = request.current + 1;
     request.current = id;
@@ -171,10 +193,20 @@ export function SlackThreadDialog({ thread, onClose }) {
     setCopy('idle');
     clearTimeout(copyTimer.current);
     getSlackThread(ts)
-      .then((result) => {
+      .then(async (result) => {
         // A response that lands after the dialog closed or moved to another
         // thread must not repaint it.
         if (!live || request.current !== id) return;
+        const status = await getSlackStatus();
+        if (!live || request.current !== id) return;
+        if (!sessionIdentity || slackSessionIdentity(status, sessionIdentity) !== sessionIdentity) {
+          sessionMismatch.current?.();
+          return;
+        }
+        if (eligible.current && !eligible.current(ts)) {
+          close.current?.();
+          return;
+        }
         if (result?.available && result.thread) setLoad({ status: 'ready', data: result.thread });
         else setLoad({ status: 'unavailable', data: null });
       })
@@ -186,7 +218,7 @@ export function SlackThreadDialog({ thread, onClose }) {
     return () => {
       live = false;
     };
-  }, [ts, attempt]);
+  }, [ts, attempt, sessionIdentity]);
 
   useEffect(() => () => clearTimeout(copyTimer.current), []);
 
