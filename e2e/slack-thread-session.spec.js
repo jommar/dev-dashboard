@@ -248,6 +248,25 @@ test('thread dialog opens from a ticket row and renders its messages', async ({
   await expect(dialog.getByTestId('slack-thread-open')).toHaveAttribute('href', DIALOG_LINK);
 });
 
+for (const hasRootKey of [true, false]) {
+  test(`Slack mentions use ${hasRootKey ? 'the loaded root key' : 'a plain title'} @regression`, async ({
+    page,
+    dashboard,
+  }) => {
+    seedThreadScenario(dashboard.data);
+    const project = ['TA', 'P'].join('');
+    const key = `${project}-${900000000020}`;
+    const root = dashboard.data.slack.threadReads[THREAD_TS].messages[0];
+    root.text = hasRootKey ? `${key}: Invented root subject` : 'Invented root without a key';
+    root.mrkdwn = hasRootKey ? `*${root.text}*` : `${key}: Raw formatting is not the title`;
+
+    const dialog = await openFromMentionsRow(page);
+    await expect(dialog.getByTestId('slack-thread-dialog-title')).toHaveText(
+      hasRootKey ? `${key} · Slack thread` : 'Slack thread',
+    );
+  });
+}
+
 test('thread session: list shows only the sessions attached to this thread', async ({
   page,
   dashboard,

@@ -97,10 +97,79 @@ test('a thread root becomes one list entry ordered by its latest activity', () =
   });
   assert.equal(thread.ts, '100.0001');
   assert.equal(thread.text, 'TAP-1: hello @Yuliia Palamarchuk');
+  assert.equal(thread.subjectText, thread.text);
   assert.equal(thread.author.name, 'Patrick Rivera');
   assert.equal(thread.replyCount, 3);
   assert.equal(thread.activityAt, new Date(200000).toISOString(), 'latest reply drives ordering');
   assert.equal(thread.needsReply, null, 'unknown until replies are read');
+});
+
+test('a thread subject is the first nonempty physical root line with Slack markup cleaned', () => {
+  const thread = buildThread({
+    root: {
+      ts: '100.0001',
+      user: 'U1',
+      text: ' \r\n\t\r\n  *Planning* <@U1> &amp; <#C1|general> <https://example.test|Guide> \r\n\nLater `details`',
+    },
+    channelId: 'C1',
+    teamId: 'T1',
+    me: 'U9',
+    users,
+  });
+
+  assert.equal(thread.text, 'Planning @Patrick Rivera & #general Guide Later details');
+  assert.equal(thread.subjectText, 'Planning @Patrick Rivera & #general Guide');
+});
+
+for (const [name, separator] of [
+  ['line separator', '\u2028'],
+  ['paragraph separator', '\u2029'],
+]) {
+  test(`a Unicode ${name} ends the first nonempty root subject`, () => {
+    const thread = buildThread({
+      root: {
+        ts: '100.0001',
+        user: 'U1',
+        text: ` \t${separator} *Planning* <@U1> &amp; launch${separator}Later details`,
+      },
+      channelId: 'C1',
+      teamId: 'T1',
+      me: 'U9',
+      users,
+    });
+
+    assert.equal(thread.text, 'Planning @Patrick Rivera & launch Later details');
+    assert.equal(thread.subjectText, 'Planning @Patrick Rivera & launch');
+  });
+}
+
+test('a mention row keeps the root subject but displays the flattened mention text', () => {
+  const thread = buildThread({
+    root: { ts: '100.0001', user: 'U1', text: '\nRoot *subject* &amp; <@U1>\nRoot details' },
+    mention: { ts: '200.0002', user: 'U2', text: 'Mention <@U2>\nMore `details`' },
+    channelId: 'C1',
+    teamId: 'T1',
+    me: 'U9',
+    users,
+  });
+
+  assert.equal(thread.text, 'Mention @Yuliia Palamarchuk More details');
+  assert.equal(thread.subjectText, 'Root subject & @Patrick Rivera');
+});
+
+test('a root without a nonempty line has an empty subject', () => {
+  for (const text of ['', null, undefined, ' \n\t\r\n']) {
+    const thread = buildThread({
+      root: { ts: '100.0001', user: 'U1', text },
+      channelId: 'C1',
+      teamId: 'T1',
+      me: 'U9',
+      users,
+    });
+
+    assert.equal(thread.text, '');
+    assert.equal(thread.subjectText, '');
+  }
 });
 
 test('the last message decides whether a reply is owed', () => {

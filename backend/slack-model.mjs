@@ -85,10 +85,14 @@ export function person(id, me, users) {
 export function buildThread({ root, mention, channelId, teamId, me, users }) {
   const activity = root.latest_reply || root.ts;
   const source = mention || root;
+  const subjectLine = String(root.text ?? '')
+    .split(/\r\n|[\r\n\u2028\u2029]/)
+    .find((line) => line.trim());
   return {
     ts: root.ts,
     ...threadLinkFields({ teamId, channelId, ts: root.ts }),
     text: cleanText(source.text, users),
+    subjectText: cleanText(subjectLine, users),
     author: person(source.user, me, users),
     starter: person(root.user, me, users),
     replyCount: root.reply_count || 0,

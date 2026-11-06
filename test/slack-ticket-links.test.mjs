@@ -1,6 +1,7 @@
 // slack-ticket-links.test.mjs — "<KEY>: <subject>" threads to ticket keys.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { buildThread } from '../backend/slack-model.mjs';
 import {
   canonicalTicketKey,
   normalizeTicketKey,
@@ -172,3 +173,243 @@ test('missing or non-array input yields an empty Map', () => {
   assert.equal(threadsByTicket().size, 0);
   assert.equal(threadsByTicket([]).size, 0);
 });
+
+function syntheticKey(project, suffix) {
+  return `${project}-${'9'.repeat(30)}${suffix}`;
+}
+
+test('one shared thread links to all four leading tickets, including renamed aliases', () => {
+  const listed = [
+    syntheticKey('trips', 1),
+    syntheticKey('TAP', 2),
+    syntheticKey('Trips', 3),
+    syntheticKey('tap', 4),
+  ];
+  const expected = [1, 2, 3, 4].map((suffix) => syntheticKey('TAP', suffix));
+  const subjectText = ` \t${listed.join(', ')}: Shared work`;
+  const shared = thread({ text: subjectText, subjectText });
+
+  assert.equal(ticketKeyFromThread(shared.text), expected[0]);
+  assert.deepEqual(
+    [...threadsByTicket([shared])],
+    expected.map((key) => [key, [shared]]),
+  );
+});
+
+test('repeated leading tickets and their aliases link a thread only once per ticket', () => {
+  const first = syntheticKey('TAP', 1);
+  const second = syntheticKey('TAP', 2);
+  const listed = [
+    first,
+    syntheticKey('TRIPS', 1),
+    syntheticKey('tap', 1),
+    syntheticKey('trips', 2),
+    second,
+  ];
+  const subjectText = `${listed.join(', ')}: Shared work`;
+  const shared = thread({ text: subjectText, subjectText });
+
+  assert.deepEqual(
+    [...threadsByTicket([shared])],
+    [
+      [first, [shared]],
+      [second, [shared]],
+    ],
+  );
+});
+
+test('later mentions do not link threads that start with a ticket list', () => {
+  const first = syntheticKey('TAP', 1);
+  const second = syntheticKey('TAP', 2);
+  const mentionedLater = syntheticKey('TAP', 3);
+  const subjectText = `${first}, ${second}: Discussing ${mentionedLater}`;
+  const unrelatedText = `Update: ${first}, ${second}`;
+  const shared = thread({ text: subjectText, subjectText });
+  const unrelated = thread({ text: unrelatedText, subjectText: unrelatedText });
+  const grouped = threadsByTicket([shared, unrelated]);
+
+  assert.equal(grouped.has(mentionedLater), false);
+  assert.deepEqual(grouped.get(first), [shared]);
+  assert.deepEqual(grouped.get(second), [shared]);
+});
+
+test('shared threads retain newest-first ordering and stable ties for every ticket', () => {
+  const first = syntheticKey('TAP', 1);
+  const second = syntheticKey('TAP', 2);
+  const subjectText = `${first}, ${second}: Shared work`;
+  const shared = thread({
+    ts: 'shared',
+    text: subjectText,
+    subjectText,
+    activityAt: '2026-10-22T09:00:00.000Z',
+  });
+  const newest = thread({
+    ts: 'newest',
+    text: `${first}: Newest`,
+    activityAt: '2026-10-28T09:00:00.000Z',
+  });
+  const firstTie = thread({
+    ts: 'first-tie',
+    text: `${first}: Same activity as shared`,
+    activityAt: '2026-10-22T09:00:00.000Z',
+  });
+  const secondTie = thread({
+    ts: 'second-tie',
+    text: `${second}: Same activity as shared`,
+    activityAt: '2026-10-22T09:00:00.000Z',
+  });
+  const older = thread({
+    ts: 'older',
+    text: `${second}: Older`,
+    activityAt: '2026-10-20T09:00:00.000Z',
+  });
+  const unknown = thread({ ts: 'unknown', text: `${second}: Unknown activity`, activityAt: '' });
+  const started = freezeTree([unknown, older, shared, firstTie, secondTie, newest]);
+  const snapshot = structuredClone(started);
+  const grouped = threadsByTicket(started);
+
+  assert.deepEqual(grouped.get(first), [newest, shared, firstTie]);
+  assert.deepEqual(started, snapshot);
+  assert.deepEqual(grouped.get(second), [shared, secondTie, older, unknown]);
+});
+
+test('shared threads without a link do not join any listed ticket', () => {
+  const listed = [1, 2, 3, 4].map((suffix) => syntheticKey('TAP', suffix));
+  const subjectText = `${listed.join(', ')}: Shared work`;
+  const started = freezeTree(
+    ['', null, undefined].map((url) => thread({ text: subjectText, subjectText, url })),
+  );
+  const snapshot = structuredClone(started);
+
+  assert.deepEqual([...threadsByTicket(started)], []);
+  assert.deepEqual(started, snapshot);
+});
+
+test('unsupported projects within a leading list are skipped without changing where matching starts', () => {
+  const first = syntheticKey('TAP', 1);
+  const second = syntheticKey('TAP', 2);
+  const otherProject = syntheticKey('OTHER', 3);
+  const mentionedLater = syntheticKey('TAP', 4);
+  const subjectText = `${first}, ${otherProject}, ${syntheticKey('TRIPS', 2)}: About ${mentionedLater}`;
+  const unrelatedText = `${otherProject}, ${first}, ${second}: Different project`;
+  const shared = thread({ text: subjectText, subjectText });
+  const unrelated = thread({ text: unrelatedText, subjectText: unrelatedText });
+
+  assert.deepEqual(
+    [...threadsByTicket([shared, unrelated])],
+    [
+      [first, [shared]],
+      [second, [shared]],
+    ],
+  );
+});
+
+test('a cached thread without a subject only links its first key even when its text looks like a list', () => {
+  const first = syntheticKey('TAP', 1);
+  const second = syntheticKey('TAP', 2);
+  const cached = thread({ text: `${syntheticKey('TRIPS', 1)}, ${second}: Flattened text` });
+
+  assert.deepEqual([...threadsByTicket([cached])], [[first, [cached]]]);
+});
+
+test('matching uses the preserved subject instead of a different flattened text', () => {
+  const first = syntheticKey('TAP', 1);
+  const second = syntheticKey('TAP', 2);
+  const unrelated = syntheticKey('TAP', 3);
+  const subjectText = `${first}, ${second}: Shared work`;
+  const shared = thread({ subjectText, text: `${unrelated}: Different text` });
+
+  assert.deepEqual(
+    [...threadsByTicket([shared])],
+    [
+      [first, [shared]],
+      [second, [shared]],
+    ],
+  );
+});
+
+test('a present but empty subject does not fall back to flattened text', () => {
+  const first = syntheticKey('TAP', 1);
+  const second = syntheticKey('TAP', 2);
+  const row = thread({ subjectText: '', text: `${first}, ${second}: Mention text` });
+
+  assert.deepEqual([...threadsByTicket([row])], []);
+});
+
+test('a built thread matches every first-line key but not a comma-led later paragraph', () => {
+  const first = syntheticKey('TAP', 1);
+  const second = syntheticKey('TAP', 2);
+  const later = syntheticKey('TAP', 3);
+  const subjectText = `${first}, ${syntheticKey('TRIPS', 2)}`;
+  const built = buildThread({
+    root: {
+      ts: '100.0001',
+      user: 'U1',
+      text: `*${subjectText}*\n\n, ${later}: Later paragraph`,
+    },
+    channelId: 'C1',
+    teamId: 'T1',
+    me: 'U1',
+    users: {},
+  });
+
+  assert.equal(built.text, `${subjectText} , ${later}: Later paragraph`);
+  assert.deepEqual(
+    [...threadsByTicket([built])],
+    [
+      [first, [built]],
+      [second, [built]],
+    ],
+  );
+  assert.equal(built.subjectText, subjectText);
+});
+
+test('a built thread does not match a later paragraph following a trailing subject comma', () => {
+  const first = syntheticKey('TAP', 1);
+  const later = syntheticKey('TAP', 2);
+  const subjectText = `${first},`;
+  const built = buildThread({
+    root: { ts: '100.0001', user: 'U1', text: `${subjectText}\n\n${later}: Later paragraph` },
+    channelId: 'C1',
+    teamId: 'T1',
+    me: 'U1',
+    users: {},
+  });
+
+  assert.equal(built.text, `${subjectText} ${later}: Later paragraph`);
+  assert.deepEqual([...threadsByTicket([built])], [[first, [built]]]);
+  assert.equal(built.subjectText, subjectText);
+});
+
+for (const [name, separator] of [
+  ['line separator', '\u2028'],
+  ['paragraph separator', '\u2029'],
+]) {
+  test(`a later comma-led ticket after a Unicode ${name} is not linked`, () => {
+    const first = syntheticKey('TAP', 1);
+    const second = syntheticKey('TAP', 2);
+    const later = syntheticKey('TAP', 3);
+    const subjectText = `${first}, ${syntheticKey('TRIPS', 2)}`;
+    const built = buildThread({
+      root: {
+        ts: '100.0001',
+        user: 'U1',
+        text: `${subjectText}${separator}, ${later}: Later details`,
+      },
+      channelId: 'C1',
+      teamId: 'T1',
+      me: 'U1',
+      users: {},
+    });
+
+    assert.equal(built.text, `${subjectText} , ${later}: Later details`);
+    assert.deepEqual(
+      [...threadsByTicket([built])],
+      [
+        [first, [built]],
+        [second, [built]],
+      ],
+    );
+    assert.equal(built.subjectText, subjectText);
+  });
+}

@@ -247,7 +247,10 @@ function TicketCard({ ticket, jiraBase, currentSprints, prs = [], slackLinks = [
             {updated}
           </span>
         )}
-        <SlackThreadLinks links={slackLinks} onOpen={onOpenThread} />
+        <SlackThreadLinks
+          links={slackLinks}
+          onOpen={(thread) => onOpenThread?.({ ...thread, selectedTicketKey: ticket.key })}
+        />
       </div>
       <p className="my-tickets-card-summary" title={ticket.summary} data-testid={testId('summary')}>
         {ticket.summary || ''}

@@ -217,7 +217,10 @@ export function SlackThreadDialog({ thread, onClose }) {
   // A mentions row previews the mentioning message rather than the subject, so
   // the loaded root message supplies a key the preview cannot. Plain `text`, not
   // mrkdwn: a key buried in emphasis would not be a subject prefix.
-  const ticketKey = ticketKeyFromThread(thread.text) || ticketKeyFromThread(messages[0]?.text);
+  const ticketKey =
+    thread.selectedTicketKey ||
+    ticketKeyFromThread(thread.text) ||
+    ticketKeyFromThread(messages[0]?.text);
   const title = ticketKey ? `${ticketKey} · Slack thread` : 'Slack thread';
   const replies = Number.isFinite(data?.replyCount) ? data.replyCount : null;
   const subtitle = [

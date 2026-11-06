@@ -233,13 +233,17 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
 
   // The card renders the links on its first line, so it stays one account of
   // the ticket; the board resolves the same normalised key the matcher produced
-  // and forwards the dialog opener unchanged.
+  // and forwards the thread with the selected card's key to the dialog opener.
   const row = read('components/TicketBoard.jsx');
   assert.match(row, /from '\.\/SlackThreadLink\.jsx'/);
   assert.match(row, /normalizeTicketKey/);
   assert.match(row, /slackLinks = \[\]/);
   assert.match(row, /onOpenThread/);
-  assert.match(row, /<SlackThreadLinks links=\{slackLinks\} onOpen=\{onOpenThread\} \/>/);
+  assert.match(
+    row,
+    /<SlackThreadLinks\s+links=\{slackLinks\}\s+onOpen=\{\(thread\) =>\s*onOpenThread\?\.\(\{\s*\.\.\.thread,\s*selectedTicketKey:\s*ticket\.key\s*\}\)\s*\}\s*\/>/,
+    'the clicked card forwards its displayed key without normalising it',
+  );
   assert.match(
     row,
     /slackLinks=\{linksByTicket\.get\(normalizeTicketKey\(ticket\.key\)\) \|\| \[\]\}/,
@@ -383,14 +387,14 @@ test('the Slack tab opens thread conversations in the shared dialog', () => {
   );
 
   // A mentions row previews the mentioning message, so the list text alone cannot
-  // name the ticket: the dialog falls back to the loaded root message's plain
-  // text when the preview carries no key, and keeps its plain title when neither
-  // does. A plain re-render is enough — nothing is cached in a ref or effect.
+  // name the ticket: without a selected card key, the dialog falls back to the
+  // preview and then the loaded root message's plain text, and keeps its plain
+  // title when neither does. Nothing is cached in a ref or effect.
   const dialogSource = read('components/SlackThreadDialog.jsx');
   assert.match(
     dialogSource,
-    /const ticketKey =\s*ticketKeyFromThread\(thread\.text\) \|\| ticketKeyFromThread\(messages\[0\]\?\.text\);/,
-    'the title key falls back to the thread root',
+    /const ticketKey =\s*thread\.selectedTicketKey\s*\|\|\s*ticketKeyFromThread\(thread\.text\)\s*\|\|\s*ticketKeyFromThread\(messages\[0\]\?\.text\);/,
+    'the selected card key takes priority, with the preview and thread root as fallbacks',
   );
   assert.doesNotMatch(
     dialogSource,

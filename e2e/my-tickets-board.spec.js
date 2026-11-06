@@ -318,6 +318,73 @@ test('a Slack chip shows its reply count and a needs-reply mark and opens the th
   await expect(dialog.getByTestId(`slack-thread-message-${needsReply}`)).toBeVisible();
 });
 
+test('a shared Slack thread opens with the selected card key @regression', async ({
+  page,
+  dashboard,
+}) => {
+  const data = ticketBoardData(dashboard.data);
+  const [sample] = data.tickets.tickets;
+  const project = sample.key.split('-')[0];
+  const keys = Array.from({ length: 3 }, (_, index) => `${project}-${900000000000 + index}`);
+  data.tickets.tickets = keys.map((key) => ({ ...sample, key }));
+
+  const [thread] = data.slack.threads.started;
+  thread.text = `${keys[0]}, ${keys[1]}: shared subject mentioning ${keys[2]}`;
+  thread.subjectText = thread.text;
+  data.slack.threads.started = [thread];
+  const root = data.slack.threadReads[thread.ts].messages[0];
+  root.text = thread.text;
+  root.mrkdwn = thread.text;
+
+  await openBoard(page);
+  const chipOf = (key) =>
+    page.getByTestId(`my-tickets-item-${key}`).getByTestId(`slack-thread-link-${thread.ts}`);
+  await expect(page.getByTestId(`my-tickets-item-${keys[2]}`)).toBeVisible();
+  for (const key of keys.slice(0, 2)) {
+    const chip = chipOf(key);
+    await expect(chip).toBeVisible();
+    await chip.click();
+    const dialog = page.getByTestId('slack-thread-dialog');
+    await expect(dialog.getByTestId('slack-thread-dialog-title')).toHaveText(
+      `${key} · Slack thread`,
+    );
+    await expect(dialog.getByTestId(`slack-thread-message-${thread.ts}`)).toContainText(
+      thread.text,
+    );
+    await expect(dialog.getByTestId('slack-thread-open')).toHaveAttribute('href', thread.url);
+    await dialog.getByTestId('slack-thread-close').click();
+    await expect(dialog).toHaveCount(0);
+  }
+  await expect(chipOf(keys[2])).toHaveCount(0);
+});
+
+test('a legacy-project card opens its Slack thread with the displayed key @regression', async ({
+  page,
+  dashboard,
+}) => {
+  const data = ticketBoardData(dashboard.data);
+  const [sample] = data.tickets.tickets;
+  const legacyProject = ['TR', 'IPS'].join('');
+  const key = `${legacyProject}-${900000000010}`;
+  data.tickets.tickets = [{ ...sample, key }];
+
+  const [thread] = data.slack.threads.started;
+  thread.text = `${key}: Invented subject`;
+  thread.subjectText = thread.text;
+  data.slack.threads.started = [thread];
+  const root = data.slack.threadReads[thread.ts].messages[0];
+  root.text = thread.text;
+  root.mrkdwn = thread.text;
+
+  await openBoard(page);
+  const card = page.getByTestId(`my-tickets-item-${key}`);
+  await expect(card.getByTestId(`my-tickets-item-link-${key}`)).toHaveText(key);
+  await card.getByTestId(`slack-thread-link-${thread.ts}`).click();
+  const dialog = page.getByTestId('slack-thread-dialog');
+  await expect(dialog.getByTestId('slack-thread-dialog-title')).toHaveText(`${key} · Slack thread`);
+  await expect(dialog.getByTestId(`slack-thread-message-${thread.ts}`)).toContainText(thread.text);
+});
+
 // PR data never blocks or fails the tickets.
 
 test('a slow PR route neither delays the cards nor raises a ticket error @regression', async ({
