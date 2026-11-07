@@ -186,7 +186,7 @@ for (const panel of ['slack', 'my-tickets']) {
       await expect(link(page, panel, ambiguousTs)).toHaveCount(0);
       const coverage =
         panel === 'slack'
-          ? page.getByTestId('slack-threads-card')
+          ? page.getByTestId('slack-section')
           : page.getByTestId('my-tickets-slack-coverage');
       await expect(coverage).toContainText(/incomplete/i);
       if (mention) await expect(coverage).toContainText(/standalone.*mention/i);

@@ -47,15 +47,14 @@ whole app feels consistent regardless of which container a given screen width la
   to ops/development" sections, packing `.pr-approval-ticket`.
 
 **Not masonry, intentionally:**
-- The My Tickets board (`.my-tickets-board`, `ui-react/styles/my-tickets.css`) is one row of
-  fixed-width status columns that scrolls sideways inside itself; it is not a card list, so it has no
-  `columns:` container and none of the breakpoints above. Each column's card list
-  (`.my-tickets-column-body`) scrolls vertically on its own, with the column header outside it so the
-  header stays in view. The board fills the rest of the viewport by layout, not by a fixed offset:
-  while My Tickets is the visible panel `#root` is a `100dvh` flex column, and the board is
-  `flex: 1 1 0` with a 320px floor and `contain: size` so its column count never sets its height.
-  Columns are 280px wide; at 599px and below they are 82vw with `scroll-snap-type: x mandatory`, so
-  the next column peeks in and snaps (`proximity` above that).
+- The My Tickets and Slack boards (`.board-track`, `ui-react/styles/board.css`) are one row of
+  fixed-width columns (Jira statuses, Slack time groups) that scrolls sideways inside itself; they
+  are not card lists, so they have no `columns:` container and none of the breakpoints above. Each
+  column's card list (`.board-column-body`) scrolls vertically on its own, with the column header
+  outside it so the header stays in view. Columns are 280px wide; at 599px and below they are 82vw
+  with `scroll-snap-type: x mandatory`, so the next column peeks in and snaps (`proximity` above
+  that). How a board fills the viewport, and how a screen adopts it, is under "UI layout: the
+  shared board" below.
 - `.home-block` itself (inside `.home-cols`) is `break-inside: avoid` — it's one packed *unit*, not a
   grid of cards, so it never gets its own internal columns (that would split a single ordered action
   queue across columns, which isn't what masonry is for here).
@@ -81,3 +80,76 @@ inter-item spacing to whatever margin the card already had (often smaller than t
 the `.my-ticket-status-group` migration once already — caught by review, not by any test, since no test
 asserted a spacing amount. When migrating a `display: grid` container to `columns:`, add the sibling
 margin rule in the same edit, every time, not just for the container you're most focused on.
+
+## UI layout: the shared board (My Tickets, Slack)
+
+My Tickets and Slack are one screen shape with different data, so they are built from one set of
+primitives — `ui-react/components/BoardShell.jsx` and `ui-react/styles/board.css` — not two copies.
+Toolbar, notes, states, board frame, columns and card shell are changed there and both screens get
+the change. The panel sheets (`my-tickets.css`, `slack.css`) hold only what is specific to their own
+domain: Jira card state, PR lines and chips, the Slack thread dialog and watcher. Generic classes
+are `board-*`, never prefixed with a screen's name; a rule that would read the same on a second
+screen belongs in `board.css`.
+
+**The primitives** (`BoardShell.jsx`; test ids come from the `name`/`testId` props and are a
+contract, so a refactor never renames them):
+- `BoardPanel` — the `<section class="panel board-panel">`. Using it is what opts a screen into the
+  viewport-fill rule below.
+- `BoardSection` — one `Card.board-section`: `.board-toolbar` (title, a `sub` line, `meta` status
+  text, `controls`, then the `filters` row and the `notes` slot) over `.board-body`. With
+  `activeTab` the body is the panel of a `BoardTabs` row (below).
+- `RefreshControl` (Refresh button and `refresh in N s` countdown) takes the `load` that
+  `useActivePolling` returns, so a click restarts the countdown and goes through the hook's
+  in-flight guard; both board screens do this. It is board-only: Home and PRs keep their own
+  button and `.pr-next` span because that countdown is styled differently (body font, `--fs-sm`,
+  against `.board-next` in mono, `--fs-xs`), so adopting it there would change how they look.
+- `BoardTabs` is a segmented switch between views of one board (Slack's Started, Mentions and Watch
+  threads). My Tickets has no `BoardTabs`: its filter row is `WorkFilters`. It is a real tab set:
+  give it the same `name` as its `BoardSection` and pass the selected tab there as `activeTab`, and
+  every tab gets an id and `aria-controls` pointing at the section's body, which becomes the one
+  `role="tabpanel"` labelled by the selected tab (the views swap inside that one body, and the
+  board's `role="region"` keeps its own name). Only the selected tab is a Tab stop; ArrowLeft,
+  ArrowRight, Home and End move focus and select. A tab may carry `count`, and `tone: 'warn'` with a
+  `hint` (spoken and shown on hover, so the tone is never colour alone).
+- `BoardNote` (amber toolbar note) and `BoardState` (loading, empty, error or warning body).
+- `Board` and `BoardColumn` — `.board-frame` > `.board-track` and its columns. `Board` owns scroll
+  preservation (`usePreservedInteraction`), so a screen never wires it again.
+- `.board-card` (`.board-card-action` for a card that is a button), `.board-card-top`,
+  `.board-card-summary`, `.board-card-stat` and `.board-chip` — the card shell and status chip. A
+  domain card adds its own class beside them (`board-card my-tickets-card`).
+
+**Shared by the two screens that open Slack threads** (My Tickets chips, the Slack board), each
+once, with the differences passed in rather than forked:
+- `ui-react/hooks/useSlackThreadDialog.jsx` — the activity clock, the rule that a thread past the
+  cutoff closes its dialog, the `slack-session-changed` listener, the dialog's session-mismatch
+  handler and the `<SlackThreadDialog>` element. The panel keeps `openThread` (its own session code
+  closes it too) and passes its `source` name, snapshot, session-identity ref, `resetSession` /
+  `reloadSession` (how each forgets and refetches its data), and for Slack `resolveOpener`, for My
+  Tickets `onExpire`. It returns `{ now, dialog }`; render `{dialog}` inside the panel, beside the card.
+- `slackCoverage(snapshot)` in `ui/slack-coverage.js` — the two reason-specific warnings and
+  `incomplete` (partial, truncated or either warning). Each panel adds its own causes (Slack:
+  replies still being checked, a stale update, threads it cannot place; My Tickets: a continuation)
+  and words its own note.
+- `readScroll` / `writeScroll` in `hooks/usePreservedInteraction.js` — the one way a scroll place
+  is read and put back by `data-testid`; `Board` (per re-render) and `useSectionScroll` (per view)
+  both use it.
+
+**Adopting it in a new screen:** render `BoardPanel` > `BoardSection` and fill the slots; make the
+body either one `BoardState` or a `Board` of `BoardColumn`s (or a `.board-pane` for a view that is
+not a board, which fills and scrolls the same way); style cards with `.board-card` and keep only
+domain rules in the screen's own sheet. Import `board.css` before the panel sheets in
+`ui-react/styles.css` so they can override it. The polling hook re-renders the panel once a second,
+so memoize the board element as `MyTicketsPanel` does. Never copy a board rule into a panel sheet.
+`board.css` is held to the stylesheet contract in `test/ui-react-contract.test.mjs` (tokens only,
+no hex, short transitions that never say `all`, a `prefers-reduced-motion` block, no `columns:`).
+
+**The viewport-fill rule.** A board screen is exactly one viewport tall: only the columns (or the
+pane) scroll, never the page, and it is done by layout, not by a fixed offset or any JS. While a
+`.board-panel` is visible `#root` is a `100dvh` flex column (`#root:has(.board-panel:not([hidden]))`),
+`.panels` and the panel are flex shares, and the card grows only when it holds a board or a visible
+`.board-pane`. The board is `flex: 1 1 0` with a 320px floor and `contain: size`, so its column count
+never sets its height. A card holding only a state message (loading, empty, disconnected) keeps its
+natural height. So a new board screen needs `BoardPanel` and nothing else: no height of its own, no
+change to `App.jsx` or `AppShell.jsx`. One trap: `.board-pane[hidden]` and `.board-sub[hidden]` need
+their explicit `display: none` rules, because a `display: flex` rule on the same element defeats the
+`hidden` attribute.

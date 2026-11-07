@@ -50,7 +50,7 @@ for (const hasRows of [false, true]) {
       await expect(page.getByTestId(`slack-thread-link-${TS}`)).toHaveCount(hasRows ? 1 : 0);
 
       await page.getByTestId('tab-slack').click();
-      const slackWarning = page.locator('.slack-coverage');
+      const slackWarning = page.getByTestId('slack-coverage');
       await expect(slackWarning).toContainText(/incomplete/i);
       if (ambiguous)
         await expect(slackWarning).toContainText(/standalone mentions may be missing/i);

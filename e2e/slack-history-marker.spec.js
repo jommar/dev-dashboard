@@ -43,7 +43,7 @@ for (const panel of ['slack', 'my-tickets']) {
       });
       const coverage = () =>
         panel === 'slack'
-          ? page.locator('.slack-coverage')
+          ? page.getByTestId('slack-coverage')
           : page.getByTestId('my-tickets-slack-coverage');
       await page.goto(`/#/${panel}`);
       await expect(coverage()).toContainText(/standalone mentions may be missing/i);

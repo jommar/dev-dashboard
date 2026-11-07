@@ -4,7 +4,7 @@
 // and draft state. A card whose open PRs are all approved is marked green and
 // sealed. Every glyph is inline SVG and every state is also a word, so nothing is
 // carried by colour alone.
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { slug, timeAgo } from '../../ui/dom.js';
 import { inSprints } from '../../ui/home-data.js';
 import {
@@ -16,9 +16,8 @@ import {
   reviewText,
 } from '../../ui/ticket-board.js';
 import { canonicalTicketKey, normalizeTicketKey } from '../../ui/slack-ticket-links.js';
-import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
 import { SlackThreadLinks } from './SlackThreadLink.jsx';
-import { BoardColumn } from './BoardShell.jsx';
+import { Board, BoardColumn } from './BoardShell.jsx';
 
 // Jira priority names mapped to a chevron step: two up, one up, bars, one down,
 // two down. The shape carries the level; the name is in the label.
@@ -189,7 +188,7 @@ function PrLine({ ticketKey, pr }) {
           </span>
         )}
       </span>
-      {pr.draft && <span className="my-tickets-pr-draft">Draft</span>}
+      {pr.draft && <span className="board-chip my-tickets-pr-draft">Draft</span>}
     </a>
   );
 }
@@ -221,12 +220,12 @@ function TicketCard({ ticket, jiraBase, currentSprints, prs = [], slackLinks = [
   const updated = timeAgo(ticket.updated);
   return (
     <article
-      className="my-tickets-card"
+      className="board-card my-tickets-card"
       data-in-current-sprint={inCurrentSprint ? 'true' : undefined}
       data-all-approved={allApproved ? 'true' : undefined}
       data-testid={testId()}
     >
-      <div className="my-tickets-card-top">
+      <div className="board-card-top">
         <a
           className="jira-link my-tickets-card-key"
           href={`${jiraBase || ''}${ticket.key}`}
@@ -239,12 +238,12 @@ function TicketCard({ ticket, jiraBase, currentSprints, prs = [], slackLinks = [
         {allApproved && <ApprovedSeal testId={testId('approved')} />}
         {ticket.priority && <PriorityMark name={ticket.priority} testId={testId('priority')} />}
         {Number.isFinite(ticket.storyPoints) && (
-          <span className="my-tickets-card-points" data-testid={testId('points')}>
+          <span className="board-card-stat" data-testid={testId('points')}>
             {ticket.storyPoints} pt
           </span>
         )}
         {updated && (
-          <span className="my-tickets-card-updated" data-testid={testId('updated')}>
+          <span className="board-card-stat" data-testid={testId('updated')}>
             {updated}
           </span>
         )}
@@ -253,7 +252,7 @@ function TicketCard({ ticket, jiraBase, currentSprints, prs = [], slackLinks = [
           onOpen={(thread) => onOpenThread?.({ ...thread, selectedTicketKey: ticket.key })}
         />
       </div>
-      <p className="my-tickets-card-summary" title={ticket.summary} data-testid={testId('summary')}>
+      <p className="board-card-summary" title={ticket.summary} data-testid={testId('summary')}>
         {ticket.summary || ''}
       </p>
       {prs.length > 0 && (
@@ -286,46 +285,36 @@ export function TicketBoard({
   prsByTicket,
   onOpenThread,
 }) {
-  const rootRef = useRef(null);
-  // Board scrollLeft and column scrollTop survive the 90 s poll re-renders.
-  usePreservedInteraction(rootRef);
   const columns = useMemo(() => boardColumns(tickets), [tickets]);
+  // Board keeps its scrollLeft and every column's scrollTop across the 90 s poll re-renders.
   return (
-    <div className="my-tickets-frame" ref={rootRef}>
-      <div
-        className="my-tickets-board"
-        role="region"
-        aria-label="Ticket board"
-        tabIndex={0}
-        data-testid="my-tickets-board"
-      >
-        {columns.map((column) => {
-          const id = slug(column.status);
-          return (
-            <BoardColumn
-              key={column.status}
-              id={id}
-              label={column.status}
-              count={column.tickets.length}
-              testIdPrefix="my-tickets-column-"
-              kind={column.kind}
-            >
-              {column.tickets.map((ticket) => (
-                <li key={ticket.key}>
-                  <TicketCard
-                    ticket={ticket}
-                    jiraBase={jiraBase}
-                    currentSprints={currentSprints}
-                    prs={prsByTicket[canonicalTicketKey(ticket.key)] || []}
-                    slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
-                    onOpenThread={onOpenThread}
-                  />
-                </li>
-              ))}
-            </BoardColumn>
-          );
-        })}
-      </div>
-    </div>
+    <Board label="Ticket board" testId="my-tickets-board">
+      {columns.map((column) => {
+        const id = slug(column.status);
+        return (
+          <BoardColumn
+            key={column.status}
+            id={id}
+            label={column.status}
+            count={column.tickets.length}
+            testIdPrefix="my-tickets-column-"
+            kind={column.kind}
+          >
+            {column.tickets.map((ticket) => (
+              <li key={ticket.key}>
+                <TicketCard
+                  ticket={ticket}
+                  jiraBase={jiraBase}
+                  currentSprints={currentSprints}
+                  prs={prsByTicket[canonicalTicketKey(ticket.key)] || []}
+                  slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
+                  onOpenThread={onOpenThread}
+                />
+              </li>
+            ))}
+          </BoardColumn>
+        );
+      })}
+    </Board>
   );
 }

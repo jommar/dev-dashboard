@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- The Slack switch row (Threads I started, Mentions, Watch threads) is now a proper
+  set of tabs: each tab controls the card's body, only the selected tab is a Tab
+  stop, and the left and right arrow keys, Home and End move along the row and
+  select. The Watch threads tab shows how many threads are watched and turns amber
+  (with a note read aloud and shown on hover) while the watcher is paused,
+  disabled or has a failing delivery, so a stopped watcher is visible from the
+  other views; it is read from the watcher's own poll, with no extra request. On
+  My Tickets, **Refresh** now restarts the countdown to the next automatic refresh,
+  as it already did on Slack. Internally, the two screens that open Slack threads
+  share one hook for the thread dialog (`useSlackThreadDialog`) and one helper for
+  the incomplete-results warnings (`slackCoverage`), and the two scroll-keeping
+  hooks share one read and write of scroll positions. No `data-testid` changed.
+- The Slack tab is redesigned onto the My Tickets board layout: one card with a
+  toolbar (title, account line, counts, Connect or Disconnect, **Load more
+  eligible threads**, **Refresh** and a countdown), a switch row (Threads I
+  started, Mentions, Watch threads) and a board that fills the rest of the
+  viewport. The separate Account card, the page intro and the **Activity time
+  unavailable** section are gone: a thread whose activity time cannot be verified
+  is no longer shown, is left out of the tab counts and the need-a-reply count,
+  and the amber note says how many were left out. Watch threads is now the third
+  view of the card rather than a card below the board; it stays mounted while
+  another view is selected, so its poll and unsent links survive switching.
+  Slack now polls through the same hook as My Tickets, which adds **Refresh** and
+  a countdown; coming back to the tab reloads the list only when it is older than
+  60 seconds (before, on every visit). My Tickets and Slack share one set of
+  board components (`BoardShell.jsx`) and one stylesheet (`board.css`), and the
+  generic `my-tickets-*` classes are renamed `board-*`. `data-testid` names are
+  unchanged, except that Slack gains `slack-tab-watch`, `slack-refresh`,
+  `slack-next`, `slack-coverage` and `slack-threads-empty` and loses
+  `slack-threads-card` and `slack-body`.
 - The Slack tab now groups Threads I started and Mentions into five columns by
   latest activity. The shared list includes only threads created in the last
   rolling 28 days, so older My Tickets Slack chips disappear even after a new
@@ -12,8 +42,12 @@
   The separate watcher and its configured links are unchanged. Live Slack
   behavior and API rate-limit impact have not been verified. Deploy and roll
   back the backend and frontend session-generation changes together.
-- The main Playwright UI suite now defaults to three fully parallel workers;
-  the separate vite-proxy config is unchanged.
+- The main Playwright UI suite now defaults to four fully parallel workers;
+  the separate vite-proxy config is unchanged. It also runs against a fresh
+  unminified production build instead of the Vite dev server, with tracing off
+  locally, which takes the full run from about 147 s to about 57 s;
+  `PW_WORKERS`, `PW_TRACE` and `PW_HTML` are the new switches, and the HTML
+  report is no longer written locally by default.
 - Each PR line on a My Tickets card now shows review-comment chips: up to two small
   chips counting the PR's GitHub review threads, one for threads a person started
   and one for Copilot's. A chip reads unresolved over total, amber while any thread

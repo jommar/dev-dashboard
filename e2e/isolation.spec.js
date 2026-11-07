@@ -12,8 +12,15 @@ test('static fixture denies non-UI paths and mutation methods @smoke', async ({ 
     expect((await request.get(path)).status(), path).toBe(404);
   }
   expect((await request.post('/api/services/api/start')).status()).toBe(404);
-  expect((await request.post('/ui-react/main.jsx')).status()).toBe(404);
-  expect((await request.get('/ui-react/main.jsx')).status()).toBe(200);
+  const index = await request.get('/');
+  expect(index.status()).toBe(200);
+  expect(index.headers()['content-type']).toContain('text/html');
+  expect((await request.post('/')).status()).toBe(404);
+  const entry = (await index.text()).match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
+  expect(entry, 'index.html names the built entry script').toBeTruthy();
+  expect((await request.get(entry)).status()).toBe(200);
+  expect((await request.post(entry)).status()).toBe(404);
+  expect((await request.get('/ui-react/main.jsx')).status(), 'unbuilt sources').toBe(404);
 });
 
 test('browser boundaries mock controls, diff, SSE and clipboard and block unknown requests @smoke', async ({

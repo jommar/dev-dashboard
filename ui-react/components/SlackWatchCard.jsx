@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Card, LoadingState } from './Primitives.jsx';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { Button, LoadingState } from './Primitives.jsx';
 import { actionErrorText } from './slack-watch/actionErrorText.js';
 import { AttachForm } from './slack-watch/AttachForm.jsx';
 import { Countdown } from './slack-watch/Countdown.jsx';
@@ -8,6 +8,7 @@ import { SessionDelivery } from './slack-watch/SessionDelivery.jsx';
 import { WatchSettingsForm } from './slack-watch/WatchSettingsForm.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { SLACK_WATCH_POLL_MS } from '../../ui/polling.js';
+import { slackWatchSummary } from '../../ui/slack-watch-summary.js';
 
 const STATE_LABELS = { running: 'Running', paused: 'Paused', disabled: 'Disabled' };
 const CHECKING_TEXT = 'checking…';
@@ -19,8 +20,13 @@ const linesOf = (text) =>
     .filter(Boolean);
 
 // The poll reads only the server's in-memory list, never Slack, so it is cheap;
-// it still stops with the tab and with a hidden document.
-export function SlackWatchCard({ active }) {
+// it still stops with the tab and with a hidden document. The pane stays mounted
+// while `hidden`, so its poll, draft text and errors survive a switch of view. It reports what the
+// tab needs to show (see slackWatchSummary) through `onSummary` whenever that changes, and null when
+// it unmounts, so the poll stays here and the panel never reads the list itself. It is memoized:
+// the panel above re-renders every second for its countdown, and the props are two primitives and
+// a stable callback.
+export const SlackWatchCard = memo(function SlackWatchCard({ active, hidden = false, onSummary }) {
   const api = useDashboardApi();
   const [watch, setWatch] = useState(null);
   const [listFailed, setListFailed] = useState(false);
@@ -127,67 +133,70 @@ export function SlackWatchCard({ active }) {
     }
   };
 
+  const { count, attention } = slackWatchSummary(watch);
+  useEffect(() => {
+    onSummary({ count, attention });
+  }, [count, attention, onSummary]);
+  useEffect(() => () => onSummary(null), [onSummary]);
+
   const state = watch?.state;
   const disabled = state === 'disabled';
   const links = watch?.links ?? [];
   return (
-    <Card className="slack-section slack-watch-card" data-testid="slack-watch-card">
-      <div className="pr-open-heading">
-        <span className="section-label">Watch threads</span>
-        {watch && (
-          <>
-            <span
-              className="slack-watch-state"
-              role="status"
-              data-state={state}
-              data-testid="slack-watch-state"
-            >
-              {STATE_LABELS[state] ?? state}
+    <div className="board-pane slack-watch-card" data-testid="slack-watch-card" hidden={hidden}>
+      {watch && (
+        <div className="board-bar">
+          <span
+            className="slack-watch-state"
+            role="status"
+            data-state={state}
+            data-testid="slack-watch-state"
+          >
+            {STATE_LABELS[state] ?? state}
+          </span>
+          {watch.reason && (
+            <span className="slack-watch-reason" data-testid="slack-watch-reason">
+              {watch.reason}
             </span>
-            {watch.reason && (
-              <span className="slack-watch-reason" data-testid="slack-watch-reason">
-                {watch.reason}
-              </span>
-            )}
-            {state === 'running' &&
-              (watch.nextCheckAt ? (
-                <Countdown
-                  className="slack-watch-countdown"
-                  iso={watch.nextCheckAt}
-                  label="next check in"
-                  dueText={CHECKING_TEXT}
-                  onDue={load}
-                />
-              ) : (
-                <span className="slack-watch-countdown">{CHECKING_TEXT}</span>
-              ))}
+          )}
+          {state === 'running' &&
+            (watch.nextCheckAt ? (
+              <Countdown
+                className="slack-watch-countdown"
+                iso={watch.nextCheckAt}
+                label="next check in"
+                dueText={CHECKING_TEXT}
+                onDue={load}
+              />
+            ) : (
+              <span className="slack-watch-countdown">{CHECKING_TEXT}</span>
+            ))}
+          <Button
+            data-testid="slack-watch-check"
+            disabled={state !== 'running' || checking}
+            aria-busy={checking}
+            onClick={checkNow}
+          >
+            Check now
+          </Button>
+          {state === 'running' && (
             <Button
-              data-testid="slack-watch-check"
-              disabled={state !== 'running' || checking}
-              aria-busy={checking}
-              onClick={checkNow}
+              data-testid="slack-watch-pause"
+              onClick={async () => settle(await api.pauseSlackWatch())}
             >
-              Check now
+              Pause
             </Button>
-            {state === 'running' && (
-              <Button
-                data-testid="slack-watch-pause"
-                onClick={async () => settle(await api.pauseSlackWatch())}
-              >
-                Pause
-              </Button>
-            )}
-            {state === 'paused' && (
-              <Button
-                data-testid="slack-watch-resume"
-                onClick={async () => settle(await api.resumeSlackWatch())}
-              >
-                Resume
-              </Button>
-            )}
-          </>
-        )}
-      </div>
+          )}
+          {state === 'paused' && (
+            <Button
+              data-testid="slack-watch-resume"
+              onClick={async () => settle(await api.resumeSlackWatch())}
+            >
+              Resume
+            </Button>
+          )}
+        </div>
+      )}
       <p className="slack-note">
         Paste Slack thread links and attach the Claude Code sessions to wake when a thread gets a
         new message.
@@ -315,6 +324,6 @@ export function SlackWatchCard({ active }) {
           <WatchSettingsForm settings={watch.settings} onSettled={settle} />
         </>
       )}
-    </Card>
+    </div>
   );
-}
+});

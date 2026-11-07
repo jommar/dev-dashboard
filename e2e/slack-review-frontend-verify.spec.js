@@ -147,6 +147,6 @@ test('ambiguous mentions are skipped, both panels warn, and Slack identifies mis
   await expect(page.getByTestId('my-tickets-slack-coverage')).toContainText(/incomplete/i);
   await page.getByTestId('tab-slack').click();
   await expect(page.getByTestId(`slack-thread-${verified.ts}`)).toBeVisible();
-  await expect(page.getByTestId('slack-threads-card')).toContainText(/incomplete/i);
-  await expect(page.getByTestId('slack-threads-card')).toContainText(/standalone.*mention/i);
+  await expect(page.getByTestId('slack-section')).toContainText(/incomplete/i);
+  await expect(page.getByTestId('slack-section')).toContainText(/standalone.*mention/i);
 });

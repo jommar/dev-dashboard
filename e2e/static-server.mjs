@@ -1,14 +1,33 @@
-import { createServer as createViteServer } from 'vite';
+import { build, preview } from 'vite';
+import { fileURLToPath } from 'node:url';
 
-const server = await createViteServer({
+// The UI suite runs against a production build of the app, not the Vite dev server: no module
+// transform per request, no HMR socket, and the bundle that ships is the bundle under test. The
+// build is unminified so a page error keeps readable names, and it goes to its own folder so it
+// never touches `dist/`, which `node --test` rebuilds. `appType: 'mpa'` keeps unknown paths a 404
+// instead of falling back to index.html, so only the built files are served.
+process.env.NODE_ENV = 'production';
+
+const root = fileURLToPath(new URL('../', import.meta.url));
+const outDir = fileURLToPath(new URL('../test-results/e2e-dist', import.meta.url));
+
+await build({
+  configFile: fileURLToPath(new URL('../vite.config.js', import.meta.url)),
+  logLevel: 'warn',
+  build: { outDir, emptyOutDir: true, minify: false },
+});
+
+const server = await preview({
   configFile: false,
-  root: new URL('../', import.meta.url).pathname,
-  appType: 'spa',
-  server: { host: '127.0.0.1', port: 6517, strictPort: true },
+  root,
+  appType: 'mpa',
+  logLevel: 'warn',
+  build: { outDir },
+  preview: { host: '127.0.0.1', port: 6517, strictPort: true },
   plugins: [
     {
       name: 'dashboard-playwright-entry',
-      configureServer(vite) {
+      configurePreviewServer(vite) {
         vite.middlewares.use((req, res, next) => {
           res.setHeader(
             'Content-Security-Policy',
@@ -28,18 +47,13 @@ const server = await createViteServer({
             res.writeHead(404).end();
             return;
           }
-          if (pathname === '/') req.url = '/ui-react/index.html';
           next();
         });
-      },
-      transformIndexHtml(html) {
-        return html.replace('src="./main.jsx"', 'src="/ui-react/main.jsx"');
       },
     },
   ],
 });
-await server.listen();
-console.log('Vite React UI fixture: http://127.0.0.1:6517 (APIs require browser mocks)');
+console.log('Built React UI fixture: http://127.0.0.1:6517 (APIs require browser mocks)');
 process.on('SIGTERM', async () => {
   await server.close();
 });

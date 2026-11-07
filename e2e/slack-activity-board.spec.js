@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, listReads } from './fixtures.js';
 import { slackAppThreadLink, slackWatchData, ticketBoardData, watchLink } from './data.js';
 
 const CHANNEL = 'C0EXAMPLE1';
@@ -87,10 +87,6 @@ async function openSlack(page) {
 const boardOf = (page) => page.getByRole('region', { name: /slack.*board/i });
 const groupOf = (page, name) => boardOf(page).getByRole('group', { name: new RegExp(name, 'i') });
 const cardOf = (page, thread) => page.getByTestId(`slack-thread-${thread.ts}`);
-const listReads = (dashboard) =>
-  dashboard.requests.filter(
-    ({ method, path }) => method === 'GET' && path.startsWith('/api/slack/threads'),
-  );
 
 test('board activity: five loaded groups count and sort by newest activity, not root age', async ({
   page,
@@ -126,7 +122,7 @@ test('board activity: five loaded groups count and sort by newest activity, not 
     await expect(column).toBeVisible();
     await expect(column.getByText(String(counts[index]), { exact: true })).toBeVisible();
   }
-  expect(await board.getByRole('group').count()).toBe(5);
+  await expect(board.getByRole('group')).toHaveCount(5);
   for (const [name, thread] of [
     ['Today', today],
     ['Yesterday', yesterday],
@@ -197,7 +193,7 @@ test('board coverage: partial loaded results are not described as all caught up'
   dashboard.data.slack.threads.truncated = true;
   await openSlack(page);
   await expect(page.getByTestId('slack-threads-meta')).not.toContainText('All caught up');
-  await expect(page.getByTestId('slack-threads-card')).toContainText(/partial|incomplete|not all/i);
+  await expect(page.getByTestId('slack-section')).toContainText(/partial|incomplete|not all/i);
 });
 
 test('board coverage: a bounded continuation keeps the loaded scope and unknown reply status honest', async ({
@@ -228,9 +224,7 @@ test('board coverage: a bounded continuation keeps the loaded scope and unknown 
   await openSlack(page);
   await expect(page.getByTestId('slack-threads-meta')).toContainText('Reply status unknown');
   await expect(cardOf(page, first)).toContainText('Reply status unknown');
-  await expect(page.getByTestId('slack-threads-card')).toContainText(
-    'search boundaries are uncertain',
-  );
+  await expect(page.getByTestId('slack-section')).toContainText('search boundaries are uncertain');
   await page.getByRole('button', { name: 'Load more eligible threads' }).click();
   await expect(cardOf(page, second)).toBeVisible();
   expect(continued).toBe(true);
@@ -482,7 +476,7 @@ test('board scope: a late My Tickets listing from the previous session cannot re
   }
 });
 
-test('board activity: time and unknown across midnight without a listing refresh', async ({
+test('board activity: time across midnight without a listing refresh; unplaceable threads are left out', async ({
   page,
   dashboard,
 }) => {
@@ -515,11 +509,20 @@ test('board activity: time and unknown across midnight without a listing refresh
   ).toBeVisible();
   await expect(groupOf(page, 'Last 3 hours').getByTestId(`slack-thread-${exact.ts}`)).toBeVisible();
   await expect(groupOf(page, 'Yesterday').getByTestId(`slack-thread-${justPast.ts}`)).toBeVisible();
-  const unavailable = page.getByText('Activity time unavailable', { exact: true });
-  await expect(unavailable).toBeVisible();
-  await expect(cardOf(page, unknown)).toBeVisible();
-  await expect(cardOf(page, future)).toBeVisible();
+  // An unusable and a future activity time cannot be placed in a group, so neither thread is shown or
+  // counted (not as a card, a tab count, or a reply that needs checking) and the note says how many.
+  await expect(cardOf(page, unknown)).toHaveCount(0);
+  await expect(cardOf(page, future)).toHaveCount(0);
+  await expect(page.getByText('Activity time unavailable')).toHaveCount(0);
+  await expect(page.locator('button[data-testid^="slack-thread-"]')).toHaveCount(3);
+  await expect(page.getByTestId('slack-tab-started').locator('.board-tab-count')).toHaveText('3');
+  await expect(page.getByTestId('slack-threads-meta')).toContainText(
+    '0 loaded threads need a reply',
+  );
   await expect(page.getByTestId('slack-threads-meta')).not.toContainText('All caught up');
+  await expect(page.getByTestId('slack-coverage')).toContainText(
+    '2 loaded threads with no usable activity time are not shown.',
+  );
   const before = listReads(dashboard).length;
   await page.clock.runFor(1);
   await expect(groupOf(page, 'Yesterday').getByTestId(`slack-thread-${exact.ts}`)).toBeVisible();
@@ -604,7 +607,9 @@ test('board scope: live expiry removes both consumers and rejects a late dialog 
     await expect(page.getByTestId(`slack-thread-link-${thread.ts}`)).toBeVisible();
     await page.getByTestId('tab-slack').click();
     await expect(cardOf(page, thread)).toBeVisible();
+    await page.getByTestId('slack-tab-watch').click();
     await expect(page.getByTestId(`slack-watch-row-${watched.key}`)).toBeVisible();
+    await page.getByTestId('slack-tab-started').click();
     await cardOf(page, thread).click();
     await expect(page.getByTestId('slack-thread-dialog')).toBeVisible();
     await expect.poll(() => requested).toBe(true);
@@ -621,6 +626,7 @@ test('board scope: live expiry removes both consumers and rejects a late dialog 
     await (await response).finished();
     await page.clock.runFor(1);
     await expect(page.getByTestId(`slack-thread-message-${thread.ts}`)).toHaveCount(0);
+    await page.getByTestId('slack-tab-watch').click();
     await expect(page.getByTestId(`slack-watch-row-${watched.key}`)).toBeVisible();
     await page.getByTestId('tab-my-tickets').click();
     await expect(page.getByTestId('my-tickets-board')).toBeVisible();
@@ -657,8 +663,10 @@ test('board interaction: both tabs retain needs-reply, dialog, focus and indepen
   await expect(cardOf(page, mention)).toBeFocused();
   await page.getByTestId('slack-tab-started').click();
   await expect(cardOf(page, started)).toBeVisible();
+  await page.getByTestId('slack-tab-watch').click();
   await expect(page.getByTestId(`slack-watch-row-${watched.key}`)).toBeVisible();
   await expect(page.getByTestId('slack-watch-links-input')).toBeVisible();
+  await page.getByTestId('slack-tab-started').click();
   await expect(boardOf(page)).toBeVisible();
 });
 
@@ -683,9 +691,9 @@ test('board interaction: focus scroll mobile survives a card moving while its di
   await body.evaluate((element) => {
     element.scrollTop = Math.floor((element.scrollHeight - element.clientHeight) / 2);
   });
-  await board.evaluate((element) => {
-    element.scrollLeft = 120;
-  });
+  // Near the second column's snap point (the same value the My Tickets board specs use): the shared
+  // board snaps to columns, so an arbitrary offset would settle somewhere else before it is read.
+  await board.evaluate((element) => element.scrollTo({ left: 300, behavior: 'instant' }));
   const before = await body.evaluate((element) => element.scrollTop);
   const leftBefore = await board.evaluate((element) => element.scrollLeft);
   expect(before).toBeGreaterThan(0);
@@ -736,10 +744,10 @@ test('board interaction: each tab restores its own column scroll', async ({ page
   await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBe(mentionsTop);
 });
 
-test('board interaction: keyboard reaches every column and the watcher on a narrow screen', async ({
+test('board interaction: keyboard reaches every column on a narrow screen', async ({
   page,
   dashboard,
-}, testInfo) => {
+}) => {
   await freeze(page, NOON);
   await page.setViewportSize({ width: 390, height: 600 });
   const recent = row('Keyboard recent', NOON - DAY, NOON - HOUR);
@@ -751,7 +759,6 @@ test('board interaction: keyboard reaches every column and the watcher on a narr
   const month = row('Keyboard month', monthTime, monthTime, { replyCount: 0 });
   seed(dashboard, NOON, [recent, today, yesterday, week, month]);
   await openSlack(page);
-  await expect(page.getByTestId('slack-watch-check')).toBeVisible();
   const board = boardOf(page);
   await board.focus();
   for (const [index, group] of GROUPS.entries()) {
@@ -761,6 +768,20 @@ test('board interaction: keyboard reaches every column and the watcher on a narr
     await expect(cardOf(page, [recent, today, yesterday, week, month][index])).toBeFocused();
   }
   expect(await board.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+});
+
+test('board interaction: keyboard reaches the watcher through its tab on a narrow screen', async ({
+  page,
+  dashboard,
+}, testInfo) => {
+  await freeze(page, NOON);
+  await page.setViewportSize({ width: 390, height: 600 });
+  seed(dashboard, NOON, [row('Keyboard recent', NOON - DAY, NOON - HOUR)]);
+  await openSlack(page);
+  await page.getByTestId('slack-tab-watch').focus();
+  await page.keyboard.press('Enter');
+  // The bar renders once the first watch read has landed; Tab only counts from there.
+  await expect(page.getByTestId('slack-watch-check')).toBeVisible();
   await page.keyboard.press('Tab');
   await expect(page.getByTestId('slack-watch-check')).toBeFocused();
   await page.keyboard.press('Tab');
@@ -817,7 +838,5 @@ for (const [width, height] of [
       element.scrollTop = element.scrollHeight;
     });
     expect(Math.abs((await title.boundingBox()).y - top)).toBeLessThanOrEqual(1);
-    await page.getByTestId('slack-watch-links-input').scrollIntoViewIfNeeded();
-    await expect(page.getByTestId('slack-watch-links-input')).toBeVisible();
   });
 }

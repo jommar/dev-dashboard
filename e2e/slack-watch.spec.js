@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, watchListReads, watchRequests } from './fixtures.js';
 import {
   WATCH_DEFAULT_TEMPLATE,
   slackWatchData,
@@ -36,10 +36,11 @@ const INVALID_SESSION_SENTENCE =
   'That session id is not valid. Choose a session from the list or paste a full session id.';
 
 const lastCall = ({ data }) => data.slack.watch.calls.at(-1);
-const watchRequests = ({ requests }) =>
-  requests.filter(({ path }) => path.startsWith('/api/slack/watch'));
+// The watcher is the third view of the Slack card, so it is hidden until its tab is chosen.
+const openWatchView = (page) => page.getByTestId('slack-tab-watch').click();
 const openSlackTab = async (page) => {
   await page.goto('/#/slack');
+  await openWatchView(page);
   await expect(page.getByTestId('slack-watch-card')).toBeVisible();
   await expect(page.getByTestId('slack-watch-state')).toBeVisible();
 };
@@ -47,8 +48,6 @@ const sessionTestId = (part, key, sessionId) => `slack-watch-session-${part}-${k
 const colorOf = (locator) => locator.evaluate((node) => getComputedStyle(node).color);
 
 const isoAfter = (milliseconds) => new Date(FROZEN_AT + milliseconds).toISOString();
-const watchListReads = ({ requests }) =>
-  requests.filter(({ method, path }) => method === 'GET' && path === '/api/slack/watch').length;
 const checkCalls = ({ data }) => data.slack.watch.calls.filter(({ path }) => path === CHECK_ROUTE);
 const watchCard = (page) => page.getByTestId('slack-watch-card');
 const checkNowButton = (page) => watchCard(page).getByRole('button', { name: 'Check now' });
@@ -99,12 +98,12 @@ const readsAddedAfterEachChunk = async (page, dashboard, baseline, chunks) => {
   const added = [];
   for (const seconds of chunks) {
     await tickSeconds(page, seconds);
-    added.push(watchListReads(dashboard) - baseline);
+    added.push(watchListReads(dashboard).length - baseline);
   }
   return added;
 };
 const expectOneReadWhileStillPastDue = async (page, dashboard, baseline) => {
-  await expect.poll(() => watchListReads(dashboard) - baseline).toBe(1);
+  await expect.poll(() => watchListReads(dashboard).length - baseline).toBe(1);
   expect(await readsAddedAfterEachChunk(page, dashboard, baseline, SECONDS_PAST_DUE)).toEqual([
     1, 1, 1, 1,
   ]);
@@ -370,6 +369,7 @@ test.describe('watch card', () => {
       ).length;
     await page.clock.install();
     await page.goto('/#/slack');
+    await openWatchView(page);
     await expect(page.getByTestId('slack-watch-unavailable')).toBeVisible();
     await expect.poll(pickerReads).toBe(1);
 
@@ -1020,10 +1020,7 @@ test.describe('watch card', () => {
     page,
     dashboard,
   }) => {
-    const listReads = () =>
-      dashboard.requests.filter(
-        ({ method, path }) => method === 'GET' && path === '/api/slack/watch',
-      ).length;
+    const listReads = () => watchListReads(dashboard).length;
     const settled = () =>
       page.evaluate(() => fetch('/api/config').then((response) => response.json()));
     const hideDocument = () =>
@@ -1201,12 +1198,12 @@ test.describe('watch schedule', () => {
 
     await tickSeconds(page, 8);
     await expect(card.getByText(nextCheckText(2))).toBeVisible();
-    const readsBeforeDue = watchListReads(dashboard);
+    const readsBeforeDue = watchListReads(dashboard).length;
     // The server polled at the due time and armed the next poll one interval later.
     watch.nextCheckAt = isoAfter(12_000 + 180_000);
     await tickSeconds(page, 2);
     await tickSeconds(page, 2);
-    await expect.poll(() => watchListReads(dashboard)).toBeGreaterThan(readsBeforeDue);
+    await expect.poll(() => watchListReads(dashboard).length).toBeGreaterThan(readsBeforeDue);
     await expect(card.getByText(/next check in \d{3} s/)).toBeVisible();
     await expect(card.getByText(nextCheckText(0))).toHaveCount(0);
   });
@@ -1368,7 +1365,7 @@ test.describe('watch schedule', () => {
       await expect(checkNow).toBeEnabled();
       await expect(watchCard(page).getByText(nextCheckText(30))).toBeVisible();
 
-      const readsBeforeClick = watchListReads(dashboard);
+      const readsBeforeClick = watchListReads(dashboard).length;
       await checkNow.click();
       await expect(checkNow).toBeDisabled();
       await expect(checkNow).toHaveAttribute('aria-busy', 'true');
@@ -1378,7 +1375,7 @@ test.describe('watch schedule', () => {
       finishCheck();
       await expect(checkNow).toBeEnabled();
       await expect(checkNow).not.toHaveAttribute('aria-busy', 'true');
-      await expect.poll(() => watchListReads(dashboard)).toBeGreaterThan(readsBeforeClick);
+      await expect.poll(() => watchListReads(dashboard).length).toBeGreaterThan(readsBeforeClick);
       await expect(watchCard(page).getByText(nextCheckText(180))).toBeVisible();
       expect(checkRequests).toEqual(['POST']);
       expect(checkCalls(dashboard)).toHaveLength(1);
@@ -1436,7 +1433,7 @@ test.describe('watch schedule', () => {
 
     await tickSeconds(page, 2);
     await expect(card.getByText(nextCheckText(1))).toBeVisible();
-    const baseline = watchListReads(dashboard);
+    const baseline = watchListReads(dashboard).length;
     await tickSeconds(page, 1);
     await expect(card.getByText('checking…')).toBeVisible();
 
@@ -1456,27 +1453,27 @@ test.describe('watch schedule', () => {
     await expect(card.getByText(nextCheckText(3))).toBeVisible();
 
     await tickSeconds(page, 2);
-    const baseline = watchListReads(dashboard);
+    const baseline = watchListReads(dashboard).length;
     // The server polled at the due time and armed the next poll 10 s later.
     watch.nextCheckAt = isoAfter(13_000);
     await tickSeconds(page, 1);
-    await expect.poll(() => watchListReads(dashboard) - baseline).toBe(1);
+    await expect.poll(() => watchListReads(dashboard).length - baseline).toBe(1);
     await expect(card.getByText(nextCheckText(10))).toBeVisible();
 
     for (const seconds of [5, 1]) {
       await tickSeconds(page, seconds);
-      expect(watchListReads(dashboard) - baseline).toBe(1);
+      expect(watchListReads(dashboard).length - baseline).toBe(1);
     }
     await expect(card.getByText(nextCheckText(4))).toBeVisible();
 
     watch.nextCheckAt = isoAfter(23_000);
     await tickSeconds(page, 4);
-    await expect.poll(() => watchListReads(dashboard) - baseline).toBe(2);
+    await expect.poll(() => watchListReads(dashboard).length - baseline).toBe(2);
     await expect(card.getByText(nextCheckText(10))).toBeVisible();
 
     for (const seconds of [3, 4]) {
       await tickSeconds(page, seconds);
-      expect(watchListReads(dashboard) - baseline).toBe(2);
+      expect(watchListReads(dashboard).length - baseline).toBe(2);
     }
     await expect(card.getByText(nextCheckText(3))).toBeVisible();
   });

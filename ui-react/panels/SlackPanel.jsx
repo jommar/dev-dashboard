@@ -1,25 +1,33 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button, Card, LoadingState } from '../components/Primitives.jsx';
-import { SlackThreadDialog } from '../components/SlackThreadDialog.jsx';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '../components/Primitives.jsx';
 import { SlackWatchCard } from '../components/SlackWatchCard.jsx';
-import { BoardColumn } from '../components/BoardShell.jsx';
-import { useDashboardApi } from '../hooks/useDashboardApi.js';
-import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
-import { useSlackActivityClock } from '../hooks/useSlackActivityClock.js';
-import { timeAgo } from '../../ui/dom.js';
 import {
-  eligibleSlackRoot,
-  groupSlackActivity,
-  slackSessionIdentity,
-} from '../../ui/slack-activity.js';
+  Board,
+  BoardColumn,
+  BoardNote,
+  BoardPanel,
+  BoardSection,
+  BoardState,
+  BoardTabs,
+  RefreshControl,
+} from '../components/BoardShell.jsx';
+import { useActivePolling } from '../hooks/useActivePolling.js';
+import { useDashboardApi } from '../hooks/useDashboardApi.js';
+import { useSectionScroll } from '../hooks/useSectionScroll.js';
+import { useSlackThreadDialog } from '../hooks/useSlackThreadDialog.jsx';
+import { timeAgo } from '../../ui/dom.js';
+import { groupSlackActivity, slackSessionIdentity } from '../../ui/slack-activity.js';
 import { SLACK_POLL_MS } from '../../ui/polling.js';
-import { slackStaleReplyWarning, slackStandaloneMentionWarning } from '../../ui/slack-coverage.js';
+import { slackCoverage } from '../../ui/slack-coverage.js';
 import { notifySlackSessionChanged } from '../hooks/useSlackPending.js';
 
 const SECTIONS = {
   started: { label: 'Threads I started', empty: 'No started threads loaded in #ezat_claudio.' },
   mentions: { label: 'Mentions', empty: 'No mentions loaded in #ezat_claudio.' },
 };
+// The third view of the card. It is not a list of threads, so it is not a section:
+// counts, notes and "Load more" keep describing the last selected section.
+const WATCH_VIEW = 'watch';
 
 // The server answers a cold cache in about a second with the rows it has and
 // "Needs reply" still unknown, then finishes checking in the background. A
@@ -27,6 +35,51 @@ const SECTIONS = {
 // a server that never finishes from being polled faster than the 60 s refresh.
 const ENRICH_RETRY_MS = 2_000;
 const ENRICH_RETRY_LIMIT = 3;
+
+const LAST_UPDATE_NOTE = 'Showing the last available update.';
+const INCOMPLETE_NOTE =
+  'Results or reply status may be incomplete; counts cover loaded threads only.';
+const unplacedNote = (count) =>
+  `${count} loaded ${count === 1 ? 'thread with no usable activity time is' : 'threads with no usable activity time are'} not shown.`;
+
+function SlackThreadCard({ thread, mentions, now, onOpen }) {
+  const mentionedBy = mentions ? thread.author?.name : null;
+  const startedBy =
+    mentions && thread.starter?.name !== thread.author?.name ? thread.starter?.name : null;
+  const lastBy = thread.replyCount > 0 ? thread.latestReplyBy?.name : null;
+  return (
+    <button
+      type="button"
+      className="board-card board-card-action"
+      data-testid={`slack-thread-${thread.ts}`}
+      data-needs-reply={thread.needsReply == null ? 'unknown' : thread.needsReply ? 'yes' : 'no'}
+      data-tooltip="Open the conversation"
+      aria-haspopup="dialog"
+      onClick={() => onOpen(thread)}
+    >
+      <span className="board-card-top">
+        {thread.needsReply === true && (
+          <span className="board-chip" data-tone="warn">
+            Needs reply
+          </span>
+        )}
+        {thread.needsReply == null && <span className="board-chip">Reply status unknown</span>}
+        <span className="board-card-stat">
+          {thread.replyCount} {thread.replyCount === 1 ? 'reply' : 'replies'}
+        </span>
+        <span className="board-card-stat slack-thread-when">{timeAgo(thread.activityAt, now)}</span>
+      </span>
+      <span className="board-card-summary">{thread.text || '(no text)'}</span>
+      {(mentionedBy || startedBy || lastBy) && (
+        <span className="slack-thread-meta">
+          {mentionedBy && <span className="slack-thread-who">@{mentionedBy} mentioned you</span>}
+          {startedBy && <span>started by {startedBy}</span>}
+          {lastBy && <span>last by {lastBy}</span>}
+        </span>
+      )}
+    </button>
+  );
+}
 
 // Slack is entirely optional. Every state below is rendered from a status that
 // already degraded a failure into "not connected" — there is no error surface,
@@ -38,7 +91,12 @@ export function SlackPanel({ active }) {
   const [threads, setThreads] = useState(null);
   const [threadsFailed, setThreadsFailed] = useState(false);
   const [section, setSection] = useState('started');
+  const [showWatch, setShowWatch] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [openThread, setOpenThread] = useState(null);
+  // The watcher's own poll feeds the Watch tab through this, so a paused or failing watcher shows
+  // while another view is selected.
+  const [watchSummary, setWatchSummary] = useState(null);
   // Which snapshot the enrichment retries belong to, so a refreshed snapshot
   // starts with its own budget instead of inheriting the previous one's.
   const [enrichRetries, setEnrichRetries] = useState({ updatedAt: null, count: 0 });
@@ -47,26 +105,19 @@ export function SlackPanel({ active }) {
   const generation = useRef(0);
   const statusRequest = useRef(0);
   const sessionIdentity = useRef('');
-  const boardRoot = useRef(null);
-  const sectionScroll = useRef(new Map());
-  usePreservedInteraction(boardRoot);
-  const [now, currentTime] = useSlackActivityClock(threads, active, openThread);
-  const threadIsEligible = (ts) => eligibleSlackRoot(ts, currentTime());
+  const boardFrame = useRef(null);
+  const view = showWatch ? WATCH_VIEW : section;
+  const rememberScroll = useSectionScroll(boardFrame, view);
 
-  const switchSection = (next) => {
-    if (next === section) return;
-    const bodies = boardRoot.current?.querySelectorAll('.my-tickets-column-body') || [];
-    sectionScroll.current.set(
-      section,
-      new Map([...bodies].map((body) => [body.dataset.testid, body.scrollTop])),
-    );
-    setSection(next);
+  const switchView = (next) => {
+    if (next === view) return;
+    rememberScroll();
+    if (next === WATCH_VIEW) setShowWatch(true);
+    else {
+      setShowWatch(false);
+      setSection(next);
+    }
   };
-  useLayoutEffect(() => {
-    const saved = sectionScroll.current.get(section);
-    const bodies = boardRoot.current?.querySelectorAll('.my-tickets-column-body') || [];
-    for (const body of bodies) body.scrollTop = saved?.get(body.dataset.testid) || 0;
-  }, [section]);
 
   const clearSession = useCallback(() => {
     generation.current += 1;
@@ -77,6 +128,7 @@ export function SlackPanel({ active }) {
     setOpenThread(null);
     setStatus(null);
     setThreadsFailed(false);
+    setShowWatch(false);
   }, []);
 
   const load = useCallback(async () => {
@@ -100,21 +152,26 @@ export function SlackPanel({ active }) {
     return next;
   }, [api]);
 
-  useEffect(() => {
-    const sessionChanged = (event) => {
-      if (event.detail?.source === 'slack') return;
-      clearSession();
-      if (active) load();
-    };
-    window.addEventListener('slack-session-changed', sessionChanged);
-    return () => window.removeEventListener('slack-session-changed', sessionChanged);
-  }, [active, clearSession, load]);
-
-  const dialogSessionMismatch = useCallback(() => {
-    clearSession();
-    notifySlackSessionChanged('slack');
+  // The thread dialog stays mounted beside the card, so an open conversation survives a status
+  // change; the hook wires it, the clock and the reaction to a session that changed elsewhere.
+  const reloadSession = useCallback(() => {
     if (active) load();
-  }, [active, clearSession, load]);
+  }, [active, load]);
+  const resolveOpener = (ts) =>
+    [...(boardFrame.current?.querySelectorAll('[data-testid]') || [])].find(
+      (element) => element.dataset.testid === `slack-thread-${ts}`,
+    ) || boardFrame.current?.querySelector('[role="region"]');
+  const { now, dialog } = useSlackThreadDialog({
+    source: 'slack',
+    snapshot: threads,
+    active,
+    openThread,
+    setOpenThread,
+    sessionIdentity,
+    resolveOpener,
+    resetSession: clearSession,
+    reloadSession,
+  });
 
   const loadThreads = useCallback(
     async (continuation) => {
@@ -157,16 +214,28 @@ export function SlackPanel({ active }) {
     return () => clearInterval(timer);
   }, [active, connecting, load]);
 
-  useEffect(() => {
-    if (!active || !connected) return undefined;
-    loadThreads();
-    const timer = setInterval(async () => {
-      if (document.hidden) return;
-      const currentStatus = await load();
-      if (currentStatus?.connected) loadThreads();
-    }, SLACK_POLL_MS);
-    return () => clearInterval(timer);
-  }, [active, connected, load, loadThreads]);
+  // The first load and a manual Refresh read the list (loadThreads checks the
+  // status itself afterwards); a periodic poll reads the status first and only
+  // asks for the list while that session is still connected.
+  const poll = useCallback(
+    async ({ silent = false } = {}) => {
+      setRefreshing(true);
+      try {
+        if (!silent) return await loadThreads();
+        const current = await load();
+        if (current?.connected) await loadThreads();
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [load, loadThreads],
+  );
+  const { load: refresh, countdown } = useActivePolling({
+    active: active && connected,
+    interval: SLACK_POLL_MS,
+    load: poll,
+    loaded: !!threads,
+  });
 
   // A snapshot can arrive with `enriched: false`: the rows are real, but the
   // server had not finished checking "Needs reply" when it answered. Retry a
@@ -213,6 +282,7 @@ export function SlackPanel({ active }) {
     const disconnected = await api.disconnectSlack();
     setThreads(null);
     setOpenThread(null);
+    setShowWatch(false);
     setStatus({ connected: false, connecting: false });
     wasConnected.current = false;
     sessionIdentity.current = '';
@@ -221,7 +291,7 @@ export function SlackPanel({ active }) {
     if (disconnected) notifySlackSessionChanged('slack');
   };
 
-  const meta = !status
+  const account = !status
     ? 'Checking…'
     : connected
       ? `Connected as @${status.user || 'you'}${status.team ? ` · ${status.team}` : ''}`
@@ -229,226 +299,188 @@ export function SlackPanel({ active }) {
         ? 'Waiting for sign-in…'
         : 'Not connected';
 
-  const items = (threads?.[section] || []).filter((thread) => eligibleSlackRoot(thread.ts, now));
-  const { groups, unknown } = groupSlackActivity(items, now);
+  // Tab counts, the reply count and the board all read the placed threads of one
+  // snapshot, so the three numbers cannot disagree. Threads without a usable
+  // activity time are counted, never listed.
+  const placed = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.keys(SECTIONS).map((id) => {
+          const { groups, unplaced } = groupSlackActivity(threads?.[id] || [], now);
+          return [id, { groups, unplaced, items: groups.flatMap((group) => group.threads) }];
+        }),
+      ),
+    [threads, now],
+  );
+  const { groups, unplaced, items } = placed[section];
   const needsReply = items.filter((thread) => thread.needsReply === true).length;
   const checking = threads?.enriched === false;
   const replyUnknown = items.some((thread) => thread.needsReply == null);
-  const staleReplyWarning = slackStaleReplyWarning(threads);
-  const standaloneWarning = slackStandaloneMentionWarning(threads);
+  const { staleReplyWarning, standaloneWarning, incomplete } = slackCoverage(threads);
   const updatedLabel = threads ? new Date(threads.updatedAt).toLocaleTimeString() : '';
+  const threadsMeta = !threads
+    ? 'Loading…'
+    : checking
+      ? `Checking replies… · ${needsReply} loaded need a reply · updated ${updatedLabel}`
+      : replyUnknown
+        ? `Reply status unknown for some loaded threads · ${needsReply} need a reply`
+        : `${needsReply} loaded threads need a reply · updated ${updatedLabel}`;
+  // The amber note over the board, or null: why the loaded threads may not be the whole story.
+  // Any reason raises it, and it names the ones that have a sentence of their own. The Watch
+  // view never shows it.
+  const lastUpdateNote = threads?.stale || threadsFailed ? LAST_UPDATE_NOTE : '';
+  const unplacedText = unplaced > 0 ? unplacedNote(unplaced) : '';
+  const coverageNote =
+    threads &&
+    !showWatch &&
+    (incomplete || checking || replyUnknown || lastUpdateNote || unplacedText)
+      ? [
+          lastUpdateNote,
+          INCOMPLETE_NOTE,
+          staleReplyWarning,
+          standaloneWarning,
+          ...(threads.coverageNotes || []),
+          unplacedText,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : null;
 
-  useEffect(() => {
-    if (openThread && !eligibleSlackRoot(openThread.ts, now)) setOpenThread(null);
-  }, [openThread, now]);
-
-  const resolveOpener = (ts) =>
-    [...(boardRoot.current?.querySelectorAll('[data-testid]') || [])].find(
-      (element) => element.dataset.testid === `slack-thread-${ts}`,
-    ) || boardRoot.current?.querySelector('[role="region"]');
-
-  const threadCard = (thread, activityKnown = true) => (
-    <button
-      key={thread.ts}
-      type="button"
-      className="slack-thread"
-      data-testid={`slack-thread-${thread.ts}`}
-      data-needs-reply={thread.needsReply == null ? 'unknown' : thread.needsReply ? 'yes' : 'no'}
-      data-tooltip="Open the conversation"
-      aria-haspopup="dialog"
-      onClick={() => setOpenThread(thread)}
-    >
-      <span className="slack-thread-text">{thread.text || '(no text)'}</span>
-      <span className="slack-thread-meta">
-        {section === 'mentions' && thread.author?.name && (
-          <span className="slack-thread-who">@{thread.author.name} mentioned you</span>
-        )}
-        {section === 'mentions' &&
-          thread.starter?.name &&
-          thread.starter.name !== thread.author?.name && (
-            <span>started by {thread.starter.name}</span>
-          )}
-        <span>
-          {thread.replyCount} {thread.replyCount === 1 ? 'reply' : 'replies'}
-        </span>
-        {thread.replyCount > 0 && thread.latestReplyBy?.name && (
-          <span>last by {thread.latestReplyBy.name}</span>
-        )}
-        <span className="slack-thread-when">
-          {activityKnown ? timeAgo(thread.activityAt, now) : 'Time unavailable'}
-        </span>
-        {thread.needsReply === true && <span className="slack-needs">Needs reply</span>}
-        {thread.needsReply == null && <span>Reply status unknown</span>}
-      </span>
-    </button>
+  // The countdown re-renders this panel every second; an identical element lets
+  // React skip the board and its card-wide DOM scan until the threads change.
+  const board = useMemo(
+    () => (
+      <Board label="Slack activity board" testId="slack-board" frameRef={boardFrame}>
+        {groups.map((group) => (
+          <BoardColumn
+            key={group.id}
+            id={group.id}
+            label={group.label}
+            count={group.threads.length}
+            testIdPrefix="slack-column-"
+          >
+            {group.threads.map((thread) => (
+              <li key={thread.ts}>
+                <SlackThreadCard
+                  thread={thread}
+                  mentions={section === 'mentions'}
+                  now={now}
+                  onOpen={setOpenThread}
+                />
+              </li>
+            ))}
+          </BoardColumn>
+        ))}
+      </Board>
+    ),
+    [groups, section, now],
   );
 
+  const renderBody = () => {
+    if (!status)
+      return <BoardState kind="loading" testId="slack-loading" label="Checking Slack…" />;
+    if (!connected)
+      return connecting ? (
+        <BoardState testId="slack-connecting">
+          Finish signing in to Slack in the window that just opened. Closing that window cancels —
+          nothing else in the dashboard changes.
+        </BoardState>
+      ) : (
+        <BoardState testId="slack-disconnected">
+          Slack is optional — skip it and every other tab behaves exactly as it does today. Signing
+          in opens a separate Slack window. Until that finishes, this tab stays empty and no other
+          panel waits on it.
+        </BoardState>
+      );
+    if (showWatch) return null;
+    if (!threads)
+      return threadsFailed ? (
+        <BoardState testId="slack-threads-unavailable">
+          Slack is not responding right now. Retrying — nothing else is waiting on it.
+        </BoardState>
+      ) : (
+        <BoardState kind="loading" testId="slack-threads-loading" label="Loading threads…" />
+      );
+    if (items.length === 0)
+      return <BoardState testId="slack-threads-empty">{SECTIONS[section].empty}</BoardState>;
+    return board;
+  };
+
   return (
-    <section
-      id="panel-slack"
-      className="panel"
-      data-testid="panel-slack"
-      hidden={!active}
-      aria-busy={pending}
-    >
-      <header className="page-intro">
-        <p className="eyebrow">Workspace</p>
-        <h2>Slack</h2>
-        <p>
-          Threads you started and threads that mention you in #ezat_claudio, newest activity first.
-          Optional — skip it and every other tab behaves exactly as it does today.
-        </p>
-      </header>
-      <Card className="slack-section" data-testid="slack-section">
-        <div className="pr-open-heading" data-testid="slack-title">
-          <span className="section-label">Account</span>
-          <span className="pr-open-count" role="status" data-testid="slack-meta">
-            {meta}
-          </span>
-          {connected ? (
-            <Button data-testid="slack-disconnect" disabled={pending} onClick={disconnect}>
-              Disconnect
-            </Button>
-          ) : (
-            <Button data-testid="slack-connect" disabled={pending || connecting} onClick={connect}>
-              Connect Slack
-            </Button>
-          )}
-        </div>
-        {!status ? (
-          <div className="slack-body" data-testid="slack-body">
-            <LoadingState label="Checking Slack…" testId="slack-loading" />
-          </div>
-        ) : connected ? null : (
-          <div className="slack-body" data-testid="slack-body">
-            {connecting ? (
-              <p className="slack-note" data-testid="slack-connecting">
-                Finish signing in to Slack in the window that just opened. Closing that window
-                cancels — nothing else in the dashboard changes.
-              </p>
-            ) : (
-              <p className="slack-note" data-testid="slack-disconnected">
-                Signing in opens a separate Slack window. Until that finishes, this tab stays empty
-                and no other panel waits on it.
-              </p>
-            )}
-          </div>
-        )}
-      </Card>
-      {connected && (
-        <Card className="slack-section slack-threads-card" data-testid="slack-threads-card">
-          <div className="slack-section-head">
-            <div className="slack-tabs" role="tablist" aria-label="Slack lists">
-              {Object.entries(SECTIONS).map(([id, entry]) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  className="slack-tab"
-                  aria-selected={section === id}
-                  data-testid={`slack-tab-${id}`}
-                  onClick={() => switchSection(id)}
-                >
-                  {entry.label}
-                  <span className="slack-tab-count">
-                    {
-                      (threads?.[id] || []).filter((thread) => eligibleSlackRoot(thread.ts, now))
-                        .length
-                    }
-                  </span>
-                </button>
-              ))}
-            </div>
-            <span className="pr-open-count" role="status" data-testid="slack-threads-meta">
-              {!threads
-                ? 'Loading…'
-                : checking
-                  ? `Checking replies… · ${needsReply} loaded need a reply · updated ${updatedLabel}`
-                  : replyUnknown
-                    ? `Reply status unknown for some loaded threads · ${needsReply} need a reply`
-                    : `${needsReply} loaded threads need a reply · updated ${updatedLabel}`}
-            </span>
-          </div>
-          <div className="slack-thread-list" data-testid="slack-threads">
-            {!threads ? (
-              threadsFailed ? (
-                <p className="slack-note" data-testid="slack-threads-unavailable">
-                  Slack is not responding right now. Retrying — nothing else is waiting on it.
-                </p>
+    <BoardPanel id="slack" active={active} busy={pending}>
+      <BoardSection
+        name="slack"
+        title="Slack"
+        sub={<span role="status">{account}</span>}
+        activeTab={connected ? view : undefined}
+        meta={connected ? threadsMeta : undefined}
+        testIds={{ sub: 'slack-meta', meta: 'slack-threads-meta', list: 'slack-threads' }}
+        controls={
+          status && (
+            <>
+              {connected ? (
+                <Button data-testid="slack-disconnect" disabled={pending} onClick={disconnect}>
+                  Disconnect
+                </Button>
               ) : (
-                <LoadingState label="Loading threads…" testId="slack-threads-loading" />
-              )
-            ) : (
-              <>
-                {(threads.partial ||
-                  threads.truncated ||
-                  threads.stale ||
-                  threadsFailed ||
-                  checking ||
-                  replyUnknown ||
-                  staleReplyWarning ||
-                  standaloneWarning) && (
-                  <p className="slack-note slack-coverage" role="status">
-                    {threads.stale || threadsFailed ? 'Showing the last available update. ' : ''}
-                    Results or reply status may be incomplete; counts cover loaded threads only.
-                    {staleReplyWarning ? ` ${staleReplyWarning}` : ''}
-                    {standaloneWarning ? ` ${standaloneWarning}` : ''}
-                    {threads.coverageNotes?.length ? ` ${threads.coverageNotes.join(' ')}` : ''}
-                  </p>
-                )}
-                {items.length === 0 && <p className="slack-note">{SECTIONS[section].empty}</p>}
-                <div ref={boardRoot} className="slack-board-frame">
-                  <div
-                    className="my-tickets-board slack-board"
-                    role="region"
-                    aria-label="Slack activity board"
-                    tabIndex={0}
-                    data-testid="slack-board"
-                  >
-                    {groups.map((group) => (
-                      <BoardColumn
-                        key={group.id}
-                        id={group.id}
-                        label={group.label}
-                        count={group.threads.length}
-                        testIdPrefix="slack-column-"
-                      >
-                        {group.threads.map((thread) => (
-                          <li key={thread.ts}>{threadCard(thread)}</li>
-                        ))}
-                      </BoardColumn>
-                    ))}
-                  </div>
-                  {unknown.length > 0 && (
-                    <div className="slack-unknown">
-                      <h3>Activity time unavailable</h3>
-                      <ul className="slack-unknown-list">
-                        {unknown.map((thread) => (
-                          <li key={thread.ts}>{threadCard(thread, false)}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-                {threads.continuation && (
-                  <Button onClick={() => loadThreads(threads.continuation)}>
-                    Load more eligible threads
-                  </Button>
-                )}
-              </>
-            )}
-          </div>
-        </Card>
-      )}
-      {connected && <SlackWatchCard active={active} />}
-      <SlackThreadDialog
-        thread={openThread}
-        onClose={() => setOpenThread(null)}
-        resolveOpener={resolveOpener}
-        isEligible={threadIsEligible}
-        sessionIdentity={sessionIdentity.current}
-        onSessionMismatch={dialogSessionMismatch}
-      />
-    </section>
+                <Button
+                  data-testid="slack-connect"
+                  disabled={pending || connecting}
+                  onClick={connect}
+                >
+                  Connect Slack
+                </Button>
+              )}
+              {connected && !showWatch && threads?.continuation && (
+                <Button onClick={() => loadThreads(threads.continuation)}>
+                  Load more eligible threads
+                </Button>
+              )}
+              {connected && (
+                <RefreshControl
+                  name="slack"
+                  loading={refreshing}
+                  countdown={countdown}
+                  onRefresh={refresh}
+                />
+              )}
+            </>
+          )
+        }
+        filters={
+          connected && (
+            <BoardTabs
+              name="slack"
+              label="Slack lists"
+              tabs={[
+                ...Object.entries(SECTIONS).map(([id, entry]) => ({
+                  id,
+                  label: entry.label,
+                  count: placed[id].items.length,
+                  testId: `slack-tab-${id}`,
+                })),
+                {
+                  id: WATCH_VIEW,
+                  label: 'Watch threads',
+                  count: watchSummary?.count,
+                  tone: watchSummary?.attention ? 'warn' : undefined,
+                  hint: watchSummary?.attention || undefined,
+                  testId: 'slack-tab-watch',
+                },
+              ]}
+              value={view}
+              onChange={switchView}
+            />
+          )
+        }
+        notes={coverageNote && <BoardNote testId="slack-coverage">{coverageNote}</BoardNote>}
+      >
+        {renderBody()}
+        {connected && (
+          <SlackWatchCard active={active} hidden={!showWatch} onSummary={setWatchSummary} />
+        )}
+      </BoardSection>
+      {dialog}
+    </BoardPanel>
   );
 }

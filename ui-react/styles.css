@@ -5,6 +5,7 @@
 @import './styles/terminal.css';
 @import './styles/prs.css';
 @import './styles/diff-viewer.css';
+@import './styles/board.css';
 @import './styles/my-tickets.css';
 @import './styles/releases.css';
 @import './styles/slack.css';

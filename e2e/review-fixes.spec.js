@@ -274,14 +274,20 @@ for (const control of ['individual', 'global']) {
       });
     }
     await toggle.click();
-    expect(
-      await log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
-    ).toBeLessThan(12);
+    // The global switch reaches the log through a later effect than the click, so wait for it.
+    await expect
+      .poll(() => log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight))
+      .toBeLessThan(12);
     dashboard.data.logs.api += '\nresumed output';
-    await page.evaluate(() =>
-      window.__dashboardMock.streams[0].emit('message', [{ id: 'api', status: 'running' }]),
-    );
-    await expect(log).toContainText('resumed output');
+    // Turning Follow on starts a log read of its own, and a snapshot that arrives while a read is
+    // in flight is folded into it (the read already holds the old text). The real stream keeps
+    // sending snapshots, so this one does too, until the log shows the new line.
+    await expect(async () => {
+      await page.evaluate(() =>
+        window.__dashboardMock.streams[0].emit('message', [{ id: 'api', status: 'running' }]),
+      );
+      await expect(log).toContainText('resumed output', { timeout: 500 });
+    }).toPass({ timeout: 10_000 });
     expect(
       await log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
     ).toBeLessThan(12);

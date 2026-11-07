@@ -1,15 +1,3 @@
-.slack-section {
-  padding: var(--s5);
-}
-
-.slack-threads-card {
-  margin-top: 20px;
-}
-
-.slack-body {
-  min-height: 72px;
-}
-
 .slack-note {
   margin: 0;
   color: var(--muted);
@@ -18,155 +6,14 @@
   max-width: 74ch;
 }
 
-.slack-section-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s3);
-  margin-bottom: var(--s4);
-}
-
-.slack-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 3px;
-  border-radius: var(--radius-sm);
-  background: var(--panel2);
-}
-
-.slack-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-
-.slack-tab[aria-selected='true'] {
-  background: var(--bg);
-  color: var(--strong);
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-
-.slack-tab-count {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.slack-thread-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* The shared ticket wells stay bounded here so the independent watcher remains
-   in the page flow. Vertical scroll can chain to the page on touch and wheel. */
-.slack-board-frame {
-  min-width: 0;
-}
-.slack-board {
-  height: clamp(320px, 52vh, 500px);
-  padding: 0 0 var(--s2);
-  scroll-padding-inline: 0;
-  scroll-snap-type: none;
-}
-.slack-board .my-tickets-column-body {
-  overscroll-behavior-y: auto;
-}
-.slack-board .slack-thread,
-.slack-unknown .slack-thread {
-  background: var(--panel2);
-  box-shadow: var(--shadow);
-}
-.slack-coverage {
-  margin-bottom: var(--s2);
-}
-.slack-unknown {
-  margin-top: var(--s3);
-}
-.slack-unknown h3 {
-  margin: 0 0 var(--s2);
-  color: var(--text);
-  font-size: var(--fs-sm);
-}
-.slack-unknown-list {
-  columns: 1;
-  column-gap: var(--s2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.slack-unknown-list > li {
-  break-inside: avoid;
-}
-.slack-unknown-list > li + li {
-  margin-top: var(--s2);
-}
-@media (min-width: 760px) {
-  .slack-unknown-list {
-    columns: 2;
-  }
-}
-@media (min-width: 1700px) {
-  .slack-unknown-list {
-    columns: 3;
-  }
-}
-@media (max-width: 599px) {
-  .slack-board {
-    padding: 0 0 var(--s2);
-    scroll-padding-inline: 0;
-    scroll-snap-type: x mandatory;
-  }
-}
-
-/* A row used to be an anchor; as a <button> it needs the browser's own chrome
-   removed — full width, left-aligned, inheriting the surrounding type — so it
-   keeps the block position it had inside the column list. */
-.slack-thread {
-  display: block;
-  width: 100%;
-  padding: var(--s3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 120ms var(--ease-out);
-}
-
-.slack-thread:hover,
-.slack-thread:focus-visible {
-  border-color: var(--accent);
-}
-
-.slack-thread-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  color: var(--strong);
-  font-size: var(--fs-md);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
+/* The thread card is the shared .board-card; these are the lines only a Slack
+   thread has. The meta line is rendered only when it has someone to name. */
 .slack-thread-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--s2);
-  margin-top: 6px;
+  gap: var(--s1) var(--s2);
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
 }
 
 .slack-thread-who {
@@ -175,12 +22,6 @@
 
 .slack-thread-when {
   margin-left: auto;
-  font-variant-numeric: tabular-nums;
-}
-
-.slack-needs {
-  color: var(--warn);
-  font-weight: 600;
 }
 
 /* ---- Thread dialog -------------------------------------------------------
@@ -473,10 +314,14 @@
   display: flex;
   flex-direction: column;
   gap: var(--s4);
-  margin-top: 20px;
 }
 
-.slack-watch-card .pr-open-heading,
+/* The pane scrolls as a whole: its blocks keep their height instead of shrinking
+   into scrollbars of their own (the table wrapper would otherwise be the first). */
+.slack-watch-card > * {
+  flex-shrink: 0;
+}
+
 .slack-watch-card p {
   margin: 0;
 }

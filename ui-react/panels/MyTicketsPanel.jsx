@@ -1,18 +1,23 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, LoadingState } from '../components/Primitives.jsx';
+import {
+  BoardNote,
+  BoardPanel,
+  BoardSection,
+  BoardState,
+  RefreshControl,
+} from '../components/BoardShell.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
 import { TicketBoard } from '../components/TicketBoard.jsx';
-import { SlackThreadDialog } from '../components/SlackThreadDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
-import { useSlackActivityClock } from '../hooks/useSlackActivityClock.js';
+import { useSlackThreadDialog } from '../hooks/useSlackThreadDialog.jsx';
 import { notifySlackSessionChanged } from '../hooks/useSlackPending.js';
 import { filterTickets, ticketFilterOptions } from '../../ui/work-filters.js';
 import { sprintDay, sprintCountdown } from '../../ui/domain-helpers.js';
 import { threadsByTicket } from '../../ui/slack-ticket-links.js';
 import { eligibleSlackRoot, slackSessionIdentity } from '../../ui/slack-activity.js';
 import { MY_TICKETS_POLL_MS } from '../../ui/polling.js';
-import { slackStaleReplyWarning, slackStandaloneMentionWarning } from '../../ui/slack-coverage.js';
+import { slackCoverage } from '../../ui/slack-coverage.js';
 
 function sprintHtml(sprints) {
   if (!sprints?.length) return 'No active sprint among your tickets';
@@ -71,8 +76,6 @@ export function MyTicketsPanel({ config, active }) {
   const slackDirty = useRef(false);
   const dialogWasOpen = useRef(false);
   const expiredDialog = useRef(false);
-  const [slackNow, currentTime] = useSlackActivityClock(slackSnapshot, active, openThread);
-  const threadIsEligible = (ts) => eligibleSlackRoot(ts, currentTime());
   const clearSlackData = useCallback(() => {
     dialogWasOpen.current = false;
     setOpenThread(null);
@@ -131,37 +134,36 @@ export function MyTicketsPanel({ config, active }) {
       if (request === slackRequest.current) setSlackSnapshot(null);
     }
   }, [api, clearSlackData]);
-  useEffect(() => {
-    const sessionChanged = (event) => {
-      if (event.detail?.source === 'my-tickets') return;
-      slackRequest.current += 1;
-      slackIdentity.current = '';
-      clearSlackData();
-      if (active) loadSlack();
-      else slackDirty.current = true;
-    };
-    window.addEventListener('slack-session-changed', sessionChanged);
-    return () => window.removeEventListener('slack-session-changed', sessionChanged);
-  }, [active, clearSlackData, loadSlack]);
+  const resetSlack = useCallback(() => {
+    slackRequest.current += 1;
+    slackIdentity.current = '';
+    clearSlackData();
+  }, [clearSlackData]);
+  // A session that changed while this tab was hidden is fetched when it next opens (below).
+  const reloadSlack = useCallback(() => {
+    if (active) loadSlack();
+    else slackDirty.current = true;
+  }, [active, loadSlack]);
+  // A thread that left the window closes its dialog without the re-read a user's close triggers.
+  const expireDialog = useCallback(() => {
+    expiredDialog.current = true;
+  }, []);
+  const { now: slackNow, dialog } = useSlackThreadDialog({
+    source: 'my-tickets',
+    snapshot: slackSnapshot,
+    active,
+    openThread,
+    setOpenThread,
+    sessionIdentity: slackIdentity,
+    resetSession: resetSlack,
+    reloadSession: reloadSlack,
+    onExpire: expireDialog,
+  });
   useEffect(() => {
     if (!active || !slackDirty.current) return;
     slackDirty.current = false;
     loadSlack();
   }, [active, loadSlack]);
-  const dialogSessionMismatch = useCallback(() => {
-    slackRequest.current += 1;
-    slackIdentity.current = '';
-    clearSlackData();
-    notifySlackSessionChanged('my-tickets');
-    if (active) loadSlack();
-    else slackDirty.current = true;
-  }, [active, clearSlackData, loadSlack]);
-  useEffect(() => {
-    if (openThread && !eligibleSlackRoot(openThread.ts, slackNow)) {
-      expiredDialog.current = true;
-      setOpenThread(null);
-    }
-  }, [openThread, slackNow]);
   // PR status is optional in the same way. The last good map stays on screen when
   // a refresh fails, and only the newest request may change the state.
   const loadPrs = useCallback(async () => {
@@ -224,7 +226,7 @@ export function MyTicketsPanel({ config, active }) {
       expiredDialog.current = false;
     }
   }, [openThread, loadSlack]);
-  const { countdown } = useActivePolling({
+  const { load: refresh, countdown } = useActivePolling({
     active,
     interval: MY_TICKETS_POLL_MS,
     load,
@@ -243,8 +245,7 @@ export function MyTicketsPanel({ config, active }) {
       ),
     [slackSnapshot, slackNow],
   );
-  const staleReplyWarning = slackStaleReplyWarning(slackSnapshot);
-  const standaloneWarning = slackStandaloneMentionWarning(slackSnapshot);
+  const { staleReplyWarning, standaloneWarning, incomplete } = slackCoverage(slackSnapshot);
   // The board is memoized as an element: the countdown re-renders this panel every second,
   // and an identical element lets React skip the board and its card-wide DOM scan.
   const board = useMemo(
@@ -261,48 +262,39 @@ export function MyTicketsPanel({ config, active }) {
     [filtered, config.jiraBase, data?.activeSprints, linksByTicket, prs?.byTicket],
   );
   return (
-    <section
-      id="panel-my-tickets"
-      className="panel"
-      data-testid="panel-my-tickets"
-      hidden={!active}
-      aria-busy={loading}
-    >
-      <Card className="my-tickets-section" data-testid="my-tickets-section">
-        <div className="my-tickets-toolbar">
-          <div className="my-tickets-bar">
-            <h2 className="my-tickets-title" data-testid="my-tickets-title">
-              My Tickets
-            </h2>
-            <div className="my-tickets-sprint" data-testid="my-tickets-sprint" hidden={!data}>
-              {data && sprintHtml(data.activeSprints)}
-            </div>
-            <span className="my-tickets-meta" data-testid="my-tickets-meta" role="status">
-              {meta}
-            </span>
-            <div className="my-tickets-controls">
-              <label className="my-tickets-toggle" data-testid="my-tickets-toggle-wrap">
-                <input
-                  type="checkbox"
-                  data-testid="my-tickets-include-done"
-                  checked={includeDone}
-                  disabled={loading}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    setIncludeDone(checked);
-                    load({ include: checked, skipPrs: true });
-                  }}
-                />{' '}
-                Include Done
-              </label>
-              <Button data-testid="my-tickets-refresh" disabled={loading} onClick={() => load()}>
-                Refresh
-              </Button>
-              <span className="my-tickets-next" data-testid="my-tickets-next">
-                {countdown}
-              </span>
-            </div>
-          </div>
+    <BoardPanel id="my-tickets" active={active} busy={loading}>
+      <BoardSection
+        name="my-tickets"
+        title="My Tickets"
+        sub={data && sprintHtml(data.activeSprints)}
+        subHidden={!data}
+        testIds={{ sub: 'my-tickets-sprint' }}
+        meta={meta}
+        controls={
+          <>
+            <label className="board-toggle" data-testid="my-tickets-toggle-wrap">
+              <input
+                type="checkbox"
+                data-testid="my-tickets-include-done"
+                checked={includeDone}
+                disabled={loading}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setIncludeDone(checked);
+                  load({ include: checked, skipPrs: true });
+                }}
+              />{' '}
+              Include Done
+            </label>
+            <RefreshControl
+              name="my-tickets"
+              loading={loading}
+              countdown={countdown}
+              onRefresh={refresh}
+            />
+          </>
+        }
+        filters={
           <WorkFilters
             id="my-tickets-filter"
             view="tickets"
@@ -312,67 +304,53 @@ export function MyTicketsPanel({ config, active }) {
             onChange={setFilters}
             collapsible
           />
-          {(prStale || prs?.truncated) && (
-            <p className="my-tickets-prs-note" data-testid="my-tickets-prs-note">
-              {prStale ? prNoteText(prs) : PR_TRUNCATED_NOTE}
-            </p>
-          )}
-          {(slackSnapshot?.partial ||
-            slackSnapshot?.truncated ||
-            slackSnapshot?.continuation ||
-            staleReplyWarning ||
-            standaloneWarning) && (
-            <p
-              className="my-tickets-prs-note"
-              role="status"
-              data-testid="my-tickets-slack-coverage"
-            >
-              Slack thread results may be incomplete. <a href="#/slack">View Slack and load more</a>
-              .{staleReplyWarning ? ` ${staleReplyWarning}` : ''}
-              {standaloneWarning ? ` ${standaloneWarning}` : ''}
-            </p>
-          )}
-        </div>
-        <div className="my-tickets-list" data-testid="my-tickets-list">
-          {!data ? (
-            <>
-              {failure ? (
-                <div className="pr-error" data-testid="my-tickets-error">
-                  {failure}
-                </div>
-              ) : (
-                <LoadingState label="Loading tickets…" testId="my-tickets-loading" />
-              )}
-            </>
+        }
+        notes={
+          <>
+            {(prStale || prs?.truncated) && (
+              <BoardNote testId="my-tickets-prs-note">
+                {prStale ? prNoteText(prs) : PR_TRUNCATED_NOTE}
+              </BoardNote>
+            )}
+            {(incomplete || slackSnapshot?.continuation) && (
+              <BoardNote testId="my-tickets-slack-coverage">
+                Slack thread results may be incomplete.{' '}
+                <a href="#/slack">View Slack and load more</a>.
+                {staleReplyWarning ? ` ${staleReplyWarning}` : ''}
+                {standaloneWarning ? ` ${standaloneWarning}` : ''}
+              </BoardNote>
+            )}
+          </>
+        }
+      >
+        {!data ? (
+          failure ? (
+            <BoardState kind="error" testId="my-tickets-error">
+              {failure}
+            </BoardState>
           ) : (
-            <>
-              {data.truncated && (
-                <p className="home-warn" data-testid="my-tickets-truncated">
-                  Not all tickets were fetched — this list and its totals may be incomplete.
-                </p>
-              )}
-              {rows.length === 0 ? (
-                <div className="pr-empty" data-testid="my-tickets-empty">
-                  No tickets assigned to you.
-                </div>
-              ) : filtered.length === 0 ? (
-                <div className="pr-empty" data-testid="my-tickets-no-matches">
-                  No matches. Try changing or clearing filters.
-                </div>
-              ) : (
-                board
-              )}
-            </>
-          )}
-        </div>
-      </Card>
-      <SlackThreadDialog
-        thread={openThread}
-        onClose={() => setOpenThread(null)}
-        isEligible={threadIsEligible}
-        sessionIdentity={slackIdentity.current}
-        onSessionMismatch={dialogSessionMismatch}
-      />
-    </section>
+            <BoardState kind="loading" label="Loading tickets…" testId="my-tickets-loading" />
+          )
+        ) : (
+          <>
+            {data.truncated && (
+              <BoardState kind="warning" testId="my-tickets-truncated">
+                Not all tickets were fetched — this list and its totals may be incomplete.
+              </BoardState>
+            )}
+            {rows.length === 0 ? (
+              <BoardState testId="my-tickets-empty">No tickets assigned to you.</BoardState>
+            ) : filtered.length === 0 ? (
+              <BoardState testId="my-tickets-no-matches">
+                No matches. Try changing or clearing filters.
+              </BoardState>
+            ) : (
+              board
+            )}
+          </>
+        )}
+      </BoardSection>
+      {dialog}
+    </BoardPanel>
   );
 }

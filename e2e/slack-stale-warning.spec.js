@@ -45,7 +45,7 @@ function link(page, panel, timestamp) {
 
 function coverage(page, panel) {
   return panel === 'slack'
-    ? page.locator('.slack-coverage')
+    ? page.getByTestId('slack-coverage')
     : page.getByTestId('my-tickets-slack-coverage');
 }
 
@@ -237,11 +237,7 @@ for (const panel of ['slack', 'my-tickets']) {
     await expect(view(page, panel).getByText(STALE_REPLY).first()).toBeVisible();
   });
 
-  for (const reason of [
-    'search_coverage_uncertain',
-    'ambiguous_search_result',
-    'reply_unavailable',
-  ]) {
+  for (const reason of ['search_coverage_uncertain', 'ambiguous_search_result']) {
     test(`stale reply: ${panel} does not mislabel ${reason} as stale reply activity`, async ({
       page,
       dashboard,
@@ -249,19 +245,52 @@ for (const panel of ['slack', 'my-tickets']) {
       await freeze(page);
       ticketBoardData(dashboard.data);
       const thread = displayedRow(dashboard.data.tickets.tickets[0].key);
-      if (reason === 'reply_unavailable') {
-        thread.activityTs = null;
-        thread.activityAt = '';
-        thread.latestReplyBy = null;
-        thread.needsReply = null;
-      }
       seed(dashboard, { started: [thread], reasons: [reason] });
       await page.goto(`/#/${panel}`);
-      await expect(link(page, panel, thread.ts)).toBeVisible();
       await expect(coverage(page, panel)).toContainText(/incomplete/i);
+      await expect(link(page, panel, thread.ts)).toBeVisible();
       await expect(view(page, panel).getByText(STALE_REPLY)).toHaveCount(0);
       if (reason === 'ambiguous_search_result')
         await expect(coverage(page, panel)).toContainText(/standalone mentions may be missing/i);
     });
   }
 }
+
+// A thread whose reply lookup failed has no activity time, no last replier and no reply status.
+async function seedUnavailableReply(page, dashboard) {
+  await freeze(page);
+  ticketBoardData(dashboard.data);
+  const thread = Object.assign(displayedRow(dashboard.data.tickets.tickets[0].key), {
+    activityTs: null,
+    activityAt: '',
+    latestReplyBy: null,
+    needsReply: null,
+  });
+  seed(dashboard, { started: [thread], reasons: ['reply_unavailable'] });
+  return thread;
+}
+
+test('stale reply: slack does not mislabel reply_unavailable as stale reply activity', async ({
+  page,
+  dashboard,
+}) => {
+  const thread = await seedUnavailableReply(page, dashboard);
+  await page.goto('/#/slack');
+  await expect(coverage(page, 'slack')).toContainText(/incomplete/i);
+  // A Slack thread with no usable activity time has no column, so the board leaves it out and the
+  // coverage note says so.
+  await expect(coverage(page, 'slack')).toContainText(/no usable activity time/i);
+  await expect(link(page, 'slack', thread.ts)).toHaveCount(0);
+  await expect(view(page, 'slack').getByText(STALE_REPLY)).toHaveCount(0);
+});
+
+test('stale reply: my-tickets does not mislabel reply_unavailable as stale reply activity', async ({
+  page,
+  dashboard,
+}) => {
+  const thread = await seedUnavailableReply(page, dashboard);
+  await page.goto('/#/my-tickets');
+  await expect(coverage(page, 'my-tickets')).toContainText(/incomplete/i);
+  await expect(link(page, 'my-tickets', thread.ts)).toBeVisible();
+  await expect(view(page, 'my-tickets').getByText(STALE_REPLY)).toHaveCount(0);
+});

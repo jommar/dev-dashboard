@@ -67,9 +67,12 @@ function localMidnight(now, daysAgo = 0) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() - daysAgo).getTime();
 }
 
+// `unplaced` counts the eligible threads whose activity time cannot be verified.
+// They are never guessed into a column and never listed; callers only report how
+// many were left out.
 export function groupSlackActivity(threads, now) {
   const groups = ACTIVITY_GROUPS.map((group) => ({ ...group, threads: [] }));
-  const unknown = [];
+  let unplaced = 0;
   const today = localMidnight(now);
   const yesterday = localMidnight(now, 1);
   const weekStart = localMidnight(now, 7);
@@ -78,7 +81,7 @@ export function groupSlackActivity(threads, now) {
     if (!eligibleSlackRoot(thread?.ts, now)) continue;
     const activity = activityMicros(thread, now);
     if (activity === null) {
-      unknown.push({ thread, activity });
+      unplaced += 1;
       continue;
     }
     const ms = Number(activity / 1000n);
@@ -94,18 +97,15 @@ export function groupSlackActivity(threads, now) {
               : ms >= monthStart
                 ? 4
                 : -1;
-    (index < 0 ? unknown : groups[index].threads).push({ thread, activity });
+    if (index < 0) unplaced += 1;
+    else groups[index].threads.push({ thread, activity });
   }
   const sort = (left, right) => {
-    if (left.activity !== right.activity) {
-      if (left.activity === null) return 1;
-      if (right.activity === null) return -1;
-      return left.activity > right.activity ? -1 : 1;
-    }
+    if (left.activity !== right.activity) return left.activity > right.activity ? -1 : 1;
     return String(left.thread.ts).localeCompare(String(right.thread.ts));
   };
   for (const group of groups) group.threads = group.threads.sort(sort).map((item) => item.thread);
-  return { groups, unknown: unknown.sort(sort).map((item) => item.thread) };
+  return { groups, unplaced };
 }
 
 // Wake at a boundary, not just at the next network poll. Equality is included,

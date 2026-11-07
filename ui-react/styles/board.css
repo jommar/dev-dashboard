@@ -1,0 +1,519 @@
+/* board.css — the shared board screen (ui-react/components/BoardShell.jsx): one card holding a
+   one-row toolbar, optional notes and a body that fills the viewport. My Tickets and Slack both
+   render it; the cards, PR lines and chips of each stay in their own sheet (my-tickets.css,
+   slack.css), which load after this one so they can override it.
+   Tokens only: no literal colours, no multi-column masonry, transitions of at most 150 ms,
+   radii of at most 10 px. */
+
+.board-section {
+  margin: 0;
+}
+
+/* Toolbar: title, account or sprint line, counts and controls on one wrapping row, then the
+   filters or switch, then the notes. */
+.board-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4) var(--s4) var(--s3);
+}
+.board-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+}
+.board-title {
+  margin-right: var(--s2);
+  color: var(--strong);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+/* The sub line (a sprint, an account) and the counts are each one muted line, truncated at the
+   end; the sub line takes the free width. */
+.board-sub,
+.board-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-sub {
+  flex: 1 1 0;
+}
+.board-sub[hidden] {
+  display: none;
+}
+.board-meta {
+  font-variant-numeric: tabular-nums;
+}
+/* Controls and the countdown wrap as one group, pushed to the right. */
+.board-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  margin-left: auto;
+}
+.board-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  min-height: 36px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.board-next {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.board-toolbar .work-filters {
+  align-items: center;
+  margin: 0;
+  gap: var(--s2) var(--s3);
+  font-size: var(--fs-sm);
+}
+/* Each field keeps its own width and wraps as a whole; none is squeezed into a
+   neighbour. The search input may shrink, so its label never spills past its box. */
+.board-toolbar .work-filters label {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--fs-sm);
+}
+.board-toolbar .work-filters .work-filter-search {
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 320px;
+}
+.board-toolbar .work-filters .work-filter-search input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+}
+.board-toolbar .work-filters input,
+.board-toolbar .work-filters select {
+  min-height: 30px;
+  padding: 0 var(--s2);
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-size: var(--fs-sm);
+}
+.board-toolbar .work-filter-count {
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+/* The region of field controls is a layout no-op on desktop: its children stay flex items of the row. */
+.board-toolbar .work-filter-fields {
+  display: contents;
+}
+.board-toolbar .work-filter-toggle {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+  min-height: 36px;
+}
+.board-toolbar .work-filter-active {
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 599px) {
+  /* The toolbar is a header, not a form: the title and the counts each get a row,
+     the sub line takes the next, the controls the one after, and the search row
+     carries the Filters button. */
+  .board-title {
+    order: 1;
+  }
+  .board-meta {
+    order: 2;
+    flex: 1 1 0;
+    text-align: right;
+  }
+  .board-sub {
+    order: 3;
+    flex: 1 0 100%;
+  }
+  .board-controls {
+    order: 4;
+    flex: 1 0 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+  /* The minimum keeps the search and the Filters button on one row when the fields
+     open, so Status starts the next row instead of squeezing the search input. */
+  .board-toolbar .work-filters {
+    gap: var(--s2);
+  }
+  .board-toolbar .work-filters .work-filter-search {
+    flex: 1 1 0;
+    min-width: 150px;
+    max-width: none;
+  }
+  .board-toolbar .work-filter-toggle {
+    display: inline-flex;
+  }
+  .board-toolbar .work-filters[data-expanded='false'] .work-filter-fields {
+    display: none;
+  }
+  .board-toolbar .work-filters[data-expanded='true'] .work-filter-field {
+    flex: 1 1 calc(50% - var(--s2));
+    min-width: 0;
+  }
+  .board-toolbar .work-filters input,
+  .board-toolbar .work-filters select {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+  }
+}
+.board-note {
+  margin: 0;
+  color: var(--amber);
+  font-size: var(--fs-sm);
+}
+
+/* What the body shows instead of a board (BoardState): a dashed box, muted when empty, red for
+   an error, amber for a warning that sits above content. */
+.board-state {
+  padding: var(--s3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+.board-state[data-kind='error'] {
+  color: var(--red);
+}
+.board-state[data-kind='warning'] {
+  margin: 0 0 var(--s3);
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+/* The switch between views of one board: a segmented control, one tab selected. It sits in the
+   toolbar's filter slot, so it hugs its content and wraps rather than widening the card. */
+.board-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-self: flex-start;
+  gap: var(--s1);
+  max-width: 100%;
+  padding: var(--s1);
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+}
+.board-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 28px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-sm);
+  transition:
+    background-color 150ms var(--ease-out),
+    color 150ms var(--ease-out);
+}
+.board-tab[aria-selected='true'] {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--strong);
+}
+.board-tab-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* A tab that needs a look (Watch threads while the watcher is paused or failing): its count takes
+   the chip's warn tone (below) and a hairline of its own; the tab's hint says why in words. */
+.board-tab[data-tone='warn'] .board-tab-count {
+  padding: 0 var(--s1);
+  border-radius: var(--radius-sm);
+}
+@media (hover: hover) and (pointer: fine) {
+  .board-tab:not([aria-selected='true']):hover {
+    color: var(--text);
+  }
+  .board-card-action:hover {
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel2));
+  }
+}
+/* Touch targets match .btn: 36 px of tab inside 4 px of padding is 44 px. */
+@media (hover: none) {
+  .board-tab {
+    min-height: 36px;
+  }
+}
+
+.board-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-bottom: var(--s1);
+}
+.board-frame {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Fill: on a board panel the page is exactly one viewport tall. The shell takes that
+   height, the panel and card take what the toolbar leaves, and the board (or a visible
+   pane) grows into the rest, so no pixel count is hard-coded. flex-shrink 0 on the card
+   means nothing can be clipped: only the 320 px minimum can push the page past the
+   viewport, and the page then scrolls. Cards without a board (loading, empty) keep
+   their natural height. A panel opts in by rendering BoardPanel; there is no script. */
+#root:has(.board-panel:not([hidden])) {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+#root:has(.board-panel:not([hidden])) > .panels {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+}
+.board-panel:not([hidden]) {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.board-panel > .board-section {
+  flex: 0 0 auto;
+}
+.board-panel > .board-section:has(.board-track, .board-pane:not([hidden])) {
+  flex: 1 0 auto;
+}
+.board-section:has(.board-track, .board-pane:not([hidden])) > .board-body {
+  flex: 1 0 auto;
+}
+
+/* The three scrollers of a board share a thin scrollbar in the border colour, and the pane and a
+   column do not hand a scroll that reached its end on to the page. The track does that only
+   sideways (overscroll-behavior-x on .board-track): it cannot scroll down, so a wheel over it
+   still scrolls the page. */
+.board-pane,
+.board-track,
+.board-column-body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.board-pane,
+.board-column-body {
+  overscroll-behavior: contain;
+}
+
+/* A view that is not a board (Slack's Watch threads). It takes the board's place and fills the
+   same space, and scrolls inside itself. display: flex rules elsewhere would defeat hidden, so
+   it is restated here. */
+.board-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 320px;
+  padding: 0 var(--s4) var(--s4);
+  overflow-y: auto;
+}
+.board-pane[hidden] {
+  display: none;
+}
+
+/* The board: one row of fixed-width columns that scrolls sideways inside itself. Its
+   height is what the page leaves after the toolbar (see the fill rules after
+   .board-frame), so each column scrolls down inside its own body and the page itself
+   stays still. contain: size keeps the column count from setting the board's own
+   height, so the flex share alone decides it. */
+.board-track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 280px;
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 0;
+  min-height: 320px;
+  gap: var(--s3);
+  padding: 0 var(--s4) var(--s4);
+  contain: size;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--s4);
+}
+.board-track:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (max-width: 599px) {
+  .board-track {
+    grid-auto-columns: 82vw;
+    gap: var(--s2);
+    padding: 0 var(--s2) var(--s2);
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: var(--s2);
+  }
+  .board-pane {
+    padding: 0 var(--s2) var(--s2);
+  }
+}
+
+/* A column is a recessed well; its cards sit one level up. The status colour is a
+   2 px rule under the header, and the column name is always printed beside it. */
+.board-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  border-radius: var(--radius);
+  scroll-snap-align: start;
+}
+.board-column-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  padding: var(--s3) var(--s3) var(--s2);
+  box-shadow: inset 0 2px 0 var(--jira-status-color, var(--muted));
+}
+.board-column-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.board-column-count {
+  flex: none;
+  min-width: 22px;
+  margin-left: auto;
+  padding: 0 var(--s1);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
+}
+.board-column-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s2);
+  min-height: 0;
+  margin: 0;
+  padding: var(--s1) var(--s2) var(--s2);
+  overflow-y: auto;
+  list-style: none;
+}
+
+/* A card is the one raised surface on the board: the hairline stack, no border. A screen adds its
+   own state on the element (my-tickets.css marks the current sprint and approved PRs). */
+.board-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+  padding: var(--s3);
+  background: var(--panel2);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  transition: background-color 150ms var(--ease-out);
+}
+/* A card that is a button (a Slack thread): the browser's own chrome is removed, and it fills the
+   column width, left-aligned, inheriting the surrounding type. Its background is the card's. */
+.board-card-action {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.board-card-action:focus-visible {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel2));
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.board-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.board-card-stat {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.board-card-summary {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--strong);
+  font-size: var(--fs-md);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+/* A status chip: a word in an outline, never colour alone. The warn tone is amber with an amber
+   hairline; the word still says what it means. It is not .pill (base.css): a pill is a rounded
+   sentence-case badge with a border, this is a small-radius uppercase tag with an inset hairline
+   that reads as a label on the card's top row. */
+.board-chip {
+  padding: 0 var(--s1);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.board-chip[data-tone='warn'],
+.board-tab[data-tone='warn'] .board-tab-count {
+  color: var(--amber);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 45%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-track,
+  .board-column-body,
+  .board-pane {
+    scroll-behavior: auto;
+  }
+  .board-card,
+  .board-tab {
+    transition: none;
+  }
+}

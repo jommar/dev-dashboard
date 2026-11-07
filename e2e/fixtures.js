@@ -22,14 +22,7 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
         request.postData() ? request.postDataJSON() : undefined,
       );
       if (response) return route.fulfill(response);
-      if (
-        method === 'GET' &&
-        (url.pathname === '/' ||
-          url.pathname.startsWith('/@') ||
-          url.pathname.startsWith('/node_modules/') ||
-          url.pathname.startsWith('/ui-react/') ||
-          url.pathname.startsWith('/ui/'))
-      ) {
+      if (method === 'GET' && (url.pathname === '/' || url.pathname.startsWith('/assets/'))) {
         return route.continue();
       }
       if (url.pathname.startsWith('/api/')) {
@@ -44,7 +37,7 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
     await route.abort('blockedbyclient');
   });
   await context.routeWebSocket('**/*', (socket) => {
-    if (!socket.url().includes('/?token=')) unexpected.push(`WebSocket ${socket.url()}`);
+    unexpected.push(`WebSocket ${socket.url()}`);
     socket.close();
   });
   await context.exposeBinding('__unexpectedDashboardNetwork', (_source, url) =>
@@ -117,6 +110,16 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
   );
   return { data, requests, unexpected, pageErrors };
 }
+
+// What the page asked the mocked Slack API for, read off the recorded requests.
+export const listReads = ({ requests }) =>
+  requests.filter(({ method, path }) => method === 'GET' && path.startsWith('/api/slack/threads'));
+export const watchRequests = ({ requests }) =>
+  requests.filter(({ path }) => path.startsWith('/api/slack/watch'));
+export const watchListReads = (dashboard) =>
+  watchRequests(dashboard).filter(
+    ({ method, path }) => method === 'GET' && path === '/api/slack/watch',
+  );
 
 export const test = base.extend({
   dashboardFixture: [null, { option: true }],

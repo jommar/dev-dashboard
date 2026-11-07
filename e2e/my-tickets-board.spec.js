@@ -1202,7 +1202,7 @@ test('two attached threads on one card each say how many sessions, and every chi
   await expect(one).not.toHaveAttribute('aria-label', /sessions/);
 
   const everyChip = page.locator('[data-testid^="slack-thread-link-"]');
-  expect(await everyChip.count()).toBeGreaterThanOrEqual(7);
+  await expect.poll(() => everyChip.count()).toBeGreaterThanOrEqual(7);
   for (const box of await everyChip.evaluateAll((chips) =>
     chips.map((chip) => {
       const { width, height } = chip.getBoundingClientRect();
@@ -1228,7 +1228,7 @@ test('with the watcher unavailable no chip is attached, whether the count is 0 o
   });
   await openBoard(page);
   await expect(page.getByTestId('my-tickets-item-TAP-9430')).toBeVisible();
-  expect(await page.locator('[data-testid^="slack-thread-link-"]').count()).toBe(rows.length);
+  await expect(page.locator('[data-testid^="slack-thread-link-"]')).toHaveCount(rows.length);
   await expect(page.locator('[data-attached]')).toHaveCount(0);
   await expect(
     page.locator('[data-testid^="slack-thread-link-"][aria-label*="Claude session"]'),
@@ -1687,7 +1687,7 @@ test('every board glyph is stroked in its text colour, a small square, and hidde
 }) => {
   await openFollowUps(page, dashboard);
   const glyphs = page.locator('[data-testid^="my-tickets-item-"] svg[viewBox="0 0 16 16"]');
-  expect(await glyphs.count(), 'the cards draw glyphs').toBeGreaterThan(10);
+  await expect.poll(() => glyphs.count(), 'the cards draw glyphs').toBeGreaterThan(10);
   const frames = await glyphs.evaluateAll((svgs) =>
     svgs.map((svg) => {
       const style = getComputedStyle(svg);

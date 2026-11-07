@@ -9,6 +9,16 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const readRepoFile = (file) =>
   fs.readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), 'utf8');
 
+// The declarations of every rule whose selector names `attribute`, joined.
+const rulesFor = (css, attribute) =>
+  [...css.matchAll(/([^{}]*)\{([^}]*)\}/g)]
+    .filter(([, selector]) => selector.includes(attribute))
+    .map(([, , body]) => body)
+    .join('\n');
+
+// The shared board frame and the Jira ticket-card sheet it is layered under.
+const BOARD_SHEETS = ['styles/board.css', 'styles/my-tickets.css'];
+
 test('the React entry mounts a themed shell with one shared ready-mode SSE hook', () => {
   assert.match(read('main.jsx'), /createRoot\(document\.getElementById\('root'\)\)/);
   const app = read('App.jsx');
@@ -98,9 +108,10 @@ test('React panels own structural rendering and compose shared React components'
       source,
       /PanelAdapter|create(?:Home|Service|Pr|MyTickets|Releases|Settings)Panel/,
     );
-    assert.match(source, /components\/Primitives\.jsx/);
-    assert.match(source, /<Card\b/);
-    assert.match(source, /<Button\b/);
+    // The board screens get their card and their Refresh button from the shared board shell.
+    assert.match(source, /components\/(?:Primitives|BoardShell)\.jsx/);
+    assert.match(source, /<Card\b|<BoardSection\b/);
+    assert.match(source, /<Button\b|<RefreshControl\b/);
   }
   for (const name of ['HomePanel.jsx', 'PrsPanel.jsx', 'MyTicketsPanel.jsx', 'ReleasesPanel.jsx']) {
     const source = read(`panels/${name}`);
@@ -174,10 +185,9 @@ test('the Slack tab carries a pending-count badge and chases an enriched thread 
   assert.match(panel, /Checking replies… · \$\{needsReply\} loaded need a reply/);
   assert.match(panel, /\$\{needsReply\} loaded threads need a reply/);
   assert.doesNotMatch(panel, /All caught up/);
-  const metaBlock = panel.slice(panel.indexOf('data-testid="slack-threads-meta"'));
-  assert.match(
-    metaBlock,
-    /checking[\s\S]*?Checking replies…[\s\S]*?loaded threads need a reply/,
+  assert.ok(
+    panel.indexOf('Checking replies…') > -1 &&
+      panel.indexOf('Checking replies…') < panel.indexOf('loaded threads need a reply'),
     'the checking state precedes the loaded-scope reply count',
   );
 });
@@ -310,13 +320,16 @@ test('the Slack thread dialog renders the conversation without leaving the app',
   assert.match(api, /\/api\/slack\/thread\?ts=\$\{encodeURIComponent\(ts\)\}/);
   assert.match(api, /if \(!res\.ok\) return \{ available: false \};/);
 
-  // The panel owns the open thread and mounts the dialog inside its section.
+  // The panel owns the open thread; the shared hook wires the dialog and the panel renders it
+  // inside its section (see the hook test below).
   const panel = read('panels/MyTicketsPanel.jsx');
   assert.match(panel, /const \[openThread, setOpenThread\] = useState\(null\);/);
   assert.match(panel, /onOpenThread=\{setOpenThread\}/);
-  assert.match(
-    panel,
-    /<SlackThreadDialog\s+thread=\{openThread\}\s+onClose=\{\(\) => setOpenThread\(null\)\}\s+isEligible=\{threadIsEligible\}\s+sessionIdentity=\{slackIdentity\.current\}\s+onSessionMismatch=\{dialogSessionMismatch\}\s+\/>/,
+  assert.match(panel, /useSlackThreadDialog\(\{[^}]*\bsource: 'my-tickets'/);
+  assert.ok(
+    panel.indexOf('{dialog}') > panel.lastIndexOf('</BoardSection>') &&
+      panel.indexOf('{dialog}') < panel.indexOf('</BoardPanel>'),
+    'the dialog is rendered after the card, inside the panel',
   );
 
   const css = read('styles/slack.css');
@@ -343,29 +356,23 @@ test('the Slack thread dialog renders the conversation without leaving the app',
 
 test('the Slack tab opens thread conversations in the shared dialog', () => {
   const panel = read('panels/SlackPanel.jsx');
-  // One dialog implementation for the whole dashboard: the panel imports the
-  // component My Tickets already uses rather than growing a second copy.
-  assert.match(
-    panel,
-    /import \{ SlackThreadDialog \} from '\.\.\/components\/SlackThreadDialog\.jsx';/,
-  );
+  // One dialog implementation for the whole dashboard: the panel gets it from the hook My Tickets
+  // already uses rather than growing a second copy.
+  assert.match(panel, /useSlackThreadDialog\(\{[^}]*\bsource: 'slack'/);
   assert.match(panel, /const \[openThread, setOpenThread\] = useState\(null\);/);
-  // Mounted with the section, not inside the thread card that unmounts on
+  // Rendered with the section, not inside the thread card that unmounts on
   // disconnect, so an open conversation is not torn down by a status change.
-  assert.match(
-    panel,
-    /<SlackThreadDialog\s+thread=\{openThread\}\s+onClose=\{\(\) => setOpenThread\(null\)\}\s+resolveOpener=\{resolveOpener\}\s+isEligible=\{threadIsEligible\}\s+sessionIdentity=\{sessionIdentity\.current\}\s+onSessionMismatch=\{dialogSessionMismatch\}\s+\/>/,
-  );
-  const card = panel.indexOf('className="slack-section slack-threads-card"');
-  const dialog = panel.indexOf('<SlackThreadDialog');
-  const sectionEnd = panel.indexOf('</section>');
-  assert.ok(card > -1 && dialog > card, 'the dialog is rendered after the thread card');
-  assert.ok(dialog < sectionEnd, 'the dialog lives inside the panel section');
+  const card = panel.indexOf('<BoardSection');
+  const cardEnd = panel.lastIndexOf('</BoardSection>');
+  const dialog = panel.indexOf('{dialog}');
+  const panelEnd = panel.indexOf('</BoardPanel>');
+  assert.ok(card > -1 && cardEnd > card, 'the panel renders one board card');
+  assert.ok(dialog > cardEnd, 'the dialog is rendered after the card, outside it');
+  assert.ok(dialog < panelEnd, 'the dialog lives inside the panel section');
 
   // A row is a button now: it hands the thread to the dialog instead of
   // navigating, so the dashboard tab keeps whatever it was showing.
-  assert.match(panel, /<button[\s\S]*?className="slack-thread"/);
-  assert.match(panel, /onClick=\{\(\) => setOpenThread\(thread\)\}/);
+  assert.match(panel, /<button[\s\S]*?className="[^"]*(?<![\w-])board-card-action(?![\w-])/);
   assert.doesNotMatch(
     panel,
     /href=\{thread\.url\}/,
@@ -377,23 +384,26 @@ test('the Slack tab opens thread conversations in the shared dialog', () => {
   assert.match(panel, /aria-haspopup="dialog"/);
   assert.match(panel, /data-testid=\{`slack-thread-\$\{thread\.ts\}`\}/);
 
-  const css = read('styles/slack.css');
-  const block = css.slice(css.indexOf('\n.slack-thread {'), css.indexOf('.slack-thread:hover'));
-  assert.ok(block, 'the row block is styled');
+  // The row is a button wearing the shared board card, so the button reset and the hover and focus
+  // tint live with the card shell rather than in slack.css.
+  const css = read('styles/board.css');
+  const block = css.match(/\.board-card-action\s*\{([^}]*)\}/)?.[1];
+  assert.ok(block, 'the button variant of the board card is styled');
   for (const declaration of [
-    'display: block',
     'width: 100%',
     'text-align: left',
     'font: inherit',
-    'background: transparent',
     'cursor: pointer',
   ]) {
-    assert.ok(block.includes(declaration), `.slack-thread declares ${declaration}`);
+    assert.ok(block.includes(declaration), `.board-card-action declares ${declaration}`);
   }
-  assert.match(
-    css,
-    /\.slack-thread:hover,\s*\n\.slack-thread:focus-visible\s*\{[^}]*border-color: var\(--accent\)/,
-  );
+  for (const state of ['hover', 'focus-visible']) {
+    assert.match(
+      rulesFor(css, `.board-card-action:${state}`),
+      /var\(--accent\)/,
+      `.board-card-action:${state} takes the accent`,
+    );
+  }
 
   // A mentions row previews the mentioning message, so the list text alone cannot
   // name the ticket: without a selected card key, the dialog falls back to the
@@ -415,6 +425,57 @@ test('the Slack tab opens thread conversations in the shared dialog', () => {
     /const title = ticketKey \? `\$\{ticketKey\} · Slack thread` : 'Slack thread';/,
   );
   assert.doesNotMatch(dialogSource, /useRef\(ticketKey|useMemo\(\(\) => ticketKey/);
+});
+
+test('Slack and My Tickets wire the thread dialog through one hook, not two copies', () => {
+  const hook = read('hooks/useSlackThreadDialog.jsx');
+  // The hook is where the dialog element, the clock, the expiry rule and the session reaction live.
+  const element = hook.match(/<SlackThreadDialog\b[\s\S]*?\/>/)?.[0] ?? '';
+  for (const prop of [
+    'thread',
+    'onClose',
+    'resolveOpener',
+    'isEligible',
+    'sessionIdentity',
+    'onSessionMismatch',
+  ])
+    assert.match(element, new RegExp(`\\b${prop}=`), `the dialog element passes ${prop}`);
+  assert.match(hook, /useSlackActivityClock\(/);
+  assert.match(hook, /eligibleSlackRoot\(/);
+  assert.match(hook, /addEventListener\('slack-session-changed'/);
+  assert.match(hook, /event\.detail\?\.source/);
+  assert.match(hook, /notifySlackSessionChanged\(/);
+
+  // Each panel only passes what is its own; none keeps a copy of the wiring.
+  for (const file of ['panels/SlackPanel.jsx', 'panels/MyTicketsPanel.jsx']) {
+    const panel = read(file);
+    assert.match(panel, /from '\.\.\/hooks\/useSlackThreadDialog\.jsx'/, `${file} uses the hook`);
+    assert.doesNotMatch(
+      panel,
+      /<SlackThreadDialog\b|useSlackActivityClock|slack-session-changed/,
+      `${file} leaves the dialog wiring to the hook`,
+    );
+  }
+});
+
+test('keeping a scroll place, per re-render and per view, shares one read and one write', () => {
+  const shared = read('hooks/usePreservedInteraction.js');
+  assert.match(shared, /export function readScroll\b/);
+  assert.match(shared, /export function writeScroll\b/);
+  const section = read('hooks/useSectionScroll.js');
+  assert.match(
+    section,
+    /import \{[^}]*\breadScroll\b[^}]*\bwriteScroll\b[^}]*\} from '\.\/usePreservedInteraction\.js'/,
+  );
+  // Neither hook reads or writes an offset itself, so a change to how places are kept is made once.
+  for (const source of [
+    shared.slice(shared.indexOf('export function usePreservedInteraction')),
+    section,
+  ]) {
+    assert.match(source, /readScroll\(/);
+    assert.match(source, /writeScroll\(/);
+    assert.doesNotMatch(source, /\.scroll(?:Top|Left)\b/);
+  }
 });
 
 test('the shared API boundary carries every Slack watch route as a literal', () => {
@@ -442,13 +503,14 @@ test('the Slack watch card composes the shared primitives, lists links in a tabl
     'SlackWatchCard.jsx exists',
   );
   const card = read('components/SlackWatchCard.jsx');
-  assert.match(card, /export function SlackWatchCard\(/);
+  assert.match(card, /export const SlackWatchCard = memo\(/);
   const primitives = card.match(/import \{([^}]*)\} from '\.\/Primitives\.jsx';/);
   assert.ok(primitives, 'the card imports from Primitives.jsx');
-  assert.match(primitives[1], /\bCard\b/);
   assert.match(primitives[1], /\bButton\b/);
-  assert.match(card, /<Card\b/);
   assert.match(card, /<Button\b/);
+  // The watcher is the third view of the Slack card: a pane of the board shell, not a card of its own.
+  assert.match(card, /board-pane/);
+  assert.doesNotMatch(card, /<Card\b/);
   // The poll belongs to a visible tab only, the same guard the thread list uses.
   assert.match(card, /document\.hidden/);
   // Links are tabular records, not a card list, so the masonry pattern does not apply.
@@ -627,11 +689,13 @@ test('My Tickets is a focusable ticket board built on the DOM-free board helper'
   assert.match(board, /from '\.\.\/\.\.\/ui\/ticket-board\.js'/);
   assert.match(board, /ciSummaryText\(/, 'the PR line words its CI through the helper');
   assert.match(board, /reviewText\(/, 'the PR line words its review through the helper');
-  // A scroll region of its own, reachable and scrollable from the keyboard.
-  assert.match(board, /data-testid="my-tickets-board"/);
-  assert.match(board, /role="region"/);
-  assert.match(board, /aria-label="Ticket board"/);
-  assert.match(board, /tabIndex=\{0\}/);
+  // A scroll region of its own, reachable and scrollable from the keyboard: the shared `Board` owns the
+  // region, and the ticket board names it and keeps its test id.
+  assert.match(board, /<Board\b[^>]*\btestId="my-tickets-board"/);
+  assert.match(board, /<Board\b[^>]*\blabel="Ticket board"/);
+  const shell = read('components/BoardShell.jsx');
+  assert.match(shell, /role="region"/);
+  assert.match(shell, /tabIndex=\{0\}/);
   for (const part of ['my-tickets-column-', 'my-tickets-pr-']) {
     assert.ok(board.includes(part), `${part}<…> test ids are rendered`);
   }
@@ -648,13 +712,60 @@ test('My Tickets is a focusable ticket board built on the DOM-free board helper'
   assert.match(panel, /<TicketBoard\b/);
   assert.doesNotMatch(panel, /MyTicketsGroups/);
   assert.match(`${panel}\n${board}`, /boardColumns\(/);
-  assert.match(`${panel}\n${board}`, /usePreservedInteraction/, 'scroll survives poll re-renders');
+  assert.match(shell, /usePreservedInteraction/, 'scroll survives poll re-renders');
   // The note that tells the user PR status is stale lives in the toolbar.
-  assert.match(panel, /data-testid="my-tickets-prs-note"/);
-  // Kept for the existing specs and for loading, error and empty states.
-  for (const id of ['my-tickets-section', 'my-tickets-list', 'my-tickets-error']) {
-    assert.ok(panel.includes(`data-testid="${id}"`), `${id} is kept`);
+  assert.match(panel, /testId="my-tickets-prs-note"/);
+  // Kept for the existing specs and for the error state. The section and list ids are the shell's
+  // `<name>-section` and `<name>-list`, so naming the section keeps them.
+  assert.match(panel, /<BoardSection\b[^>]*\bname="my-tickets"/);
+  assert.match(panel, /testId="my-tickets-error"/);
+  assert.match(shell, /\$\{name\}-section/);
+  assert.match(shell, /\$\{name\}-list/);
+});
+
+test('My Tickets and Slack are two consumers of one board shell, not two copies of it', () => {
+  const shell = read('components/BoardShell.jsx');
+  for (const name of [
+    'BoardPanel',
+    'BoardSection',
+    'RefreshControl',
+    'BoardTabs',
+    'BoardNote',
+    'BoardState',
+    'Board',
+    'BoardColumn',
+  ]) {
+    assert.match(shell, new RegExp(`export function ${name}\\b`), `${name} is a shared export`);
   }
+  for (const file of ['panels/MyTicketsPanel.jsx', 'panels/SlackPanel.jsx']) {
+    const source = read(file);
+    const imported = source.match(
+      /import \{([^}]*)\} from '\.\.\/components\/BoardShell\.jsx'/,
+    )?.[1];
+    for (const name of ['BoardPanel', 'BoardSection']) {
+      assert.match(imported ?? '', new RegExp(`\\b${name}\\b`), `${file} imports ${name}`);
+      assert.match(source, new RegExp(`<${name}\\b`), `${file} renders ${name}`);
+    }
+  }
+  for (const file of ['components/TicketBoard.jsx', 'panels/SlackPanel.jsx']) {
+    assert.match(read(file), /<Board\b/, `${file} renders the shared Board`);
+  }
+
+  // Slack styles itself with the shared classes: no My Tickets name, no private tab, board or
+  // unresolved-section class, and nothing for the removed block.
+  const panel = read('panels/SlackPanel.jsx');
+  assert.doesNotMatch(panel, /my-tickets-/);
+  assert.doesNotMatch(panel, /className=["{`'][^"}`']*\bslack-(?:board|tab|unknown)/);
+  assert.doesNotMatch(panel, /Activity time unavailable/);
+  assert.doesNotMatch(read('styles/slack.css'), /\.slack-(?:section|tab|board|unknown)/);
+
+  // The shared sheet loads before the panel sheets that override it.
+  const rootCss = read('styles.css');
+  const importAt = (sheet) =>
+    rootCss.search(new RegExp(`@import ['"]\\./styles/${sheet}\\.css['"]`));
+  assert.ok(importAt('board') > -1, 'styles.css imports board.css');
+  assert.ok(importAt('board') < importAt('my-tickets'), 'board.css loads before my-tickets.css');
+  assert.ok(importAt('board') < importAt('slack'), 'board.css loads before slack.css');
 });
 
 test('the My Tickets masonry is gone while Home, PR-tab and Slack rules stay', () => {
@@ -677,12 +788,12 @@ test('the My Tickets masonry is gone while Home, PR-tab and Slack rules stay', (
 });
 
 test('the board scrolls inside itself, snaps, clamps the summary and scopes the compact toolbar', () => {
-  const css = read('styles/my-tickets.css');
+  const css = BOARD_SHEETS.map(read).join('\n');
   assert.match(css, /overflow-x:\s*auto/);
   assert.match(css, /scroll-snap-type:\s*x\b/);
   assert.match(css, /overscroll-behavior-x:\s*contain/);
   assert.match(css, /-webkit-line-clamp:\s*2\b/, 'a summary shows two lines');
-  assert.match(css, /\.my-tickets-toolbar\b/, 'the compact filters are scoped to the toolbar');
+  assert.match(css, /\.board-toolbar\b/, 'the compact filters are scoped to the toolbar');
   assert.doesNotMatch(
     css,
     /(?<![\w-])columns:\s*\d/,
@@ -690,29 +801,32 @@ test('the board scrolls inside itself, snaps, clamps the summary and scopes the 
   );
 });
 
-test('the board stylesheet uses tokens only, short transitions and honours reduced motion', () => {
-  const css = read('styles/my-tickets.css');
-  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, 'colours come from tokens, never a hex literal');
-  // Every transition is short and names its properties: colour and background only.
-  const declarations = [...css.matchAll(/transition(?:-duration|-property)?\s*:\s*([^;}]+)/g)];
-  for (const [, value] of declarations) {
-    for (const [, amount, unit] of value.matchAll(/(\d*\.?\d+)\s*(ms|s)\b/g)) {
-      const ms = unit === 's' ? Number(amount) * 1000 : Number(amount);
-      assert.ok(ms <= 200, `transition "${value.trim()}" stays within 200 ms`);
+test('the board stylesheets use tokens only, short transitions and honour reduced motion', () => {
+  const sheets = BOARD_SHEETS.map(read);
+  for (const css of sheets) {
+    assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, 'colours come from tokens, never a hex literal');
+    // Every transition is short and names its properties: colour and background only.
+    const declarations = [...css.matchAll(/transition(?:-duration|-property)?\s*:\s*([^;}]+)/g)];
+    for (const [, value] of declarations) {
+      for (const [, amount, unit] of value.matchAll(/(\d*\.?\d+)\s*(ms|s)\b/g)) {
+        const ms = unit === 's' ? Number(amount) * 1000 : Number(amount);
+        assert.ok(ms <= 200, `transition "${value.trim()}" stays within 200 ms`);
+      }
+      assert.doesNotMatch(value, /\ball\b/, 'transition names its properties');
     }
-    assert.doesNotMatch(value, /\ball\b/, 'transition names its properties');
+    // Radii come from the tokens (10 px card) or a literal of at most 12 px.
+    for (const [, value] of css.matchAll(/border-radius\s*:\s*([^;}]+)/g)) {
+      for (const [, px] of value.matchAll(/(\d*\.?\d+)px/g)) {
+        assert.ok(Number(px) <= 12, `border-radius "${value.trim()}" is at most 12 px`);
+      }
+    }
   }
+  const css = sheets.join('\n');
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
   assert.match(css, /tabular-nums/, 'counts and numbers do not jiggle');
-  // Radii come from the tokens (10 px card) or a literal of at most 12 px.
   const tokens = read('styles/tokens.css');
   const radius = Number(tokens.match(/--radius:\s*(\d+)px/)?.[1]);
   assert.ok(radius <= 12, 'the shared card radius token is at most 12 px');
-  for (const [, value] of css.matchAll(/border-radius\s*:\s*([^;}]+)/g)) {
-    for (const [, px] of value.matchAll(/(\d*\.?\d+)px/g)) {
-      assert.ok(Number(px) <= 12, `border-radius "${value.trim()}" is at most 12 px`);
-    }
-  }
 });
 
 // -- comment chips, the attached Slack chip and the all-approved card -------------------------------
@@ -773,13 +887,6 @@ test('the Slack chip marks an attached session by a filled glyph and words, keep
   assert.doesNotMatch(link, EMOJI, 'no emoji');
   assert.match(link, /if \(!links\.length\) return null;/, 'no thread still means no container');
 });
-
-// The declarations of every rule whose selector names `attribute`, joined.
-const rulesFor = (css, attribute) =>
-  [...css.matchAll(/([^{}]*)\{([^}]*)\}/g)]
-    .filter(([, selector]) => selector.includes(attribute))
-    .map(([, , body]) => body)
-    .join('\n');
 
 test('the green card, the comment chips and the attached chip take their colours from tokens', () => {
   const css = read('styles/my-tickets.css');

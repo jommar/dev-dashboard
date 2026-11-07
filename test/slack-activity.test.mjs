@@ -80,7 +80,7 @@ test('board activity: unverified, inconsistent and future activity is never gues
   const before = row(root - 3, root - 4);
   const empty = { ts: ts(root - 5), replyCount: 0 };
   const result = groupSlackActivity([bad, mismatch, future, before, empty], now);
-  assert.equal(result.unknown.length, 4);
+  assert.equal(result.unplaced, 4);
   assert.deepEqual(result.groups[0].threads, [empty]);
 });
 

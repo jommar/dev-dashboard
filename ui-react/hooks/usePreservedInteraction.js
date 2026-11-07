@@ -1,25 +1,37 @@
 import { useInsertionEffect, useLayoutEffect, useRef } from 'react';
 
+// Scroll places are read and written by data-testid, the one handle that survives a re-render
+// that replaces an element. Both ways of keeping a place (usePreservedInteraction here,
+// useSectionScroll for a board's views) go through these two, so they cannot drift apart.
+
+// The place of each element, keyed by its test id, as [top, left].
+export function readScroll(elements) {
+  return new Map(
+    [...elements].map((element) => [
+      element.dataset.testid,
+      [element.scrollTop, element.scrollLeft],
+    ]),
+  );
+}
+
+// Puts places from readScroll back on the elements with the same test id. An element the places
+// do not mention is set to `fallback` ([top, left]) when one is given and left alone otherwise.
+export function writeScroll(elements, places, fallback) {
+  for (const element of elements) {
+    const place = places.get(element.dataset.testid) ?? fallback;
+    if (place) [element.scrollTop, element.scrollLeft] = place;
+  }
+}
+
+const withTestId = (root) => root.querySelectorAll('[data-testid]');
+const isScrolled = (element) => element.scrollTop || element.scrollLeft;
+
 export function usePreservedInteraction(root) {
-  const positions = useRef([]);
+  const places = useRef(new Map());
   useInsertionEffect(() => {
-    const element = root.current;
-    if (!element) return;
-    positions.current = [...element.querySelectorAll('[data-testid]')]
-      .filter((item) => item.scrollTop || item.scrollLeft)
-      .map((item) => [item.dataset.testid, item.scrollTop, item.scrollLeft]);
+    if (root.current) places.current = readScroll([...withTestId(root.current)].filter(isScrolled));
   });
   useLayoutEffect(() => {
-    const element = root.current;
-    if (!element) return;
-    for (const [testId, top, left] of positions.current) {
-      const item = [...element.querySelectorAll('[data-testid]')].find(
-        (candidate) => candidate.dataset.testid === testId,
-      );
-      if (item) {
-        item.scrollTop = top;
-        item.scrollLeft = left;
-      }
-    }
+    if (root.current) writeScroll(withTestId(root.current), places.current);
   });
 }

@@ -76,8 +76,10 @@ validation details. Once setup is ready, the navigation contains:
   earliest unreleased EZAT version), each with its GitHub PRs, grouped by
   whether the work reached `ops/development`. It opens on your own tickets;
   **All release tickets** widens it. See [Releases](#releases).
-- **Slack** — optional. One connect button that captures your own Slack web
-  session; nothing else in the app depends on it. See [Slack](#slack).
+- **Slack** — optional. One connect button captures your own Slack web session;
+  once connected, one card shows your recent `#ezat_claudio` threads as a board
+  (the My Tickets layout) next to the thread watcher. Nothing else in the app
+  depends on it. See [Slack](#slack).
 - **Settings** — saved integrations, token replacements, local services and
   advanced options.
 
@@ -273,7 +275,7 @@ to Settings on that event or an operational `SETUP_REQUIRED` response.
 ### Slack watch settings
 
 The Slack watcher has three settings, kept in a `slackWatch` section of
-`settings.json`. They are edited on the Slack tab's **Watch threads** card (and
+`settings.json`. They are edited on the Slack tab's **Watch threads** view (and
 through the `/api/slack/watch` routes), not in the Settings panel:
 
 | Field             | Meaning                         | Valid values                                                                                                                                                   |
@@ -740,7 +742,8 @@ The board scrolls sideways inside itself and the page never does: columns are
 snaps into place. Each column scrolls down on its own with its header in view,
 and the board fills the rest of the viewport under the toolbar. The board's
 sideways position and each column's scroll position survive a refresh, and the
-board is keyboard-focusable (arrow keys scroll it).
+board is keyboard-focusable (arrow keys scroll it). The Slack tab's board is the
+same frame, so all of this holds there too (see [UI layout](#ui-layout)).
 
 ### Slack threads
 
@@ -1108,34 +1111,63 @@ set `SLACK_WORKSPACE` to point the window at a different workspace, or
 
 ### What it shows
 
-Two tabs over `#ezat_claudio` show a board of threads created within the last
-rolling 28 days. An older thread is excluded even if it has recent activity;
-there is no older-history option:
+The tab is one card laid out like the [My Tickets](#my-tickets) card, on the
+same board frame ([UI layout](#ui-layout)). Its toolbar carries the title, an
+account line (`Checking…`, `Connected as @user · team`, `Waiting for sign-in…`
+or `Not connected`), a counts line, **Disconnect** (**Connect Slack** while not
+connected), **Load more eligible threads** when more can be loaded, and
+**Refresh** with a **refresh in N s** countdown. The counts line says how many
+loaded threads need a reply and when the list was updated, and says so while
+replies are still being checked or some reply states are unknown. While Slack is
+checking, not connected or waiting for sign-in, the card shows only the toolbar
+and one message in place of the switch row and the board.
+
+A switch row under the toolbar chooses what the card shows. The first two views
+are a board of `#ezat_claudio` threads created within the last rolling 28 days,
+each tab carrying the number of threads it shows. An older thread is excluded
+even if it has recent activity; there is no older-history option:
 
 - **Threads I started** — thread roots authored by you, with reply count, who
   replied last, and how long ago.
 - **Mentions** — threads where someone wrote `<@you>`, grouped to one row per
   thread with the mentioning message as the preview.
+- **Watch threads** — the thread [watcher](#watch) in place of the board. Its tab
+  shows how many threads are watched and turns amber, with a note you can hover
+  or hear, while the watcher is paused, disabled or a delivery is failing, so that
+  shows while another view is selected.
 
-Each tab groups eligible threads by latest known activity into **Last 3 hours**,
-**Today**, **Yesterday**, **Past week** and **Past month**, newest first. The
-three-hour group takes precedence across midnight; the other groups use local
-calendar days: Past week covers days 2–7 ago and Past month days 8–30 ago.
-Threads whose activity time cannot be verified appear separately under
-**Activity time unavailable**. A thread is flagged **Needs reply** when its
-verified newest message is by another person; reply status can also be unknown.
+The switch row is a set of tabs for the keyboard too: only the selected tab is a
+Tab stop, and the left and right arrow keys, **Home** and **End** move along the
+row and select the tab they reach.
+
+Each thread view groups eligible threads by latest known activity into **Last 3
+hours**, **Today**, **Yesterday**, **Past week** and **Past month**, newest
+first. The three-hour group takes precedence across midnight; the other groups
+use local calendar days: Past week covers days 2–7 ago and Past month days 8–30
+ago. Threads whose activity time cannot be verified (or lies in the future) are
+not shown: the tab counts and the need-a-reply count leave them out, and the
+amber note in the toolbar says how many were left out. A thread is flagged
+**Needs reply** when its verified newest message is by another person; reply
+status can also be unknown. Each view remembers its own column scroll positions
+while you switch between them.
 
 A click opens the conversation in the same in-app dialog My Tickets uses, with
 **Open in Slack**, **Copy link** and the **Claude session** section
 ([Watch](#watch)). The conversation is fetched on demand, cached for a minute
 and may be truncated; an open dialog closes when the thread passes the cutoff.
 
+While Slack is connected and the tab is open, the list reloads every 60 seconds
+(not while the page is hidden), counted down beside **Refresh**. **Refresh**
+reloads it at once and restarts the countdown (My Tickets' **Refresh** does the
+same); coming back to the tab reloads the list only when it is older than 60
+seconds.
+
 The server caches the list for five minutes and revalidates it in the background;
 cached rows are still checked against the moving cutoff. An incomplete refresh
 replaces the old list with only rows confirmed by that refresh, and both Slack
 and My Tickets warn that results may be incomplete, even when no rows are found.
-Counts cover loaded rows only. When available, **Load more eligible threads**
-continues the current listing. Previously verified reply information can be reused
+Counts cover the rows shown. **Load more eligible threads**, on the two thread
+views, continues the current listing. Previously verified reply information can be reused
 for a confirmed row while replies are checked; a warning says it may be stale.
 Some reply states may remain unknown. A failed read backs off for a minute.
 
@@ -1162,7 +1194,7 @@ underlying endpoints — including the `thread_ts === ts` root marker and the
 ### Watch
 
 The Slack tab can also watch Slack threads and wake the Claude Code sessions that
-are working on them. You paste thread links on the **Watch threads** card, a session
+are working on them. You paste thread links on the **Watch threads** view, a session
 attaches its own id to a link over HTTP, and a watcher inside the dashboard server
 reads each watched thread on a poll paced by the interval (a poll is called a tick below).
 The watcher is separate from the board's 28-day listing cutoff: its configured
@@ -1346,7 +1378,7 @@ and re-measures `nextCheckAt` from the last poll. The notice is one line of at m
 characters, `There's a new message on {link}` by default. `{link}` is the only
 placeholder and every occurrence is replaced by the stored link, so a notice holds
 only the template and the link, never Slack text. Line breaks and other control
-characters are rejected. A template without `{link}` is accepted and the card
+characters are rejected. A template without `{link}` is accepted and the view
 warns that a session will not know which thread changed. The settings are described
 under [Slack watch settings](#slack-watch-settings).
 
@@ -1382,7 +1414,8 @@ already attached, and you can paste a full session id instead. The server starts
 watcher when it starts listening, and nothing is read until a session is attached to
 a link.
 
-**The card.** Once Slack is connected the Slack tab shows a **Watch threads** card:
+**The Watch threads view.** Once Slack is connected, the third tab of the Slack
+card's switch row, **Watch threads**, replaces the board with:
 
 - a textarea for links, one per line, with **Add**; refused lines stay in the box
   and their reasons are listed under it
@@ -1401,28 +1434,31 @@ a link.
   **Pause** while running and **Resume** while paused, and the interval and notice
   fields with **Save**
 
-While the state is disabled, Add, Attach and Remove are disabled. The card polls only
+While the state is disabled, Add, Attach and Remove are disabled. The view polls only
 the server's in-memory list, every 30 seconds, only while the Slack tab is open and
-the page is visible, so it makes no Slack calls itself. Reason codes are shown as
-the server sends them. A `waiting` status, and the reason under `delivered` or
-`waiting`, are muted; the reason under a failure stays red.
+the page is visible, so it makes no Slack calls itself. It stays mounted while
+**Threads I started** or **Mentions** is selected, so it keeps polling, and the
+pasted links, the refused lines and the last action error are still there when you
+switch back.
+Reason codes are shown as the server sends them. A `waiting` status, and the reason
+under `delivered` or `waiting`, are muted; the reason under a failure stays red.
 
 **The thread dialog.** The dialog that opens from a My Tickets glyph or a Slack tab
 row has a **Claude session** section for the thread it shows, on the same watcher as
-the Watch threads card, so both screens behave the same. It lists the sessions
+the Watch threads view, so both screens behave the same. It lists the sessions
 attached to that thread, each with a **Detach** button, or says "No session
-attached". Its picker offers the sessions the card's picker offers
+attached". Its picker offers the sessions the view's picker offers
 (`GET /api/slack/watch/sessions`), with the same labels, minus those already
 attached to this thread; **Attach** stays disabled until one is chosen, and pasting a
-session id stays on the card. **Attach** also puts a thread that is not yet watched on
-the Watch threads list, because it uses the same attach route. **Detach** leaves the
-thread on that list; removing a thread stays on the card. The thread is matched to
-its watch entry by the `watchKey` the server hands the dialog, never by a link string.
-A failed attach or detach shows the card's words for that error in the section and
-leaves it as it was, and the buttons are disabled while a request is in flight. The
-section reads the watch list and the picker once when the dialog opens and the watch
-list once more after each successful attach or detach; it never polls, so it can lag
-behind the card until the dialog is reopened. When the watcher is disabled or its list
+session id stays on the Watch threads view. **Attach** also puts a thread that is not
+yet watched on the Watch threads list, because it uses the same attach route. **Detach**
+leaves the thread on that list; removing a thread stays on the view. The thread is
+matched to its watch entry by the `watchKey` the server hands the dialog, never by a
+link string. A failed attach or detach shows the view's words for that error in the
+section and leaves it as it was, and the buttons are disabled while a request is in
+flight. The section reads the watch list and the picker once when the dialog opens and
+the watch list once more after each successful attach or detach; it never polls, so it
+can lag behind the view until the dialog is reopened. When the watcher is disabled or its list
 cannot be read, the section says so in one sentence and offers neither picker nor
 buttons; when the thread has no link, attaching is disabled and the section says "No
 link to attach to".
@@ -1583,8 +1619,19 @@ Run `npm run lint` to check JavaScript and JSX with ESLint. `npm run format`
 formats JavaScript, JSX, CSS, HTML and JSON files; use `npm run format:check`
 to verify formatting without changing files.
 
-`npm run test:ui` uses the main Playwright config, defaulting to three workers
-with full parallelism. `npm run test:ui:proxy` uses the separate, unchanged
+`npm run test:ui` uses the main Playwright config, defaulting to four workers
+with full parallelism. It runs against a fresh unminified production build of the
+UI: `e2e/static-server.mjs` builds into `test-results/e2e-dist` (never `dist/`) and
+serves it on port 6517, so only one run can go at a time and no test depends on
+the Vite dev server (`npm run test:ui:serve` starts the same server by hand).
+Actions time out after 5 s and navigations after 10 s. Tracing is off locally and
+kept on failure on CI. Three switches, none needed for a normal run:
+`PW_WORKERS` sets the worker count, a number or a share of the CPU threads
+(`PW_WORKERS=2`, `PW_WORKERS=25%`; `--workers` on the command line wins);
+`PW_TRACE` sets the trace mode (`PW_TRACE=retain-on-failure` turns tracing on to
+debug a red test); `PW_HTML=1` also writes the HTML report to
+`test/.settings-verification/playwright-report` (always written when `CI` is
+set). `npm run test:ui:proxy` uses the separate, unchanged
 vite-proxy config. Some existing full-suite tests write fixed screenshots under
 `../docs/dev-dashboard-redesign/verification/screenshots/` and can overwrite
 existing files there.
@@ -1616,9 +1663,12 @@ cards, filters, listboxes, terminal output and status; domain-free selectors
 and established card/diff helpers preserve existing calculations, escaping
 and data-testid contracts. Masonry uses CSS multi-column packing with intact
 cards and sibling spacing at 760px and 1700px; Services retains an explicit
-CSS grid, Home blocks remain indivisible and My Tickets is a horizontally
-scrolling board of columns that scroll on their own (see
-[My Tickets](#my-tickets)). Legacy DOM panel controllers,
+CSS grid, Home blocks remain indivisible, and My Tickets and Slack are
+horizontally scrolling boards of columns that scroll on their own (see
+[My Tickets](#my-tickets)). Both are built on one shared board frame,
+[`ui-react/components/BoardShell.jsx`](ui-react/components/BoardShell.jsx) with
+[`ui-react/styles/board.css`](ui-react/styles/board.css); how a new screen adopts
+it is in [`CLAUDE.md`](CLAUDE.md). Legacy DOM panel controllers,
 entry points, stylesheet tree and the API compatibility re-export have been
 retired.
 
