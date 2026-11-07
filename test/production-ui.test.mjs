@@ -43,6 +43,7 @@ test('production Node handler serves built assets safely without swallowing API 
     ],
     [`assets/${fixtureAsset}.js`, 'document.documentElement.dataset.builtUi = "served";'],
     [`assets/${fixtureAsset}.css`, '#built-ui-contract { color: rgb(1, 2, 3); }'],
+    [`assets/${fixtureAsset}.svg`, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"/>'],
   ];
   const originals = new Map();
   for (const [relative] of fixtureFiles) {
@@ -110,6 +111,14 @@ test('production Node handler serves built assets safely without swallowing API 
     !stylesheet.body.includes('built-ui-contract')
   )
     failures.push('GET built CSS asset must return its contents with CSS MIME');
+
+  const logo = await request(origin, `/assets/${fixtureAsset}.svg`);
+  if (
+    logo.status !== 200 ||
+    !/^image\/svg\+xml\b/.test(logo.headers['content-type'] || '') ||
+    !logo.body.includes('<svg')
+  )
+    failures.push('GET built SVG logo must return its contents with SVG MIME');
 
   const config = await request(origin, '/api/config');
   if (config.status !== 200 || JSON.parse(config.body).setup.ready !== false)

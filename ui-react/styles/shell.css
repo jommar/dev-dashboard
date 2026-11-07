@@ -32,16 +32,13 @@
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 34px;
+  width: 36px;
   height: 36px;
-  border-radius: var(--radius-sm);
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
 }
-.brand-mark svg {
-  width: 28px;
-  height: 28px;
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .brand-caption {
   display: block;

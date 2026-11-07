@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="logo-title">
+  <title id="logo-title">EZAT developer workspace</title>
+  <rect width="48" height="48" rx="10" fill="#67e8f9" />
+  <path d="M11 13h17l-2 5H11zm0 9h14l-2 5H11zm0 9h10l-2 5h-8zM32 10h6L26 38h-6z" fill="#111113" />
+</svg>

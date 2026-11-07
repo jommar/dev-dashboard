@@ -1,5 +1,6 @@
 import { Button } from './Primitives.jsx';
 import { AppTabs } from './AppTabs.jsx';
+import logoUrl from '../assets/logo.svg?no-inline';
 
 export function AppShell({ children, tabs, active, onNavigate, connection, ready }) {
   const connectionLabel =
@@ -33,10 +34,7 @@ export function AppShell({ children, tabs, active, onNavigate, connection, ready
             }}
           >
             <span className="brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 32 32" fill="none" focusable="false">
-                <path d="M9 9h14M9 16h10M9 23h14" stroke="currentColor" strokeWidth="3" />
-                <path d="m25 5-8 22" stroke="currentColor" strokeWidth="2" />
-              </svg>
+              <img src={logoUrl} alt="" width="36" height="36" draggable={false} />
             </span>
             <span className="brand-name">
               EZAT<span className="brand-caption">Dev workspace</span>
