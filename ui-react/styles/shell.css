@@ -1,0 +1,117 @@
+/* A single compact header leaves the board its full horizontal workspace. */
+.app-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 32px;
+  min-height: 76px;
+  padding: 14px 32px;
+  background: var(--panel);
+  box-shadow:
+    0 1px 0 var(--border),
+    inset 0 1px 0 color-mix(in srgb, var(--strong) 5%, transparent);
+}
+.app-head h1 {
+  flex: none;
+  font-size: 17px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.home-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--strong);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.brand-mark svg {
+  width: 28px;
+  height: 28px;
+}
+.brand-caption {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font: 11px/1.2 var(--sans);
+  letter-spacing: 0;
+}
+.shell-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  color: var(--muted);
+  font: 10px/1.3 var(--mono);
+  white-space: nowrap;
+}
+#connection-status {
+  display: inline-flex;
+}
+#connection-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+}
+#connection-status[data-state='connected'] {
+  color: var(--green);
+}
+#connection-status[data-state='reconnecting'] {
+  color: var(--amber);
+}
+/* The dot is compact visually. Its complete status remains spoken and on hover. */
+.connection-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (hover: hover) and (pointer: fine) {
+  .home-link:hover .brand-name {
+    color: var(--accent);
+  }
+}
+@media (max-width: 1399px) {
+  .app-head {
+    gap: 20px;
+    padding-inline: 24px;
+  }
+  .shell-location {
+    display: none;
+  }
+}
+@media (max-width: 699px) {
+  .app-head {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px 16px 10px;
+  }
+  .shell-foot {
+    order: 1;
+  }
+  .shell-location {
+    display: inline;
+  }
+  .app-head .tabs {
+    order: 2;
+    flex-basis: 100%;
+  }
+}

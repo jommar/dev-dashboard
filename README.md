@@ -59,27 +59,32 @@ the dashboard's development dependencies once with `npm install` in
 Open `http://127.0.0.1:6500`. On a fresh or incomplete installation, only
 **Settings** is available: complete GitHub, Jira and local services, then click
 **Save settings**. See [Settings and setup](#settings-and-setup) for migration and
-validation details. Once setup is ready, the navigation contains:
+validation details. Once setup is ready, a compact top bar puts **Home → My Tickets
+→ Slack** first. Pull Requests, Releases and Services follow in a separate tools
+group, with Settings at the end. Below 1200px the tools move into a **Tools**
+disclosure (a menu icon on phones), while the first three links stay visible.
+The menu supports Tab, Enter and Escape and closes on navigation or an outside
+click. All seven views remain available:
 
 - **Home** — the overview: sprint progress, KPI tiles, the "needs you" queue and
   a compact service health strip. See [Home](#home). Use its tab or click the
   **EZAT Dev Dashboard** title to return to it.
-- **Services** — one card per service, each showing its status and a log
-  viewport that tails the last 40 lines (_Show full_ reveals everything).
-- **Pull Requests** — your open and draft PRs in separate sections, grouped by ticket.
 - **My Tickets** — Jira tickets assigned to you (`assignee = currentUser()`) as a
   kanban board with one column per status, each card carrying your open PRs
   with their CI and review state and any Slack threads, under a header line
   naming the current active sprint. An _include Done_ checkbox controls whether
   Done tickets are shown. See [My Tickets](#my-tickets).
-- **Releases** — the tickets of one Jira fix version (the picker defaults to the
-  earliest unreleased EZAT version), each with its GitHub PRs, grouped by
-  whether the work reached `ops/development`. It opens on your own tickets;
-  **All release tickets** widens it. See [Releases](#releases).
 - **Slack** — optional. One connect button captures your own Slack web session;
   once connected, one card shows your recent `#ezat_claudio` threads as a board
   (the My Tickets layout) next to the thread watcher. Nothing else in the app
   depends on it. See [Slack](#slack).
+- **Pull Requests** — your open and draft PRs in separate sections, grouped by ticket.
+- **Releases** — the tickets of one Jira fix version (the picker defaults to the
+  earliest unreleased EZAT version), each with its GitHub PRs, grouped by
+  whether the work reached `ops/development`. It opens on your own tickets;
+  **All release tickets** widens it. See [Releases](#releases).
+- **Services** — one card per service, each showing its status and a log
+  viewport that tails the last 40 lines (_Show full_ reveals everything).
 - **Settings** — saved integrations, token replacements, local services and
   advanced options.
 
@@ -1510,10 +1515,10 @@ after a server restart. The watcher never stops or removes a copy that a resume 
 
 | Route                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified, sessionVersion }`; session fields are present when connected; never fails                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while reply checks are still running; `available: false` when disconnected or unavailable; each thread carries `url` and `watchKey`, the `<channelId>:<ts>` string the watch list uses as `key` for that thread, both empty when the thread has no link; each `started` row also carries `attachedSessions`, the number of Claude sessions attached to it (`0` for none, with a disabled watcher or an unreadable watch list) |
+| `GET /api/slack/status`                  | `{ connected, connecting, user, team, savedAt, verified, sessionVersion }`; session fields are present when connected; never fails                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `GET /api/slack/threads`                 | `{ available, channel, started[], mentions[], updatedAt, enriched }`; `enriched: false` while reply checks are still running; `available: false` when disconnected or unavailable; each thread carries `url` and `watchKey`, the `<channelId>:<ts>` string the watch list uses as `key` for that thread, both empty when the thread has no link; each `started` row also carries `attachedSessions`, the number of Claude sessions attached to it (`0` for none, with a disabled watcher or an unreadable watch list)                                                            |
 | `GET /api/slack/pending`                 | `{ available, channel: { id, name, mentions, unread }, mentionsTotal, updatedAt }`; `available: false` when disconnected or unknown                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, watchKey, channel, replyCount, truncated, updatedAt, names, messages[] } }`; `watchKey` is as for the thread lists; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed or ineligible `ts`, for an unverified root, or for a thread Slack refuses                                                                                                                                                                                        |
+| `GET /api/slack/thread?ts=`              | one conversation: `{ available, thread: { ts, url, watchKey, channel, replyCount, truncated, updatedAt, names, messages[] } }`; `watchKey` is as for the thread lists; each message carries plain `text` and raw `mrkdwn`; `available: false` when disconnected, for a malformed or ineligible `ts`, for an unverified root, or for a thread Slack refuses                                                                                                                                                                                                                       |
 | `POST /api/slack/connect`                | starts the sign-in window, `{ ok, connecting }`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `POST /api/slack/disconnect`             | deletes the stored session                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `GET /api/slack/watch`                   | the [watcher](#watch) state, answered from memory, no Slack calls: `{ state, reason?, nextCheckAt, settings: { intervalSeconds, noticeTemplate, paused }, links[] }`; `state` is `running`, `paused` or `disabled`, `reason` only if disabled; `nextCheckAt` is the time the next timed poll fires, `null` while one runs, paused, disabled or before the start; each link is `{ key, link, lastCheckedAt, lastStatus, sessions[] }` and each session `{ sessionId, delivery }`; `delivery` is `{ status, reason, at }` (`status` may be `waiting`) or `null` before any attempt |

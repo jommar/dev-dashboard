@@ -105,6 +105,8 @@ test('double-size layout and keyboard focus remain usable with reduced motion @r
   await page.evaluate(() => {
     document.documentElement.style.zoom = '2';
   });
+  if (!(await page.getByTestId('tab-services').isVisible()))
+    await page.getByTestId('nav-tools-toggle').click();
   await page.getByTestId('tab-services').focus();
   await expect(page.getByTestId('tab-services')).toBeFocused();
   expect(

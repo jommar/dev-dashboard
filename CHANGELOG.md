@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The main navigation is now a compact sticky top bar, freeing the full width for
+  the ticket and Slack boards. Home, My Tickets and Slack lead, followed by the
+  other tools and Settings. Below 1200px the tools use a keyboard-accessible
+  disclosure, while the first three links stay visible. Routes, setup gating,
+  Slack notification badges and the service connection status are unchanged.
 - The Slack switch row (Threads I started, Mentions, Watch threads) is now a proper
   set of tabs: each tab controls the card's body, only the selected tab is a Tab
   stop, and the left and right arrow keys, Home and End move along the row and

@@ -25,64 +25,11 @@ h2 {
   margin: 0;
 }
 
-.app-head {
-  position: fixed;
-  inset: 0 auto 0 0;
-  width: 224px;
-  padding: 32px 20px 24px;
-  background: var(--panel);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 48px;
-}
 .panels {
-  margin-left: 224px;
-  padding: 40px;
+  padding: 28px 32px;
   max-width: 1920px;
-}
-.home-link {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 44px;
-  color: var(--accent);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  font: 600 25px var(--mono);
-}
-.brand-caption {
-  display: block;
-  font: 12px/1.5 var(--sans);
-  color: var(--muted);
-  letter-spacing: 0;
-}
-.shell-foot {
-  margin-top: auto;
-  display: grid;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
-#connection-status::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  background: currentColor;
-  border-radius: 50%;
-  margin-right: 8px;
-}
-#connection-status[data-state='connected'] {
-  color: var(--green);
-}
-#connection-status[data-state='reconnecting'] {
-  color: var(--amber);
+  margin-inline: auto;
+  width: 100%;
 }
 .eyebrow,
 .section-label {
@@ -181,58 +128,17 @@ input {
   color: var(--muted);
 }
 @media (max-width: 1199px) {
-  .app-head {
-    position: static;
-    width: auto;
-    padding: 18px 24px 0;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 16px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .shell-foot {
-    margin: 0 0 0 auto;
-    font-size: 12px;
-  }
-  .shell-foot .eyebrow {
-    display: none;
-  }
   .panels {
-    margin-left: 0;
     padding: 28px 24px;
   }
 }
 @media (max-width: 600px) {
-  .app-head {
-    padding: 16px 16px 0;
-  }
   .panels {
     padding: 24px 16px;
-  }
-  .brand-caption {
-    font-size: 11px;
-  }
-  .shell-foot {
-    max-width: 125px;
   }
   .page-intro {
     margin-bottom: 24px;
   }
-}
-
-/* The page title doubles as the Home link, so it reads as text — not a button
-   — but tints on hover and while Home is the visible panel. */
-.home-link {
-  color: inherit;
-  text-decoration: none;
-}
-.home-link:hover {
-  color: var(--accent);
-}
-body:has(#panel-home:not([hidden])) .home-link {
-  color: var(--accent);
 }
 
 .sub {

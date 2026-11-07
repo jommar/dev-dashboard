@@ -1,6 +1,7 @@
 @import './styles/tokens.css';
 @import './styles/base.css';
 @import './styles/tabs.css';
+@import './styles/shell.css';
 @import './styles/services.css';
 @import './styles/terminal.css';
 @import './styles/prs.css';
@@ -56,10 +57,6 @@ body {
   color: var(--fg);
   font-family: var(--font-text);
 }
-.app-head {
-  z-index: 2;
-}
-
 /* Preserve the established card-list packing contract exactly. */
 .home-cols {
   columns: 1;

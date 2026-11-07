@@ -16,11 +16,11 @@ test('shell exposes seven semantic navigation links @smoke', async ({ page }) =>
     );
   expect(links).toEqual([
     { name: 'Home', tag: 'A', href: '#/home', current: 'page' },
-    { name: 'Services', tag: 'A', href: '#/services', current: null },
-    { name: 'Pull Requests', tag: 'A', href: '#/prs', current: null },
     { name: 'My Tickets', tag: 'A', href: '#/my-tickets', current: null },
-    { name: 'Releases', tag: 'A', href: '#/releases', current: null },
     { name: 'Slack', tag: 'A', href: '#/slack', current: null },
+    { name: 'Pull Requests', tag: 'A', href: '#/prs', current: null },
+    { name: 'Releases', tag: 'A', href: '#/releases', current: null },
+    { name: 'Services', tag: 'A', href: '#/services', current: null },
     { name: 'Settings', tag: 'A', href: '#/settings', current: null },
   ]);
 });
@@ -62,7 +62,11 @@ test('populated routes fit a mobile viewport without horizontal overflow @regres
     contentType: 'image/png',
   });
   for (const route of ['home', 'services', 'prs', 'my-tickets', 'releases']) {
-    if (route !== 'home') await page.getByTestId('tab-' + route).click();
+    if (route !== 'home') {
+      if (!(await page.getByTestId('tab-' + route).isVisible()))
+        await page.getByTestId('nav-tools-toggle').click();
+      await page.getByTestId('tab-' + route).click();
+    }
     await expect(page.getByTestId('panel-' + route)).toBeVisible();
     if (route === 'services') await expect(page.getByTestId('card-api')).toBeVisible();
     if (route === 'prs') await expect(page.getByTestId('prs-loading')).toHaveCount(0);

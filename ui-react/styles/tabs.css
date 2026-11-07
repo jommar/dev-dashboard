@@ -1,43 +1,88 @@
-.tabs {
+.tabs,
+.nav-primary,
+.nav-tools-panel {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
-.tab {
+.tabs {
+  flex: 1;
+  min-width: 0;
+  gap: 24px;
+}
+.nav-primary {
+  flex: none;
+}
+.tab,
+.nav-tools-toggle {
+  position: relative;
   display: flex;
   align-items: center;
+  justify-content: center;
+  gap: 8px;
   min-height: 44px;
-  padding: 10px 14px;
-  border-radius: 6px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--muted);
   text-decoration: none;
-  font-size: 14px;
-  font-weight: 500;
+  white-space: nowrap;
+  font: 500 13px/1.3 var(--sans);
 }
-.tab::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  border: 1px solid currentColor;
-  margin-right: 12px;
-  border-radius: 1px;
+.nav-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+.nav-primary .tab {
+  color: var(--text);
 }
 .tab.active {
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
 }
-.tab.active::before {
-  background: currentColor;
+.nav-primary .tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  left: calc(50% - 7px);
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
 }
-/* Pending-count pill, rendered inline after the label. Fixed height and a
-   tabular-numeral font keep the nav from shifting as the count changes. */
+.nav-tools {
+  position: relative;
+  min-width: 0;
+}
+.nav-tools-compact {
+  padding-left: 24px;
+  box-shadow: -1px 0 0 var(--border);
+}
+.nav-tools-toggle {
+  display: none;
+  cursor: pointer;
+}
+.nav-tools-panel .tab[data-tab='settings'] {
+  margin-left: 8px;
+}
+/* Keep the Settings name accessible even when only its glyph is displayed. */
+.nav-tools-compact .tab[data-tab='settings'] .nav-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
 .tab-badge {
   flex: none;
-  margin-left: var(--s2);
   min-width: 18px;
   padding: 0 5px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
   color: var(--warn);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -45,7 +90,6 @@
   line-height: 18px;
   text-align: center;
 }
-/* Unread-but-unmentioned: a dot carries the same weight without inventing a count. */
 .tab-badge-dot {
   width: 6px;
   min-width: 6px;
@@ -54,43 +98,90 @@
   border-radius: 50%;
   background: var(--warn);
 }
-@media (hover: hover) {
-  .tab:hover {
+@media (hover: hover) and (pointer: fine) {
+  .tab:hover,
+  .nav-tools-toggle:hover {
     color: var(--strong);
     background: var(--panel2);
   }
 }
 @media (max-width: 1199px) {
   .tabs {
-    flex-direction: row;
-    order: 3;
-    flex-basis: 100%;
-    gap: 20px;
+    gap: 16px;
   }
-  .tab {
-    padding: 10px 2px 14px;
-    border-radius: 0;
-    border-bottom: 2px solid transparent;
+  .nav-tools-compact {
+    padding-left: 16px;
   }
-  .tab.active {
-    background: none;
-    border-bottom-color: var(--accent);
+  .nav-tools-toggle {
+    display: flex;
   }
-  .tab::before {
+  .nav-tools-toggle[data-active='true'] {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  }
+  .nav-tools-compact .nav-tools-panel {
     display: none;
+    position: absolute;
+    top: calc(100% + 12px);
+    right: 0;
+    z-index: 3;
+    width: 220px;
+    padding: 6px;
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: var(--shadow);
   }
-  /* Tabs sit in a tight horizontal row here, so the badge keeps its own space
-     with the smallest gap instead of pushing neighbours apart. */
-  .tab-badge {
-    margin-left: var(--s1);
+  .nav-tools-compact .nav-tools-panel.is-open {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .nav-tools-panel .tab {
+    justify-content: flex-start;
+    gap: 12px;
+  }
+  .nav-tools-panel .tab[data-tab='settings'] {
+    margin: 4px 0 0;
+  }
+  .nav-tools-compact .tab[data-tab='settings'] .nav-label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
   }
 }
-@media (max-width: 600px) {
+@media (max-width: 699px) {
   .tabs {
-    gap: 0;
     justify-content: space-between;
+    gap: 8px;
   }
-  .tab {
-    font-size: 13px;
+  .nav-primary {
+    flex: 1;
+    gap: 2px;
+  }
+  .nav-primary .tab {
+    flex: 1;
+    padding-inline: 8px;
+    gap: 6px;
+  }
+  .nav-tools-compact {
+    padding-left: 8px;
+  }
+  .nav-tools-toggle {
+    padding-inline: 10px;
+  }
+  .nav-tools-toggle > span:not(.sr-only) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+@media (max-width: 359px) {
+  .nav-primary .nav-icon {
+    display: none;
   }
 }

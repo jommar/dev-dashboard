@@ -19,11 +19,11 @@ import './styles.css';
 // renders SETTINGS_TAB) never starts a Slack request at all.
 const READY_TABS = [
   { id: 'home', label: 'Home' },
-  { id: 'services', label: 'Services' },
-  { id: 'prs', label: 'Pull Requests' },
   { id: 'my-tickets', label: 'My Tickets' },
-  { id: 'releases', label: 'Releases' },
   { id: 'slack', label: 'Slack', badge: <SlackTabBadge /> },
+  { id: 'prs', label: 'Pull Requests' },
+  { id: 'releases', label: 'Releases' },
+  { id: 'services', label: 'Services' },
   { id: 'settings', label: 'Settings' },
 ];
 const SETTINGS_TAB = [{ id: 'settings', label: 'Settings' }];
