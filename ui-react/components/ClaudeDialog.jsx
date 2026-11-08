@@ -21,6 +21,8 @@ const REASON_TEXT = {
   spawn_failed: 'Could not start Claude. Is the claude command installed?',
   listing_unavailable: 'Claude status is unavailable.',
   session_running: 'A Claude session is already running for this ticket.',
+  investigate_running: 'Investigate and plan is still running.',
+  implement_running: 'Implement plan is running.',
   not_planned: 'Run Investigate and plan first.',
   plan_missing: 'The plan file was not found.',
   questions_unanswered: 'Answer the open questions first.',
@@ -160,14 +162,14 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
             label="Investigate and plan"
             disabled={busy || Boolean(blocks.investigate)}
             hint={REASON_TEXT[blocks.investigate]}
-            onClick={() => run(() => launch(ticketKey, INVESTIGATE, summary))}
+            onClick={() => run(() => launch(ticketKey, INVESTIGATE))}
           />
           <ClaudeAction
             name="implement"
             label="Implement plan"
             disabled={busy || Boolean(blocks.implement)}
             hint={REASON_TEXT[blocks.implement]}
-            onClick={() => run(() => launch(ticketKey, IMPLEMENT, summary))}
+            onClick={() => run(() => launch(ticketKey, IMPLEMENT))}
           >
             {/* Starting the session is the user's approval, so where the plan is stays in view. */}
             {entry.reason === 'plan_ready' && (

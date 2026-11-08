@@ -7,8 +7,8 @@
 // which phase). The session writes `status.json` only while it works and this module only while no
 // session works; every write is a temp file, fsync and rename, under one lock per ticket.
 //
-// The ticket summary is untrusted text: it reaches the session name through `sessionName` and no
-// prompt. Both prompts are fixed text with a validated key, a slug of it and a built path.
+// Both prompts are fixed text with a validated key, a slug of it and a built path; no ticket text
+// reaches a session name or a prompt.
 
 import fsDefault from 'node:fs';
 import os from 'node:os';
@@ -31,6 +31,7 @@ import {
   readLaunch,
   readQuestions,
   resolveSession,
+  runningBlock,
   sessionName,
   sessionRunning,
 } from './claude-ticket-state.mjs';
@@ -214,9 +215,13 @@ export function createClaudeLauncher({
     return entries;
   }
 
-  const requireNoRunningSession = (entries, launched) => {
-    if (readLaunch(launched.value).some((record) => sessionRunning(entries, record, now())))
-      throw refused('session_running');
+  // Refuses while a phase's session works, naming which one when it is not the phase asked for. An
+  // answer asks for no phase and is refused as `session_running` whichever works.
+  const requireNoRunningSession = (entries, launched, asked) => {
+    const running = readLaunch(launched.value).find((record) =>
+      sessionRunning(entries, record, now()),
+    );
+    if (running) throw refused(runningBlock(running.phase, asked ?? running.phase));
   };
 
   // The listed session the CLI just started: the one with the id it printed, else the newest with
@@ -226,17 +231,17 @@ export function createClaudeLauncher({
     (entries && resolveSession(entries, record)) ||
     null;
 
-  async function launchLocked(key, phase, summary) {
+  async function launchLocked(key, phase) {
     const entries = await freshListing();
     const status = readObject(statusPath(key));
     const launched = readObject(launchPath(key));
-    requireNoRunningSession(entries, launched);
+    requireNoRunningSession(entries, launched, phase);
     if (phase === IMPLEMENT) {
       const reason = implementBlock(statusOf(status), launched.value, planExists(key));
       if (reason) throw refused(reason);
     }
 
-    const name = sessionName(key, summary);
+    const name = sessionName(key, phase);
     const record = { name, launchedAt: now(), id: null };
     if (phase === IMPLEMENT) {
       // The answers saved for questions the implement session asked stay answered on a relaunch.
@@ -282,14 +287,10 @@ export function createClaudeLauncher({
     return { ok: true, key, phase, name, id, ticket: ticketEntry(key, listing) };
   }
 
-  async function launch({ key, phase, summary }) {
-    if (
-      !isTicketKey(key) ||
-      !PHASES.includes(phase) ||
-      (summary !== undefined && typeof summary !== 'string')
-    )
-      throw invalid('INVALID_TICKET', 'Invalid ticket, phase or summary.');
-    return withTicketLock(key, () => launchLocked(key, phase, summary));
+  async function launch({ key, phase }) {
+    if (!isTicketKey(key) || !PHASES.includes(phase))
+      throw invalid('INVALID_TICKET', 'Invalid ticket or phase.');
+    return withTicketLock(key, () => launchLocked(key, phase));
   }
 
   // The body's [id, text] pairs: a plain object of at most 20 entries, each a question id and a

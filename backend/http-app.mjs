@@ -179,8 +179,8 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const claudeRoutes = {
     'GET /api/claude/tickets': () => claudeLauncher.list(),
     'POST /api/claude/launch': async (req) => {
-      const { key, phase, summary } = await readJson(req);
-      return claudeLauncher.launch({ key, phase, summary });
+      const { key, phase } = await readJson(req);
+      return claudeLauncher.launch({ key, phase });
     },
     'POST /api/claude/answers': async (req) => {
       const { key, answers } = await readJson(req);

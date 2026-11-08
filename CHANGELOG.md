@@ -2,12 +2,15 @@
 
 ## Unreleased
 
+- Added `nodemon.json` so `npm run dev` ignores the `claude/` state folder. Writing a
+  launch or status file there used to restart the dashboard mid-request.
 - Added a Claude icon to every My Tickets card. It shows where the ticket stands with
   Claude (not started, working, needs you, done, ended without finishing,
   unavailable) as a badge and a word, and opens a dialog with **Investigate and
   plan**, **Implement plan** and **Go to session**. Both launches start a background
-  `claude --bg` session from `~/pathwise`, named after the ticket key and a slug of
-  its summary; **Go to session** copies the command that attaches to or resumes it.
+  `claude --bg` session from `~/pathwise`, named `<KEY>-investigate-and-plan` or
+  `<KEY>-implement-plan`; **Go to session** copies the command that attaches to or
+  resumes it.
   Questions the planning session asks appear in the dialog as text inputs, and
   **Implement plan** stays disabled until you have saved an answer to each. State
   lives in the gitignored `claude/<KEY>/` folder: `status.json`, shared with the
@@ -16,6 +19,14 @@
   answer before setup is complete. Host only: it needs the `claude` command and
   `~/pathwise`, and launched sessions do not receive `GH_TOKEN`, `GITHUB_TOKEN`,
   `JIRA_API_TOKEN` or `JIRA_TOKEN`. Run the manual check in the README before first use.
+- Claude sessions are now named per phase, and the Jira summary no longer reaches the
+  launch (`POST /api/claude/launch` takes `{ key, phase }`; a leftover `summary` is
+  ignored). Each phase finds its own session, so **Implement plan** no longer reports
+  "already running" while only Investigate and plan runs: a refused launch now names
+  the phase that runs (`session_running` for the phase asked for, `investigate_running`
+  or `implement_running` for the other), ahead of `not_planned`, `plan_missing` and
+  `questions_unanswered`. Sessions launched earlier keep their old name and are still
+  tracked by their saved id.
 - Added a shared `writeFileAtomic` helper (a temp file, then a rename) beside
   `stageTokenFile` in `backend/credentials.mjs`; the Claude launcher and the Slack
   watch map use it.

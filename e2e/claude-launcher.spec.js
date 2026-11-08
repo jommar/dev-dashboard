@@ -128,7 +128,7 @@ test('scenario 22: the icon opens a dialog with three items and Escape closes it
   await expect(icon).toBeFocused();
 });
 
-test('scenario 23: Investigate and plan sends one launch request and the icon starts working', async ({
+test('scenario 23: Investigate and plan sends one launch request with the key and phase only and the icon starts working', async ({
   page,
   dashboard,
 }) => {
@@ -137,6 +137,8 @@ test('scenario 23: Investigate and plan sends one launch request and the icon st
     await openBoard(page, dashboard);
     await expect(iconOf(page)).toHaveAttribute('data-state', 'none');
     const dialog = await openDialog(page);
+    // The summary is shown for the person; it is never part of a launch.
+    await expect(dialog.getByTestId('claude-dialog-title')).toContainText(SUMMARY);
     const investigate = dialog.getByTestId('claude-action-investigate');
     await investigate.click();
     await expect.poll(() => bodies.length).toBe(1);
@@ -144,7 +146,7 @@ test('scenario 23: Investigate and plan sends one launch request and the icon st
     release();
     await expect(iconOf(page)).toHaveAttribute('data-state', 'working');
     await expect(page.getByTestId('claude-error')).toHaveCount(0);
-    expect(bodies).toEqual([{ key: KEY, phase: 'investigate-and-plan', summary: SUMMARY }]);
+    expect(bodies).toEqual([{ key: KEY, phase: 'investigate-and-plan' }]);
   } finally {
     release();
   }
@@ -455,7 +457,7 @@ test('scenario 41: Implement plan sends an implement launch and the icon starts 
   await expect(iconOf(page)).toHaveAttribute('data-state', 'working');
   await expect(page.getByTestId('claude-error')).toHaveCount(0);
   expect(bodiesTo(dashboard, '/api/claude/launch')).toEqual([
-    { key: KEY, phase: 'implement-plan', summary: SUMMARY },
+    { key: KEY, phase: 'implement-plan' },
   ]);
 });
 
@@ -538,4 +540,48 @@ test('scenario 44: a plan-ready ticket shows where its plan file is beside Imple
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
   }
+});
+
+// While one phase runs the other says which: a session of this ticket is already running (the
+// phase that runs) or the other phase is. Go to session is the way into the running session.
+test('scenario 46: while Investigate and plan runs, Implement plan says so and Go to session stays open', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('working', 'running', { goTo: ATTACH }),
+  });
+  const dialog = await openDialog(page);
+  await expect(dialog.getByTestId('claude-action-investigate')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-investigate')).toHaveText(
+    'A Claude session is already running for this ticket.',
+  );
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(
+    'Investigate and plan is still running.',
+  );
+  await expect(dialog.getByTestId('claude-action-goto')).toBeEnabled();
+});
+
+test('scenario 47: while Implement plan runs, Investigate and plan says so and Implement plan keeps the running hint', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('working', 'running', {
+      phase: 'implement-plan',
+      flags: PLANNED,
+      goTo: ATTACH,
+    }),
+  });
+  const dialog = await openDialog(page);
+  await expect(dialog.getByTestId('claude-action-investigate')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-investigate')).toHaveText(
+    'Implement plan is running.',
+  );
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(
+    'A Claude session is already running for this ticket.',
+  );
+  await expect(dialog.getByTestId('claude-action-goto')).toBeEnabled();
 });

@@ -936,11 +936,12 @@ the ticket stands with Claude and opens a dialog with three items:
   terminal.
 
 Both launches are fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
-session `<KEY>-<slug>` (the ticket key, then a slug of its Jira summary, at most 40 characters in
-all) and returns. It never opens a terminal and never stops, resumes, removes or messages a
-session. The summary reaches the session name only. Both prompts are fixed text with the key, the
-key in lower case and the path of the ticket's `status.json` filled in, so the summary is never
-part of what a session is told to do. They tell the session to use your `orchestrator` skill
+session after the ticket and the phase, `<KEY>-investigate-and-plan` or `<KEY>-implement-plan`, and
+returns. It never opens a terminal and never stops, resumes, removes or messages a session. The
+Jira summary never reaches the launch: the request carries only the key and the phase. Both
+prompts are fixed text with the key, the key in lower case and the path of the ticket's
+`status.json` filled in, so the summary is never part of what a session is told to do. They tell
+the session to use your `orchestrator` skill
 (step 1 for Investigate and plan, step 3 for Implement plan) and to treat ticket text as data. The
 planning session writes `02-plan.md`, `02-checklist.md` and `02-spec.md` in
 `~/pathwise/.orchestrator/<key in lower case>/`, creates no branch, commit, push or pull request,
@@ -960,9 +961,15 @@ leaves its changes in a worktree with a short report beside the plan.
   `JIRA_API_TOKEN` or `JIRA_TOKEN` from the dashboard's environment (the same four names the
   dashboard keeps out of the services it starts). It uses its own credentials and MCP servers;
   the rest of the environment is inherited.
-- **One session per ticket.** A launch or a saved answer is refused while a session for the
-  ticket works, or was launched less than 30 seconds ago and is not listed yet. A launch is also
-  refused when `claude agents --json --all` cannot be read, because the decision rests on it.
+- **One session per ticket at a time.** A launch or a saved answer is refused while a session of
+  the ticket works, or was launched less than 30 seconds ago and is not listed yet. The reason
+  names the phase: `session_running` when the phase you asked for is the one running,
+  `investigate_running` when you ask for Implement plan while Investigate and plan runs (the
+  dialog says `Investigate and plan is still running.`) and `implement_running` when you ask for
+  Investigate and plan while Implement plan runs (`Implement plan is running.`). A saved answer is
+  always refused as `session_running`. The running reason comes before `not_planned`,
+  `plan_missing` and `questions_unanswered`. A launch is also refused when
+  `claude agents --json --all` cannot be read, because the decision rests on it.
 - **Local state.** Everything the dashboard knows about a ticket's Claude work is in
   `claude/<KEY>/` in the dashboard directory. `/claude/` is gitignored and `claude` is in
   `.dockerignore`. Sessions get that folder (and only it, not the dashboard's source) through
@@ -1011,6 +1018,10 @@ It only joins the current phase's session.
 `claude/<KEY>/status.json` is shared with the session. The key must match `^[A-Z]{1,10}-\d{1,7}$`
 before any path is built, and a folder under `claude/` with another name is ignored.
 
+`nodemon.json` makes `npm run dev` ignore `claude/`. Without it, every write to these files (a launch,
+a saved answer, the session's own updates) would restart the dashboard and cut off the request in
+flight. nodemon reads the file only at start-up, so restart `npm run dev` once after pulling it.
+
 ```json
 {
   "investigate-and-plan": false,
@@ -1035,25 +1046,28 @@ before any path is built, and a folder under `claude/` with another name is igno
   depends on it is refused with `status_unreadable`, and only an Investigate launch overwrites it.
 
 `claude/<KEY>/launch.json` is written by the dashboard only, because `status.json` has no place for
-which session belongs to which phase and session names are not unique.
+which session belongs to which phase and a re-run reuses its session name.
 
 ```json
 {
   "investigate-and-plan": {
-    "name": "ABC-123-fix-login",
+    "name": "ABC-123-investigate-and-plan",
     "launchedAt": 1731100000000,
     "id": "ab12cd34",
     "answered": { "q1": "<sha-256 hex of the id, question and answer you saved>" }
   },
-  "implement-plan": { "name": "ABC-123-fix-login", "launchedAt": 1731100500000, "id": null }
+  "implement-plan": { "name": "ABC-123-implement-plan", "launchedAt": 1731100500000, "id": null }
 }
 ```
 
 A phase key is absent until that phase is launched. It is written before the CLI runs (`id` is
-`null`) and rewritten once afterwards, when the listing shows the session. A session is matched by
-its recorded `id`; with none, by the newest listed session with the recorded name that started at
-or after `launchedAt`, so a session of the same name started by hand earlier is never taken for it.
-An Investigate launch drops the `implement-plan` entry. `answered` appears once you save an answer
+`null`) and rewritten once afterwards, when the listing shows the session. Each phase finds its own
+session from its own record: by its recorded `id`; with none, by the newest listed session with
+the recorded name that started at or after `launchedAt`. The two phases have different names, so
+one phase's session is never taken for the other's, and a session of the same name started by hand
+earlier is never taken for either. Sessions launched before names were per phase keep their old
+name and are still tracked by their saved `id` (or, with none saved, by that recorded name). An
+Investigate launch drops the `implement-plan` entry. `answered` appears once you save an answer
 (see below).
 
 Folders are mode `0700` and files `0600`, and every dashboard write is a temp file, fsync and
@@ -1070,8 +1084,8 @@ checked only when the planning flag is `true` and when Implement plan launches.
 
 **Implement plan** launches only when the status file is readable (`status_unreadable`), the
 planning flag is `true` (`not_planned`), the plan file exists (`plan_missing`) and no question is
-unanswered (`questions_unanswered`), and no session works (`session_running`). A refused launch
-starts nothing and changes no file.
+unanswered (`questions_unanswered`), and neither phase's session works (`session_running` or
+`investigate_running`, which come first). A refused launch starts nothing and changes no file.
 
 For each answer you save, the dashboard records a hash of it (SHA-256 of the question id, the
 question text and the answer, untrimmed) in `launch.json` and counts an answer only when its text
@@ -1087,7 +1101,7 @@ dialog shows its path) and the answers you saved yourself.
 | Route                      | Purpose                                                                                                                                        |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/claude/tickets`  | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below) |
-| `POST /api/claude/launch`  | body `{ key, phase, summary? }`; answers `{ ok: true, key, phase, name, id, ticket }`                                                          |
+| `POST /api/claude/launch`  | body `{ key, phase }`; answers `{ ok: true, key, phase, name, id, ticket }`                                                                    |
 | `POST /api/claude/answers` | body `{ key, answers }`; answers `{ ok: true, key, ticket }`                                                                                   |
 
 `tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
@@ -1104,12 +1118,16 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
 - Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
   `unanswered` counts the open ones.
 - `blocks` is `{ investigate, implement, answer }`, each a reason string or `null` (why that
-  action is refused now). It is what the dialog words beside a disabled item.
+  action is refused now). It is what the dialog words beside a disabled item. While Investigate
+  and plan runs it is `session_running`, `investigate_running` and `session_running`; while
+  Implement plan runs it is `implement_running`, `session_running` and `session_running`. The
+  running reason comes before `not_planned`, `plan_missing` and `questions_unanswered`.
 - `goTo` is `{ kind, command }`, with `kind` `attach` or `resume`, or `null`.
 
-`launch` takes `phase` `investigate-and-plan` or `implement-plan` and an optional string `summary`,
-used for the session name only. Its answer has `id`, the session's 8-character id, or `null` while
-the listing does not show the session yet, and `ticket`, the refreshed entry. `answers` takes
+`launch` takes `phase` `investigate-and-plan` or `implement-plan`; a leftover `summary` property in
+the body is ignored. Its answer has `name` (the phase's session name), `id` (the session's
+8-character id, or `null` while the listing does not show the session yet) and `ticket` (the
+refreshed entry). `answers` takes
 `{ "<question id>": "<text>" }` with at most 20 entries, each text at most 2000 characters and an
 empty text clearing that answer; only the `answer` of an existing question changes, and nothing is
 written when any entry is invalid.
@@ -1122,9 +1140,9 @@ so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 
 | Status | Code             | When                                                                                                                                                                                                             |
 | ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase, or `summary` is present and not a string                                                                                                 |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase                                                                                                                                           |
 | `400`  | `INVALID_ANSWER` | `answers` is not a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record |
-| `409`  | `CLAUDE_REFUSED` | `session_running`, `not_planned`, `plan_missing`, `questions_unanswered` or `status_unreadable`                                                                                                                  |
+| `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered` or `status_unreadable`                                           |
 | `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist) or `spawn_failed`                                       |
 
 `INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt and the

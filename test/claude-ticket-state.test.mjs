@@ -6,8 +6,10 @@ import {
   FIRST_ID,
   HOUR_MS,
   IMPLEMENT,
+  IMPLEMENT_NAME,
   INVESTIGATE,
-  NAME,
+  INVESTIGATE_NAME,
+  KEY,
   START_MS,
   launchRecord,
   listed,
@@ -117,7 +119,11 @@ test('scenario 14: the implement phase with its flag set is done and implemented
     status: statusFile({ investigate: true, implement: true }),
     launch: {
       [INVESTIGATE]: launchRecord({ launchedAt: START_MS - 2 * HOUR_MS, id: 'aaaa0001' }),
-      [IMPLEMENT]: launchRecord({ launchedAt: START_MS - HOUR_MS, id: FIRST_ID }),
+      [IMPLEMENT]: launchRecord({
+        name: IMPLEMENT_NAME,
+        launchedAt: START_MS - HOUR_MS,
+        id: FIRST_ID,
+      }),
     },
     entries: [listed({ id: 'aaaa0001' }), listed({ id: FIRST_ID })],
     planPresent: false,
@@ -191,7 +197,11 @@ test('scenario 16: the recorded id wins over a newer session with the same name'
     workingEntry({ id: 'aaaa0003', startedAt: newerThan(9_000) }),
     listed({ id: RECORD_ID, name: 'a different name', startedAt: newerThan(500) }),
   ];
-  const found = await resolve(entries, { name: NAME, launchedAt: LAUNCHED_AT, id: RECORD_ID });
+  const found = await resolve(entries, {
+    name: INVESTIGATE_NAME,
+    launchedAt: LAUNCHED_AT,
+    id: RECORD_ID,
+  });
   assert.equal(found?.sessionId, sessionUuid(RECORD_ID));
 });
 
@@ -202,7 +212,7 @@ test('scenario 16: without a recorded id the newest same-name session not older 
     workingEntry({ id: 'aaaa0003', startedAt: newerThan(9_000) }),
     listed({ id: RECORD_ID, name: 'a different name', startedAt: newerThan(20_000) }),
   ];
-  const record = { name: NAME, launchedAt: LAUNCHED_AT, id: null };
+  const record = { name: INVESTIGATE_NAME, launchedAt: LAUNCHED_AT, id: null };
   assert.equal((await resolve(entries, record))?.sessionId, sessionUuid('aaaa0003'));
   assert.equal(
     (await resolve(entries.slice(0, 2), record))?.sessionId,
@@ -212,14 +222,17 @@ test('scenario 16: without a recorded id the newest same-name session not older 
 });
 
 test('scenario 16: a same-name session that started before the launch never matches', async () => {
-  const record = { name: NAME, launchedAt: LAUNCHED_AT, id: null };
+  const record = { name: INVESTIGATE_NAME, launchedAt: LAUNCHED_AT, id: null };
   const before = listed({ id: 'aaaa0001', startedAt: LAUNCHED_AT - 1 });
   assert.equal(await resolve([before], record), null);
   const atLaunch = listed({ id: 'aaaa0002', startedAt: LAUNCHED_AT });
   assert.equal((await resolve([before, atLaunch], record))?.sessionId, sessionUuid('aaaa0002'));
 });
 
-const TAINTED = { name: `${NAME}; $(touch /tmp/sentinel-name)`, cwd: '/tmp/$(sentinel-cwd)' };
+const TAINTED = {
+  name: `${INVESTIGATE_NAME}; $(touch /tmp/sentinel-name)`,
+  cwd: '/tmp/$(sentinel-cwd)',
+};
 
 // An entry the record matches by name, so only its ids decide the go-to command.
 const byName = (extra) => ({
@@ -273,4 +286,183 @@ test('scenario 42: a launch time in the future is not a start in progress', asyn
     entries: [],
   });
   assertEntry(fiveSecondsAhead, { state: 'working', reason: 'starting' });
+});
+
+// ---- sessions are named per phase, and each phase runs or not on its own ----
+
+const LONGEST_KEY = 'ABCDEFGHIJ-1234567';
+const MAX_NAME_LENGTH = 40;
+
+test('scenario 63: a session is named after the ticket key and the phase, nothing else', async () => {
+  const { sessionName } = await import('../backend/claude-ticket-state.mjs');
+  assert.equal(sessionName(KEY, INVESTIGATE), 'TAP-1234-investigate-and-plan');
+  assert.equal(sessionName(KEY, IMPLEMENT), 'TAP-1234-implement-plan');
+  for (const phase of [INVESTIGATE, IMPLEMENT]) {
+    const name = sessionName(LONGEST_KEY, phase);
+    assert.equal(name, `${LONGEST_KEY}-${phase}`);
+    assert.ok(
+      name.length <= MAX_NAME_LENGTH,
+      `${name.length} characters is within the CLI's limit`,
+    );
+  }
+});
+
+const BOTH_PHASES = {
+  [INVESTIGATE]: launchRecord({
+    name: INVESTIGATE_NAME,
+    launchedAt: START_MS - 2 * HOUR_MS,
+    id: null,
+  }),
+  [IMPLEMENT]: launchRecord({ name: IMPLEMENT_NAME, launchedAt: START_MS - HOUR_MS, id: null }),
+};
+
+test('scenario 64: each phase resolves only its own session, by name and by id', async () => {
+  const { readLaunch, resolveSession, sessionRunning } =
+    await import('../backend/claude-ticket-state.mjs');
+  const records = Object.fromEntries(readLaunch(BOTH_PHASES).map((found) => [found.phase, found]));
+  const investigating = workingEntry({
+    id: 'aaaa0001',
+    name: INVESTIGATE_NAME,
+    startedAt: START_MS - 2 * HOUR_MS + 1_000,
+  });
+  const implementing = workingEntry({
+    id: 'aaaa0002',
+    name: IMPLEMENT_NAME,
+    startedAt: START_MS - HOUR_MS + 1_000,
+  });
+  const running = (entries, phase, record = records[phase]) =>
+    sessionRunning(entries, record, START_MS);
+
+  assert.equal(
+    running([implementing], INVESTIGATE),
+    false,
+    'investigate with only implement listed',
+  );
+  assert.equal(running([implementing], IMPLEMENT), true, 'implement with only implement listed');
+  assert.equal(
+    running([investigating], IMPLEMENT),
+    false,
+    'implement with only investigate listed',
+  );
+  assert.equal(
+    running([investigating], INVESTIGATE),
+    true,
+    'investigate with only investigate listed',
+  );
+
+  const byId = (phase, id) => ({ ...records[phase], id });
+  const entries = [
+    listed({ id: 'aaaa0001', name: INVESTIGATE_NAME }),
+    workingEntry({ id: 'aaaa0002', name: IMPLEMENT_NAME }),
+  ];
+  assert.equal(running(entries, INVESTIGATE, byId(INVESTIGATE, 'aaaa0001')), false, 'by id');
+  assert.equal(running(entries, IMPLEMENT, byId(IMPLEMENT, 'aaaa0002')), true, 'by id');
+  assert.equal(resolveSession(entries, byId(INVESTIGATE, 'aaaa0001'))?.id, 'aaaa0001');
+  assert.equal(resolveSession(entries, byId(IMPLEMENT, 'aaaa0002'))?.id, 'aaaa0002');
+});
+
+const BLOCKS_WHILE_INVESTIGATING = {
+  investigate: 'session_running',
+  implement: 'investigate_running',
+  answer: 'session_running',
+};
+const BLOCKS_WHILE_IMPLEMENTING = {
+  investigate: 'implement_running',
+  implement: 'session_running',
+  answer: 'session_running',
+};
+
+test('scenario 65: while the investigate session runs, implement says investigate is running', async () => {
+  const arrangements = {
+    'listed and working': { entries: [workingEntry({ id: FIRST_ID })] },
+    'launched ten seconds ago and not listed yet': {
+      launch: launchedAgo(TEN_SECONDS_MS, { id: null }),
+      entries: [],
+    },
+    'investigate launched after an older implement run': {
+      launch: {
+        [IMPLEMENT]: launchRecord({
+          name: IMPLEMENT_NAME,
+          launchedAt: START_MS - 2 * HOUR_MS,
+          id: 'aaaa0002',
+        }),
+        [INVESTIGATE]: launchRecord({ launchedAt: START_MS - HOUR_MS, id: FIRST_ID }),
+      },
+      entries: [listed({ id: 'aaaa0002', name: IMPLEMENT_NAME }), workingEntry({ id: FIRST_ID })],
+    },
+  };
+  for (const [label, arrangement] of Object.entries(arrangements)) {
+    const entry = await derive(arrangement);
+    assertEntry(entry, {
+      state: 'working',
+      reason: arrangement.entries.length ? 'running' : 'starting',
+    });
+    assert.deepEqual(entry.blocks, BLOCKS_WHILE_INVESTIGATING, label);
+  }
+});
+
+// The implement run launched an hour ago, after an investigate run two hours ago.
+const implementRun = (extra = {}) => ({
+  launch: {
+    [INVESTIGATE]: launchRecord({ launchedAt: START_MS - 2 * HOUR_MS, id: 'aaaa0001' }),
+    [IMPLEMENT]: launchRecord({
+      name: IMPLEMENT_NAME,
+      launchedAt: START_MS - HOUR_MS,
+      id: FIRST_ID,
+    }),
+  },
+  entries: [listed({ id: 'aaaa0001' }), workingEntry({ id: FIRST_ID, name: IMPLEMENT_NAME })],
+  ...extra,
+});
+
+test('scenario 66: while the implement session runs, investigate says implement is running', async () => {
+  const arrangements = {
+    'listed and working': implementRun(),
+    'launched ten seconds ago and not listed yet': implementRun({
+      launch: {
+        [INVESTIGATE]: launchRecord({ launchedAt: START_MS - 2 * HOUR_MS, id: 'aaaa0001' }),
+        [IMPLEMENT]: launchRecord({
+          name: IMPLEMENT_NAME,
+          launchedAt: START_MS - TEN_SECONDS_MS,
+          id: null,
+        }),
+      },
+      entries: [listed({ id: 'aaaa0001' })],
+    }),
+    'investigate record without an id and only the implement session listed': implementRun({
+      launch: {
+        [INVESTIGATE]: launchRecord({ launchedAt: START_MS - 2 * HOUR_MS, id: null }),
+        [IMPLEMENT]: launchRecord({
+          name: IMPLEMENT_NAME,
+          launchedAt: START_MS - HOUR_MS,
+          id: FIRST_ID,
+        }),
+      },
+      entries: [workingEntry({ id: FIRST_ID, name: IMPLEMENT_NAME })],
+    }),
+  };
+  for (const [label, arrangement] of Object.entries(arrangements)) {
+    const entry = await derive(arrangement);
+    assert.equal(entry.phase, IMPLEMENT, `${label}: phase`);
+    assert.equal(entry.state, 'working', `${label}: state`);
+    assert.deepEqual(entry.blocks, BLOCKS_WHILE_IMPLEMENTING, label);
+  }
+});
+
+test('scenario 67: the running phase is the implement block reason before any other', async () => {
+  const unplanned = { status: statusFile() };
+  const noPlanFile = { status: statusFile({ investigate: true }), planPresent: false };
+  const unanswered = {
+    status: statusFile({ investigate: true, questions: [question('q1')] }),
+  };
+  for (const [label, other] of Object.entries({
+    'not planned': unplanned,
+    'plan file missing': noPlanFile,
+    'questions unanswered': unanswered,
+  })) {
+    const investigating = await derive({ entries: [workingEntry({ id: FIRST_ID })], ...other });
+    assert.equal(investigating.blocks.implement, 'investigate_running', `investigate, ${label}`);
+    const implementing = await derive(implementRun(other));
+    assert.equal(implementing.blocks.implement, 'session_running', `implement, ${label}`);
+  }
 });

@@ -69,12 +69,13 @@ test('scenario 27: getClaudeTickets reads the status route and resolves its payl
   assert.deepEqual(result.tickets, {});
 });
 
-test('scenario 23: launchClaude posts the key, phase and summary as JSON', async (t) => {
+test('scenario 23: launchClaude posts the key and phase only as JSON', async (t) => {
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (...args) => {
     calls.push(args);
     return jsonResponse({ ok: true, key: 'TAP-1234', id: 'ab12cd34' });
   });
+  // A third argument (the summary a caller once passed) is not sent.
   const result = await api.launchClaude('TAP-1234', 'investigate-and-plan', 'Fix the redirect');
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], '/api/claude/launch');
@@ -83,7 +84,6 @@ test('scenario 23: launchClaude posts the key, phase and summary as JSON', async
   assert.deepEqual(JSON.parse(calls[0][1].body), {
     key: 'TAP-1234',
     phase: 'investigate-and-plan',
-    summary: 'Fix the redirect',
   });
   assert.equal(result.ok, true);
   assert.equal(result.id, 'ab12cd34');
@@ -96,7 +96,7 @@ test('scenario 24: launchClaude resolves a refusal with its code and reasons ins
     errors: ['untrusted_workspace'],
   };
   t.mock.method(globalThis, 'fetch', async () => jsonResponse(refusal, 502));
-  const result = await api.launchClaude('TAP-1234', 'investigate-and-plan', 'Fix the redirect');
+  const result = await api.launchClaude('TAP-1234', 'investigate-and-plan');
   assert.equal(result.ok, false);
   assert.equal(result.status, 502);
   assert.equal(result.code, 'CLAUDE_FAILED');
@@ -106,7 +106,7 @@ test('scenario 24: launchClaude resolves a refusal with its code and reasons ins
   t.mock.method(globalThis, 'fetch', async () => {
     throw new TypeError('network down');
   });
-  const unreachable = await api.launchClaude('TAP-1234', 'implement-plan', 'Fix the redirect');
+  const unreachable = await api.launchClaude('TAP-1234', 'implement-plan');
   assert.equal(unreachable.ok, false);
   assert.equal(unreachable.status, 0);
 });

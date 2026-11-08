@@ -16,10 +16,11 @@ export { START_MS, createClock, recordingFs };
 
 export const KEY = 'TAP-1234';
 export const SLUG = 'tap-1234';
-export const SUMMARY = 'Fix the login redirect';
-export const NAME = 'TAP-1234-fix-the-login-redirect';
 export const INVESTIGATE = 'investigate-and-plan';
 export const IMPLEMENT = 'implement-plan';
+// The session name of each phase: the key and the phase, nothing else.
+export const INVESTIGATE_NAME = 'TAP-1234-investigate-and-plan';
+export const IMPLEMENT_NAME = 'TAP-1234-implement-plan';
 export const HOUR_MS = 3_600_000;
 export const FIRST_ID = 'ab12cd34';
 export const EARLIER_ID = 'aaaa1111';
@@ -36,7 +37,7 @@ export const sessionUuid = (id) => `${id}-0000-4000-8000-000000000000`;
 export function listed({
   id = FIRST_ID,
   sessionId = sessionUuid(id),
-  name = NAME,
+  name = INVESTIGATE_NAME,
   state = 'done',
   status = null,
   pid,
@@ -91,7 +92,7 @@ export const answeredMap = (questions) =>
 
 // One phase's record in launch.json; `answered` appears only when given.
 export const launchRecord = ({
-  name = NAME,
+  name = INVESTIGATE_NAME,
   launchedAt = START_MS - HOUR_MS,
   id = EARLIER_ID,
   answered,

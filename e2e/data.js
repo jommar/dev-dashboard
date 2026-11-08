@@ -1182,20 +1182,32 @@ export function claudeQuestion(id, question, answer = null) {
   return { id, question, answer };
 }
 
-// An entry's `unanswered` count and `blocks` follow from its state, flags and questions, as the
-// server derives them.
+// An entry's `unanswered` count and `blocks` follow from its state, phase, flags and questions, as
+// the server derives them. While a session works, each phase names the other's reason: the phase
+// that runs says a session is running, the other says which phase is.
 function claudeDerived(entry) {
   const unanswered = entry.questions.filter(({ answer }) => !answer?.trim()).length;
-  const held = { working: 'session_running', unknown: 'listing_unavailable' }[entry.state] ?? null;
   const planned = entry.flags['investigate-and-plan'] === true;
-  const implement = planned ? (unanswered ? 'questions_unanswered' : null) : 'not_planned';
+  const implementing = entry.phase === 'implement-plan';
+  const held = {
+    working: {
+      investigate: implementing ? 'implement_running' : 'session_running',
+      implement: implementing ? 'session_running' : 'investigate_running',
+      answer: 'session_running',
+    },
+    unknown: {
+      investigate: 'listing_unavailable',
+      implement: 'listing_unavailable',
+      answer: 'listing_unavailable',
+    },
+  }[entry.state];
   return {
     ...entry,
     unanswered,
-    blocks: {
-      investigate: held,
-      implement: held ?? implement,
-      answer: held ?? (entry.questions.length ? null : 'no_questions'),
+    blocks: held ?? {
+      investigate: null,
+      implement: planned ? (unanswered ? 'questions_unanswered' : null) : 'not_planned',
+      answer: entry.questions.length ? null : 'no_questions',
     },
   };
 }

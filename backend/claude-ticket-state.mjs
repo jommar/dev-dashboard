@@ -15,9 +15,6 @@ export const PHASES = [INVESTIGATE, IMPLEMENT];
 const TICKET_KEY = /^[A-Z]{1,10}-\d{1,7}$/;
 const QUESTION_ID = /^[A-Za-z0-9_-]{1,32}$/;
 const SHORT_ID = /^[0-9a-f]{8}$/;
-// The length at which the CLI's listing starts to abbreviate a session name.
-const NAME_LIMIT = 40;
-const SUMMARY_LIMIT = 200;
 const QUESTION_LIMIT = 20;
 const QUESTION_TEXT_LIMIT = 500;
 export const ANSWER_MAX_LENGTH = 2000;
@@ -31,18 +28,16 @@ export const isTicketKey = (value) => isText(value) && TICKET_KEY.test(value);
 export const isQuestionId = (value) => isText(value) && QUESTION_ID.test(value);
 export const isShortId = (value) => isText(value) && SHORT_ID.test(value);
 
-// The key, then a slug of the summary when it leaves one. The summary is untrusted ticket text:
-// this is the only place it is used, and only lower-case letters, digits and hyphens survive.
-export function sessionName(key, summary) {
-  const slug = String(summary ?? '')
-    .slice(0, SUMMARY_LIMIT)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, NAME_LIMIT - key.length - 1)
-    .replace(/-+$/, '');
-  return slug ? `${key}-${slug}` : key;
-}
+// The key and the phase: the two sessions of a ticket have different names. The longest valid key
+// gives 39 characters, under the 40 at which the CLI's listing starts to abbreviate a name.
+export const sessionName = (key, phase) => `${key}-${phase}`;
+
+const RUNNING_REASONS = { [INVESTIGATE]: 'investigate_running', [IMPLEMENT]: 'implement_running' };
+
+// Why `asked` cannot start while the session of phase `running` works: the same phase is already
+// running, and another phase names the one that is.
+export const runningBlock = (running, asked) =>
+  running === asked ? 'session_running' : RUNNING_REASONS[running];
 
 const isQuestion = (value) =>
   Boolean(value) && typeof value === 'object' && isQuestionId(value.id) && isText(value.question);
@@ -212,12 +207,15 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
       })
     : { state: 'none', reason: null };
 
-  const investigate = { unknown: 'listing_unavailable', working: 'session_running' }[state] ?? null;
+  const running = state === 'working' ? record.phase : null;
+  const busy = (asked) =>
+    state === 'unknown' ? 'listing_unavailable' : running && runningBlock(running, asked);
   const blocks = {
-    investigate,
-    implement: investigate ?? implementBlock(status, launch, planPresent),
+    investigate: busy(INVESTIGATE) || null,
+    implement: busy(IMPLEMENT) || implementBlock(status, launch, planPresent),
+    // An answer is refused while either phase works.
     answer:
-      investigate ??
+      busy(running) ||
       (status === null ? 'status_unreadable' : questions.length === 0 ? 'no_questions' : null),
   };
   return {
