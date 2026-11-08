@@ -13,17 +13,23 @@ import {
   KEY,
   START_MS,
   UNTRUSTED_OUTPUT,
+  answeredMap,
   claudeHttpFixture,
   launchRecord,
   listed,
   question,
   requestsSeen,
   seedPlanned,
+  sessionUuid,
   sleep,
   statusFile,
+  throughGap,
   until,
+  wakeConstants,
   workingEntry,
 } from './claude-launcher-fixture.mjs';
+
+const { SETTLE_MS } = await wakeConstants();
 
 const TICKETS = '/api/claude/tickets';
 const LAUNCH = '/api/claude/launch';
@@ -38,6 +44,7 @@ const ENTRY_KEYS = [
   'unanswered',
   'blocks',
   'goTo',
+  'unsent',
 ];
 const BAD_KEYS = ['../etc', 'tap-1', 'TAP-1/../x', 'TAP-', ' TAP-1', 'TAP-12345678'];
 
@@ -76,7 +83,10 @@ function seedTicket(f, key, { status, id }) {
 test('scenario 12: the ticket list holds exactly the valid state folders, each with the full entry', async (t) => {
   const f = await claudeHttpFixture(t);
   f.writePlan();
-  seedTicket(f, KEY, { status: statusFile({ investigate: true }), id: 'aaaa0001' });
+  seedTicket(f, KEY, {
+    status: statusFile({ investigate: true, done: true }),
+    id: 'aaaa0001',
+  });
   seedTicket(f, SECOND_KEY, {
     status: statusFile({ investigate: true, questions: [question('q1')] }),
     id: 'aaaa0002',
@@ -97,7 +107,7 @@ test('scenario 12: the ticket list holds exactly the valid state folders, each w
   }
   const [first, second] = [body.tickets[KEY], body.tickets[SECOND_KEY]];
   assert.deepEqual([first.phase, first.state, first.reason], [INVESTIGATE, 'done', 'plan_ready']);
-  assert.deepEqual(first.flags, { [INVESTIGATE]: true, [IMPLEMENT]: false });
+  assert.deepEqual(first.flags, { [INVESTIGATE]: true, [IMPLEMENT]: false, done: true });
   assert.deepEqual([second.state, second.reason], ['waiting', 'questions']);
   assert.deepEqual(second.questions, [question('q1')]);
   assert.equal(second.unanswered, 1);
@@ -301,4 +311,144 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     answer: 'session_running',
   });
   assert.equal(f.cli.launches().length, 0, 'nothing is spawned');
+});
+
+// ---- saved answers go back to the session that asked ----
+
+const FIRST_TEXT = 'ANSWER-ALPHA-7731';
+const SECOND_TEXT = 'ANSWER-BETA-5520';
+const HALF_ANSWERED = [question('q1', FIRST_TEXT), question('q2')];
+
+// A planned ticket whose first question has an answer saved; `listing` is the investigate session.
+function seedHalfAnswered(f, listing = [listed({ id: EARLIER_ID })]) {
+  f.seed(KEY, {
+    status: statusFile({ investigate: true, questions: HALF_ANSWERED }),
+    launch: { [INVESTIGATE]: launchRecord({ answered: answeredMap(HALF_ANSWERED) }) },
+  });
+  f.writePlan();
+  f.cli.setListing(listing);
+}
+
+// A background session that is alive and waiting for input.
+const IDLE_LIVE = () => [listed({ id: EARLIER_ID, state: 'done', status: 'idle', pid: 4242 })];
+
+const save = (f, answers) => f.http.json('POST', ANSWERS, { key: KEY, answers });
+
+test('scenario 98: the last answer is sent to the same session and the reply gains send', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedHalfAnswered(f);
+
+  const res = await save(f, { q2: SECOND_TEXT });
+
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(Object.keys(body).sort(), ['key', 'ok', 'send', 'ticket']);
+  assert.equal(body.ok, true);
+  assert.equal(body.key, KEY);
+  for (const field of ENTRY_KEYS) assert.ok(field in body.ticket, `the ticket carries ${field}`);
+  assert.deepEqual(body.send, { status: 'sent' });
+
+  const resumes = f.cli.resumes();
+  assert.equal(resumes.length, 1, 'one resume');
+  const { args } = resumes[0];
+  assert.deepEqual(args.slice(0, 4), ['--bg', '--resume', sessionUuid(EARLIER_ID), '--']);
+  assert.equal(args.length, 5, 'the notice is one argument');
+  assert.ok(
+    args[4].includes(KEY) && args[4].includes(f.statusPath()),
+    'the notice names the ticket and file',
+  );
+  assert.equal(f.cli.launches().length, 0, 'no new session is started');
+  assert.equal(f.cli.stops().length, 0, 'a finished session needs no stop');
+  assert.ok(f.parsed().launch[INVESTIGATE].sent, 'the send is recorded');
+});
+
+test('scenario 98: an idle live session is stopped through the CLI before it is resumed', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedHalfAnswered(f, IDLE_LIVE());
+
+  const res = await throughGap(f, save(f, { q2: SECOND_TEXT }));
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json().send, { status: 'sent' });
+  assert.deepEqual(
+    f.cli.stops().map(({ args }) => args),
+    [['stop', EARLIER_ID]],
+  );
+  assert.equal(f.cli.resumes().length, 1);
+  const order = f.cli.calls
+    .filter(({ args }) => args[0] === 'stop' || args.includes('--resume'))
+    .map(({ args }) => args[0]);
+  assert.deepEqual(order, ['stop', '--bg'], 'stop first, then the resume');
+});
+
+test('scenario 99: a partial save answers 200 and skipped, an empty list is accepted, other bodies are invalid', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedHalfAnswered(f);
+
+  const partial = await save(f, { q1: 'ANSWER-ALPHA-7731 edited' });
+  assert.equal(partial.status, 200);
+  assert.deepEqual(partial.json().send, { status: 'skipped', reason: 'incomplete' });
+  assert.equal(f.parsed().status.questions[0].answer, 'ANSWER-ALPHA-7731 edited');
+
+  const empty = await save(f, []);
+  assert.equal(empty.status, 200, 'an empty list is a valid body');
+  assert.deepEqual(empty.json().send, { status: 'skipped', reason: 'incomplete' });
+
+  for (const answers of [[['q1', 'x']], 'x']) {
+    const invalid = await save(f, answers);
+    assert.equal(invalid.status, 400, JSON.stringify(answers));
+    assert.equal(invalid.json().code, 'INVALID_ANSWER', JSON.stringify(answers));
+  }
+  assert.equal(f.cli.resumes().length, 0, 'nothing was sent');
+});
+
+const SEND_FAILURES = {
+  'the CLI cannot be run': { spawnError: 'ENOENT' },
+  'the resume started a copy of the session': { stdout: 'started a copy of the session\n' },
+};
+
+for (const [label, outcome] of Object.entries(SEND_FAILURES)) {
+  test(`scenario 100: when ${label}, the reply is 200 with a failed send and a later empty save retries it`, async (t) => {
+    const f = await claudeHttpFixture(t);
+    seedHalfAnswered(f);
+    f.cli.failResume(outcome);
+
+    const res = await save(f, { q2: SECOND_TEXT });
+
+    assert.equal(res.status, 200, 'a failed send is not an HTTP error');
+    assert.deepEqual(res.json().send, { status: 'failed', reason: 'resume_failed' });
+    assert.equal(f.parsed().status.questions[1].answer, SECOND_TEXT, 'the answer is saved');
+    assert.equal(f.parsed().launch[INVESTIGATE].sent, undefined, 'and not recorded as sent');
+
+    f.cli.failResume(null);
+    const retry = await save(f, []);
+    assert.equal(retry.status, 200);
+    assert.deepEqual(retry.json().send, { status: 'sent' });
+    assert.equal(f.cli.resumes().length, 2, 'the retry resumed again');
+  });
+}
+
+test('scenario 110: over HTTP the reply waits the settle gap after the stop, then the session is resumed', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedHalfAnswered(f, IDLE_LIVE());
+  f.seed(KEY, { status: { ...f.parsed().status, done: true } });
+
+  const reply = save(f, { q2: SECOND_TEXT });
+  await until(() => f.cli.stops().length === 1);
+  await sleep(30);
+
+  assert.deepEqual(f.timers.scheduled, [SETTLE_MS], 'one wait, as long as the settle gap');
+  assert.equal(f.cli.resumes().length, 0, 'the CLI is not asked to resume during the gap');
+  assert.equal(f.parsed().status.done, true, 'done is not written during the gap');
+
+  await f.timers.advance(SETTLE_MS);
+  const res = await reply;
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json().send, { status: 'sent' });
+  assert.equal(f.parsed().status.done, false, 'done was reset once the gap had passed');
+  const order = f.cli.calls
+    .filter(({ args }) => args[0] === 'stop' || args.includes('--resume'))
+    .map(({ args }) => args[0]);
+  assert.deepEqual(order, ['stop', '--bg']);
 });

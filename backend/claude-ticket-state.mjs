@@ -23,6 +23,8 @@ const START_WINDOW_MS = 30_000;
 const KNOWN_STATES = ['working', 'blocked', 'done'];
 
 const isText = (value) => typeof value === 'string';
+// `done` is the session's word that the planning phase is complete; anything but true reads false.
+const isDone = (status) => status?.done === true;
 
 export const isTicketKey = (value) => isText(value) && TICKET_KEY.test(value);
 export const isQuestionId = (value) => isText(value) && QUESTION_ID.test(value);
@@ -77,14 +79,15 @@ function questionViews(status, launch) {
   }));
 }
 
-// The status.json an implement launch writes: the locked shape with the investigate flag set, and
-// the questions the dashboard reads, each whole, keeping only the answers it saved. Nothing else
-// the session left in the file survives.
+// The status.json an implement launch writes: the locked shape with the investigate flag set, `done`
+// as the session left it, and the questions the dashboard reads, each whole, keeping only the
+// answers it saved. Nothing else the session left in the file survives.
 export function implementStatus(status, launch) {
   const isSaved = answerCheck(launch);
   return {
     [INVESTIGATE]: true,
     [IMPLEMENT]: false,
+    done: isDone(status),
     questions: readQuestions(status).map((question) => ({
       id: question.id,
       question: question.question,
@@ -97,28 +100,39 @@ export function implementStatus(status, launch) {
 const isUnanswered = ({ answer }) => !(isText(answer) && answer.trim());
 
 // Why implement cannot start from this status.json (null: unreadable), launch.json and plan file,
-// or null when it can.
+// or null when it can. Answers not yet sent to the planning session block it, so an answer whose
+// send failed is never implemented against a stale `done`.
 export function implementBlock(status, launch, planPresent) {
   if (status === null) return 'status_unreadable';
   if (status?.[INVESTIGATE] !== true) return 'not_planned';
   if (!planPresent) return 'plan_missing';
-  return questionViews(status, launch).some(isUnanswered) ? 'questions_unanswered' : null;
+  if (questionViews(status, launch).some(isUnanswered)) return 'questions_unanswered';
+  if (!answersToSend(status, launch).skip) return 'answers_not_sent';
+  return isDone(status) ? null : 'plan_not_done';
 }
 
-// The phases launch.json records, each as { phase, name, launchedAt, id, answered }. An entry that
-// is not shaped like a record is ignored, an id that is not a short id is no id, and `answered`
-// (question id to the hash of its saved answer) keeps only text values.
+// A map of question id to hash, keeping only the text values.
+const textHashes = (hashes) =>
+  hashes && typeof hashes === 'object'
+    ? Object.fromEntries(Object.entries(hashes).filter(([, hash]) => isText(hash)))
+    : {};
+
+// The phases launch.json records, each as { phase, name, launchedAt, id, answered, sent }. An entry
+// that is not shaped like a record is ignored, an id that is not a short id is no id, `answered`
+// (question id to the hash of its saved answer) keeps only text values, and `sent` is what the last
+// send to the session recorded, { at, answers } with `answers` shaped like `answered`, or null.
 export function readLaunch(launch) {
   return PHASES.flatMap((phase) => {
     const record = launch?.[phase];
     if (!record || typeof record !== 'object') return [];
     if (!isText(record.name) || !Number.isFinite(record.launchedAt)) return [];
     const id = isShortId(record.id) ? record.id : null;
-    const answered =
-      record.answered && typeof record.answered === 'object'
-        ? Object.fromEntries(Object.entries(record.answered).filter(([, hash]) => isText(hash)))
-        : {};
-    return [{ phase, name: record.name, launchedAt: record.launchedAt, id, answered }];
+    const sent =
+      record.sent && typeof record.sent === 'object'
+        ? { at: record.sent.at, answers: textHashes(record.sent.answers) }
+        : null;
+    const answered = textHashes(record.answered);
+    return [{ phase, name: record.name, launchedAt: record.launchedAt, id, answered, sent }];
   });
 }
 
@@ -150,8 +164,35 @@ const isRunning = (session, { launchedAt }, now) =>
 export const sessionRunning = (entries, record, now) =>
   isRunning(resolveSession(entries, record), record, now);
 
+// The hash of every question whose saved answer counts, by question id: the shape of `answered`
+// and of a send's `answers`.
+function savedHashes(status, launch) {
+  const isSaved = answerCheck(launch);
+  return Object.fromEntries(
+    readQuestions(status)
+      .filter(isSaved)
+      .map(({ id, question, answer }) => [id, answerHash(id, question, answer)]),
+  );
+}
+
+// Whether the saved answers should go to the planning session: { skip: reason } when not (the first
+// of: every question answered, the plan flag set, no implement run, an answer that differs from the
+// last send), otherwise { changed } (the ids of the answers that are new or differ from the last
+// send) and { hashes } (every question's hash, to record once the send is delivered).
+export function answersToSend(status, launch) {
+  const questions = questionViews(status, launch);
+  if (questions.length === 0 || questions.some(isUnanswered)) return { skip: 'incomplete' };
+  if (status?.[INVESTIGATE] !== true) return { skip: 'not_planned' };
+  const records = readLaunch(launch);
+  if (records.some(({ phase }) => phase === IMPLEMENT)) return { skip: 'implement_started' };
+  const sent = records.find(({ phase }) => phase === INVESTIGATE)?.sent?.answers ?? {};
+  const hashes = savedHashes(status, launch);
+  const changed = Object.keys(hashes).filter((id) => hashes[id] !== sent[id]);
+  return changed.length ? { changed, hashes } : { skip: 'unchanged' };
+}
+
 // The state and reason of the current phase: the first row of the truth table that matches.
-function classify({ record, session, entries, now, flag, unanswered, planPresent }) {
+function classify({ record, session, entries, now, flag, unanswered, planPresent, done, unsent }) {
   if (!entries) return { state: 'unknown', reason: 'listing_unavailable' };
   if (session && !KNOWN_STATES.includes(session.state))
     return { state: 'unknown', reason: 'unrecognised_state' };
@@ -161,9 +202,11 @@ function classify({ record, session, entries, now, flag, unanswered, planPresent
   if (unanswered > 0) return { state: 'waiting', reason: 'questions' };
   if (flag) {
     if (record.phase === INVESTIGATE) {
-      return planPresent
+      if (!planPresent) return { state: 'failed', reason: 'plan_missing' };
+      if (unsent) return { state: 'waiting', reason: 'answers_not_sent' };
+      return done
         ? { state: 'done', reason: 'plan_ready' }
-        : { state: 'failed', reason: 'plan_missing' };
+        : { state: 'failed', reason: 'plan_not_done' };
     }
     return { state: 'done', reason: 'implemented' };
   }
@@ -190,8 +233,10 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
   const flags = {
     [INVESTIGATE]: status?.[INVESTIGATE] === true,
     [IMPLEMENT]: status?.[IMPLEMENT] === true,
+    done: isDone(status),
   };
   const questions = questionViews(status, launch);
+  const sendable = !answersToSend(status, launch).skip;
   const unanswered = questions.filter(isUnanswered).length;
   const record = currentRecord(launch);
   const session = record && entries ? resolveSession(entries, record) : null;
@@ -204,6 +249,8 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
         flag: flags[record.phase],
         unanswered,
         planPresent,
+        done: flags.done,
+        unsent: sendable,
       })
     : { state: 'none', reason: null };
 
@@ -225,6 +272,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     flags,
     questions,
     unanswered,
+    unsent: sendable && state !== 'working' && state !== 'unknown',
     blocks,
     goTo: goToFor(session),
   };

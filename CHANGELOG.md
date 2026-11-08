@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Saved Claude answers now go back to the planning session. **Save answers** still saves
+  what you changed, and partial answers send nothing. Once every question has an answer, the
+  dashboard stops the session if it is idle, waits the Slack wake's 15 s settle gap and
+  resumes the same session (a finished one is resumed with no wait) with a notice that
+  names the answered or changed question ids (never the answer text) and tells it to update
+  the plan, checklist and spec and then set the new `done` flag in `status.json`. A save that
+  changes nothing never re-sends answers already delivered, a changed answer re-sends, and a
+  failed send keeps the answers and is retried by the next **Save answers**, with or without
+  edits. `launch.json` gains `sent`, recorded only after a real delivery. **Implement plan**
+  now needs the planning flag and `done` both `true`, no open question and no answer waiting
+  to be sent. Two new reasons join the icon and `blocks`: `answers_not_sent` (amber) and
+  `plan_not_done` (red); both are also `CLAUDE_REFUSED` reasons for Implement plan, in the order
+  open questions, `answers_not_sent`, `plan_not_done`. `GET /api/claude/tickets` entries gain
+  `flags.done` and `unsent`, and `POST /api/claude/answers` accepts `[]` and answers with
+  `send`. Limits: only the planning session is messaged (after an Implement launch answers just
+  save), a session that never sets `done` shows red, **Save answers** can take about 15 s when
+  a live session has to be stopped, the gap is a design constant that is not checked against
+  the real CLI (the README's manual check covers it), and a failed `launch.json` write after a
+  delivered resume is an HTTP error and the next save re-sends.
 - Added `nodemon.json` so `npm run dev` ignores the `claude/` state folder. Writing a
   launch or status file there used to restart the dashboard mid-request.
 - Added a Claude icon to every My Tickets card. It shows where the ticket stands with

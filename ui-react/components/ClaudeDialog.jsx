@@ -23,11 +23,37 @@ const REASON_TEXT = {
   session_running: 'A Claude session is already running for this ticket.',
   investigate_running: 'Investigate and plan is still running.',
   implement_running: 'Implement plan is running.',
+  session_not_found: 'The Claude session could not be found.',
+  live_at_resume: 'The Claude session is still running.',
+  resume_failed: 'The Claude session could not be resumed.',
+  answers_not_sent:
+    'All questions are answered, but they have not been sent to the session. Press Save answers to send them.',
+  plan_not_done: 'Claude has not marked the plan done. Check the session before implementing.',
   not_planned: 'Run Investigate and plan first.',
   plan_missing: 'The plan file was not found.',
   questions_unanswered: 'Answer the open questions first.',
   status_unreadable: "The ticket's status file cannot be read.",
 };
+
+// What a save says about routing the answers to the session, by the server's `send` outcome.
+const SKIPPED_TEXT = {
+  unchanged: 'Saved. The answers had not changed, so nothing was sent.',
+  not_planned: 'Saved. The plan is not ready yet, so nothing was sent.',
+  implement_started: 'Saved. Implement plan has started, so nothing was sent.',
+};
+
+function sendText({ send, ticket }) {
+  if (send?.status === 'sent') return 'Answers sent. Claude is updating the plan.';
+  if (send?.status === 'failed') {
+    const why = REASON_TEXT[send.reason].replace(/\.$/, '');
+    return `Answers saved, but they could not be sent: ${why}. Save again to retry.`;
+  }
+  if (send?.reason === 'incomplete') {
+    const open = ticket.unanswered;
+    return `Saved. ${open} question${open === 1 ? ' still needs' : 's still need'} an answer; nothing was sent.`;
+  }
+  return SKIPPED_TEXT[send?.reason];
+}
 
 // A ticket the server lists nothing for has not been started.
 const NOT_STARTED = {
@@ -71,6 +97,7 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [drafts, setDrafts] = useState({});
+  const [sendResult, setSendResult] = useState('');
   const [copy, setCopy] = useState(null);
 
   // Open once, trap focus (the browser does that for a modal) and give focus back to the ticket's
@@ -115,14 +142,18 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
       .filter(({ id, answer: saved }) => Object.hasOwn(drafts, id) && drafts[id] !== (saved ?? ''))
       .map(({ id }) => [id, drafts[id]]),
   );
+  const dirty = Object.keys(changed).length > 0;
+  // With nothing changed, Save still asks the server to try sending (the retry of an unsent set).
   const save = async (event) => {
     event.preventDefault();
-    const result = await run(() => answer(ticketKey, changed));
+    setSendResult('');
+    const result = await run(() => answer(ticketKey, dirty ? changed : []));
+    if (!result.ok) return;
+    setSendResult(sendText(result));
     // The saved drafts are dropped; whatever was typed while the request ran is kept.
-    if (result.ok)
-      setDrafts((current) =>
-        Object.fromEntries(Object.entries(current).filter(([id, text]) => changed[id] !== text)),
-      );
+    setDrafts((current) =>
+      Object.fromEntries(Object.entries(current).filter(([id, text]) => changed[id] !== text)),
+    );
   };
 
   const copyCommand = async () => {
@@ -209,6 +240,12 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
           />
         )}
 
+        {entry.reason === 'answers_not_sent' && (
+          <p className="claude-note" data-testid="claude-answers-hint">
+            {REASON_TEXT.answers_not_sent}
+          </p>
+        )}
+
         {questions.length > 0 && (
           <form className="claude-questions" data-testid="claude-questions" onSubmit={save}>
             {questions.map(({ id, question, answer: saved }) => (
@@ -228,13 +265,23 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
                 />
               </label>
             ))}
+            <p className="claude-note" data-testid="claude-questions-progress">
+              {`${questions.filter(({ answer: saved }) => saved?.trim()).length} of ${questions.length} answered`}
+            </p>
+            <p className="claude-note">
+              Save as you go. Nothing is sent to the session until every question has an answer.
+            </p>
             <Button
               type="submit"
               data-testid="claude-questions-save"
-              disabled={busy || Boolean(blocks.answer) || Object.keys(changed).length === 0}
+              disabled={busy || Boolean(blocks.answer) || !(dirty || entry.unsent)}
             >
               Save answers
             </Button>
+            {/* Always rendered, so a screen reader hears its text change rather than appear. */}
+            <p className="claude-note" role="status" data-testid="claude-send-result">
+              {sendResult}
+            </p>
           </form>
         )}
       </div>

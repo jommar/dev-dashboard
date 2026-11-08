@@ -14,11 +14,21 @@ import { BOARD_THREAD_TS, claudeEntry, claudeQuestion, ticketBoardData } from '.
 const KEY = 'TAP-9001';
 const SUMMARY = 'Invented fix for the failing export job';
 const ATTACH = { kind: 'attach', command: 'claude attach ab12cd34' };
-const PLANNED = { 'investigate-and-plan': true, 'implement-plan': false };
+// The first pass wrote the plan; `done` stays false until every question is answered and the
+// session has updated the plan.
+const PLANNED = { 'investigate-and-plan': true, 'implement-plan': false, done: false };
+const PLAN_DONE = { ...PLANNED, done: true };
 const TRUST_SENTENCE =
   'Claude does not trust ~/pathwise yet. Run claude there once and accept the trust prompt.';
 const Q1 = 'Which repo owns the fix?';
 const Q2 = 'Should the retry cap be configurable?';
+const Q3 = 'Should the old export keep working?';
+const STANDING_HINT =
+  'Save as you go. Nothing is sent to the session until every question has an answer.';
+const SENT_LINE = 'Answers sent. Claude is updating the plan.';
+const PLAN_NOT_DONE = 'Claude has not marked the plan done. Check the session before implementing.';
+const ANSWERS_NOT_SENT =
+  'All questions are answered, but they have not been sent to the session. Press Save answers to send them.';
 
 const isPath = (path) => (url) => url.pathname === path;
 const claudeReads = ({ requests }) =>
@@ -75,7 +85,7 @@ test('scenario 21: every ticket card shows a Claude icon in its state', async ({
       flags: PLANNED,
       questions: [claudeQuestion('q1', Q1)],
     }),
-    'TAP-9005': claudeEntry('done', 'plan_ready', { flags: PLANNED }),
+    'TAP-9005': claudeEntry('done', 'plan_ready', { flags: PLAN_DONE }),
     'TAP-9007': claudeEntry('failed', 'ended_without_flag'),
   });
   const cases = [
@@ -269,7 +279,7 @@ test('scenario 26: Go to session is disabled when the ticket has no session to j
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLANNED, goTo: null }),
+    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: null }),
   });
   const dialog = await openDialog(page);
   await expect(dialog.getByTestId('claude-action-goto')).toBeDisabled();
@@ -305,7 +315,7 @@ test('scenario 27: the icon follows the session by polling, with no reload and t
   });
 
   dashboard.data.claude.tickets[KEY] = claudeEntry('done', 'plan_ready', {
-    flags: PLANNED,
+    flags: PLAN_DONE,
     goTo: ATTACH,
   });
   await page.clock.runFor(15_000);
@@ -447,7 +457,7 @@ test('scenario 41: Implement plan sends an implement launch and the icon starts 
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLANNED, goTo: ATTACH }),
+    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: ATTACH }),
   });
   await expect(iconOf(page)).toHaveAttribute('data-state', 'done');
   const dialog = await openDialog(page);
@@ -512,7 +522,7 @@ test('scenario 44: a plan-ready ticket shows where its plan file is beside Imple
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLANNED, goTo: ATTACH }),
+    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: ATTACH }),
     'TAP-9002': claudeEntry('working', 'running', { flags: PLANNED, goTo: ATTACH }),
     'TAP-9003': claudeEntry('waiting', 'questions', {
       flags: PLANNED,
@@ -520,7 +530,7 @@ test('scenario 44: a plan-ready ticket shows where its plan file is beside Imple
     }),
     'TAP-9005': claudeEntry('done', 'implemented', {
       phase: 'implement-plan',
-      flags: { 'investigate-and-plan': true, 'implement-plan': true },
+      flags: { ...PLAN_DONE, 'implement-plan': true },
       goTo: ATTACH,
     }),
   });
@@ -584,4 +594,192 @@ test('scenario 47: while Implement plan runs, Investigate and plan says so and I
     'A Claude session is already running for this ticket.',
   );
   await expect(dialog.getByTestId('claude-action-goto')).toBeEnabled();
+});
+
+// Saving answers routes them back to the session once every question has one.
+
+test('scenario 48: answers are saved as you go and sent only when every question has one', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('waiting', 'questions', {
+      flags: PLANNED,
+      questions: [claudeQuestion('q1', Q1), claudeQuestion('q2', Q2), claudeQuestion('q3', Q3)],
+    }),
+  });
+  const dialog = await openDialog(page);
+  const progress = dialog.getByTestId('claude-questions-progress');
+  await expect(progress).toContainText('0 of 3 answered');
+  await expect(dialog.getByTestId('claude-questions')).toContainText(STANDING_HINT);
+  const save = dialog.getByTestId('claude-questions-save');
+  const result = dialog.getByTestId('claude-send-result');
+
+  await dialog.getByLabel(Q1).fill('Portage-backend');
+  await save.click();
+  await expect(result).toHaveText('Saved. 2 questions still need an answer; nothing was sent.');
+  await expect(progress).toContainText('1 of 3 answered');
+
+  await dialog.getByLabel(Q2).fill('Yes, behind a setting');
+  await dialog.getByLabel(Q3).fill('No');
+  await save.click();
+  await expect(result).toHaveText(SENT_LINE);
+  await expect(progress).toContainText('3 of 3 answered');
+  await expect(save).toBeDisabled();
+  expect(bodiesTo(dashboard, '/api/claude/answers')).toEqual([
+    { key: KEY, answers: { q1: 'Portage-backend' } },
+    { key: KEY, answers: { q2: 'Yes, behind a setting', q3: 'No' } },
+  ]);
+});
+
+test('scenario 49: unsent answers can be saved again with nothing changed, and each outcome is worded', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('waiting', 'answers_not_sent', {
+      flags: PLANNED,
+      unsent: true,
+      questions: [claudeQuestion('q1', Q1, 'Portage-backend'), claudeQuestion('q2', Q2, 'Yes')],
+    }),
+  });
+  const dialog = await openDialog(page);
+  const save = dialog.getByTestId('claude-questions-save');
+  const result = dialog.getByTestId('claude-send-result');
+  // A failure reads "<reason's sentence, without its full stop>. Save again to retry."
+  const failed = (sentence) =>
+    `Answers saved, but they could not be sent: ${sentence}. Save again to retry.`;
+  const outcomes = [
+    [{ status: 'failed', reason: 'listing_unavailable' }, failed('Claude status is unavailable')],
+    [
+      { status: 'failed', reason: 'session_running' },
+      failed('A Claude session is already running for this ticket'),
+    ],
+    [
+      { status: 'failed', reason: 'session_not_found' },
+      failed('The Claude session could not be found'),
+    ],
+    [{ status: 'failed', reason: 'live_at_resume' }, failed('The Claude session is still running')],
+    [
+      { status: 'failed', reason: 'resume_failed' },
+      failed('The Claude session could not be resumed'),
+    ],
+    [
+      { status: 'skipped', reason: 'unchanged' },
+      'Saved. The answers had not changed, so nothing was sent.',
+    ],
+    [
+      { status: 'skipped', reason: 'not_planned' },
+      'Saved. The plan is not ready yet, so nothing was sent.',
+    ],
+    [
+      { status: 'skipped', reason: 'implement_started' },
+      'Saved. Implement plan has started, so nothing was sent.',
+    ],
+    [{ status: 'sent' }, SENT_LINE],
+  ];
+  for (const [send, expected] of outcomes) {
+    // Nothing is typed, yet an unsent entry can be saved again.
+    await expect(save).toBeEnabled();
+    dashboard.data.claude.sends.push(send);
+    await save.click();
+    await expect(result).toHaveText(expected);
+  }
+  await expect(save).toBeDisabled();
+  expect(bodiesTo(dashboard, '/api/claude/answers')).toEqual(
+    outcomes.map(() => ({ key: KEY, answers: [] })),
+  );
+});
+
+test('scenario 50: Save answers stays disabled while a session works, even for unsent answers', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('working', 'running', {
+      flags: PLANNED,
+      unsent: true,
+      goTo: ATTACH,
+      questions: [claudeQuestion('q1', Q1, 'Portage-backend')],
+    }),
+  });
+  const dialog = await openDialog(page);
+  await expect(dialog.getByTestId('claude-question-q1')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-questions-save')).toBeDisabled();
+});
+
+test('scenario 51: the icon and dialog tell answers not sent, plan not done and done apart', async ({
+  page,
+  dashboard,
+}) => {
+  const answered = [claudeQuestion('q1', Q1, 'Portage-backend')];
+  await openBoard(page, dashboard, {
+    'TAP-9002': claudeEntry('waiting', 'answers_not_sent', {
+      flags: PLANNED,
+      unsent: true,
+      questions: answered,
+    }),
+    'TAP-9003': claudeEntry('failed', 'plan_not_done', {
+      flags: PLANNED,
+      goTo: ATTACH,
+      questions: answered,
+    }),
+    'TAP-9005': claudeEntry('done', 'plan_ready', {
+      flags: PLAN_DONE,
+      goTo: ATTACH,
+      questions: answered,
+    }),
+    'TAP-9006': claudeEntry('waiting', 'answers_not_sent', {
+      flags: PLAN_DONE,
+      unsent: true,
+      questions: answered,
+    }),
+  });
+  // The existing amber (waiting) and red (failed) badges, each with a phrase of its own.
+  for (const [key, state, reason, phrase] of [
+    ['TAP-9002', 'waiting', 'answers_not_sent', 'answers not sent'],
+    ['TAP-9003', 'failed', 'plan_not_done', 'plan not done'],
+    ['TAP-9005', 'done', 'plan_ready', 'plan ready'],
+  ]) {
+    const icon = iconOf(page, key);
+    await expect(icon).toHaveAttribute('data-state', state);
+    await expect(icon).toHaveAttribute('data-reason', reason);
+    await expect(icon).toHaveAttribute('aria-label', `Claude: ${phrase}`);
+    await expect(icon).toHaveAttribute('data-tooltip', `Claude: ${phrase}`);
+  }
+
+  // Answers complete but never sent: a hint above the questions says to press Save answers, and
+  // Implement plan waits for them to be sent, saying the same thing beside the button.
+  let dialog = await openDialog(page, 'TAP-9002');
+  const hint = dialog.getByTestId('claude-answers-hint');
+  await expect(hint).toHaveText(ANSWERS_NOT_SENT);
+  const hintBox = await hint.boundingBox();
+  const formBox = await dialog.getByTestId('claude-questions').boundingBox();
+  expect(hintBox.y + hintBox.height, 'the hint sits above the questions').toBeLessThanOrEqual(
+    formBox.y,
+  );
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(ANSWERS_NOT_SENT);
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
+
+  // A changed answer whose send failed leaves the old `done` flag true: Implement plan still waits
+  // for the answers to be sent, and says so rather than offering a plan the session never updated.
+  dialog = await openDialog(page, 'TAP-9006');
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(ANSWERS_NOT_SENT);
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
+
+  // The plan was not marked done: Implement plan is blocked and says why beside the button.
+  dialog = await openDialog(page, 'TAP-9003');
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(PLAN_NOT_DONE);
+  await expect(dialog.getByTestId('claude-answers-hint')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
+
+  dialog = await openDialog(page, 'TAP-9005');
+  await expect(dialog.getByTestId('claude-action-implement')).toBeEnabled();
+  await expect(dialog.getByTestId('claude-answers-hint')).toHaveCount(0);
 });

@@ -1184,7 +1184,9 @@ export function claudeQuestion(id, question, answer = null) {
 
 // An entry's `unanswered` count and `blocks` follow from its state, phase, flags and questions, as
 // the server derives them. While a session works, each phase names the other's reason: the phase
-// that runs says a session is running, the other says which phase is.
+// that runs says a session is running, the other says which phase is. Implement needs the plan
+// marked done (`flags.done`) once every question has an answer. `unsent` (the answers are complete
+// but were never sent to the session) is not derived: a spec sets it on the entry.
 function claudeDerived(entry) {
   const unanswered = entry.questions.filter(({ answer }) => !answer?.trim()).length;
   const planned = entry.flags['investigate-and-plan'] === true;
@@ -1201,39 +1203,60 @@ function claudeDerived(entry) {
       answer: 'listing_unavailable',
     },
   }[entry.state];
+  // The server's order: open questions, then answers never sent (a stale `done` cannot be trusted),
+  // then a plan not marked done.
+  const implement = unanswered
+    ? 'questions_unanswered'
+    : entry.unsent
+      ? 'answers_not_sent'
+      : entry.flags.done
+        ? null
+        : 'plan_not_done';
   return {
     ...entry,
     unanswered,
+    unsent: Boolean(entry.unsent),
     blocks: held ?? {
       investigate: null,
-      implement: planned ? (unanswered ? 'questions_unanswered' : null) : 'not_planned',
+      implement: planned ? implement : 'not_planned',
       answer: entry.questions.length ? null : 'no_questions',
     },
   };
 }
 
 // One ticket's entry in the shape GET /api/claude/tickets returns. Pass `flags`, `questions`,
-// `goTo` or `phase` to override the first-launch defaults.
+// `goTo`, `phase` or `unsent` to override the first-launch defaults.
 export function claudeEntry(state, reason, overrides = {}) {
   return claudeDerived({
     phase: 'investigate-and-plan',
     state,
     reason,
-    flags: { 'investigate-and-plan': false, 'implement-plan': false },
+    flags: { 'investigate-and-plan': false, 'implement-plan': false, done: false },
     questions: [],
     goTo: null,
     ...overrides,
   });
 }
 
+// `sends` is a queue of outcomes the next answers saves report as `send`, for a spec that needs a
+// failure or a skip the fake would not choose itself.
 function claudeData() {
-  return { listing: 'ok', tickets: {}, calls: [] };
+  return { listing: 'ok', tickets: {}, calls: [], sends: [] };
 }
 
 const claudeFailure = (status, code, errors = []) => ({
   status,
   json: { code, error: code.replaceAll('_', ' '), errors },
 });
+
+// What the server's send step reports for an entry whose answers were just saved: nothing goes to
+// the session until every question has an answer and the plan has been written.
+function claudeSend(entry) {
+  if (entry.unanswered) return { status: 'skipped', reason: 'incomplete' };
+  if (entry.flags['investigate-and-plan'] !== true)
+    return { status: 'skipped', reason: 'not_planned' };
+  return { status: 'sent' };
+}
 
 // Only the paths the specs drive are modelled: a launch of either phase that starts a session, and
 // answers that fill in existing questions. Anything else is left unanswered, so the run aborts it
@@ -1283,14 +1306,21 @@ function claudeResponse(url, method, { claude }, body) {
       const question = entry.questions.find((candidate) => candidate.id === id);
       if (question) question.answer = value === '' ? null : value;
     }
-    // Once nothing is left to answer, the session's plan is ready.
     const answered = claudeDerived(entry);
+    const send = claude.sends.shift() ?? claudeSend(answered);
+    // A notice that was sent is acted on at once: the session updates the plan and marks it done.
     const ticket =
-      answered.state === 'waiting' && !answered.unanswered
-        ? claudeDerived({ ...answered, state: 'done', reason: 'plan_ready' })
+      send.status === 'sent'
+        ? claudeDerived({
+            ...answered,
+            state: 'done',
+            reason: 'plan_ready',
+            flags: { ...answered.flags, done: true },
+            unsent: false,
+          })
         : answered;
     claude.tickets[body.key] = ticket;
-    return { json: { ok: true, key: body.key, ticket: structuredClone(ticket) } };
+    return { json: { ok: true, key: body.key, ticket: structuredClone(ticket), send } };
   }
   return null;
 }

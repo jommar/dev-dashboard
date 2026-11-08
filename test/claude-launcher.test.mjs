@@ -15,24 +15,31 @@ import {
   INVESTIGATE_NAME,
   KEY,
   RESET_STATUS,
+  SLUG,
   START_MS,
   UNTRUSTED_OUTPUT,
   answeredMap,
   implementPrompt,
-  investigatePrompt,
+  investigateParagraphs,
   launchRecord,
   launcherEnvironment,
   listed,
   question,
+  resolvesWithin,
+  routingEnvironment,
   seedPlanned,
+  sentRecord,
   sessionUuid,
   sleep,
   statusFile,
+  throughGap,
   until,
+  wakeConstants,
   workingEntry,
 } from './claude-launcher-fixture.mjs';
 
 const LAUNCH_TIMEOUT_MS = 30_000;
+const { SETTLE_MS } = await wakeConstants();
 const SECOND_ID = 'bbbb2222';
 
 const launchBody = (phase = INVESTIGATE) => ({ key: KEY, phase });
@@ -48,6 +55,21 @@ const expectedArgv = (env, name, prompt) => [
   '--',
   prompt,
 ];
+
+// The investigate prompt: the paragraphs that carry no flag rule word for word, every placeholder
+// filled, and the status file's path. What it says about `done` is checked in its own scenario.
+function assertInvestigatePrompt(prompt, env) {
+  for (const paragraph of investigateParagraphs(KEY, env.statusPath())) {
+    assert.ok(prompt.includes(paragraph), `the prompt keeps: ${paragraph.slice(0, 50)}`);
+  }
+  assert.ok(!/\{(KEY|SLUG|STATUS_FILE)\}/.test(prompt), 'every placeholder is filled');
+  assert.ok(prompt.includes(env.statusPath()), 'the prompt names the status file');
+}
+
+// The session finishing the planning phase: it sets `done`, leaving the rest of the file as it is.
+function finishPlanning(env) {
+  env.seed(KEY, { status: { ...env.parsed().status, done: true } });
+}
 
 async function assertRejects(operation, { code, status, errors }, label) {
   await assert.rejects(
@@ -73,10 +95,12 @@ test('scenario 1: investigate launch runs the fixed command from the launch dire
   assert.equal(launches.length, 1, 'claude runs once');
   const [launch] = launches;
   assert.equal(path.basename(launch.file), 'claude');
+  assert.equal(launch.args.length, 7);
   assert.deepStrictEqual(
-    launch.args,
-    expectedArgv(env, INVESTIGATE_NAME, investigatePrompt(KEY, env.statusPath())),
+    launch.args.slice(0, 6),
+    expectedArgv(env, INVESTIGATE_NAME, '').slice(0, 6),
   );
+  assertInvestigatePrompt(launch.args[6], env);
   assert.equal(launch.options.cwd, path.join(env.home, 'pathwise'));
   assert.ok(!launch.options.shell, 'no shell');
   assert.equal(launch.options.timeout, LAUNCH_TIMEOUT_MS);
@@ -98,6 +122,7 @@ test('scenario 2: launch creates status.json in the locked shape and launch.json
   assert.deepEqual(env.parsed().status, {
     'investigate-and-plan': false,
     'implement-plan': false,
+    done: false,
     questions: [],
   });
   assert.deepEqual(env.parsed().launch, {
@@ -115,6 +140,7 @@ test('scenario 3: re-running investigate resets the ticket', async (t) => {
     status: statusFile({
       investigate: true,
       implement: true,
+      done: true,
       questions: [question('q1', 'first answer'), question('q2', 'second answer')],
     }),
     launch: {
@@ -260,7 +286,7 @@ test('scenario 6: launching implement again resets only the implement flag and e
     id: SECOND_ID,
   });
   env.seed(KEY, {
-    status: statusFile({ investigate: true, implement: true, questions }),
+    status: statusFile({ investigate: true, implement: true, done: true, questions }),
     launch: { [INVESTIGATE]: investigated, [IMPLEMENT]: earlierImplement },
   });
   env.writePlan();
@@ -269,7 +295,10 @@ test('scenario 6: launching implement again resets only the implement flag and e
   await env.launcher.launch(launchBody(IMPLEMENT));
 
   const { status, launch } = env.parsed();
-  assert.deepEqual(status, statusFile({ investigate: true, implement: false, questions }));
+  assert.deepEqual(
+    status,
+    statusFile({ investigate: true, implement: false, done: true, questions }),
+  );
   assert.deepEqual(launch[INVESTIGATE], investigated, 'the investigate entry is untouched');
   assert.deepEqual(launch[IMPLEMENT], {
     name: IMPLEMENT_NAME,
@@ -339,9 +368,13 @@ async function launchWithSummary(t, phase, summary) {
   return { env, result, args, name: args[nameIndex], others };
 }
 
-for (const [phase, fixedName, promptFor] of [
-  [INVESTIGATE, INVESTIGATE_NAME, investigatePrompt],
-  [IMPLEMENT, IMPLEMENT_NAME, implementPrompt],
+for (const [phase, fixedName, checkPrompt] of [
+  [INVESTIGATE, INVESTIGATE_NAME, (prompt, env) => assertInvestigatePrompt(prompt, env)],
+  [
+    IMPLEMENT,
+    IMPLEMENT_NAME,
+    (prompt, env) => assert.equal(prompt, implementPrompt(KEY, env.statusPath())),
+  ],
 ]) {
   test(`scenario 9: a hostile body summary reaches no ${phase} argument and the name is the fixed phase name`, async (t) => {
     const { env, result, args, name, others } = await launchWithSummary(t, phase, HOSTILE_SUMMARY);
@@ -349,10 +382,12 @@ for (const [phase, fixedName, promptFor] of [
     assert.equal(name, fixedName);
     assert.equal(result.name, fixedName);
     assert.deepStrictEqual(
-      others,
-      ['--bg', '--add-dir', env.stateDir, '-n', '--', promptFor(KEY, env.statusPath())],
+      others.slice(0, 5),
+      ['--bg', '--add-dir', env.stateDir, '-n', '--'],
       'every other argument is fixed text',
     );
+    assert.equal(others.length, 6);
+    checkPrompt(others[5], env);
     for (const fragment of HOSTILE_FRAGMENTS) {
       assert.ok(
         !args.some((argument) => argument.includes(fragment)),
@@ -804,9 +839,12 @@ test('scenario 44: answering through the route records the answer and unlocks im
 
   const saved = await env.launcher.answer(answerBody({ q1: 'Portage-backend' }));
   assert.equal(saved.ticket.unanswered, 0);
-  assert.equal(saved.ticket.blocks.implement, null);
   const recorded = answeredMap([question('q1', 'Portage-backend')]);
   assert.deepEqual(env.parsed().launch[INVESTIGATE].answered, recorded);
+
+  // The session finishes updating the plan and marks it done.
+  finishPlanning(env);
+  assert.equal((await env.launcher.list()).tickets[KEY].blocks.implement, null);
 
   const result = await env.launcher.launch(launchBody(IMPLEMENT));
   assert.equal(result.ok, true);
@@ -859,6 +897,7 @@ test('scenario 47: relaunching implement keeps the answers saved on its record, 
   env.seed(KEY, {
     status: statusFile({
       investigate: true,
+      done: true,
       questions: [question('q1', 'Portage-backend'), question('q2')],
     }),
     launch: {
@@ -922,7 +961,10 @@ const INJECTED_FIELD = 'INJECT: a field no one validated';
 // not know, with the investigate session done.
 function seedUnvetted(env, questions) {
   env.seed(KEY, {
-    status: { ...statusFile({ investigate: true, questions }), injected: INJECTED_FIELD },
+    status: {
+      ...statusFile({ investigate: true, done: true, questions }),
+      injected: INJECTED_FIELD,
+    },
     launch: { [INVESTIGATE]: launchRecord() },
   });
   env.writePlan();
@@ -934,6 +976,7 @@ test('scenario 49: an implement launch rewrites status.json as the locked shape 
   const unreadable = { id: 'q'.repeat(40), question: 'Anything else?', answer: INJECTED_ANSWER };
   seedUnvetted(env, [question('q1'), unreadable]);
   await env.launcher.answer(answerBody({ q1: 'Portage-backend' }));
+  finishPlanning(env);
   const before = env.files().status;
   assert.ok(before.includes(INJECTED_ANSWER), 'the file the session wrote still holds the answer');
   assert.ok(before.includes(INJECTED_FIELD), 'and the extra field');
@@ -945,9 +988,10 @@ test('scenario 49: an implement launch rewrites status.json as the locked shape 
     statusFile({
       investigate: true,
       implement: false,
+      done: true,
       questions: [question('q1', 'Portage-backend')],
     }),
-    'only the three keys, and only the question the dashboard reads',
+    'only the four keys, and only the question the dashboard reads',
   );
   const after = env.files().status;
   assert.ok(!after.includes(INJECTED_ANSWER), 'the unread answer is gone');
@@ -969,6 +1013,7 @@ test('scenario 50: the rewritten status.json keeps the first 20 readable questio
   ]);
   const answers = Object.fromEntries(readable.slice(0, 20).map(({ id }) => [id, `answer ${id}`]));
   await env.launcher.answer(answerBody(answers));
+  finishPlanning(env);
 
   await env.launcher.launch(launchBody(IMPLEMENT));
 
@@ -1139,4 +1184,757 @@ test('scenario 74: a session the launcher just started for implement blocks inve
     implement: 'session_running',
     answer: 'session_running',
   });
+});
+
+// ---- saved answers go back to the session that asked ----
+
+const FIRST_TEXT = 'ANSWER-ALPHA-7731';
+const SECOND_TEXT = 'ANSWER-BETA-5520';
+const CHANGED_TEXT = 'ANSWER-GAMMA-1189';
+const THIRD_TEXT = 'ANSWER-DELTA-4046';
+const ALL_TEXTS = [FIRST_TEXT, SECOND_TEXT, CHANGED_TEXT, THIRD_TEXT];
+const OPEN_PAIR = [question('q1'), question('q2')];
+const ANSWERED_PAIR = [question('q1', FIRST_TEXT), question('q2', SECOND_TEXT)];
+const BOTH_ANSWERS = { q1: FIRST_TEXT, q2: SECOND_TEXT };
+const HALF_ANSWERED = [question('q1', FIRST_TEXT), question('q2')];
+const sentOf = (env) => env.parsed().launch[INVESTIGATE].sent;
+const finishedListing = () => [listed({ id: EARLIER_ID })];
+// A background session that is alive and waiting for input.
+const idleListing = () => [listed({ id: EARLIER_ID, state: 'done', status: 'idle', pid: 4242 })];
+
+// A planned ticket on the fake sessions: the investigate run asked `questions`, which hold the
+// answers the dashboard saved. `sent` is the record of an earlier send, `implement` adds an
+// implement run, and `extra` is a field of status.json the dashboard knows nothing about.
+function seedAsked(
+  env,
+  {
+    questions = OPEN_PAIR,
+    done = false,
+    investigate = true,
+    sent,
+    implement = false,
+    listing = finishedListing(),
+    extra = {},
+  } = {},
+) {
+  const launch = { [INVESTIGATE]: launchRecord({ answered: answeredMap(questions), sent }) };
+  if (implement) {
+    launch[IMPLEMENT] = launchRecord({
+      name: IMPLEMENT_NAME,
+      launchedAt: START_MS - 1_800_000,
+      id: SECOND_ID,
+    });
+    listing = [...listing, listed({ id: SECOND_ID, name: IMPLEMENT_NAME })];
+  }
+  env.seed(KEY, { status: { ...statusFile({ investigate, done, questions }), ...extra }, launch });
+  env.writePlan();
+  env.fake.setListing(listing);
+}
+
+// The question ids a notice names; the status file's path is left out, since it is not a question.
+const idsIn = (env, notice) =>
+  ['q1', 'q2', 'q3'].filter((id) =>
+    new RegExp(`\\b${id}\\b`).test(notice.replaceAll(env.statusPath(), '')),
+  );
+
+const answerTexts = (env) =>
+  Object.fromEntries(env.parsed().status.questions.map(({ id, answer }) => [id, answer]));
+
+function assertNothingSent(env, label) {
+  assert.equal(env.fake.resumes().length, 0, `${label}: no resume`);
+  assert.equal(env.fake.stops().length, 0, `${label}: no stop`);
+}
+
+const SKIPS = [
+  {
+    label: 'a partial save sends nothing and says incomplete',
+    reason: 'incomplete',
+    arrange: (env) => seedAsked(env),
+    body: { q1: FIRST_TEXT },
+  },
+  {
+    label: 'a ticket that is not planned yet says not_planned',
+    reason: 'not_planned',
+    arrange: (env) => seedAsked(env, { investigate: false }),
+    body: BOTH_ANSWERS,
+  },
+  {
+    label: 'once implement was launched the answers only save (implement_started)',
+    reason: 'implement_started',
+    arrange: (env) => seedAsked(env, { implement: true }),
+    body: BOTH_ANSWERS,
+  },
+  {
+    label: 'answers equal to what was sent say unchanged',
+    reason: 'unchanged',
+    arrange: (env) =>
+      seedAsked(env, {
+        questions: ANSWERED_PAIR,
+        done: true,
+        sent: sentRecord(ANSWERED_PAIR),
+      }),
+    body: BOTH_ANSWERS,
+  },
+];
+
+for (const { label, reason, arrange, body } of SKIPS) {
+  test(`scenario 84: ${label}`, async (t) => {
+    const env = await routingEnvironment(t);
+    arrange(env);
+    const before = env.parsed();
+
+    const result = await env.launcher.answer(answerBody(body));
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.send, { status: 'skipped', reason });
+    assertNothingSent(env, label);
+    for (const [id, text] of Object.entries(body))
+      assert.equal(answerTexts(env)[id], text, `${id} is saved`);
+    const { status, launch } = env.parsed();
+    assert.equal(status.done, before.status.done, 'done is left as it was');
+    assert.deepEqual(sentOf(env), before.launch[INVESTIGATE].sent, 'sent is not touched');
+    assert.deepEqual(Object.keys(launch).sort(), Object.keys(before.launch).sort());
+  });
+}
+
+test('scenario 85: an empty answers list saves nothing and runs the send decision', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: ANSWERED_PAIR });
+  const before = env.parsed();
+
+  const result = await env.launcher.answer(answerBody([]));
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 1);
+  assert.deepEqual(env.parsed().status.questions, before.status.questions, 'no answer changed');
+  assert.deepEqual(
+    env.parsed().launch[INVESTIGATE].answered,
+    before.launch[INVESTIGATE].answered,
+    'no answer record changed',
+  );
+});
+
+test('scenario 85: an empty list on an incomplete set changes nothing and sends nothing', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED });
+  const before = env.files();
+
+  const result = await env.launcher.answer(answerBody([]));
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.send, { status: 'skipped', reason: 'incomplete' });
+  assert.deepEqual(env.files(), before, 'both files are untouched');
+  assertNothingSent(env, 'incomplete');
+});
+
+const STILL_INVALID = {
+  'a list of pairs': [['q1', FIRST_TEXT]],
+  'a list of ids': ['q1'],
+  'a list of answer objects': [{ id: 'q1', answer: FIRST_TEXT }],
+  'a string': 'q1',
+  null: null,
+  'a number': 42,
+  'a missing list': undefined,
+  'an answer that is not text': { q1: 5 },
+  'an answer that is null': { q1: null },
+};
+
+for (const [label, answers] of Object.entries(STILL_INVALID)) {
+  test(`scenario 85: ${label} is still INVALID_ANSWER`, async (t) => {
+    const env = await routingEnvironment(t);
+    seedAsked(env, { questions: ANSWERED_PAIR });
+    const before = env.files();
+
+    await assertRejects(
+      () => env.launcher.answer(answerBody(answers)),
+      { code: 'INVALID_ANSWER', status: 400 },
+      label,
+    );
+
+    assert.deepEqual(env.files(), before, 'nothing is saved');
+    assertNothingSent(env, label);
+  });
+}
+
+test('scenario 86: an idle live session is stopped, done is reset, and only then is it resumed', async (t) => {
+  const env = await routingEnvironment(t);
+  const earlier = [question('q1', FIRST_TEXT), question('q2', 'the first answer')];
+  const updated = ANSWERED_PAIR;
+  seedAsked(env, {
+    questions: earlier,
+    done: true,
+    sent: sentRecord(earlier),
+    listing: idleListing(),
+    extra: { note: { kept: 'as parsed' } },
+  });
+  const atResume = [];
+  env.fake.onResume(() => atResume.push(env.parsed()));
+  env.recorder.clearCalls();
+
+  const result = await throughGap(env, env.launcher.answer(answerBody({ q2: SECOND_TEXT })));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  const order = env.fake.calls
+    .filter(({ method }) => method === 'stop' || method === 'resume')
+    .map(({ method }) => method);
+  assert.deepEqual(order, ['stop', 'resume'], 'stopped first, then resumed');
+  assert.ok(env.fake.freshListings().length >= 2, 'the send reads a fresh listing after the save');
+  const [stop] = env.fake.stops();
+  const [resume] = env.fake.resumes();
+  assert.equal(stop.sessionId, sessionUuid(EARLIER_ID));
+  assert.equal(resume.sessionId, sessionUuid(EARLIER_ID));
+
+  assert.equal(atResume.length, 1);
+  const [{ status, launch }] = atResume;
+  assert.deepEqual(
+    status,
+    {
+      ...statusFile({ investigate: true, done: false, questions: updated }),
+      note: { kept: 'as parsed' },
+    },
+    'by the resume the answer is saved, done is false and no other key moved',
+  );
+  assert.deepEqual(
+    launch[INVESTIGATE].sent,
+    sentRecord(earlier),
+    'nothing is recorded as sent yet',
+  );
+
+  const sent = sentOf(env);
+  assert.deepEqual(Object.keys(sent).sort(), ['answers', 'at']);
+  assert.deepEqual(sent.answers, answeredMap(updated));
+  assert.equal(sent.at, new Date(env.clock.now()).toISOString());
+  assert.equal(env.parsed().status.done, false);
+  assertAtomicWrites(env, [env.statusPath(), env.launchPath()]);
+});
+
+test('scenario 87: a session that has finished is resumed without a stop', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED });
+
+  const result = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(Object.keys(result).sort(), ['key', 'ok', 'send', 'ticket']);
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.fake.stops().length, 0, 'nothing to stop');
+  const [resume] = env.fake.resumes();
+  assert.equal(env.fake.resumes().length, 1);
+  assert.equal(resume.sessionId, sessionUuid(EARLIER_ID), 'the investigate session, by its id');
+  assert.deepEqual(sentOf(env).answers, answeredMap(ANSWERED_PAIR));
+  assert.equal(env.parsed().status.done, false);
+});
+
+test('scenario 87: a session that finishes the moment it is resumed keeps the done it set', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED, done: true });
+  env.fake.onResume(() => finishPlanning(env));
+
+  const result = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.parsed().status.done, true, 'the dashboard writes nothing over it afterwards');
+  assert.deepEqual(sentOf(env).answers, answeredMap(ANSWERED_PAIR));
+});
+
+const BLOCKED_LIVE = () => [
+  listed({ id: EARLIER_ID, state: 'blocked', status: 'waiting', pid: 4242 }),
+];
+
+const FAILURES = [
+  {
+    label: 'the fresh listing is unavailable',
+    reason: 'listing_unavailable',
+    arrange: (env) => env.fake.failFreshListing(2),
+    before: true,
+  },
+  {
+    label: 'the session is not in the listing',
+    reason: 'session_not_found',
+    listing: [],
+    before: true,
+  },
+  {
+    label: 'the session is live and not idle',
+    reason: 'session_running',
+    listing: BLOCKED_LIVE(),
+    before: true,
+  },
+  {
+    label: 'the resume says not_listed, so nothing was routed',
+    reason: 'session_not_found',
+    arrange: (env) => env.fake.forceResume({ status: 'delivered', reason: 'not_listed' }),
+  },
+  {
+    label: 'the session came alive before the resume',
+    reason: 'live_at_resume',
+    arrange: (env) => env.fake.forceResume({ status: 'waiting', reason: 'live_at_resume' }),
+  },
+  {
+    label: 'the resume forked the session',
+    reason: 'resume_failed',
+    arrange: (env) => env.fake.forceResume({ status: 'failed-permanent', reason: 'resume_forked' }),
+  },
+  {
+    label: 'the resume failed to spawn',
+    reason: 'resume_failed',
+    arrange: (env) => env.fake.forceResume({ status: 'failed-transient', reason: 'spawn_failed' }),
+  },
+  {
+    label: 'the workspace is not trusted',
+    reason: 'resume_failed',
+    arrange: (env) =>
+      env.fake.forceResume({ status: 'failed-permanent', reason: 'untrusted_workspace' }),
+  },
+];
+
+for (const { label, reason, arrange, listing, before } of FAILURES) {
+  test(`scenario 88: ${label}, so the save answers 200 with a failed send and the answers stay saved`, async (t) => {
+    const env = await routingEnvironment(t);
+    seedAsked(env, { questions: HALF_ANSWERED, done: true, listing: listing ?? finishedListing() });
+    arrange?.(env);
+
+    const result = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+    assert.equal(result.ok, true, 'not an error');
+    assert.deepEqual(result.send, { status: 'failed', reason });
+    assert.equal(env.fake.resumes().length, before ? 0 : 1, 'a resume only where one was possible');
+    assert.equal(result.ticket.unanswered, 0);
+    assert.equal(answerTexts(env).q2, SECOND_TEXT, 'the answer stays saved');
+    const record = env.parsed().launch[INVESTIGATE];
+    assert.deepEqual(record.answered, answeredMap(ANSWERED_PAIR), 'and counts as answered');
+    assert.equal(record.sent, undefined, 'a failed send is never recorded');
+    if (before)
+      assert.equal(env.parsed().status.done, true, 'done is reset only once a resume is due');
+  });
+}
+
+test('scenario 89: a failed send is retried by saving an empty list, and an unchanged set is not sent twice', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED });
+  env.fake.forceResume({ status: 'waiting', reason: 'live_at_resume' });
+  const first = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+  assert.deepEqual(first.send, { status: 'failed', reason: 'live_at_resume' });
+  assert.equal(sentOf(env), undefined);
+
+  env.fake.forceResume(null);
+  const retry = await env.launcher.answer(answerBody([]));
+  assert.deepEqual(retry.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 2, 'the retry resumed again');
+  assert.deepEqual(idsIn(env, env.fake.resumes()[1].notice), ['q1', 'q2'], 'every answer is new');
+  assert.deepEqual(sentOf(env).answers, answeredMap(ANSWERED_PAIR));
+
+  env.fake.setListing(finishedListing());
+  const again = await env.launcher.answer(answerBody([]));
+  assert.deepEqual(again.send, { status: 'skipped', reason: 'unchanged' });
+  assert.equal(env.fake.resumes().length, 2, 'nothing more is sent');
+});
+
+test('scenario 90: clearing an answer makes the set incomplete, and entering the same text again is unchanged', async (t) => {
+  const env = await routingEnvironment(t);
+  const sent = sentRecord(ANSWERED_PAIR);
+  seedAsked(env, { questions: ANSWERED_PAIR, done: true, sent });
+
+  const same = await env.launcher.answer(answerBody(BOTH_ANSWERS));
+  assert.deepEqual(same.send, { status: 'skipped', reason: 'unchanged' }, 'same text');
+
+  const cleared = await env.launcher.answer(answerBody({ q1: '' }));
+  assert.deepEqual(cleared.send, { status: 'skipped', reason: 'incomplete' }, 'cleared');
+  assert.deepEqual(sentOf(env), sent, 'the record of what was sent stays');
+
+  const restored = await env.launcher.answer(answerBody({ q1: FIRST_TEXT }));
+  assert.deepEqual(restored.send, { status: 'skipped', reason: 'unchanged' }, 're-entered');
+  assertNothingSent(env, 'all three saves');
+
+  const edited = await env.launcher.answer(answerBody({ q1: CHANGED_TEXT }));
+  assert.deepEqual(edited.send, { status: 'sent' }, 'a different text is sent');
+  assert.equal(env.fake.resumes().length, 1);
+});
+
+test('scenario 91: a changed answer is sent again, naming only the answers that changed', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: ANSWERED_PAIR, done: true, sent: sentRecord(ANSWERED_PAIR) });
+
+  const result = await env.launcher.answer(answerBody({ q1: FIRST_TEXT, q2: CHANGED_TEXT }));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  const [{ notice }] = env.fake.resumes();
+  assert.deepEqual(idsIn(env, notice), ['q2'], 'q1 did not change');
+  assert.match(notice, /changed answers to questions/i);
+  const after = [question('q1', FIRST_TEXT), question('q2', CHANGED_TEXT)];
+  assert.deepEqual(sentOf(env).answers, answeredMap(after), 'the new hashes are recorded');
+  assert.equal(env.parsed().status.done, false, 'the plan is not done while the session works');
+});
+
+test('scenario 91: an answer to a question added after the send is the only one named', async (t) => {
+  const env = await routingEnvironment(t);
+  const addedLater = [...ANSWERED_PAIR, question('q3')];
+  seedAsked(env, { questions: addedLater, sent: sentRecord(ANSWERED_PAIR) });
+
+  const result = await env.launcher.answer(answerBody({ q3: THIRD_TEXT }));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  const [{ notice }] = env.fake.resumes();
+  assert.deepEqual(idsIn(env, notice), ['q3'], 'q1 and q2 were sent already');
+  const all = [...ANSWERED_PAIR, question('q3', THIRD_TEXT)];
+  assert.deepEqual(sentOf(env).answers, answeredMap(all));
+});
+
+// What the session is told, by its parts rather than its wording.
+function assertNotice(env, notice, { ids, resend }) {
+  assert.equal(typeof notice, 'string', 'the notice is text');
+  assert.ok(notice.includes(KEY), 'the ticket key');
+  assert.ok(notice.includes(env.statusPath()), 'the status file to read');
+  assert.match(notice, /questions\[\]\.answer|questions\W+answer/, 'where the answers are');
+  assert.match(notice, resend ? /changed answers to questions/i : /answers to questions/i);
+  assert.deepEqual(idsIn(env, notice), ids, 'only the ids that are new or changed');
+  for (const text of ALL_TEXTS) assert.ok(!notice.includes(text), 'no answer text is embedded');
+  assert.ok(notice.includes(`.orchestrator/${SLUG}/`), 'the docs to update');
+  assert.match(notice, /\b(do not|don't|never)\b[\s\S]{0,80}\bimplement/i, 'do not implement');
+  assert.match(notice, /approval gate/i, 'stop at the approval gate');
+  assert.match(notice, /\bdone\b[\s\S]{0,80}\btrue\b/i, 'set done to true');
+  assert.match(notice, /\blast\b/i, 'as the very last action');
+  assert.match(notice, /\banswer\W{0,4}null\b/, 'a new question is appended with a null answer');
+  assert.match(notice, /\b(do not|don't|never)\b[\s\S]{0,40}\bset\b[\s\S]{0,40}\bdone\b/i);
+}
+
+test('scenario 92: the first notice carries every part the session needs and no answer text', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED });
+  await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.equal(env.fake.resumes().length, 1);
+  assertNotice(env, env.fake.resumes()[0].notice, { ids: ['q1', 'q2'], resend: false });
+});
+
+test('scenario 92: the notice of a re-send carries the same parts', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: ANSWERED_PAIR, done: true, sent: sentRecord(ANSWERED_PAIR) });
+  await env.launcher.answer(answerBody({ q2: CHANGED_TEXT }));
+
+  assert.equal(env.fake.resumes().length, 1);
+  assertNotice(env, env.fake.resumes()[0].notice, { ids: ['q2'], resend: true });
+});
+
+test('scenario 93: the investigate prompt says what to do with done and keeps the flag rule', async (t) => {
+  const env = await launcherEnvironment(t);
+  await env.launcher.launch(launchBody());
+  const prompt = env.cli.launches()[0].args.at(-1);
+
+  assert.ok(prompt.includes('"investigate-and-plan": true'), 'the flag is still set');
+  const passage = prompt
+    .split('\n\n')
+    .filter((paragraph) => /\bdone\b/.test(paragraph))
+    .join('\n');
+  assert.ok(passage, 'the prompt says something about done');
+  assert.match(passage, /\bfalse\b/, 'done stays false while a question is open');
+  assert.match(passage, /\btrue\b/, 'done is set to true when the phase is complete');
+  assert.match(
+    passage,
+    /\b(no|zero|any)\b[\s\S]{0,40}\bquestions?\b|\bempty\b/i,
+    'the no-question case',
+  );
+});
+
+const NOT_A_BOOLEAN = {
+  'a file without done': undefined,
+  'a done that is a string': 'true',
+  'a done that is a number': 1,
+  'a done that is null': null,
+  'a done that is an object': {},
+};
+
+for (const [label, done] of Object.entries(NOT_A_BOOLEAN)) {
+  test(`scenario 94: ${label} reads as not done: readable, answerable, and implement says plan_not_done`, async (t) => {
+    const env = await launcherEnvironment(t);
+    const questions = ANSWERED_PAIR;
+    const status = statusFile({ investigate: true, questions });
+    if (done === undefined) delete status.done;
+    else status.done = done;
+    env.seed(KEY, {
+      status,
+      launch: {
+        [INVESTIGATE]: launchRecord({
+          answered: answeredMap(questions),
+          sent: sentRecord(questions),
+        }),
+      },
+    });
+    env.writePlan();
+    env.cli.setListing(finishedListing());
+
+    const { tickets } = await env.launcher.list();
+    assert.equal(tickets[KEY].flags.done, false, 'reads as false');
+    assert.equal(tickets[KEY].blocks.implement, 'plan_not_done');
+    assert.notEqual(tickets[KEY].blocks.answer, 'status_unreadable');
+    await assertImplementRefusedFor(env, 'plan_not_done', label);
+
+    const result = await env.launcher.answer(answerBody([]));
+    assert.equal(result.ok, true, 'a save is not refused as unreadable');
+    assert.deepEqual(result.send, { status: 'skipped', reason: 'unchanged' }, 'sent already');
+  });
+}
+
+test('scenario 94: an older file with no done that was never sent is answers_not_sent, and a send leaves a boolean false', async (t) => {
+  const env = await launcherEnvironment(t);
+  const questions = ANSWERED_PAIR;
+  const status = statusFile({ investigate: true, questions });
+  delete status.done;
+  env.seed(KEY, {
+    status,
+    launch: { [INVESTIGATE]: launchRecord({ answered: answeredMap(questions) }) },
+  });
+  env.writePlan();
+  env.cli.setListing(finishedListing());
+
+  const { tickets } = await env.launcher.list();
+  assert.equal(tickets[KEY].flags.done, false, 'reads as false');
+  assert.equal(tickets[KEY].blocks.implement, 'answers_not_sent', 'the unsent answers come first');
+  await assertImplementRefusedFor(env, 'answers_not_sent', 'older file');
+
+  const result = await env.launcher.answer(answerBody([]));
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.strictEqual(env.parsed().status.done, false, 'a send leaves a boolean false');
+});
+
+for (const [label, done] of Object.entries({
+  true: true,
+  'a string': 'yes',
+  absent: undefined,
+})) {
+  test(`scenario 95: an investigate launch resets done to false (it was ${label})`, async (t) => {
+    const env = await launcherEnvironment(t);
+    const questions = [question('q1', FIRST_TEXT)];
+    const status = statusFile({ investigate: true, done: true, questions });
+    if (done === undefined) delete status.done;
+    else status.done = done;
+    env.seed(KEY, {
+      status,
+      launch: { [INVESTIGATE]: launchRecord({ answered: answeredMap(questions) }) },
+    });
+    env.cli.setListing(finishedListing());
+
+    await env.launcher.launch(launchBody());
+
+    assert.deepEqual(env.parsed().status, RESET_STATUS);
+    assert.strictEqual(env.parsed().status.done, false);
+  });
+}
+
+test('scenario 96: an implement launch keeps done as it was', async (t) => {
+  const env = await launcherEnvironment(t);
+  const questions = [question('q1', FIRST_TEXT)];
+  seedPlanned(env, { questions });
+
+  await env.launcher.launch(launchBody(IMPLEMENT));
+
+  assert.deepEqual(
+    env.parsed().status,
+    statusFile({ investigate: true, implement: false, done: true, questions }),
+  );
+});
+
+test('scenario 97: two saves at once send the answers once', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: ANSWERED_PAIR });
+
+  const settled = await Promise.allSettled([
+    env.launcher.answer(answerBody([])),
+    env.launcher.answer(answerBody([])),
+  ]);
+
+  assert.equal(env.fake.resumes().length, 1, 'one resume');
+  const sends = settled.filter(
+    ({ status, value }) => status === 'fulfilled' && value.send.status === 'sent',
+  );
+  assert.equal(sends.length, 1, 'one of the saves sent');
+});
+
+// ---- the settle gap after a stop, and what the implement gate does with unsent answers ----
+
+test('scenario 103: after stopping a live session the send waits the settle gap, then writes done and resumes', async (t) => {
+  const env = await routingEnvironment(t);
+  const earlier = [question('q1', FIRST_TEXT), question('q2', 'the first answer')];
+  seedAsked(env, {
+    questions: earlier,
+    done: true,
+    sent: sentRecord(earlier),
+    listing: idleListing(),
+  });
+  const timersAtStop = [];
+  env.fake.onStop(() => timersAtStop.push(env.timers.pending()));
+
+  const pending = env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+  await until(() => env.fake.stops().length === 1);
+  await sleep(30);
+
+  assert.deepEqual(timersAtStop, [0], 'nothing waits before the stop');
+  assert.deepEqual(env.timers.scheduled, [SETTLE_MS], 'one wait, as long as the settle gap');
+  assert.equal(env.timers.pending(), 1, 'and it is still pending');
+  assert.equal(env.timers.referenced(), 0, 'the wait is unref’d, so it never holds the process');
+  assert.equal(env.fake.resumes().length, 0, 'no resume during the gap');
+  assert.equal(env.parsed().status.done, true, 'done is not written during the gap');
+  assert.deepEqual(sentOf(env), sentRecord(earlier), 'nothing is recorded as sent');
+
+  await env.timers.advance(SETTLE_MS - 1);
+  await sleep(30);
+  assert.equal(env.fake.resumes().length, 0, 'one millisecond short of the gap');
+  assert.equal(env.parsed().status.done, true, 'and done is still untouched');
+
+  await env.timers.advance(1);
+  const result = await pending;
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 1);
+  assert.equal(env.parsed().status.done, false, 'done was reset once the gap had passed');
+  assert.deepEqual(env.timers.scheduled, [SETTLE_MS], 'no other wait');
+  const order = env.fake.calls
+    .filter(({ method }) => method === 'stop' || method === 'resume')
+    .map(({ method }) => method);
+  assert.deepEqual(order, ['stop', 'resume']);
+});
+
+test('scenario 104: a session that has finished is resumed with no wait at all', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED, done: true });
+
+  const result = await resolvesWithin(
+    env.launcher.answer(answerBody({ q2: SECOND_TEXT })),
+    'a finished session',
+  );
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.fake.stops().length, 0, 'nothing to stop');
+  assert.deepEqual(env.timers.scheduled, [], 'no timer was set');
+  assert.equal(env.fake.resumes().length, 1);
+});
+
+const STOP_FAILURES = [
+  {
+    label: 'the session was no longer idle',
+    outcome: { status: 'not_idle', activity: 'busy' },
+    reason: 'session_running',
+  },
+  {
+    label: 'the CLI failed to stop it',
+    outcome: { status: 'failed-transient', reason: 'stop_failed' },
+  },
+  { label: 'the stop timed out', outcome: { status: 'failed-transient', reason: 'timed_out' } },
+  {
+    label: 'its short id is ambiguous',
+    outcome: { status: 'failed-permanent', reason: 'ambiguous_id' },
+  },
+];
+
+for (const { label, outcome, reason } of STOP_FAILURES) {
+  test(`scenario 105: when ${label}, the send fails with no wait and no write of done`, async (t) => {
+    const env = await routingEnvironment(t);
+    seedAsked(env, { questions: HALF_ANSWERED, done: true, listing: idleListing() });
+    env.fake.forceStop(outcome);
+
+    const result = await resolvesWithin(
+      env.launcher.answer(answerBody({ q2: SECOND_TEXT })),
+      label,
+    );
+
+    assert.equal(result.ok, true, 'not an error');
+    assert.equal(result.send.status, 'failed');
+    assert.equal(typeof result.send.reason, 'string');
+    if (reason) assert.equal(result.send.reason, reason);
+    assert.deepEqual(env.timers.scheduled, [], 'no gap is waited for a stop that did not happen');
+    assert.equal(env.fake.resumes().length, 0, 'no resume');
+    assert.equal(env.parsed().status.done, true, 'done is never written');
+    assert.equal(sentOf(env), undefined, 'nothing is recorded as sent');
+    assert.equal(answerTexts(env).q2, SECOND_TEXT, 'the answer stays saved');
+  });
+}
+
+test('scenario 106: the ticket stays locked through the settle gap, so a second save waits behind it', async (t) => {
+  const env = await routingEnvironment(t);
+  const earlier = [question('q1', FIRST_TEXT), question('q2', 'the first answer')];
+  seedAsked(env, {
+    questions: earlier,
+    done: true,
+    sent: sentRecord(earlier),
+    listing: idleListing(),
+  });
+  const first = env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+  await until(() => env.fake.stops().length === 1);
+  await sleep(30);
+  assert.equal(env.timers.pending(), 1, 'the send is waiting out the settle gap');
+  const listingsBefore = env.fake.freshListings().length;
+
+  // Whatever the second save ends in (a refusal, since the session works again, or a skip), it is
+  // caught here so that waiting behind the lock cannot surface as an unhandled rejection.
+  const second = env.launcher.answer(answerBody([])).catch((error) => ({ error }));
+  await sleep(30);
+
+  assert.equal(env.fake.freshListings().length, listingsBefore, 'the second save has not started');
+  assert.equal(env.fake.resumes().length, 0, 'and nothing was resumed');
+
+  await env.timers.advance(SETTLE_MS);
+  const [one, two] = await Promise.all([first, second]);
+  assert.deepEqual(one.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 1, 'the answers went once');
+  assert.notDeepEqual(two.send, { status: 'sent' }, 'the second save did not send again');
+});
+
+test('scenario 107: a changed answer whose send failed cannot be implemented against a stale done', async (t) => {
+  const env = await routingEnvironment(t);
+  const earlier = [question('q1', FIRST_TEXT), question('q2', 'the first answer')];
+  seedAsked(env, { questions: earlier, done: true, sent: sentRecord(earlier) });
+  env.fake.failFreshListing(2);
+
+  const save = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+  assert.deepEqual(save.send, { status: 'failed', reason: 'listing_unavailable' });
+  assert.equal(env.parsed().status.done, true, 'done is still the stale true');
+
+  const { tickets } = await env.launcher.list();
+  assert.equal(tickets[KEY].unsent, true);
+  assert.equal(tickets[KEY].blocks.implement, 'answers_not_sent');
+  const before = env.files();
+  await assertRejects(
+    () => env.launcher.launch(launchBody(IMPLEMENT)),
+    refused('answers_not_sent'),
+    'implement',
+  );
+  assert.deepEqual(env.files(), before, 'a refusal changes nothing');
+
+  const retry = await env.launcher.answer(answerBody([]));
+  assert.deepEqual(retry.send, { status: 'sent' });
+  env.fake.setListing(finishedListing());
+  finishPlanning(env);
+  const after = (await env.launcher.list()).tickets[KEY];
+  assert.equal(after.unsent, false, 'sent');
+  assert.equal(after.blocks.implement, null, 'and done again, so implement is open');
+});
+
+test('scenario 108: a new investigate launch drops what was sent with the rest of the record', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env, { questions: ANSWERED_PAIR });
+  assert.ok(env.parsed().launch[INVESTIGATE].sent, 'the seed records a send');
+
+  await env.launcher.launch(launchBody());
+
+  assert.deepEqual(env.parsed().launch[INVESTIGATE], {
+    name: INVESTIGATE_NAME,
+    launchedAt: START_MS,
+    id: FIRST_ID,
+  });
+});
+
+test('scenario 108: after a new launch the same answers are sent again, not unchanged', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env, { questions: ANSWERED_PAIR });
+  await env.launcher.launch(launchBody());
+
+  // The new session asks the same two questions and ends without done.
+  env.cli.setListing([listed({ id: FIRST_ID, startedAt: START_MS })]);
+  env.seed(KEY, { status: statusFile({ investigate: true, questions: OPEN_PAIR }) });
+  env.writePlan();
+  const result = await env.launcher.answer(answerBody(BOTH_ANSWERS));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.cli.resumes().length, 1);
+  assert.deepEqual(sentOf(env).answers, answeredMap(ANSWERED_PAIR));
 });

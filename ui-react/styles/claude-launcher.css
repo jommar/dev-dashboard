@@ -170,6 +170,15 @@
   padding-top: var(--s3);
   border-top: 1px solid var(--border);
 }
+.claude-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+/* The send result is empty until a save; it takes no room until then. */
+.claude-note:empty {
+  margin-top: calc(var(--s3) * -1);
+}
 .claude-question {
   display: flex;
   flex-direction: column;

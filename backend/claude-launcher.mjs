@@ -1,11 +1,12 @@
 // claude-launcher.mjs — starts an investigate-and-plan or implement-plan Claude session for a
-// ticket, records what it started, collects the answers the planning session asked for and lists
-// where every ticket stands.
+// ticket, records what it started, collects the answers the planning session asked for, sends them
+// back to that session once every question has one, and lists where every ticket stands.
 //
 // A ticket's state is two files under `<stateDir>/<KEY>/`: `status.json`, shared with the session
-// (two flags and the questions), and `launch.json`, written only here (which session belongs to
-// which phase). The session writes `status.json` only while it works and this module only while no
-// session works; every write is a temp file, fsync and rename, under one lock per ticket.
+// (the two phase flags, `done` and the questions), and `launch.json`, written only here (which
+// session belongs to which phase, and what was last sent to it). The session writes `status.json`
+// only while it works and this module only while no session works; every write is a temp file,
+// fsync and rename, under one lock per ticket.
 //
 // Both prompts are fixed text with a validated key, a slug of it and a built path; no ticket text
 // reaches a session name or a prompt.
@@ -15,12 +16,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { DASHBOARD_DIR } from './config.mjs';
 import { writeFileAtomic } from './credentials.mjs';
+import { SETTLE_MS } from './slack-watcher.mjs';
 import {
   ANSWER_MAX_LENGTH,
   IMPLEMENT,
   INVESTIGATE,
   PHASES,
   answerHash,
+  answersToSend,
   currentRecord,
   deriveEntry,
   implementBlock,
@@ -44,7 +47,7 @@ const ANSWER_LIMIT = 20;
 const MAX_STATE_BYTES = 1024 * 1024;
 const MAX_TICKETS = 500;
 const PLAN_FILE = '02-plan.md';
-const RESET_STATUS = { [INVESTIGATE]: false, [IMPLEMENT]: false, questions: [] };
+const RESET_STATUS = { [INVESTIGATE]: false, [IMPLEMENT]: false, done: false, questions: [] };
 
 const OPENING =
   'This is an unattended background session started by the dev dashboard for ticket {KEY}. ' +
@@ -73,9 +76,12 @@ const PROMPTS = {
       'file outside `.orchestrator/{SLUG}/` and `{STATUS_FILE}`.',
     'Finish: your very last action, after everything above is saved, is to edit ' +
       '`{STATUS_FILE}` and change only `"investigate-and-plan": false` to ' +
-      '`"investigate-and-plan": true`. Re-read the file just before each edit. Never rewrite or ' +
-      'reformat it and touch no other key. If you could not produce the plan, do not set the ' +
-      'flag: end with a short note on what blocked you.',
+      '`"investigate-and-plan": true`. If you asked no questions, change `"done": false` to ' +
+      '`"done": true` in that same edit: the phase is complete. If you asked questions, leave ' +
+      '`"done"` as `false` and stop: the dashboard messages this session once every question ' +
+      'has an answer. Re-read the file just before each edit. Never rewrite or reformat it and ' +
+      'touch no other key. If you could not produce the plan, do not set the flag: end with a ' +
+      'short note on what blocked you.',
   ].join('\n\n'),
   [IMPLEMENT]: [
     OPENING,
@@ -105,6 +111,31 @@ const promptFor = (phase, key, statusFile) =>
     (_, name) => ({ KEY: key, SLUG: key.toLowerCase(), STATUS_FILE: statusFile })[name],
   );
 
+// What a planning session is told when its questions are answered: the answers it must read in the
+// status file (named by id, never quoted), the docs to update, and when to set `done`.
+const answerNotice = (key, statusFile, ids, resent) =>
+  [
+    `The user has answered the open questions for ticket ${key}: ` +
+      `${resent ? 'changed answers' : 'answers'} to questions ${ids.join(', ')}. Read them in ` +
+      `\`${statusFile}\`, in \`questions[].answer\`: they are the user's decisions.`,
+    `Update the docs under \`.orchestrator/${key.toLowerCase()}/\` (plan, checklist, spec) ` +
+      'wherever the answers change anything, and adjust the plan if necessary. Do not ' +
+      'implement anything: stop at the approval gate.',
+    `Finish: your very last action is to edit \`${statusFile}\` and change only ` +
+      '`"done": false` to `"done": true`. Re-read the file just before the edit, never rewrite ' +
+      'or reformat it, and leave `"investigate-and-plan"` as it is. If an answer raises a new ' +
+      'question, append it to `questions` with `"answer": null`, do not set `done`, and stop.',
+  ].join('\n\n');
+
+// Why a send that did not go through failed: how a stop that did not stop and a resume that did not
+// deliver are reported. A resume that listed no such session routed nothing, so it fails too.
+const STOP_FAILURES = { not_idle: 'session_running', not_listed: 'session_not_found' };
+const sendFailed = (reason) => ({ status: 'failed', reason });
+function resumeFailure({ status, reason }) {
+  if (status === 'delivered') return reason === 'not_listed' ? 'session_not_found' : null;
+  return status === 'waiting' ? 'live_at_resume' : 'resume_failed';
+}
+
 const invalid = (code, message) => Object.assign(new Error(message), { code, status: 400 });
 const refused = (reason) =>
   Object.assign(new Error('Claude action refused.'), {
@@ -125,6 +156,7 @@ export function createClaudeLauncher({
   home = os.homedir(),
   fs = fsDefault,
   now = Date.now,
+  timers = { setTimeout, clearTimeout },
 }) {
   const launchDirectory = path.join(home, 'pathwise');
   const locks = new Map();
@@ -294,8 +326,9 @@ export function createClaudeLauncher({
   }
 
   // The body's [id, text] pairs: a plain object of at most 20 entries, each a question id and a
-  // text of at most 2000 characters.
+  // text of at most 2000 characters. An empty list is no pairs: it saves nothing and retries a send.
   function readAnswers(answers) {
+    if (Array.isArray(answers) && answers.length === 0) return [];
     const pairs =
       answers && typeof answers === 'object' && !Array.isArray(answers)
         ? Object.entries(answers)
@@ -305,6 +338,48 @@ export function createClaudeLauncher({
     if (!pairs || pairs.length > ANSWER_LIMIT || !pairs.every(isAnswer))
       throw invalid('INVALID_ANSWER', 'Invalid answers.');
     return pairs;
+  }
+
+  // Routes the saved answers back to the planning session that asked, when every question has one
+  // and they differ from the last send. The answers are saved already, so a send that cannot be made
+  // only reports why and the next save retries it; nothing is rolled back and `sent` is recorded
+  // only once the resume delivered.
+  async function sendAnswers(key) {
+    const status = readObject(statusPath(key)).value;
+    const launched = readObject(launchPath(key)).value;
+    const plan = answersToSend(status, launched);
+    if (plan.skip) return { status: 'skipped', reason: plan.skip };
+
+    const listing = await claudeSessions.entries({ fresh: true });
+    if (!listing) return sendFailed('listing_unavailable');
+    const record = readLaunch(launched).find(({ phase }) => phase === INVESTIGATE);
+    const session = resolveSession(listing, record);
+    if (!session) return sendFailed('session_not_found');
+    // A live session is resumed only once it is stopped, and `stop` refuses one that is not idle. A
+    // resume right after a stop forks a copy of the session, so the stop gets time to settle first.
+    if (typeof session.pid === 'number') {
+      const stopped = await claudeSessions.stop({ sessionId: session.sessionId });
+      if (stopped.status !== 'stopped')
+        return sendFailed(STOP_FAILURES[stopped.status] ?? 'resume_failed');
+      await new Promise((resolve) => {
+        timers.setTimeout(resolve, SETTLE_MS).unref?.();
+      });
+    }
+
+    // `done` is reset before the resume, so a session that finishes at once and sets it again is
+    // never overwritten afterwards.
+    writeJson(statusPath(key), { ...status, done: false });
+    const notice = answerNotice(key, statusPath(key), plan.changed, Boolean(record.sent));
+    const result = await claudeSessions.resume({ sessionId: session.sessionId, notice });
+    const reason = resumeFailure(result);
+    if (reason) return sendFailed(reason);
+
+    const sent = { at: new Date(now()).toISOString(), answers: plan.hashes };
+    writeJson(launchPath(key), {
+      ...launched,
+      [INVESTIGATE]: { ...launched[INVESTIGATE], sent },
+    });
+    return { status: 'sent' };
   }
 
   async function answerLocked(key, pairs) {
@@ -331,12 +406,18 @@ export function createClaudeLauncher({
       else delete answered[question.id];
     }
     // status.json first: if the second write fails the answer stays unrecorded, so unanswered.
-    writeJson(statusPath(key), value);
-    writeJson(launchPath(key), {
-      ...launched.value,
-      [current.phase]: { ...launched.value[current.phase], answered },
-    });
-    return { ok: true, key, ticket: ticketEntry(key, entries) };
+    if (pairs.length) {
+      writeJson(statusPath(key), value);
+      writeJson(launchPath(key), {
+        ...launched.value,
+        [current.phase]: { ...launched.value[current.phase], answered },
+      });
+    }
+    const send = await sendAnswers(key);
+    // A delivered send has the session working again, which the first listing cannot show.
+    const listing =
+      send.status === 'sent' ? await claudeSessions.entries({ fresh: true }) : entries;
+    return { ok: true, key, send, ticket: ticketEntry(key, listing) };
   }
 
   async function answer({ key, answers }) {

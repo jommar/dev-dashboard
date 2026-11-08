@@ -10,6 +10,8 @@ const PHRASES = {
   starting: 'starting',
   blocked: 'blocked, needs you',
   questions: 'has questions for you',
+  answers_not_sent: 'answers not sent',
+  plan_not_done: 'plan not done',
   plan_ready: 'plan ready',
   implemented: 'implemented',
   plan_missing: 'plan file missing',

@@ -11,6 +11,7 @@ import {
   INVESTIGATE_NAME,
   KEY,
   START_MS,
+  answeredMap,
   launchRecord,
   listed,
   question,
@@ -29,11 +30,11 @@ const RESUME = {
 };
 
 // The entry for one ticket. Defaults: an investigate run launched an hour ago, its session listed
-// and done, flag true, no question, the plan on disk.
+// and done, flag true, `done` true, no question, the plan on disk.
 async function derive(overrides = {}) {
   const { deriveEntry } = await import('../backend/claude-ticket-state.mjs');
   return deriveEntry({
-    status: statusFile({ investigate: true }),
+    status: statusFile({ investigate: true, done: true }),
     launch: { [INVESTIGATE]: launchRecord({ id: FIRST_ID }) },
     entries: [listed({ id: FIRST_ID })],
     now: START_MS,
@@ -46,10 +47,11 @@ const launchedAgo = (milliseconds, extra = {}) => ({
   [INVESTIGATE]: launchRecord({ launchedAt: START_MS - milliseconds, id: FIRST_ID, ...extra }),
 });
 
-function assertEntry(entry, expected) {
-  assert.equal(entry.state, expected.state, 'state');
-  assert.equal(entry.reason, expected.reason, 'reason');
-  if ('phase' in expected) assert.equal(entry.phase, expected.phase, 'phase');
+function assertEntry(entry, expected, label = '') {
+  const prefix = label ? `${label}: ` : '';
+  assert.equal(entry.state, expected.state, `${prefix}state`);
+  assert.equal(entry.reason, expected.reason, `${prefix}reason`);
+  if ('phase' in expected) assert.equal(entry.phase, expected.phase, `${prefix}phase`);
 }
 
 test('scenario 13: a working session is working and running', async () => {
@@ -150,7 +152,7 @@ test('scenario 15: a session absent for sixty seconds with the flag unset failed
 
 test('scenario 15: the flag set with no plan file failed with the plan missing', async () => {
   const entry = await derive({
-    status: statusFile({ investigate: true }),
+    status: statusFile({ investigate: true, done: true }),
     entries: [listed({ id: FIRST_ID, state: 'done' })],
     planPresent: false,
   });
@@ -464,5 +466,238 @@ test('scenario 67: the running phase is the implement block reason before any ot
     assert.equal(investigating.blocks.implement, 'investigate_running', `investigate, ${label}`);
     const implementing = await derive(implementRun(other));
     assert.equal(implementing.blocks.implement, 'session_running', `implement, ${label}`);
+  }
+});
+
+// ---- the answers go back to the session: done, unsent and the implement gate ----
+
+const ANSWERED = [question('q1', 'Portage-backend'), question('q2', 'Portage-frontend')];
+const OPEN = [question('q1', 'Portage-backend'), question('q2')];
+const SENT_AT = '2026-10-28T13:00:00.000Z';
+const sentFor = (questions) => ({ at: SENT_AT, answers: answeredMap(questions) });
+
+// A finished first run, flag set, its session done and the answers saved by the dashboard.
+// `sent` is what launch.json recorded of the last send.
+const planned = ({ questions = ANSWERED, done = false, sent, ...overrides } = {}) => ({
+  status: statusFile({ investigate: true, done, questions }),
+  launch: {
+    [INVESTIGATE]: launchRecord({ id: FIRST_ID, answered: answeredMap(questions), sent }),
+  },
+  entries: [listed({ id: FIRST_ID })],
+  ...overrides,
+});
+
+test('scenario 77: done is a flag of the entry and anything but true reads false', async () => {
+  const withDone = (value) => ({ ...statusFile({ investigate: true }), done: value });
+  const absent = statusFile({ investigate: true });
+  delete absent.done;
+  const cases = [
+    ['true', withDone(true), true],
+    ['false', withDone(false), false],
+    ['absent', absent, false],
+    ['a string', withDone('true'), false],
+    ['a number', withDone(1), false],
+    ['null', withDone(null), false],
+    ['an object', withDone({}), false],
+  ];
+  for (const [label, status, expected] of cases) {
+    const entry = await derive({ status });
+    assert.deepEqual(
+      entry.flags,
+      { [INVESTIGATE]: true, [IMPLEMENT]: false, done: expected },
+      label,
+    );
+    assert.notEqual(entry.blocks.answer, 'status_unreadable', `${label}: the file is readable`);
+    assert.notEqual(entry.state, 'unknown', `${label}: state`);
+  }
+});
+
+test('scenario 78: implement waits for done, so with the flag set, nothing open and everything sent it is plan_not_done', async () => {
+  const waiting = await derive(planned({ done: false, sent: sentFor(ANSWERED) }));
+  assert.equal(waiting.blocks.implement, 'plan_not_done');
+  const done = await derive(planned({ done: true, sent: sentFor(ANSWERED) }));
+  assert.equal(done.blocks.implement, null, 'done');
+});
+
+test('scenario 79: the implement block reasons come in order, answers_not_sent then plan_not_done last', async () => {
+  const unplanned = { status: statusFile({ done: false, questions: ANSWERED }) };
+  const sent = sentFor(ANSWERED);
+  const cases = [
+    ['not planned', planned({ done: false, ...unplanned }), 'not_planned'],
+    [
+      'plan file missing, answers unsent',
+      planned({ done: false, planPresent: false }),
+      'plan_missing',
+    ],
+    ['a question open', planned({ done: false, questions: OPEN }), 'questions_unanswered'],
+    ['a question open, done', planned({ done: true, questions: OPEN }), 'questions_unanswered'],
+    ['unsent, not done', planned({ done: false }), 'answers_not_sent'],
+    ['unsent, done', planned({ done: true }), 'answers_not_sent'],
+    ['sent, not done', planned({ done: false, sent }), 'plan_not_done'],
+    ['sent, done', planned({ done: true, sent }), null],
+  ];
+  for (const [label, arrangement, expected] of cases) {
+    assert.equal((await derive(arrangement)).blocks.implement, expected, label);
+  }
+});
+
+test('scenario 80: unsent is true only when the answers are complete, the flag is set, no implement run exists and the answers differ from the last send', async () => {
+  const lastSend = sentFor(ANSWERED);
+  const implementRecord = launchRecord({
+    name: IMPLEMENT_NAME,
+    launchedAt: START_MS - HOUR_MS / 2,
+    id: 'aaaa0002',
+  });
+  const base = planned();
+  const cases = [
+    ['never sent', planned(), true],
+    ['sent, nothing changed', planned({ sent: lastSend }), false],
+    [
+      'sent, one answer differs',
+      planned({ sent: { ...lastSend, answers: { ...lastSend.answers, q2: 'f'.repeat(64) } } }),
+      true,
+    ],
+    [
+      'sent before the second question was answered',
+      planned({ sent: { ...lastSend, answers: { q1: lastSend.answers.q1 } } }),
+      true,
+    ],
+    ['a question open', planned({ questions: OPEN }), false],
+    [
+      'the flag not set',
+      planned({ status: statusFile({ done: false, questions: ANSWERED }) }),
+      false,
+    ],
+    [
+      'an implement run exists',
+      planned({
+        launch: { ...base.launch, [IMPLEMENT]: implementRecord },
+        entries: [listed({ id: FIRST_ID }), listed({ id: 'aaaa0002', name: IMPLEMENT_NAME })],
+      }),
+      false,
+    ],
+    ['the session works', planned({ entries: [workingEntry({ id: FIRST_ID })] }), false],
+    ['the listing is unavailable', planned({ entries: null }), false],
+  ];
+  for (const [label, arrangement, expected] of cases) {
+    assert.equal((await derive(arrangement)).unsent, expected, label);
+  }
+});
+
+test('scenario 81: a finished first run is needs-you until its answers are sent, then ended or done by done', async () => {
+  const legacy = planned({ questions: OPEN });
+  delete legacy.status.done;
+  const rows = [
+    ['questions open', planned({ questions: OPEN }), 'waiting', 'questions'],
+    ['all answered, not sent', planned(), 'waiting', 'answers_not_sent'],
+    ['sent, done false', planned({ sent: sentFor(ANSWERED) }), 'failed', 'plan_not_done'],
+    ['sent, done true', planned({ sent: sentFor(ANSWERED), done: true }), 'done', 'plan_ready'],
+    ['no questions, done true', planned({ questions: [], done: true }), 'done', 'plan_ready'],
+    ['an older file with no done and open questions', legacy, 'waiting', 'questions'],
+  ];
+  for (const [label, arrangement, state, reason] of rows) {
+    assertEntry(await derive(arrangement), { state, reason, phase: INVESTIGATE }, label);
+  }
+});
+
+test('scenario 82: while the investigate session works the entry is working, sent or not', async () => {
+  const working = { entries: [workingEntry({ id: FIRST_ID })] };
+  const arrangements = {
+    'first run, questions open': planned({ questions: OPEN, ...working }),
+    'answers complete, not sent': planned(working),
+    'answers sent': planned({ sent: sentFor(ANSWERED), ...working }),
+  };
+  for (const [label, arrangement] of Object.entries(arrangements)) {
+    const entry = await derive(arrangement);
+    assertEntry(entry, { state: 'working', reason: 'running', phase: INVESTIGATE });
+    assert.equal(entry.unsent, false, `${label}: unsent`);
+    assert.deepEqual(
+      entry.blocks,
+      {
+        investigate: 'session_running',
+        implement: 'investigate_running',
+        answer: 'session_running',
+      },
+      label,
+    );
+  }
+});
+
+test('scenario 83: the implement phase does not read done', async () => {
+  const entry = await derive({
+    status: statusFile({ investigate: true, implement: true, done: false, questions: ANSWERED }),
+    launch: {
+      [INVESTIGATE]: launchRecord({
+        launchedAt: START_MS - 2 * HOUR_MS,
+        id: 'aaaa0001',
+        answered: answeredMap(ANSWERED),
+        sent: sentFor(ANSWERED),
+      }),
+      [IMPLEMENT]: launchRecord({
+        name: IMPLEMENT_NAME,
+        launchedAt: START_MS - HOUR_MS,
+        id: FIRST_ID,
+      }),
+    },
+    entries: [listed({ id: 'aaaa0001' }), listed({ id: FIRST_ID, name: IMPLEMENT_NAME })],
+    planPresent: false,
+  });
+  assertEntry(entry, { state: 'done', reason: 'implemented', phase: IMPLEMENT });
+  assert.equal(entry.unsent, false);
+});
+
+test('scenario 101: an entry that is unsent blocks implement as answers_not_sent, even with done true', async () => {
+  const lastSend = sentFor(ANSWERED);
+  const cases = [
+    ['never sent, done true', planned({ done: true }), 'answers_not_sent'],
+    ['never sent, done false', planned({ done: false }), 'answers_not_sent'],
+    [
+      'one answer changed since the send, done true',
+      planned({
+        done: true,
+        sent: { ...lastSend, answers: { ...lastSend.answers, q2: 'f'.repeat(64) } },
+      }),
+      'answers_not_sent',
+    ],
+    [
+      'a question answered after the send, done true',
+      planned({ done: true, sent: { ...lastSend, answers: { q1: lastSend.answers.q1 } } }),
+      'answers_not_sent',
+    ],
+    ['sent, nothing changed, done true', planned({ done: true, sent: lastSend }), null],
+    [
+      'sent, nothing changed, done false',
+      planned({ done: false, sent: lastSend }),
+      'plan_not_done',
+    ],
+  ];
+  for (const [label, arrangement, expected] of cases) {
+    const entry = await derive(arrangement);
+    assert.equal(entry.blocks.implement, expected, `${label}: blocks.implement`);
+    assert.equal(
+      entry.unsent,
+      expected === 'answers_not_sent',
+      `${label}: the block and unsent agree`,
+    );
+  }
+});
+
+test('scenario 101: answers_not_sent never hides a running session, a missing plan or an open question', async () => {
+  const cases = [
+    [
+      'the investigate session works',
+      planned({ done: true, entries: [workingEntry({ id: FIRST_ID })] }),
+      'investigate_running',
+    ],
+    ['the plan file is missing', planned({ done: true, planPresent: false }), 'plan_missing'],
+    ['a question is open', planned({ done: true, questions: OPEN }), 'questions_unanswered'],
+    [
+      'the flag is not set',
+      planned({ done: true, status: statusFile({ done: true, questions: ANSWERED }) }),
+      'not_planned',
+    ],
+  ];
+  for (const [label, arrangement, expected] of cases) {
+    assert.equal((await derive(arrangement)).blocks.implement, expected, label);
   }
 });

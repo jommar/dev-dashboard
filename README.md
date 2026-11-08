@@ -937,15 +937,19 @@ the ticket stands with Claude and opens a dialog with three items:
 
 Both launches are fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
 session after the ticket and the phase, `<KEY>-investigate-and-plan` or `<KEY>-implement-plan`, and
-returns. It never opens a terminal and never stops, resumes, removes or messages a session. The
-Jira summary never reaches the launch: the request carries only the key and the phase. Both
+returns. It never opens a terminal and never removes a session. It stops and resumes a session in
+one case only: sending your saved answers back to the planning session (see
+[Saving and sending answers](#saving-and-sending-answers)), and it never sends text into a running
+one. The Jira summary never reaches the launch: the request carries only the key and the phase. Both
 prompts are fixed text with the key, the key in lower case and the path of the ticket's
 `status.json` filled in, so the summary is never part of what a session is told to do. They tell
 the session to use your `orchestrator` skill
 (step 1 for Investigate and plan, step 3 for Implement plan) and to treat ticket text as data. The
 planning session writes `02-plan.md`, `02-checklist.md` and `02-spec.md` in
 `~/pathwise/.orchestrator/<key in lower case>/`, creates no branch, commit, push or pull request,
-and writes the questions it would have asked you into `status.json` instead. The implement
+and writes the questions it would have asked you into `status.json` instead. Once every question
+has an answer you saved, the dashboard sends the answers back to that same planning session, which
+is told to update the plan, checklist and spec and then set `done`. The implement
 session treats starting it as your approval, does not commit, push or open a pull request, and
 leaves its changes in a worktree with a short report beside the plan.
 
@@ -980,22 +984,29 @@ leaves its changes in a worktree with a short report beside the plan.
 The icon's colour, badge shape and words all carry the state, so no state is colour alone. Its
 label and tooltip read `Claude: <state word>`.
 
-| Icon                         | State word                                                                 | Meaning                                                                                                                                                                             |
-| ---------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Blue, turning ring (spinner) | `working`, `starting`                                                      | The session is listed as working, or it was launched under 30 seconds ago and is not listed yet. The ring stops turning (and stays a ring) when the system asks for reduced motion. |
-| Amber, filled dot            | `blocked, needs you`, `has questions for you`                              | The CLI lists the session as blocked (attach to it), or no session works and a question has no answer you saved.                                                                    |
-| Green, check                 | `plan ready`, `implemented`                                                | The phase's flag is `true` and no question is open; for `plan ready` the plan file `02-plan.md` exists.                                                                             |
-| Red, cross                   | `plan file missing`, `ended without finishing`, `session no longer listed` | The planning flag is `true` but there is no `02-plan.md`; the session finished without setting its flag; or it has been unlisted for 30 seconds or more without setting its flag.   |
-| Muted, no badge              | `not started`, `status unavailable`                                        | Nothing was launched for the ticket; or the CLI listing failed or showed a state the dashboard does not know.                                                                       |
+| Icon                         | State word                                                                 | Meaning                                                                                                                                                                                                         |
+| ---------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Blue, turning ring (spinner) | `working`, `starting`                                                      | The session is listed as working, or it was launched under 30 seconds ago and is not listed yet. The ring stops turning (and stays a ring) when the system asks for reduced motion.                             |
+| Amber, filled dot            | `blocked, needs you`, `has questions for you`                              | The CLI lists the session as blocked (attach to it), or no session works and a question has no answer you saved.                                                                                                |
+| Amber, filled dot            | `answers not sent`                                                         | Every question has an answer you saved and the plan flag is `true`, but the answers (or a change to them) have not been sent to the session. **Save answers** sends them; until then Implement plan is blocked. |
+| Green, check                 | `plan ready`, `implemented`                                                | The phase's flag is `true` and no question is open; for `plan ready` the plan file `02-plan.md` exists, `done` is `true` and nothing is waiting to be sent.                                                     |
+| Red, cross                   | `plan file missing`, `ended without finishing`, `session no longer listed` | The planning flag is `true` but there is no `02-plan.md`; the session finished without setting its flag; or it has been unlisted for 30 seconds or more without setting its flag.                               |
+| Red, cross                   | `plan not done`                                                            | The plan flag is `true`, the plan file exists and nothing is waiting to be sent, but the session has not set `done`. Check the session before implementing.                                                     |
+| Muted, no badge              | `not started`, `status unavailable`                                        | Nothing was launched for the ticket; or the CLI listing failed or showed a state the dashboard does not know.                                                                                                   |
 
 The icon shows the ticket's current phase, the one launched last. The dialog opens from it as a
 native modal: the ticket key and summary, the state word, then the three items. A disabled item
 says why beside it, for example `A Claude session is already running for this ticket.` When the
 state is `plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows
 beside **Implement plan**, because starting it is your approval. When the planning session asked
-questions, the dialog also shows one text input per question with your saved answer filled in,
-and **Save answers**, which sends only the answers you changed. The inputs are disabled while a
-session works or the status is unavailable. Escape and a click on the backdrop close the dialog.
+questions, the dialog also shows one text input per question with your saved answer filled in, a
+count (`N of M answered`), a reminder that nothing is sent to the session until every question has
+an answer, and **Save answers**. It saves only the answers you changed and, when every question has
+one, sends them to the session (see [Saving and sending answers](#saving-and-sending-answers)); a
+line under the button says what the save did. **Save answers** is enabled when you changed an
+answer, or when every question is answered but the answers were not sent (the retry). The inputs
+are disabled while a session works or the status is unavailable. Escape and a click on the
+backdrop close the dialog.
 
 The board reads every ticket's state from one `GET /api/claude/tickets` every 15 seconds while the
 My Tickets tab is open and the page is visible, and straight after a launch or a save.
@@ -1026,20 +1037,30 @@ flight. nodemon reads the file only at start-up, so restart `npm run dev` once a
 {
   "investigate-and-plan": false,
   "implement-plan": false,
+  "done": false,
   "questions": [{ "id": "q1", "question": "Which repo owns the fix?", "answer": null }]
 }
 ```
 
 - **The session** writes `questions` (once, near the end of planning, or by appending one object
   when Implement is blocked by something the plan and your answers do not settle) and changes its
-  own flag to `true` as its very last action, after everything else is saved.
-- **The dashboard** creates the file at an Investigate launch with both flags `false` and no
-  questions, replacing any earlier file (a re-run resets it). At an Implement launch it rewrites
-  the file from what it can read: the planning flag `true`, the implement flag `false` and the
-  first 20 readable questions, each whole, with `answer` kept only where you saved that answer;
-  anything else a session left in the file is dropped. Otherwise it writes only the `answer` of an
-  existing question, when you save.
-- **Reads are defensive.** A flag counts only when it is exactly `true`. A question is read only
+  own flag to `true` as its very last action, after everything else is saved. `done` is also the
+  session's: it means the planning phase is complete, every question answered and the plan,
+  checklist and spec updated. A planning session that asked no questions sets `done` to `true` in
+  the same edit as its flag; one that asked questions leaves it `false` and sets it `true`, as its
+  very last action, after the answers have been sent to it (see
+  [Saving and sending answers](#saving-and-sending-answers)). The dashboard never sets `done` to
+  `true`.
+- **The dashboard** creates the file at an Investigate launch with both flags `false`, `done`
+  `false` and no questions, replacing any earlier file (a re-run resets it). At an Implement
+  launch it rewrites the file from what it can read: the planning flag `true`, the implement flag
+  `false`, `done` as the session left it and the first 20 readable questions, each whole, with
+  `answer` kept only where you saved that answer; anything else a session left in the file is
+  dropped. When it sends answers it sets `done` to `false` first. Otherwise it writes only the
+  `answer` of an existing question, when you save.
+- **Reads are defensive.** A flag counts only when it is exactly `true`, and so does `done`: a file
+  with no `done`, or one that is not a boolean, reads as `done: false` (it is not unreadable), so a
+  `status.json` written before the field existed reads `false`. A question is read only
   when its `id` matches `^[A-Za-z0-9_-]{1,32}$` and its `question` is a string; the board shows at
   most 20 questions, each cut to 500 characters, as plain text. A file over 1 MiB, or one that is
   not a JSON object, is unreadable: the card shows no flags and no questions, every action that
@@ -1054,7 +1075,8 @@ which session belongs to which phase and a re-run reuses its session name.
     "name": "ABC-123-investigate-and-plan",
     "launchedAt": 1731100000000,
     "id": "ab12cd34",
-    "answered": { "q1": "<sha-256 hex of the id, question and answer you saved>" }
+    "answered": { "q1": "<sha-256 hex of the id, question and answer you saved>" },
+    "sent": { "at": "<ISO time>", "answers": { "q1": "<the same hash, at the time of the send>" } }
   },
   "implement-plan": { "name": "ABC-123-implement-plan", "launchedAt": 1731100500000, "id": null }
 }
@@ -1067,8 +1089,12 @@ the recorded name that started at or after `launchedAt`. The two phases have dif
 one phase's session is never taken for the other's, and a session of the same name started by hand
 earlier is never taken for either. Sessions launched before names were per phase keep their old
 name and are still tracked by their saved `id` (or, with none saved, by that recorded name). An
-Investigate launch drops the `implement-plan` entry. `answered` appears once you save an answer
-(see below).
+Investigate launch drops the `implement-plan` entry, and with the rest of the investigate record
+whatever `sent` it held. `answered` appears once you save an answer (see below). `sent` is on the
+investigate record only. It is written when answers were really delivered to the session, and again
+at each re-send, and holds the time and the hash of every question (the same hash as `answered`)
+at that moment. It is written only after the resume succeeded, so a failed send leaves it as it
+was.
 
 Folders are mode `0700` and files `0600`, and every dashboard write is a temp file, fsync and
 rename, under one lock per ticket. The dashboard writes only while no session works, and a session
@@ -1080,12 +1106,93 @@ The plan counts as present when `02-plan.md` is a regular file in
 `~/pathwise/.orchestrator/<key in lower case>/`, the workspace the planning prompt pins. It is
 checked only when the planning flag is `true` and when Implement plan launches.
 
+### Saving and sending answers
+
+**Save answers** always saves first: each changed answer goes into `status.json`, with its hash in
+`launch.json`. A save with nothing changed (`answers: []`) saves nothing. Partial answers just save
+and send nothing, so you can answer one question and come back. Then, in the same request, the
+dashboard decides whether to send the answers to the planning session. It sends only when all of
+these hold; otherwise the reply says `send: { status: "skipped", reason }` with the first that
+fails:
+
+1. Every question has an answer you saved (`incomplete`; a ticket with no questions never sends).
+2. The planning flag is `true` (`not_planned`).
+3. Implement plan has never been launched for the ticket (`implement_started`: after that, answers
+   only save).
+4. At least one answer is new or differs from what was last sent (`unchanged` otherwise), judged
+   by the hash in `sent`. So a save that changes nothing never re-sends answers that were already
+   delivered (after a failed send, where `sent` was never recorded, the same save sends them), and
+   typing a cleared answer back as it was restores `unchanged`.
+
+To send, the dashboard reads a fresh listing and finds the planning session by its saved `id`, or
+with none saved by its recorded name (`listing_unavailable`, `session_not_found`). A session with
+a process is stopped first, which the existing stop does only for an idle one: a busy session
+fails the send as `session_running`, one that is no longer listed as `session_not_found`, and any
+other stop failure as `resume_failed`. After a stop the dashboard waits the settle gap, 15 seconds
+(`SETTLE_MS`, the constant the Slack wake uses), before it goes on; a session with no process
+(already finished) is resumed with no wait. It then sets `done` to `false` in `status.json` (before
+the resume, so a session that finishes at once and sets it `true` is never overwritten) and
+resumes the same session with a notice. The Save request waits for all of this, so it can take
+about 15 seconds when a live session had to be stopped, and the ticket stays locked meanwhile. Only
+after the CLI delivered the resume does the dashboard record `sent`; a resume that found no such
+session counts as `session_not_found`, a session still live at that moment as `live_at_resume`,
+and anything else (including the CLI reporting that it started a copy) as `resume_failed`.
+
+The notice names the ticket, says you answered the open questions, lists the ids (it reads
+"answers to questions q1, q2" the first time and "changed answers to questions q2" after a send,
+naming the answers that are new or differ from the last send) and points at `status.json`, where
+the answers are in `questions[].answer`. It never contains answer text. It tells the session to
+update the plan, checklist and spec under `.orchestrator/<key in lower case>/` wherever the
+answers change anything, to implement nothing and stop at the approval gate, and to set `done` to
+`true` as its very last action, changing only that key. If an answer raises a new question, it
+appends it with `answer: null`, leaves `done` `false` and stops.
+
+The reply is `{ ok, key, send, ticket }` with `send` `{ status, reason? }`, `status` being `sent`,
+`skipped` or `failed`. A failed send is not an HTTP error: the answers stay saved (they are never
+rolled back), `sent` is not recorded, and the call answers `200` with `send.status` `failed`. The
+next **Save answers** retries it, with or without edits: with nothing changed the dialog posts
+`answers: []`, which saves nothing and runs the same decision. After a save the dialog shows one of:
+
+| `send`                         | The dialog says                                                                                           |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `sent`                         | `Answers sent. Claude is updating the plan.`                                                              |
+| `skipped`, `incomplete`        | `Saved. N questions still need an answer; nothing was sent.` (`1 question still needs an answer` for one) |
+| `skipped`, `unchanged`         | `Saved. The answers had not changed, so nothing was sent.`                                                |
+| `skipped`, `not_planned`       | `Saved. The plan is not ready yet, so nothing was sent.`                                                  |
+| `skipped`, `implement_started` | `Saved. Implement plan has started, so nothing was sent.`                                                 |
+| `failed`, with a reason below  | `Answers saved, but they could not be sent: <reason>. Save again to retry.`                               |
+
+The reason in that last line is the dialog's sentence for the code, without its closing full stop:
+`Claude status is unavailable` (`listing_unavailable`), `The Claude session could not be found`
+(`session_not_found`), `A Claude session is already running for this ticket` (`session_running`),
+`The Claude session is still running` (`live_at_resume`) or `The Claude session could not be
+resumed` (`resume_failed`). A save is still refused (`CLAUDE_REFUSED`, `session_running`) while a
+session works.
+
+Limits:
+
+- **Planning session only.** Answers are sent to the `investigate-and-plan` session. After an
+  Implement launch they only save.
+- **The settle gap is a design constant.** The 15 seconds after a stop are the Slack wake's
+  `SETTLE_MS` (see [Watch](#watch)), not a measured timing there or here. The watcher's record is
+  that a resume 3 seconds after a stop started a copy and one 10 seconds after continued. That no
+  copy appears here is not checked against the real CLI (see the manual check). A copy makes the
+  send fail as `resume_failed`, and it may exist.
+- **A crash can send twice.** A crash between a successful resume and recording `sent` leaves
+  `sent` as it was, so the next **Save answers** sends the same notice again. So does a failed
+  write of `launch.json` there, which reaches you as an HTTP error rather than `send.failed`.
+- **`done` is the session's word.** A planning session that never sets it shows red
+  (`plan not done`) and cannot unlock Implement plan, and an old `status.json` with no `done` reads
+  `false`.
+
 ### Answers and the Implement gate
 
 **Implement plan** launches only when the status file is readable (`status_unreadable`), the
-planning flag is `true` (`not_planned`), the plan file exists (`plan_missing`) and no question is
-unanswered (`questions_unanswered`), and neither phase's session works (`session_running` or
-`investigate_running`, which come first). A refused launch starts nothing and changes no file.
+planning flag is `true` (`not_planned`), the plan file exists (`plan_missing`), no question is
+unanswered (`questions_unanswered`), no answer is waiting to be sent (`answers_not_sent`) and
+`done` is `true` (`plan_not_done`), in that order, and neither phase's session works
+(`session_running` or `investigate_running`, which come first). A refused launch starts nothing
+and changes no file.
 
 For each answer you save, the dashboard records a hash of it (SHA-256 of the question id, the
 question text and the answer, untrimmed) in `launch.json` and counts an answer only when its text
@@ -1102,26 +1209,33 @@ dialog shows its path) and the answers you saved yourself.
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/claude/tickets`  | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below) |
 | `POST /api/claude/launch`  | body `{ key, phase }`; answers `{ ok: true, key, phase, name, id, ticket }`                                                                    |
-| `POST /api/claude/answers` | body `{ key, answers }`; answers `{ ok: true, key, ticket }`                                                                                   |
+| `POST /api/claude/answers` | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                             |
 
 `tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
 board shows it as not started). With no ticket folder the route answers without running the CLI;
 otherwise concurrent callers share one `claude agents --json --all`. An entry is
-`{ phase, state, reason, flags, questions[], unanswered, blocks, goTo }`:
+`{ phase, state, reason, flags, questions[], unanswered, unsent, blocks, goTo }`:
 
 - `phase` is `investigate-and-plan`, `implement-plan` or `null` (nothing launched). `flags` holds
-  the two flags as read.
+  the two phase flags and `done`, as read (`done` is `false` when missing).
 - `state` is `none`, `working`, `waiting`, `done`, `failed` or `unknown`, and `reason` refines it:
-  `running`, `starting`, `blocked`, `questions`, `plan_ready`, `implemented`, `plan_missing`,
-  `ended_without_flag`, `session_missing`, `listing_unavailable`, `unrecognised_state` or `null`
-  (for `none`). The icon's state word comes from `reason`.
+  `running`, `starting`, `blocked`, `questions`, `answers_not_sent` (`waiting`), `plan_ready`,
+  `implemented`, `plan_missing`, `plan_not_done` (`failed`), `ended_without_flag`,
+  `session_missing`, `listing_unavailable`, `unrecognised_state` or `null` (for `none`). The
+  icon's state word comes from `reason`.
 - Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
   `unanswered` counts the open ones.
 - `blocks` is `{ investigate, implement, answer }`, each a reason string or `null` (why that
   action is refused now). It is what the dialog words beside a disabled item. While Investigate
   and plan runs it is `session_running`, `investigate_running` and `session_running`; while
   Implement plan runs it is `implement_running`, `session_running` and `session_running`. The
-  running reason comes before `not_planned`, `plan_missing` and `questions_unanswered`.
+  running reason comes before `not_planned`, `plan_missing`, `questions_unanswered`,
+  `answers_not_sent` and `plan_not_done`, in that order. So `blocks.implement` is
+  `answers_not_sent` when no question is open but the answers are waiting to be sent, and
+  `plan_not_done` when they are sent (or nothing is waiting) and `done` is not `true`.
+- `unsent` is `true` when the answers are complete, the plan flag is `true`, Implement plan was
+  never launched, they differ from the last send and no session works: the conditions under which
+  a **Save answers** would send. The same conditions make `answers_not_sent` the Implement block.
 - `goTo` is `{ kind, command }`, with `kind` `attach` or `resume`, or `null`.
 
 `launch` takes `phase` `investigate-and-plan` or `implement-plan`; a leftover `summary` property in
@@ -1130,7 +1244,9 @@ the body is ignored. Its answer has `name` (the phase's session name), `id` (the
 refreshed entry). `answers` takes
 `{ "<question id>": "<text>" }` with at most 20 entries, each text at most 2000 characters and an
 empty text clearing that answer; only the `answer` of an existing question changes, and nothing is
-written when any entry is invalid.
+written when any entry is invalid. The empty array `[]` is also accepted: it saves nothing and runs
+the send decision (the retry). The reply's `send` is described under
+[Saving and sending answers](#saving-and-sending-answers).
 
 The three routes bypass the `SETUP_REQUIRED` gate like the Slack routes, because they need
 neither GitHub nor Jira. They run behind the same Host, Origin, `Sec-Fetch-Site` and JSON
@@ -1138,12 +1254,12 @@ neither GitHub nor Jira. They run behind the same Host, Origin, `Sec-Fetch-Site`
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 `Cache-Control: no-store`. Failures answer `{ code, error, errors[] }`, with `errors[0]` the reason:
 
-| Status | Code             | When                                                                                                                                                                                                             |
-| ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase                                                                                                                                           |
-| `400`  | `INVALID_ANSWER` | `answers` is not a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record |
-| `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered` or `status_unreadable`                                           |
-| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist) or `spawn_failed`                                       |
+| Status | Code             | When                                                                                                                                                                                                                          |
+| ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase                                                                                                                                                        |
+| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record |
+| `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done` or `status_unreadable`                   |
+| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist) or `spawn_failed`                                                    |
 
 `INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt and the
 name are never logged or returned beyond the validated `id` and the computed `name`.
@@ -1155,7 +1271,9 @@ launcher (use a throwaway ticket):
 
 1. With `~/pathwise` trusted, click **Investigate and plan**. Confirm the session starts, the icon
    shows the turning ring, questions (if any) appear in the dialog, and `claude/<KEY>/status.json`
-   shows `"investigate-and-plan": true` when the session finishes, with the icon green.
+   shows `"investigate-and-plan": true` when the session finishes. With no questions `done` is
+   `true` too and the icon is green; with questions the icon is amber (`has questions for you`)
+   and `done` is `false`.
 2. Copy **Go to session** for a live, a blocked and a finished session and run each in a terminal.
    Confirm `claude attach <id>` works for a blocked session and that
    `cd ~/pathwise && claude --resume <sessionId>` continues a finished one.
@@ -1164,13 +1282,30 @@ launcher (use a throwaway ticket):
    launch too: a hand-made `POST /api/claude/launch` answers `409` with `session_running`.
 4. In a launched session, confirm the toolkit MCP tools (Jira and GitHub) work. Sessions no longer
    receive the dashboard's token variables, so this is what proves they have their own.
+5. On a ticket whose planning session asked at least two questions, answer some but not all and
+   press **Save answers**. Confirm the dialog says `Saved. N questions still need an answer;
+nothing was sent.` and that the session received nothing (attach to it).
+6. Answer the rest and press **Save answers**. If the session was live and idle the request takes
+   about 15 seconds (the settle gap after the stop). Confirm the same session (the same id under
+   **Go to session**) receives a message naming the question ids, the icon shows the turning
+   ring while it works, `status.json` shows `"done": true` when it finishes, and `claude agents`
+   lists no second session (a copy). Until then **Implement plan** stays disabled.
+7. Change one answer and press **Save answers**. Confirm the session receives a message naming
+   only that question id as changed, `done` goes `false` and then `true` again, and the icon
+   returns to green.
+8. Clear one answer and save (nothing is sent: the set is incomplete), then type the same text
+   back and save. Confirm the dialog says the answers had not changed and the session receives
+   nothing. A hand-made `POST /api/claude/answers` with `answers: []` answers `send` with
+   `skipped` and `unchanged` in the same way.
 
-Also taken as assumptions until then: `--bg` prints a standalone 8-character id, a name of 40
-characters or fewer is listed unabbreviated, and a tool call denied in a background session ends it
-without the flag (shown as `ended without finishing`) or blocks it (shown as `blocked, needs you`).
-If one is wrong, the fix is a single constant or rule: the id pattern (`STARTED_ID` in
-`backend/claude-sessions.mjs`), the name cap (`NAME_LIMIT`) or the command for a blocked session
-(`goToFor`), both in `backend/claude-ticket-state.mjs`. To roll the feature back, revert the change;
+Also taken as assumptions until then: `--bg` prints a standalone 8-character id, a session name of
+39 characters or fewer is listed unabbreviated, a tool call denied in a background session ends it
+without the flag (shown as `ended without finishing`) or blocks it (shown as `blocked, needs you`),
+and a resume 15 seconds after a stop (the settle gap) continues the same session instead of
+starting a copy. If one is wrong, the fix is a single constant or rule: the id pattern
+(`STARTED_ID` in `backend/claude-sessions.mjs`), the command for a blocked session (`goToFor` in
+`backend/claude-ticket-state.mjs`), or, for the last one, `SETTLE_MS` in
+`backend/slack-watcher.mjs`, which the Slack wake shares. To roll the feature back, revert the change;
 `claude/` holds only local files you can delete, and running sessions are unaffected.
 
 ## Releases

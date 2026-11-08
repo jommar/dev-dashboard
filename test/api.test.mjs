@@ -128,3 +128,26 @@ test('scenario 25: answerClaude posts the key and only the given answers as JSON
   });
   assert.equal(result.ok, true);
 });
+
+test('scenario 49: answerClaude passes the send outcome through with the saved ticket', async (t) => {
+  const send = { status: 'failed', reason: 'resume_failed' };
+  t.mock.method(globalThis, 'fetch', async () =>
+    jsonResponse({ ok: true, key: 'TAP-1234', ticket: { unsent: true }, send }),
+  );
+  const result = await api.answerClaude('TAP-1234', { q1: 'Portage-backend' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.send, send);
+  assert.deepEqual(result.ticket, { unsent: true });
+});
+
+test('scenario 49: answerClaude posts an empty answers array to retry a send', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse({ ok: true, key: 'TAP-1234', ticket: {}, send: { status: 'sent' } });
+  });
+  const result = await api.answerClaude('TAP-1234', []);
+  assert.equal(calls[0][0], '/api/claude/answers');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { key: 'TAP-1234', answers: [] });
+  assert.deepEqual(result.send, { status: 'sent' });
+});
