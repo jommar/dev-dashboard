@@ -67,6 +67,20 @@ export function stageTokenFile(file, contents, fs = fsDefault) {
   }
 }
 
+// Write `contents` to `file` whole or not at all: stage a sibling temp file, then rename it into
+// place. A failed rename removes the temp file and rethrows.
+export function writeFileAtomic(file, contents, fs = fsDefault) {
+  const temporary = stageTokenFile(file, contents, fs);
+  try {
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {}
+    throw error;
+  }
+}
+
 export function createCredentialStore({ paths, fs = fsDefault }) {
   function read(file) {
     return readTokenFile(file, fs);

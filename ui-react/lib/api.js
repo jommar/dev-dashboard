@@ -247,6 +247,16 @@ export const resumeSlackWatch = () => watchRequest('/api/slack/watch/resume', { 
 
 export const checkSlackWatchNow = () => watchRequest('/api/slack/watch/check', { method: 'POST' });
 
+// The Claude launcher wrappers resolve the same way, through the same helper: a refusal keeps its
+// code and reasons for the dialog to word, and an unreachable server is `ok: false, status: 0`.
+export const getClaudeTickets = () => watchRequest('/api/claude/tickets');
+
+export const launchClaude = (key, phase, summary) =>
+  watchRequest('/api/claude/launch', { method: 'POST', body: { key, phase, summary } });
+
+export const answerClaude = (key, answers) =>
+  watchRequest('/api/claude/answers', { method: 'POST', body: { key, answers } });
+
 export function subscribeServices(onSnapshot, onConnection = () => {}) {
   const source = new EventSource('/api/events');
   source.addEventListener('setup-required', () => {

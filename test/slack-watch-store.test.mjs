@@ -384,6 +384,24 @@ for (const [label, text] of Object.entries(UNUSABLE_MAPS))
     assert.deepEqual(Object.keys(readMap(env).links), [LINK_1.key], 'a later write recovers');
   });
 
+test('scenario 62: map store removes its temp file when the rename fails', async (t) => {
+  const { env, store } = await openWithLinks(t, [LINK_1]);
+  await store.attach(LINK_1.key, SESSION_A);
+  env.recorder.failOn(
+    'renameSync',
+    (args) => args[1] === env.mapFile,
+    Object.assign(new Error('synthetic rename failure'), { code: 'EIO' }),
+  );
+
+  await Promise.resolve(store.attach(LINK_1.key, SESSION_B)).then(
+    () => {},
+    () => {},
+  );
+
+  const strays = fs.readdirSync(env.directory).filter((name) => name.endsWith('.tmp'));
+  assert.deepEqual(strays, [], 'no temp file is left beside map.json');
+});
+
 test('map store loads empty when reading the map throws', async (t) => {
   const { env } = await openWithLinks(t, [LINK_1]);
   env.recorder.failOn(

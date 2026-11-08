@@ -1,7 +1,7 @@
 import fsDefault from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { stageTokenFile } from './credentials.mjs';
+import { writeFileAtomic } from './credentials.mjs';
 
 const MAP_VERSION = 1;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -92,15 +92,7 @@ export function createSlackWatchStore({
   }
 
   function persist(next) {
-    const temporary = stageTokenFile(mapFile, JSON.stringify(next, null, 2) + '\n', fs);
-    try {
-      fs.renameSync(temporary, mapFile);
-    } catch (error) {
-      try {
-        fs.rmSync(temporary, { force: true });
-      } catch {}
-      throw error;
-    }
+    writeFileAtomic(mapFile, JSON.stringify(next, null, 2) + '\n', fs);
     state = next;
   }
 

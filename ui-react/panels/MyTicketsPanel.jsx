@@ -8,9 +8,11 @@ import {
 } from '../components/BoardShell.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
 import { TicketBoard } from '../components/TicketBoard.jsx';
+import { ClaudeDialog } from '../components/ClaudeDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { useSlackThreadDialog } from '../hooks/useSlackThreadDialog.jsx';
+import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { notifySlackSessionChanged } from '../hooks/useSlackPending.js';
 import { filterTickets, ticketFilterOptions } from '../../ui/work-filters.js';
 import { sprintDay, sprintCountdown } from '../../ui/domain-helpers.js';
@@ -61,6 +63,9 @@ export function MyTicketsPanel({ config, active }) {
   const [prs, setPrs] = useState(null);
   const [prStale, setPrStale] = useState(false);
   const [openThread, setOpenThread] = useState(null);
+  // The ticket whose Claude dialog is open. It is held here, not in a card, so a card that
+  // remounts (a filter or column change) does not close it.
+  const [openClaudeKey, setOpenClaudeKey] = useState(null);
   const [filters, setFilters] = useState({
     search: '',
     status: '',
@@ -148,6 +153,7 @@ export function MyTicketsPanel({ config, active }) {
   const expireDialog = useCallback(() => {
     expiredDialog.current = true;
   }, []);
+  const claude = useClaudeTickets({ active });
   const { now: slackNow, dialog } = useSlackThreadDialog({
     source: 'my-tickets',
     snapshot: slackSnapshot,
@@ -237,6 +243,13 @@ export function MyTicketsPanel({ config, active }) {
     [data],
   );
   const filtered = useMemo(() => filterTickets(rows, filters), [rows, filters]);
+  const openClaudeTicket = openClaudeKey && rows.find((ticket) => ticket.key === openClaudeKey);
+  // A ticket that left the list (a status change on the 90 s poll) takes its dialog with it, and so
+  // does leaving the tab: the panel only goes hidden, and a modal left open in it would keep the
+  // rest of the page inert.
+  useEffect(() => {
+    if (openClaudeKey && (!active || !openClaudeTicket)) setOpenClaudeKey(null);
+  }, [active, openClaudeKey, openClaudeTicket]);
   const options = ticketFilterOptions(rows, data?.allSprints);
   const linksByTicket = useMemo(
     () =>
@@ -256,10 +269,12 @@ export function MyTicketsPanel({ config, active }) {
         currentSprints={data?.activeSprints}
         linksByTicket={linksByTicket}
         prsByTicket={prs?.byTicket || NO_PR_LINES}
+        claudeByTicket={claude.byTicket}
         onOpenThread={setOpenThread}
+        onOpenClaude={setOpenClaudeKey}
       />
     ),
-    [filtered, config.jiraBase, data?.activeSprints, linksByTicket, prs?.byTicket],
+    [filtered, config.jiraBase, data?.activeSprints, linksByTicket, prs?.byTicket, claude.byTicket],
   );
   return (
     <BoardPanel id="my-tickets" active={active} busy={loading}>
@@ -351,6 +366,17 @@ export function MyTicketsPanel({ config, active }) {
         )}
       </BoardSection>
       {dialog}
+      {openClaudeTicket && (
+        <ClaudeDialog
+          key={openClaudeTicket.key}
+          ticketKey={openClaudeTicket.key}
+          summary={openClaudeTicket.summary}
+          entry={claude.byTicket[openClaudeTicket.key]}
+          onClose={() => setOpenClaudeKey(null)}
+          launch={claude.launch}
+          answer={claude.answer}
+        />
+      )}
     </BoardPanel>
   );
 }

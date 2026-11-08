@@ -1,6 +1,6 @@
 // TicketBoard.jsx — My Tickets as a kanban: one column per status, in workflow
 // order (ui/ticket-board.js). Each card carries its Jira key, priority, points and
-// age, its Slack chips, and one line per open PR with CI, review, review-comment
+// age, its Slack chips, its Claude icon, and one line per open PR with CI, review, review-comment
 // and draft state. A card whose open PRs are all approved is marked green and
 // sealed. Every glyph is inline SVG and every state is also a word, so nothing is
 // carried by colour alone.
@@ -17,6 +17,7 @@ import {
 } from '../../ui/ticket-board.js';
 import { canonicalTicketKey, normalizeTicketKey } from '../../ui/slack-ticket-links.js';
 import { SlackThreadLinks } from './SlackThreadLink.jsx';
+import { ClaudeIcon } from './ClaudeIcon.jsx';
 import { Board, BoardColumn } from './BoardShell.jsx';
 
 // Jira priority names mapped to a chevron step: two up, one up, bars, one down,
@@ -212,7 +213,16 @@ function ApprovedSeal({ testId }) {
   );
 }
 
-function TicketCard({ ticket, jiraBase, currentSprints, prs = [], slackLinks = [], onOpenThread }) {
+function TicketCard({
+  ticket,
+  jiraBase,
+  currentSprints,
+  prs = [],
+  slackLinks = [],
+  claude,
+  onOpenThread,
+  onOpenClaude,
+}) {
   const key = slug(ticket.key);
   const testId = (name) => `my-tickets-item${name ? `-${name}` : ''}-${key}`;
   const inCurrentSprint = currentSprints ? inSprints(ticket, currentSprints) : false;
@@ -251,6 +261,7 @@ function TicketCard({ ticket, jiraBase, currentSprints, prs = [], slackLinks = [
           links={slackLinks}
           onOpen={(thread) => onOpenThread?.({ ...thread, selectedTicketKey: ticket.key })}
         />
+        <ClaudeIcon ticketKey={ticket.key} entry={claude} onOpen={onOpenClaude} />
       </div>
       <p className="board-card-summary" title={ticket.summary} data-testid={testId('summary')}>
         {ticket.summary || ''}
@@ -283,7 +294,9 @@ export function TicketBoard({
   currentSprints,
   linksByTicket,
   prsByTicket,
+  claudeByTicket,
   onOpenThread,
+  onOpenClaude,
 }) {
   const columns = useMemo(() => boardColumns(tickets), [tickets]);
   // Board keeps its scrollLeft and every column's scrollTop across the 90 s poll re-renders.
@@ -308,7 +321,9 @@ export function TicketBoard({
                   currentSprints={currentSprints}
                   prs={prsByTicket[canonicalTicketKey(ticket.key)] || []}
                   slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
+                  claude={claudeByTicket[ticket.key]}
                   onOpenThread={onOpenThread}
+                  onOpenClaude={onOpenClaude}
                 />
               </li>
             ))}

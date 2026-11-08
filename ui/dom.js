@@ -17,6 +17,19 @@ export function clamp(v, min, max) {
   return Math.max(min, Math.min(v, max));
 }
 
+// Writes `text` to the clipboard. Resolves true once the write has finished, and false when there
+// is no clipboard or the write is refused; it never rejects. The clipboard is looked up on every
+// call, since a page can lose or swap it.
+export async function copyText(text) {
+  try {
+    if (!navigator.clipboard?.writeText) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function replaceRegion(el, html) {
   const focused = el.contains(document.activeElement)
     ? document.activeElement.dataset.testid

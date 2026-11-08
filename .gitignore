@@ -1,6 +1,10 @@
 # Rolling service logs produced by the dashboard — local-only, never committed
 logs/
 
+# Claude launcher state (per-ticket status and launch files) — local-only, never committed.
+# Anchored: only this directory, not any other folder named claude.
+/claude/
+
 # Dependencies
 node_modules/
 dist/

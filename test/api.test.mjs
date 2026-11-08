@@ -50,3 +50,81 @@ test('getTicketPrs resolves to unavailable instead of throwing, so PRs never blo
     t.mock.restoreAll();
   }
 });
+
+const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), { status });
+
+test('scenario 27: getClaudeTickets reads the status route and resolves its payload', async (t) => {
+  const payload = { listing: 'ok', updatedAt: 1731100000000, tickets: {} };
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse(payload);
+  });
+  const result = await api.getClaudeTickets();
+  assert.equal(calls[0][0], '/api/claude/tickets');
+  assert.ok(!calls[0][1]?.method || calls[0][1].method === 'GET');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 200);
+  assert.equal(result.listing, 'ok');
+  assert.deepEqual(result.tickets, {});
+});
+
+test('scenario 23: launchClaude posts the key, phase and summary as JSON', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse({ ok: true, key: 'TAP-1234', id: 'ab12cd34' });
+  });
+  const result = await api.launchClaude('TAP-1234', 'investigate-and-plan', 'Fix the redirect');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], '/api/claude/launch');
+  assert.equal(calls[0][1].method, 'POST');
+  assert.equal(calls[0][1].headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(calls[0][1].body), {
+    key: 'TAP-1234',
+    phase: 'investigate-and-plan',
+    summary: 'Fix the redirect',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.id, 'ab12cd34');
+});
+
+test('scenario 24: launchClaude resolves a refusal with its code and reasons instead of throwing', async (t) => {
+  const refusal = {
+    code: 'CLAUDE_FAILED',
+    error: 'CLAUDE FAILED',
+    errors: ['untrusted_workspace'],
+  };
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse(refusal, 502));
+  const result = await api.launchClaude('TAP-1234', 'investigate-and-plan', 'Fix the redirect');
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 502);
+  assert.equal(result.code, 'CLAUDE_FAILED');
+  assert.deepEqual(result.errors, ['untrusted_workspace']);
+  t.mock.restoreAll();
+
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw new TypeError('network down');
+  });
+  const unreachable = await api.launchClaude('TAP-1234', 'implement-plan', 'Fix the redirect');
+  assert.equal(unreachable.ok, false);
+  assert.equal(unreachable.status, 0);
+});
+
+test('scenario 25: answerClaude posts the key and only the given answers as JSON', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse({ ok: true, key: 'TAP-1234', ticket: {} });
+  });
+  const result = await api.answerClaude('TAP-1234', { q1: 'Portage-backend' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], '/api/claude/answers');
+  assert.equal(calls[0][1].method, 'POST');
+  assert.equal(calls[0][1].headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(calls[0][1].body), {
+    key: 'TAP-1234',
+    answers: { q1: 'Portage-backend' },
+  });
+  assert.equal(result.ok, true);
+});

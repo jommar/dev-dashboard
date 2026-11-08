@@ -401,6 +401,7 @@ export function dashboardData() {
     diff: { diff: '--- a/example.js\n+++ b/example.js\n@@ -1 +1 @@\n-old\n+new\n' },
     releases: releasesData(),
     slack: slackData(),
+    claude: claudeData(),
   };
 }
 
@@ -1171,6 +1172,117 @@ function watchLinkFromParsed({ key, link }) {
   return { ...watchLink(channelId, threadTs), link };
 }
 
+// The Claude launcher's fake API. `claude.tickets` is what GET /api/claude/tickets lists, by ticket
+// key; a ticket with no entry is not started, as on the server. A POST is recorded in `claude.calls`
+// and changes `tickets` the way the server's answer would, so a spec can assert what the dialog
+// sent and what the icon shows afterwards. Invented data only.
+const CLAUDE_ATTACH = { kind: 'attach', command: 'claude attach ab12cd34' };
+
+export function claudeQuestion(id, question, answer = null) {
+  return { id, question, answer };
+}
+
+// An entry's `unanswered` count and `blocks` follow from its state, flags and questions, as the
+// server derives them.
+function claudeDerived(entry) {
+  const unanswered = entry.questions.filter(({ answer }) => !answer?.trim()).length;
+  const held = { working: 'session_running', unknown: 'listing_unavailable' }[entry.state] ?? null;
+  const planned = entry.flags['investigate-and-plan'] === true;
+  const implement = planned ? (unanswered ? 'questions_unanswered' : null) : 'not_planned';
+  return {
+    ...entry,
+    unanswered,
+    blocks: {
+      investigate: held,
+      implement: held ?? implement,
+      answer: held ?? (entry.questions.length ? null : 'no_questions'),
+    },
+  };
+}
+
+// One ticket's entry in the shape GET /api/claude/tickets returns. Pass `flags`, `questions`,
+// `goTo` or `phase` to override the first-launch defaults.
+export function claudeEntry(state, reason, overrides = {}) {
+  return claudeDerived({
+    phase: 'investigate-and-plan',
+    state,
+    reason,
+    flags: { 'investigate-and-plan': false, 'implement-plan': false },
+    questions: [],
+    goTo: null,
+    ...overrides,
+  });
+}
+
+function claudeData() {
+  return { listing: 'ok', tickets: {}, calls: [] };
+}
+
+const claudeFailure = (status, code, errors = []) => ({
+  status,
+  json: { code, error: code.replaceAll('_', ' '), errors },
+});
+
+// Only the paths the specs drive are modelled: a launch of either phase that starts a session, and
+// answers that fill in existing questions. Anything else is left unanswered, so the run aborts it
+// as unexpected network and the spec's author extends this.
+function claudeResponse(url, method, { claude }, body) {
+  const { pathname } = url;
+  if (method === 'GET' && pathname === '/api/claude/tickets')
+    return {
+      json: {
+        listing: claude.listing,
+        updatedAt: '2026-10-08T09:00:00.000Z',
+        tickets: structuredClone(claude.tickets),
+      },
+    };
+  if (method !== 'POST') return null;
+  claude.calls.push({ method, path: pathname, body: structuredClone(body) });
+  if (
+    pathname === '/api/claude/launch' &&
+    ['investigate-and-plan', 'implement-plan'].includes(body?.phase)
+  ) {
+    // An implement launch keeps the plan's flag and questions; only an investigate launch resets them.
+    const earlier = body.phase === 'implement-plan' ? claude.tickets[body.key] : null;
+    const ticket = claudeEntry('working', 'starting', {
+      phase: body.phase,
+      goTo: CLAUDE_ATTACH,
+      ...(earlier && {
+        flags: { ...earlier.flags, 'implement-plan': false },
+        questions: earlier.questions,
+      }),
+    });
+    claude.tickets[body.key] = ticket;
+    return {
+      json: {
+        ok: true,
+        key: body.key,
+        phase: body.phase,
+        name: body.key,
+        id: 'ab12cd34',
+        ticket: structuredClone(ticket),
+      },
+    };
+  }
+  if (pathname === '/api/claude/answers') {
+    const entry = claude.tickets[body?.key];
+    if (!entry) return claudeFailure(400, 'INVALID_ANSWER');
+    for (const [id, value] of Object.entries(body.answers)) {
+      const question = entry.questions.find((candidate) => candidate.id === id);
+      if (question) question.answer = value === '' ? null : value;
+    }
+    // Once nothing is left to answer, the session's plan is ready.
+    const answered = claudeDerived(entry);
+    const ticket =
+      answered.state === 'waiting' && !answered.unanswered
+        ? claudeDerived({ ...answered, state: 'done', reason: 'plan_ready' })
+        : answered;
+    claude.tickets[body.key] = ticket;
+    return { json: { ok: true, key: body.key, ticket: structuredClone(ticket) } };
+  }
+  return null;
+}
+
 export function apiResponse(url, method, data, body) {
   if (
     data.statefulSettings &&
@@ -1199,6 +1311,8 @@ export function apiResponse(url, method, data, body) {
   }
   if (url.pathname.startsWith('/api/slack/') && data.slack)
     return slackResponse(url, method, data, body);
+  if (url.pathname.startsWith('/api/claude/') && data.claude)
+    return claudeResponse(url, method, data, body);
   if (method === 'GET') {
     if (url.pathname === '/api/config') return { json: data.config };
     if (url.pathname === '/api/settings') return { json: data.settings };

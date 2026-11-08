@@ -8,7 +8,9 @@ import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
-async function fixture(t, { customNvm = false } = {}) {
+const SECRET_NAMES = ['GH_TOKEN', 'GITHUB_TOKEN', 'JIRA_API_TOKEN', 'JIRA_TOKEN'];
+
+async function fixture(t, { customNvm = false, secretNames = SECRET_NAMES } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-dashboard-manager-'));
   const project = path.join(root, 'project');
   const logs = path.join(root, 'logs');
@@ -55,6 +57,7 @@ async function fixture(t, { customNvm = false } = {}) {
     export const REPOS_ROOT = ${JSON.stringify(root)};
     export const LOGS_DIR = ${JSON.stringify(logs)};
     export const BUFFER_BYTES = 65536;
+    export const SECRET_ENV_NAMES = ${JSON.stringify(secretNames)};
   `,
   );
   const { ServiceProcess, Manager } = await import(pathToFileURL(path.join(root, 'manager.mjs')));
@@ -110,6 +113,40 @@ test('start retains inherited PATH when both pin files are absent', async (t) =>
   await f.service.start();
   assert.equal(f.spawns[0].options.env.PATH, process.env.PATH);
   assert.equal(f.spawns[0].cmd, 'npm');
+});
+
+// Sets process environment variables for the rest of the test and puts the old values back.
+function setEnv(t, variables) {
+  const previous = Object.keys(variables).map((name) => [name, process.env[name]]);
+  Object.assign(process.env, variables);
+  t.after(() => {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+}
+
+test('scenario 55: start gives the child none of the dashboard credentials and keeps PATH', async (t) => {
+  setEnv(t, Object.fromEntries(SECRET_NAMES.map((name) => [name, `synthetic-${name}`])));
+  const f = await fixture(t);
+  await f.service.start();
+  const { env } = f.spawns[0].options;
+  for (const name of SECRET_NAMES) assert.equal(name in env, false, `${name} is not passed on`);
+  assert.equal(env.PATH, process.env.PATH);
+});
+
+test('scenario 56: start strips the names config.mjs lists as secret, and only those', async (t) => {
+  setEnv(t, { SENTINEL_CREDENTIAL: 'synthetic-sentinel', GH_TOKEN: 'synthetic-unlisted' });
+  const f = await fixture(t, { secretNames: ['SENTINEL_CREDENTIAL'] });
+  await f.service.start();
+  const { env } = f.spawns[0].options;
+  assert.equal('SENTINEL_CREDENTIAL' in env, false, 'a listed name is stripped');
+  assert.equal(
+    env.GH_TOKEN,
+    'synthetic-unlisted',
+    'an unlisted name is not: the list is config.mjs',
+  );
 });
 
 for (const scenario of [

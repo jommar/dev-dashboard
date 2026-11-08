@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { SERVICES, REPOS_ROOT, LOGS_DIR, BUFFER_BYTES } from './config.mjs';
+import { SERVICES, REPOS_ROOT, LOGS_DIR, BUFFER_BYTES, SECRET_ENV_NAMES } from './config.mjs';
 import { freePort } from './port.mjs';
 
 // ── rolling ring buffer ────────────────────────────────────────────
@@ -106,7 +106,7 @@ export class ServiceProcess {
 
   #nodeRuntime() {
     const env = { ...process.env };
-    for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'JIRA_API_TOKEN', 'JIRA_TOKEN']) delete env[key];
+    for (const key of SECRET_ENV_NAMES) delete env[key];
     const pin = this.nvmrc();
     if (pin === null) return { env };
     if (!/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(pin)) {

@@ -13,6 +13,7 @@ blob-report
 .playwright-mcp
 .orchestrator
 .claude
+claude
 Dockerfile
 docker-compose.yml
 .dockerignore

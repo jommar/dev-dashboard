@@ -73,7 +73,9 @@ click. All seven views remain available:
   kanban board with one column per status, each card carrying your open PRs
   with their CI and review state and any Slack threads, under a header line
   naming the current active sprint. An _include Done_ checkbox controls whether
-  Done tickets are shown. See [My Tickets](#my-tickets).
+  Done tickets are shown. A Claude icon on each card launches background Claude
+  sessions for the ticket. See [My Tickets](#my-tickets) and
+  [Claude launcher](#claude-launcher).
 - **Slack** — optional. One connect button captures your own Slack web session;
   once connected, one card shows your recent `#ezat_claudio` threads as a board
   (the My Tickets layout) next to the thread watcher. Nothing else in the app
@@ -134,6 +136,9 @@ repo inside the container, which takes several minutes. Later starts reuse it.
   `GH_TOKEN`. SSH remotes do not work inside the container.
 - The Slack thread watcher is host only. The image has no `.claude` directory, so
   the watcher reports `disabled` and starts no timer (see [Watch](#watch)).
+- The [Claude launcher](#claude-launcher) is host only too. The image has no
+  `claude` command, so a launch is refused with `listing_unavailable`, and
+  `claude/` is in `.dockerignore`.
 
 ## Settings and setup
 
@@ -149,6 +154,7 @@ The dashboard persists configuration outside the project:
 | `~/.config/github/token`                                     | GitHub token                                                                                                                                 |
 | `~/.config/jira/token`                                       | Jira API token                                                                                                                               |
 | `~/.config/slack/session.json`                               | Slack web-session credentials (`xoxc-` token + `d` cookie), only after you connect Slack                                                     |
+| `claude/<KEY>/status.json`, `launch.json`                    | Claude launcher state per ticket, in the dashboard directory, not under `~/.config`; gitignored (see [Claude launcher](#claude-launcher))    |
 
 Token files use mode `600`; existing regular token files are normalized to that
 mode when read. Symlinks and nonregular credential files are rejected. Tokens
@@ -277,6 +283,10 @@ oversized bodies `413`. Responses use sanitized errors. A setup revocation
 closes existing SSE streams with a `setup-required` event; the browser returns
 to Settings on that event or an operational `SETUP_REQUIRED` response.
 
+The Slack routes and the three `/api/claude/*` routes (see
+[Claude launcher](#claude-launcher)) also answer before setup is complete, because
+they need neither GitHub nor Jira.
+
 ### Slack watch settings
 
 The Slack watcher has three settings, kept in a `slackWatch` section of
@@ -369,6 +379,7 @@ An agent can read the same logs three ways:
    - `GET /api/my-tickets?includeDone=0|1`
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
+   - `GET /api/claude/tickets`, `POST /api/claude/launch` and `POST /api/claude/answers` (see [Claude launcher](#claude-launcher))
    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
 
 ## Home
@@ -577,7 +588,7 @@ points (`5 pt`, absent when unestimated), time since the last update, and the
 [Slack chips](#slack-threads) at the right end. Below are the summary, clamped to
 two lines with the full text in its tooltip, and one line per open PR. The status
 and the issue type are not on the card: the column names the status, and Type
-stays a filter.
+stays a filter. The [Claude icon](#claude-launcher) is the last item of that top line.
 
 **PR lines** — one link per PR, opening it in a new tab: a CI glyph, `repo #number`
 (the repository name without its owner), the review state in words, up to two
@@ -912,6 +923,237 @@ that Jira files several review/test gates (e.g. `Ready For Code Review`,
 `Ready For Testing`, `Awaiting Merge`) under its "To Do" category, but they
 are mapped to active here since they are late-stage gates, not untouched
 backlog.
+
+## Claude launcher
+
+Each card on the **My Tickets** board ends its top line with a **Claude icon**. It shows where
+the ticket stands with Claude and opens a dialog with three items:
+
+- **Investigate and plan** starts a background Claude session that investigates the ticket,
+  writes a plan and stops at the approval gate.
+- **Implement plan** starts a second session that builds the plan you approved.
+- **Go to session** copies the command that joins or resumes the ticket's current session in a
+  terminal.
+
+Both launches are fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
+session `<KEY>-<slug>` (the ticket key, then a slug of its Jira summary, at most 40 characters in
+all) and returns. It never opens a terminal and never stops, resumes, removes or messages a
+session. The summary reaches the session name only. Both prompts are fixed text with the key, the
+key in lower case and the path of the ticket's `status.json` filled in, so the summary is never
+part of what a session is told to do. They tell the session to use your `orchestrator` skill
+(step 1 for Investigate and plan, step 3 for Implement plan) and to treat ticket text as data. The
+planning session writes `02-plan.md`, `02-checklist.md` and `02-spec.md` in
+`~/pathwise/.orchestrator/<key in lower case>/`, creates no branch, commit, push or pull request,
+and writes the questions it would have asked you into `status.json` instead. The implement
+session treats starting it as your approval, does not commit, push or open a pull request, and
+leaves its changes in a worktree with a short report beside the plan.
+
+### Requirements and limits
+
+- **Host only.** It needs the `claude` command on `PATH` and a `~/pathwise` directory that
+  `claude` trusts: run `claude` there once and accept the trust prompt, or a launch fails with
+  `untrusted_workspace`. The Docker image has no `claude`, so there every launch is refused with
+  `listing_unavailable`. The sessions also need your user-level `orchestrator` skill.
+- **Your permission mode.** The dashboard passes no permission flag, so a session runs under your
+  own Claude settings and permission mode and can do what your user can.
+- **No dashboard tokens.** A launched session does not inherit `GH_TOKEN`, `GITHUB_TOKEN`,
+  `JIRA_API_TOKEN` or `JIRA_TOKEN` from the dashboard's environment (the same four names the
+  dashboard keeps out of the services it starts). It uses its own credentials and MCP servers;
+  the rest of the environment is inherited.
+- **One session per ticket.** A launch or a saved answer is refused while a session for the
+  ticket works, or was launched less than 30 seconds ago and is not listed yet. A launch is also
+  refused when `claude agents --json --all` cannot be read, because the decision rests on it.
+- **Local state.** Everything the dashboard knows about a ticket's Claude work is in
+  `claude/<KEY>/` in the dashboard directory. `/claude/` is gitignored and `claude` is in
+  `.dockerignore`. Sessions get that folder (and only it, not the dashboard's source) through
+  `--add-dir`.
+
+### Icon and dialog
+
+The icon's colour, badge shape and words all carry the state, so no state is colour alone. Its
+label and tooltip read `Claude: <state word>`.
+
+| Icon                         | State word                                                                 | Meaning                                                                                                                                                                             |
+| ---------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Blue, turning ring (spinner) | `working`, `starting`                                                      | The session is listed as working, or it was launched under 30 seconds ago and is not listed yet. The ring stops turning (and stays a ring) when the system asks for reduced motion. |
+| Amber, filled dot            | `blocked, needs you`, `has questions for you`                              | The CLI lists the session as blocked (attach to it), or no session works and a question has no answer you saved.                                                                    |
+| Green, check                 | `plan ready`, `implemented`                                                | The phase's flag is `true` and no question is open; for `plan ready` the plan file `02-plan.md` exists.                                                                             |
+| Red, cross                   | `plan file missing`, `ended without finishing`, `session no longer listed` | The planning flag is `true` but there is no `02-plan.md`; the session finished without setting its flag; or it has been unlisted for 30 seconds or more without setting its flag.   |
+| Muted, no badge              | `not started`, `status unavailable`                                        | Nothing was launched for the ticket; or the CLI listing failed or showed a state the dashboard does not know.                                                                       |
+
+The icon shows the ticket's current phase, the one launched last. The dialog opens from it as a
+native modal: the ticket key and summary, the state word, then the three items. A disabled item
+says why beside it, for example `A Claude session is already running for this ticket.` When the
+state is `plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows
+beside **Implement plan**, because starting it is your approval. When the planning session asked
+questions, the dialog also shows one text input per question with your saved answer filled in,
+and **Save answers**, which sends only the answers you changed. The inputs are disabled while a
+session works or the status is unavailable. Escape and a click on the backdrop close the dialog.
+
+The board reads every ticket's state from one `GET /api/claude/tickets` every 15 seconds while the
+My Tickets tab is open and the page is visible, and straight after a launch or a save.
+
+**Go to session** copies one of these strings, built only from ids that pass a pattern check and
+never from listing text:
+
+| The ticket's session                              | Copied                                          |
+| ------------------------------------------------- | ----------------------------------------------- |
+| Has a process (live, busy or idle), or is blocked | `claude attach <id>` (the 8-character short id) |
+| Finished, with no process                         | `cd ~/pathwise && claude --resume <sessionId>`  |
+| Not listed, or its id fails the check             | Disabled, with `No session to join`             |
+
+The resume string starts with `cd ~/pathwise &&` because a resumed conversation is found from the
+directory it started in; `claude attach` needs no `cd`. When the browser refuses the clipboard write, the dialog shows the command in a read-only field.
+It only joins the current phase's session.
+
+### State files
+
+`claude/<KEY>/status.json` is shared with the session. The key must match `^[A-Z]{1,10}-\d{1,7}$`
+before any path is built, and a folder under `claude/` with another name is ignored.
+
+```json
+{
+  "investigate-and-plan": false,
+  "implement-plan": false,
+  "questions": [{ "id": "q1", "question": "Which repo owns the fix?", "answer": null }]
+}
+```
+
+- **The session** writes `questions` (once, near the end of planning, or by appending one object
+  when Implement is blocked by something the plan and your answers do not settle) and changes its
+  own flag to `true` as its very last action, after everything else is saved.
+- **The dashboard** creates the file at an Investigate launch with both flags `false` and no
+  questions, replacing any earlier file (a re-run resets it). At an Implement launch it rewrites
+  the file from what it can read: the planning flag `true`, the implement flag `false` and the
+  first 20 readable questions, each whole, with `answer` kept only where you saved that answer;
+  anything else a session left in the file is dropped. Otherwise it writes only the `answer` of an
+  existing question, when you save.
+- **Reads are defensive.** A flag counts only when it is exactly `true`. A question is read only
+  when its `id` matches `^[A-Za-z0-9_-]{1,32}$` and its `question` is a string; the board shows at
+  most 20 questions, each cut to 500 characters, as plain text. A file over 1 MiB, or one that is
+  not a JSON object, is unreadable: the card shows no flags and no questions, every action that
+  depends on it is refused with `status_unreadable`, and only an Investigate launch overwrites it.
+
+`claude/<KEY>/launch.json` is written by the dashboard only, because `status.json` has no place for
+which session belongs to which phase and session names are not unique.
+
+```json
+{
+  "investigate-and-plan": {
+    "name": "ABC-123-fix-login",
+    "launchedAt": 1731100000000,
+    "id": "ab12cd34",
+    "answered": { "q1": "<sha-256 hex of the id, question and answer you saved>" }
+  },
+  "implement-plan": { "name": "ABC-123-fix-login", "launchedAt": 1731100500000, "id": null }
+}
+```
+
+A phase key is absent until that phase is launched. It is written before the CLI runs (`id` is
+`null`) and rewritten once afterwards, when the listing shows the session. A session is matched by
+its recorded `id`; with none, by the newest listed session with the recorded name that started at
+or after `launchedAt`, so a session of the same name started by hand earlier is never taken for it.
+An Investigate launch drops the `implement-plan` entry. `answered` appears once you save an answer
+(see below).
+
+Folders are mode `0700` and files `0600`, and every dashboard write is a temp file, fsync and
+rename, under one lock per ticket. The dashboard writes only while no session works, and a session
+writes only while it works, so the one residual race is a session you resume by hand while an
+answer is being saved. A failed launch other than `timed_out` puts the earlier files back (a first
+launch leaves no folder). After `timed_out` they stay, because the session may exist.
+
+The plan counts as present when `02-plan.md` is a regular file in
+`~/pathwise/.orchestrator/<key in lower case>/`, the workspace the planning prompt pins. It is
+checked only when the planning flag is `true` and when Implement plan launches.
+
+### Answers and the Implement gate
+
+**Implement plan** launches only when the status file is readable (`status_unreadable`), the
+planning flag is `true` (`not_planned`), the plan file exists (`plan_missing`) and no question is
+unanswered (`questions_unanswered`), and no session works (`session_running`). A refused launch
+starts nothing and changes no file.
+
+For each answer you save, the dashboard records a hash of it (SHA-256 of the question id, the
+question text and the answer, untrimmed) in `launch.json` and counts an answer only when its text
+still matches. A best-guess default that a session copied into `status.json` itself, or an answer
+or a question edited after you saved it, therefore reads as unanswered and keeps Implement plan
+disabled. This is accident-proofing, not a security boundary: a launched session can write the
+whole `claude/` folder, `launch.json` included, so a hostile session could forge the hashes. Your
+real protection is that Implement plan is a manual click, made after you read the plan (the
+dialog shows its path) and the answers you saved yourself.
+
+### Routes and errors
+
+| Route                      | Purpose                                                                                                                                        |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/claude/tickets`  | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below) |
+| `POST /api/claude/launch`  | body `{ key, phase, summary? }`; answers `{ ok: true, key, phase, name, id, ticket }`                                                          |
+| `POST /api/claude/answers` | body `{ key, answers }`; answers `{ ok: true, key, ticket }`                                                                                   |
+
+`tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
+board shows it as not started). With no ticket folder the route answers without running the CLI;
+otherwise concurrent callers share one `claude agents --json --all`. An entry is
+`{ phase, state, reason, flags, questions[], unanswered, blocks, goTo }`:
+
+- `phase` is `investigate-and-plan`, `implement-plan` or `null` (nothing launched). `flags` holds
+  the two flags as read.
+- `state` is `none`, `working`, `waiting`, `done`, `failed` or `unknown`, and `reason` refines it:
+  `running`, `starting`, `blocked`, `questions`, `plan_ready`, `implemented`, `plan_missing`,
+  `ended_without_flag`, `session_missing`, `listing_unavailable`, `unrecognised_state` or `null`
+  (for `none`). The icon's state word comes from `reason`.
+- Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
+  `unanswered` counts the open ones.
+- `blocks` is `{ investigate, implement, answer }`, each a reason string or `null` (why that
+  action is refused now). It is what the dialog words beside a disabled item.
+- `goTo` is `{ kind, command }`, with `kind` `attach` or `resume`, or `null`.
+
+`launch` takes `phase` `investigate-and-plan` or `implement-plan` and an optional string `summary`,
+used for the session name only. Its answer has `id`, the session's 8-character id, or `null` while
+the listing does not show the session yet, and `ticket`, the refreshed entry. `answers` takes
+`{ "<question id>": "<text>" }` with at most 20 entries, each text at most 2000 characters and an
+empty text clearing that answer; only the `answer` of an existing question changes, and nothing is
+written when any entry is invalid.
+
+The three routes bypass the `SETUP_REQUIRED` gate like the Slack routes, because they need
+neither GitHub nor Jira. They run behind the same Host, Origin, `Sec-Fetch-Site` and JSON
+`Content-Type` checks (`403` and `415`), a local POST that sends none of those headers is accepted
+so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
+`Cache-Control: no-store`. Failures answer `{ code, error, errors[] }`, with `errors[0]` the reason:
+
+| Status | Code             | When                                                                                                                                                                                                             |
+| ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase, or `summary` is present and not a string                                                                                                 |
+| `400`  | `INVALID_ANSWER` | `answers` is not a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record |
+| `409`  | `CLAUDE_REFUSED` | `session_running`, `not_planned`, `plan_missing`, `questions_unanswered` or `status_unreadable`                                                                                                                  |
+| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist) or `spawn_failed`                                       |
+
+`INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt and the
+name are never logged or returned beyond the validated `id` and the computed `name`.
+
+### Manual check before first use
+
+The tests use a fake CLI and never start a real session, so run this once before relying on the
+launcher (use a throwaway ticket):
+
+1. With `~/pathwise` trusted, click **Investigate and plan**. Confirm the session starts, the icon
+   shows the turning ring, questions (if any) appear in the dialog, and `claude/<KEY>/status.json`
+   shows `"investigate-and-plan": true` when the session finishes, with the icon green.
+2. Copy **Go to session** for a live, a blocked and a finished session and run each in a terminal.
+   Confirm `claude attach <id>` works for a blocked session and that
+   `cd ~/pathwise && claude --resume <sessionId>` continues a finished one.
+3. While the first session works, open the dialog again. Confirm **Investigate and plan** is
+   disabled with `A Claude session is already running for this ticket.` The server refuses a second
+   launch too: a hand-made `POST /api/claude/launch` answers `409` with `session_running`.
+4. In a launched session, confirm the toolkit MCP tools (Jira and GitHub) work. Sessions no longer
+   receive the dashboard's token variables, so this is what proves they have their own.
+
+Also taken as assumptions until then: `--bg` prints a standalone 8-character id, a name of 40
+characters or fewer is listed unabbreviated, and a tool call denied in a background session ends it
+without the flag (shown as `ended without finishing`) or blocks it (shown as `blocked, needs you`).
+If one is wrong, the fix is a single constant or rule: the id pattern (`STARTED_ID` in
+`backend/claude-sessions.mjs`), the name cap (`NAME_LIMIT`) or the command for a blocked session
+(`goToFor`), both in `backend/claude-ticket-state.mjs`. To roll the feature back, revert the change;
+`claude/` holds only local files you can delete, and running sessions are unaffected.
 
 ## Releases
 
@@ -1652,7 +1894,7 @@ ui-react/
   panels/               Home, Services, PRs, My Tickets, Releases, Slack and Settings
   styles.css            theme variables plus the established bespoke panel CSS
 ui/
-  dom.js                esc / slug / clamp / timeAgo
+  dom.js                esc / slug / clamp / copyText / timeAgo
   home-data.js          Home's counting / sprint scoping / urgency ordering (DOM-free)
   work-filters.js       shared PR, ticket and action filtering (DOM-free)
   releases-data.js      release grouping and remembered version (DOM-free)

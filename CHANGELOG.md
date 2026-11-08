@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Added a Claude icon to every My Tickets card. It shows where the ticket stands with
+  Claude (not started, working, needs you, done, ended without finishing,
+  unavailable) as a badge and a word, and opens a dialog with **Investigate and
+  plan**, **Implement plan** and **Go to session**. Both launches start a background
+  `claude --bg` session from `~/pathwise`, named after the ticket key and a slug of
+  its summary; **Go to session** copies the command that attaches to or resumes it.
+  Questions the planning session asks appear in the dialog as text inputs, and
+  **Implement plan** stays disabled until you have saved an answer to each. State
+  lives in the gitignored `claude/<KEY>/` folder: `status.json`, shared with the
+  session, and `launch.json`, written by the dashboard only. The new routes
+  `GET /api/claude/tickets`, `POST /api/claude/launch` and `POST /api/claude/answers`
+  answer before setup is complete. Host only: it needs the `claude` command and
+  `~/pathwise`, and launched sessions do not receive `GH_TOKEN`, `GITHUB_TOKEN`,
+  `JIRA_API_TOKEN` or `JIRA_TOKEN`. Run the manual check in the README before first use.
+- Added a shared `writeFileAtomic` helper (a temp file, then a rename) beside
+  `stageTokenFile` in `backend/credentials.mjs`; the Claude launcher and the Slack
+  watch map use it.
+- Added a shared `SECRET_ENV_NAMES` list to `backend/config.mjs`: the credentials kept
+  out of the environment of the services and Claude sessions the dashboard starts.
+- Added a shared `copyText` helper to `ui/dom.js` for the copy buttons of the Claude
+  dialog and the Slack thread dialog; the diff viewer keeps its own clipboard code.
+- `.dockerignore` now lists `claude`, so the launcher's state folder stays out of the
+  image build context.
 - The main navigation is now a compact sticky top bar, freeing the full width for
   the ticket and Slack boards. Home, My Tickets and Slack lead, followed by the
   other tools and Settings. Below 1200px the tools use a keyboard-accessible

@@ -19,6 +19,7 @@ import { parseSlackLink } from './slack-link.mjs';
 import { withAttachedSessions } from './slack-model.mjs';
 import { createSlackWatchStore, isSessionId } from './slack-watch-store.mjs';
 import { createClaudeSessions } from './claude-sessions.mjs';
+import { createClaudeLauncher } from './claude-launcher.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
 
 const MAX_LINKS_PER_REQUEST = 50;
@@ -71,6 +72,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const slackWatchStore = integrations.slackWatchStore || createSlackWatchStore();
   const claudeSessions =
     integrations.claudeSessions || createClaudeSessions({ store: slackWatchStore });
+  const claudeLauncher = integrations.claudeLauncher || createClaudeLauncher({ claudeSessions });
   const slackWatcher =
     integrations.slackWatcher ||
     createSlackWatcher({ slack, store: slackWatchStore, settings, sessions: claudeSessions });
@@ -172,6 +174,17 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       const { state, checked } = await slackWatcher.checkNow();
       if (state === 'paused') throw httpError('WATCH_PAUSED', 'Slack watching is paused.', 409);
       return { ok: true, state, checked };
+    },
+  };
+  const claudeRoutes = {
+    'GET /api/claude/tickets': () => claudeLauncher.list(),
+    'POST /api/claude/launch': async (req) => {
+      const { key, phase, summary } = await readJson(req);
+      return claudeLauncher.launch({ key, phase, summary });
+    },
+    'POST /api/claude/answers': async (req) => {
+      const { key, answers } = await readJson(req);
+      return claudeLauncher.answer({ key, answers });
     },
   };
   const guard = () => {
@@ -296,10 +309,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         json(res, 200, slack.disconnect());
         return;
       }
-      // The watch routes need Slack and the host only, never GitHub or Jira setup.
-      const slackWatchRoute = slackWatchRoutes[`${req.method} ${pathname}`];
-      if (slackWatchRoute) {
-        json(res, 200, await slackWatchRoute(req));
+      // The watch routes need Slack and the host only, never GitHub or Jira setup; the Claude
+      // routes need the claude CLI and this directory only.
+      const routeKey = `${req.method} ${pathname}`;
+      const tableRoute = slackWatchRoutes[routeKey] || claudeRoutes[routeKey];
+      if (tableRoute) {
+        json(res, 200, await tableRoute(req));
         return;
       }
       if (pathname.startsWith('/api/')) {
@@ -481,6 +496,10 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'INVALID_SESSION',
         'WATCH_DISABLED',
         'WATCH_PAUSED',
+        'INVALID_TICKET',
+        'INVALID_ANSWER',
+        'CLAUDE_REFUSED',
+        'CLAUDE_FAILED',
       ];
       const code = allowed.includes(error.code) ? error.code : 'OPERATION_FAILED';
       const conflict = ['SETUP_REQUIRED', 'REVISION_CONFLICT', 'SERVICE_IN_USE'].includes(code);

@@ -1,5 +1,6 @@
 // claude-sessions.mjs — the Claude CLI's session listing (for the watcher's picker and prune), the
-// stop of an idle background session and the resume that continues a finished one.
+// stop of an idle background session, the resume that continues a finished one and the launch of a
+// new background session.
 //
 // Everything runs as a fixed argument array with no shell. The listing carries session names and
 // working directories; neither is logged, stored or sent beyond the picker's name, and the CLI's
@@ -9,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { SECRET_ENV_NAMES } from './config.mjs';
 import { isSessionId } from './slack-watch-store.mjs';
 
 const CLAUDE_BIN = 'claude';
@@ -19,9 +21,13 @@ const STOP_TIMEOUT_MS = 30_000;
 const STOP_MAX_BYTES = 1024 * 1024;
 const RESUME_TIMEOUT_MS = 30_000;
 const RESUME_MAX_BYTES = 1024 * 1024;
+const LAUNCH_TIMEOUT_MS = 30_000;
+const LAUNCH_MAX_BYTES = 1024 * 1024;
 const UNTRUSTED_WORKSPACE_MARKER = 'Workspace not trusted';
 // What the CLI prints when a resume found the session running and continued it as a copy.
 const FORK_MARKER = 'started a copy';
+// The short id a background start prints: a standalone token, not a part of a longer id.
+const STARTED_ID = /(?<![\w-])[0-9a-f]{8}(?![\w-])/;
 
 const delivered = (reason) => ({ status: 'delivered', ...(reason && { reason }) });
 const failure = (status, reason) => ({ status, reason });
@@ -418,5 +424,27 @@ export function createClaudeSessions({
     return failure('failed-transient', error.killed ? 'timed_out' : 'spawn_failed');
   }
 
-  return { listSessions, stop, resume };
+  // The CLI's entries from the listing that concurrent callers share, or from a read of their own
+  // when a decision must not rest on an answer that was already in flight. Null when unavailable.
+  async function entries({ fresh = false } = {}) {
+    return fresh ? readEntries() : (await rawListing()).entries;
+  }
+
+  // Starts a background session named `name` that runs `prompt` from `cwd` with access to `addDir`.
+  // The prompt follows `--`, so it is never read as an option. Returns the id the CLI printed, or
+  // null when it printed none.
+  async function launch({ name, prompt, cwd, addDir }) {
+    const env = { ...process.env };
+    for (const secret of SECRET_ENV_NAMES) delete env[secret];
+    const { error, stdout, stderr } = await run(
+      ['--bg', '--add-dir', addDir, '-n', name, '--', prompt],
+      { cwd, env, timeout: LAUNCH_TIMEOUT_MS, maxBuffer: LAUNCH_MAX_BYTES },
+    );
+    if (!error) return { ...delivered(), id: stdout.match(STARTED_ID)?.[0] ?? null };
+    if (error.code === 1 && `${stdout}${stderr}`.includes(UNTRUSTED_WORKSPACE_MARKER))
+      return failure('failed-permanent', 'untrusted_workspace');
+    return failure('failed-transient', error.killed ? 'timed_out' : 'spawn_failed');
+  }
+
+  return { listSessions, stop, resume, entries, launch };
 }

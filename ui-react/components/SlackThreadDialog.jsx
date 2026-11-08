@@ -7,6 +7,7 @@ import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import { Button, LoadingState } from './Primitives.jsx';
 import { ThreadSession } from './ThreadSession.jsx';
 import { getSlackStatus, getSlackThread } from '../lib/api.js';
+import { copyText } from '../../ui/dom.js';
 import { slackSessionIdentity } from '../../ui/slack-activity.js';
 import { parseSlackText } from '../../ui/slack-mrkdwn.js';
 import { ticketKeyFromThread } from '../../ui/slack-ticket-links.js';
@@ -231,15 +232,11 @@ export function SlackThreadDialog({
 
   const copyLink = async () => {
     if (!url) return;
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-      await navigator.clipboard.writeText(url);
+    if (await copyText(url)) {
       setCopy('copied');
       clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopy('idle'), 2000);
-    } catch {
-      setCopy('failed');
-    }
+    } else setCopy('failed');
   };
 
   if (!thread) return null;

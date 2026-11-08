@@ -297,7 +297,7 @@ test('the Slack thread dialog renders the conversation without leaving the app',
   assert.match(dialog, /data-testid="slack-thread-copy"/);
   assert.match(dialog, /data-testid="slack-thread-open"/);
   assert.match(dialog, /data-testid="slack-thread-close"/);
-  assert.match(dialog, /navigator\.clipboard\.writeText/);
+  assert.match(dialog, /copyText\(url\)/);
   assert.match(dialog, /setCopy\('copied'\)/);
   assert.match(dialog, /Couldn&apos;t copy/);
   assert.match(dialog, /noopener noreferrer/);

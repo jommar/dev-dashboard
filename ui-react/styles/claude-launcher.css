@@ -1,0 +1,215 @@
+/* The Claude launcher on My Tickets: the state icon on each card and the dialog it opens. Card
+   and board rules stay in board.css and my-tickets.css; this sheet holds only what is Claude's.
+   Tokens only, no literal colours. */
+
+/* ---- Icon -----------------------------------------------------------------
+   The last item of the card's top row, pushed to its right edge. The mark takes the state's
+   colour and the badge in its corner takes the state's shape, so colour is never the only cue. */
+.claude-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    color 150ms var(--ease-out),
+    background-color 150ms var(--ease-out);
+}
+/* The icon takes the row's free space, so the Slack chip no longer does: with both pushing right
+   they split it and leave a gap between them. The chip stays beside the card's figures. */
+.board-card-top .my-ticket-slack {
+  margin-left: var(--s1);
+}
+.claude-icon:hover {
+  background: var(--panel);
+}
+.claude-icon:focus-visible {
+  background: var(--panel);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.claude-icon[data-state='working'] {
+  color: var(--accent);
+}
+.claude-icon[data-state='waiting'] {
+  color: var(--amber);
+}
+.claude-icon[data-state='done'] {
+  color: var(--green);
+}
+.claude-icon[data-state='failed'] {
+  color: var(--red);
+}
+/* A broken ring: it turns under no-preference motion and stays a still ring otherwise. */
+.claude-icon-ring {
+  stroke-dasharray: 14 11;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: claude-ring-turn 1.1s linear infinite;
+}
+@keyframes claude-ring-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Dialog ---------------------------------------------------------------
+   A flex column so the header and footer stay put while only the body scrolls. Width is
+   vw-capped so it fits a 600px window. */
+.claude-dialog {
+  width: min(560px, 92vw);
+  max-height: 85vh;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.claude-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.claude-dialog::backdrop {
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(2px);
+}
+.claude-dialog-head {
+  padding: var(--s4) var(--s5);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+}
+.claude-dialog-title {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-xl);
+  overflow-wrap: anywhere;
+}
+.claude-dialog-key {
+  font-family: var(--mono);
+  font-size: var(--fs-md);
+}
+.claude-dialog-state {
+  margin: var(--s1) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.claude-dialog-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s3);
+  min-height: 0;
+  padding: var(--s4) var(--s5);
+  overflow-y: auto;
+}
+.claude-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--s3) var(--s5);
+  border-top: 1px solid var(--border);
+  background: var(--panel2);
+}
+
+/* The three items, one per row, each with the reason it is off beside it. */
+.claude-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.claude-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s3);
+}
+.claude-action-hint {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* Go to session: the copy status (a live region, so it is always in the body and takes no room
+   while empty), then the command in a field to copy by hand if the copy failed. */
+.claude-goto {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.claude-goto:empty {
+  margin-top: calc(var(--s3) * -1);
+}
+.claude-goto-fallback {
+  min-width: 0;
+  padding: 6px var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+/* The planning session's questions, one labelled input each. */
+.claude-questions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--border);
+}
+.claude-question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  align-self: stretch;
+  color: var(--strong);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.claude-question-input {
+  padding: 6px var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.claude-question-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.claude-question-input:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.claude-error {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
+  color: var(--red);
+  font-size: var(--fs-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-icon {
+    transition: none;
+  }
+  .claude-icon-ring {
+    animation: none;
+  }
+}
