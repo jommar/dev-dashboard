@@ -19,13 +19,14 @@ after making code changes:
 
 ## UI layout: masonry, not grid, for card lists
 
-Several sections render a variable number of variable-height cards (PR cards, Jira ticket cards,
-approval items) grouped under headings. These use real CSS **multi-column masonry** — Pinterest-style
-packing — not `display: grid`. Grid lays cards out in strict rows, so if one card in a row is much
+The retained legacy PR group styles and non-board card lists use real CSS
+**multi-column masonry** — Pinterest-style packing — not `display: grid`.
+Pull Requests now uses the shared board below, not these legacy group containers.
+Grid lays cards out in strict rows, so if one card in a row is much
 taller than its neighbor, everything below that row inherits the dead space; masonry lets a short
 column pack the next card up instead.
 
-**The pattern**, applied consistently across `ui/styles/*.css`:
+**The pattern**, retained in `ui-react/styles/*.css`:
 
 ```css
 .some-group-container { columns: 1; column-gap: <n>px; }
@@ -41,14 +42,16 @@ matching `services.css`'s `.grid` (an explicit-row grid, not masonry, but same b
 whole app feels consistent regardless of which container a given screen width lands in.
 
 **Applied to:**
-- `.home-cols` (`ui/styles/home.css`) — Home's three top-level blocks (Sprint, Services, Needs You).
-- `.pr-open-groups` (`ui/styles/prs.css`) — the PR tab's main "Open PRs" list, packing `.ticket-card`.
-- `.pr-approval-groups` (`ui/styles/prs.css`) — the PR tab's "Needs approval" and "PR merge candidates
-  to ops/development" sections, packing `.pr-approval-ticket`.
+
+- `.home-cols` (`ui-react/styles/home.css`) — Home's three top-level blocks (Sprint, Services, Needs You).
+- `.pr-open-groups` / `.pr-draft-groups` and `.pr-approval-groups`
+  (`ui-react/styles/prs.css`) — retained legacy group rules, not the current Pull Requests layout.
+  Do not remove legacy PR styles/helpers as part of board work; Home still uses shared PR rendering.
 
 **Not masonry, intentionally:**
-- The My Tickets and Slack boards (`.board-track`, `ui-react/styles/board.css`) are one row of
-  fixed-width columns (Jira statuses, Slack time groups) that scrolls sideways inside itself; they
+
+- The My Tickets, Slack and Pull Requests boards (`.board-track`, `ui-react/styles/board.css`) are one row of
+  fixed-width columns (Jira statuses, Slack time groups, PR review lanes) that scrolls sideways inside itself; they
   are not card lists, so they have no `columns:` container and none of the breakpoints above. Each
   column's card list (`.board-column-body`) scrolls vertically on its own, with the column header
   outside it so the header stays in view. Columns are 280px wide; at 599px and below they are 82vw
@@ -81,18 +84,19 @@ the `.my-ticket-status-group` migration once already — caught by review, not b
 asserted a spacing amount. When migrating a `display: grid` container to `columns:`, add the sibling
 margin rule in the same edit, every time, not just for the container you're most focused on.
 
-## UI layout: the shared board (My Tickets, Slack)
+## UI layout: the shared board (My Tickets, Slack, Pull Requests)
 
-My Tickets and Slack are one screen shape with different data, so they are built from one set of
-primitives — `ui-react/components/BoardShell.jsx` and `ui-react/styles/board.css` — not two copies.
-Toolbar, notes, states, board frame, columns and card shell are changed there and both screens get
-the change. The panel sheets (`my-tickets.css`, `slack.css`) hold only what is specific to their own
+My Tickets, Slack and Pull Requests share one screen shape with different data, built from one set of
+primitives — `ui-react/components/BoardShell.jsx` and `ui-react/styles/board.css` — not screen-specific copies.
+Toolbar, notes, states, board frame, columns and card shell are changed there and all three screens get
+the change. The panel sheets (`my-tickets.css`, `slack.css`, `prs.css`) hold only what is specific to their own
 domain: Jira card state, PR lines and chips, the Slack thread dialog and watcher. Generic classes
 are `board-*`, never prefixed with a screen's name; a rule that would read the same on a second
 screen belongs in `board.css`.
 
 **The primitives** (`BoardShell.jsx`; test ids come from the `name`/`testId` props and are a
 contract, so a refactor never renames them):
+
 - `BoardPanel` — the `<section class="panel board-panel">`. Using it is what opts a screen into the
   viewport-fill rule below.
 - `BoardSection` — one `Card.board-section`: `.board-toolbar` (title, a `sub` line, `meta` status
@@ -100,9 +104,9 @@ contract, so a refactor never renames them):
   `activeTab` the body is the panel of a `BoardTabs` row (below).
 - `RefreshControl` (Refresh button and `refresh in N s` countdown) takes the `load` that
   `useActivePolling` returns, so a click restarts the countdown and goes through the hook's
-  in-flight guard; both board screens do this. It is board-only: Home and PRs keep their own
-  button and `.pr-next` span because that countdown is styled differently (body font, `--fs-sm`,
-  against `.board-next` in mono, `--fs-xs`), so adopting it there would change how they look.
+  in-flight guard; all three board screens do this. Pull Requests intentionally adopted the shared
+  `.board-next` countdown. Home keeps its own button and `.pr-next` span (body font, `--fs-sm`,
+  against `.board-next` in mono, `--fs-xs`); retained legacy PR styles do not govern the PR board.
 - `BoardTabs` is a segmented switch between views of one board (Slack's Started, Mentions and Watch
   threads). My Tickets has no `BoardTabs`: its filter row is `WorkFilters`. It is a real tab set:
   give it the same `name` as its `BoardSection` and pass the selected tab there as `activeTab`, and
@@ -113,7 +117,9 @@ contract, so a refactor never renames them):
   `hint` (spoken and shown on hover, so the tone is never colour alone).
 - `BoardNote` (amber toolbar note) and `BoardState` (loading, empty, error or warning body).
 - `Board` and `BoardColumn` — `.board-frame` > `.board-track` and its columns. `Board` owns scroll
-  preservation (`usePreservedInteraction`), so a screen never wires it again.
+  preservation (`usePreservedInteraction`), so a screen never wires it again. Optional `BoardColumn.hint`
+  gives a heading existing `DashboardTooltip` help on hover/keyboard focus; only hinted headings gain
+  a Tab stop. Pull Requests supplies lane meanings; My Tickets/Slack keep their no-hint defaults.
 - `.board-card` (`.board-card-action` for a card that is a button), `.board-card-top`,
   `.board-card-summary`, `.board-card-stat` and `.board-chip` — the card shell and status chip. A
   domain card adds its own class beside them (`board-card my-tickets-card`).

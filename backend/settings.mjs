@@ -7,7 +7,7 @@ import { loadEnvFile } from './env.mjs';
 import { validateNoticeTemplate } from './slack-notice.mjs';
 
 const clone = (value) => structuredClone(value);
-const freeze = (value) => {
+export const freeze = (value) => {
   if (value && typeof value === 'object') {
     Object.values(value).forEach(freeze);
     Object.freeze(value);

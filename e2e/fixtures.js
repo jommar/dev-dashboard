@@ -13,7 +13,11 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
     const url = new URL(request.url());
     const method = request.method();
     requests.push({ method, path: url.pathname + url.search });
-    if (url.origin !== baseURL && method === 'GET') return route.continue();
+    if (url.origin !== baseURL) {
+      unexpected.push(`${method} ${url.href}`);
+      await route.abort('blockedbyclient');
+      return;
+    }
     if (url.origin === baseURL) {
       const response = apiResponse(
         url,

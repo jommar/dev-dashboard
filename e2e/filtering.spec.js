@@ -55,6 +55,51 @@ function populateFilters(data) {
       'DEMO-107': { ticket: { status: 'Promote to UAT', sprint: active }, prs: [candidate] },
     },
   });
+  const queuePr = (item) => ({
+    repo: item.repo,
+    number: item.number,
+    title: item.title,
+    url: item.url,
+    owner: item.owner,
+    draft: !!item.draft,
+    updatedAt: item.updatedAt,
+    review: {
+      complete: !!item.reviews?.available,
+      state: item.reviews ? item.reviews.state || 'awaiting' : 'unknown',
+      approvers: item.reviews?.approvers || [],
+      changesRequesters: item.reviews?.changesRequesters || [],
+      reviewDecision: null,
+    },
+  });
+  const queueTicket = (key, items, sprint = active) => ({
+    ...data.reviewTickets.tickets[0],
+    key,
+    summary: `${literal} change ${key.slice(5)}`,
+    status: 'Ready For Code Review',
+    sprint,
+    sprints: [sprint],
+    prs: items.map(queuePr),
+  });
+  data.reviewTickets = {
+    ...data.reviewTickets,
+    total: 8,
+    prCoverage: {
+      available: true,
+      complete: true,
+      repos: ['example/api', 'example/web'],
+      reasons: [],
+    },
+    tickets: [
+      queueTicket('DEMO-101', [changed, approved]),
+      queueTicket('DEMO-201', [changed], previous),
+      queueTicket('DEMO-103', [unknown]),
+      queueTicket('DEMO-104', [awaiting]),
+      queueTicket('DEMO-105', [draft]),
+      queueTicket('DEMO-106', [teammate]),
+      queueTicket('DEMO-107', [candidate]),
+      queueTicket('DEMO-108', []),
+    ],
+  };
   const ticket = (key, overrides = {}) => ({
     ...data.tickets.tickets[0],
     key,
@@ -111,48 +156,47 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
   const tickets = page.getByTestId('panel-my-tickets');
   const mine = controls(tickets);
 
-  await test.step('PR controls combine AND criteria, distinguish unknown reviews and keep grouped counts', async () => {
+  await test.step('PR controls combine AND criteria, distinguish unknown reviews and keep whole-ticket counts', async () => {
     await expect(pr.search).toBeVisible();
-    for (const label of ['Section', 'Repository', 'Review state'])
+    for (const label of ['Repository', 'Review state'])
       await expect(pr.select(label)).toBeVisible();
-    await expect(prs.getByTestId('prs-filter-count')).toHaveText('7 of 7');
+    await expect(pr.select('Section')).toHaveCount(0);
+    await expect(prs.getByTestId('prs-filter-count')).toHaveText('8 of 8');
     await expectNoFetches(dashboard, async () => {
       await pr.search.fill('[FIX].* <IMG> &');
-      await pr.select('Section').selectOption('open');
       await pr.select('Repository').selectOption('example/api');
       await pr.select('Review state').selectOption('changes_requested');
-      await expect(prs.getByTestId('prs-filter-count')).toHaveText('1 of 7');
-      await expect(prs.getByTestId('pr-open-ticket-DEMO-101')).toContainText('change 101');
-      await expect(prs.getByTestId('pr-open-group-count-DEMO-101')).toHaveText('1');
-      await expect(prs.getByTestId('pr-open-ticket-DEMO-201')).toContainText('change 101');
-      await expect(prs.getByTestId('pr-open-example/web-102')).toHaveCount(0);
-      await expect(prs.getByTestId('pr-draft-example/api-105')).toHaveCount(0);
+      await expect(prs.getByTestId('prs-filter-count')).toHaveText('3 of 8');
+      await expect(prs.getByTestId('prs-ticket-DEMO-101')).toContainText('change 101');
+      await expect(prs.getByTestId('prs-ticket-DEMO-101')).toContainText('2 PRs');
+      await expect(prs.getByTestId('prs-ticket-DEMO-201')).toContainText('change 201');
+      await expect(prs.getByTestId('prs-pr-DEMO-101-example-web-102')).toBeVisible();
+      await expect(
+        prs.getByTestId('prs-column-reviewing').getByTestId('prs-ticket-DEMO-101'),
+      ).toBeVisible();
+      await expect(prs.getByTestId('prs-ticket-DEMO-105')).toContainText('Draft');
       await expect(prs.locator('img, script')).toHaveCount(0);
       await pr.select('Review state').selectOption('unknown');
-      await expect(prs.getByTestId('pr-open-example/api-103')).toBeVisible();
-      await expect(prs.getByTestId('pr-open-example/api-104')).toHaveCount(0);
+      await expect(prs.getByTestId('prs-pr-DEMO-103-example-api-103')).toBeVisible();
+      await expect(prs.getByTestId('prs-ticket-DEMO-104')).toHaveCount(0);
       await pr.select('Review state').selectOption('awaiting');
-      await expect(prs.getByTestId('pr-open-example/api-104')).toBeVisible();
-      await expect(prs.getByTestId('pr-open-example/api-103')).toHaveCount(0);
+      await expect(prs.getByTestId('prs-pr-DEMO-104-example-api-104')).toBeVisible();
+      await expect(prs.getByTestId('prs-ticket-DEMO-103')).toHaveCount(0);
       await pr.clear.click();
-      for (const [section, row] of [
-        ['draft', 'pr-draft-example/api-105'],
-        ['approval', 'pr-approval-example/api-106'],
-        ['uat', 'pr-uat-promote-example/web-107'],
-      ]) {
-        await pr.select('Section').selectOption(section);
-        await expect(prs.getByTestId(row)).toBeVisible();
-        await expect(prs.getByTestId('prs-filter-count')).toHaveText('1 of 7');
+      for (const key of ['DEMO-105', 'DEMO-106', 'DEMO-107', 'DEMO-108']) {
+        await pr.search.fill(key);
+        await expect(prs.getByTestId(`prs-ticket-${key}`)).toBeVisible();
+        await expect(prs.getByTestId('prs-filter-count')).toHaveText('1 of 8');
       }
       await pr.search.fill('^');
       await expect(prs.getByTestId('prs-no-matches')).toContainText('No matches');
-      await expect(prs.getByTestId('prs-filter-count')).toHaveText('0 of 7');
+      await expect(prs.getByTestId('prs-filter-count')).toHaveText('0 of 8');
       await pr.clear.click();
-      await expect(prs.getByTestId('prs-filter-count')).toHaveText('7 of 7');
+      await expect(prs.getByTestId('prs-filter-count')).toHaveText('8 of 8');
+      await expect(prs.getByTestId('prs-ticket-DEMO-108')).toContainText('No linked open PRs');
       await pr.search.fill('change 105');
-      await pr.select('Section').selectOption('draft');
     });
-    await prs.getByTestId('pr-draft-view-diff-example/api-105').click();
+    await prs.getByTestId('prs-diff-DEMO-105-example-api-105').click();
     await expect(page.getByRole('dialog', { name: 'Diff viewer', exact: true })).toBeVisible();
     await page.getByTestId('diff-close').click();
   });
@@ -218,30 +262,31 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
   await test.step('refresh, tab switches and reload keep independent selections; missing options stay selected', async () => {
     await page.getByTestId('tab-prs').click();
     await expect(pr.search).toHaveValue('change 105');
-    await expect(pr.select('Section')).toHaveValue('draft');
+    await expect(pr.select('Section')).toHaveCount(0);
     await pr.select('Repository').selectOption('example/api');
     const searchNode = await pr.search.elementHandle();
     await pr.search.focus();
-    dashboard.data.prs.draftPrs[0].title += ' refreshed';
+    dashboard.data.reviewTickets.tickets.find((ticket) => ticket.key === 'DEMO-105').summary +=
+      ' refreshed';
     await page.clock.fastForward(91_000);
-    await expect(prs.getByTestId('pr-draft-example/api-105')).toContainText('refreshed');
+    await expect(prs.getByTestId('prs-ticket-DEMO-105')).toContainText('refreshed');
     expect(await pr.search.evaluate((element, original) => element === original, searchNode)).toBe(
       true,
     );
     await expect(pr.search).toBeFocused();
-    await page.route('**/api/prs', (route) => route.fulfill({ status: 502, body: 'Unavailable' }));
+    await page.route('**/api/review-tickets', (route) =>
+      route.fulfill({ status: 502, body: 'Unavailable' }),
+    );
     await prs.getByTestId('prs-refresh').click();
     await expect(prs.getByTestId('prs-meta')).toContainText('Refresh failed');
     await pr.search.fill('change 105');
     await expect(prs.getByTestId('prs-meta')).toContainText('Refresh failed');
-    await expect(prs.getByTestId('pr-draft-example/api-105')).toBeVisible();
-    await page.unroute('**/api/prs');
-    dashboard.data.prs.draftPrs = [];
-    dashboard.data.prs.draftGroups = {};
-    dashboard.data.prs.prs = [dashboard.data.prs.prs[1]];
-    dashboard.data.prs.groups = { 'DEMO-102': dashboard.data.prs.prs };
-    dashboard.data.prs.prsNeedingApprovals = [];
-    dashboard.data.prs.approvalGroups = {};
+    await expect(prs.getByTestId('prs-ticket-DEMO-105')).toBeVisible();
+    await page.unroute('**/api/review-tickets');
+    dashboard.data.reviewTickets.tickets = dashboard.data.reviewTickets.tickets.filter(
+      (ticket) => ticket.key === 'DEMO-107',
+    );
+    dashboard.data.reviewTickets.total = 1;
     await prs.getByTestId('prs-refresh').click();
     await waitLoaded(page, 'prs');
     await expect(pr.select('Repository')).toHaveValue('example/api');
@@ -250,7 +295,7 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
     await page.reload();
     await waitLoaded(page, 'prs');
     await expect(pr.search).toHaveValue('change 105');
-    await expect(pr.select('Section')).toHaveValue('draft');
+    await expect(pr.select('Section')).toHaveCount(0);
     await expect(pr.select('Repository')).toHaveValue('example/api');
     const slackLoaded = waitForSlackListing(page);
     await page.getByTestId('tab-my-tickets').click();
@@ -288,7 +333,7 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
       await expect(pr.search).toHaveValue('change 105');
       await pr.clear.click();
       await expect(pr.search).toHaveValue('');
-      for (const label of ['Section', 'Repository', 'Review state'])
+      for (const label of ['Repository', 'Review state'])
         await expect(pr.select(label)).toHaveValue('');
       await expect(pr.select('Repository').locator('option[value="example/api"]')).toHaveCount(0);
     });
@@ -316,9 +361,25 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
       await page.reload();
       await waitLoaded(page, 'prs');
       await expect(pr.search).toHaveValue('');
-      for (const label of ['Section', 'Repository', 'Review state'])
+      for (const label of ['Repository', 'Review state'])
         await expect(pr.select(label)).toHaveValue('');
     }
+    await page.evaluate(
+      (key) =>
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            version: 1,
+            views: { prs: { search: '', section: 'draft', repo: '', review: '' } },
+          }),
+        ),
+      STORAGE_KEY,
+    );
+    await page.reload();
+    await waitLoaded(page, 'prs');
+    await expect(pr.select('Section')).toHaveCount(0);
+    await expect(prs.getByTestId('prs-filter-count')).toHaveText('1 of 1');
+    await expect(prs.getByTestId('prs-ticket-DEMO-107')).toBeVisible();
     const blockedPage = await context.newPage();
     await blockedPage.addInitScript((key) => {
       const get = Storage.prototype.getItem;
@@ -346,38 +407,32 @@ test('work toolbars combine local filters, keep counts and warnings honest, and 
     await blockedPage.close();
   });
 
-  await test.step('JSON group context matches and overlapping drafts agree with rendered counts', async () => {
+  await test.step('ticket keys, PR titles and shared PRs agree with whole-ticket counts', async () => {
     populateFilters(dashboard.data);
-    dashboard.data.prs.prs.push(dashboard.data.prs.draftPrs[0]);
-    dashboard.data.prs.groups.Unticketed = dashboard.data.prs.draftPrs;
-    dashboard.data.prs.draftGroups = { 'CONTEXT-DRAFT': dashboard.data.prs.draftPrs };
-    dashboard.data.prs.approvalGroups = {
-      'CONTEXT-APPROVAL': dashboard.data.prs.prsNeedingApprovals,
-    };
+    dashboard.data.reviewTickets.tickets.find((ticket) => ticket.key === 'DEMO-106').summary =
+      'Independent Jira summary for a linked PR';
     await prs.getByTestId('prs-refresh').click();
     await waitLoaded(page, 'prs');
-    for (const [section, search, row] of [
-      ['open', 'Ready For Testing', 'pr-open-example/api-101'],
-      ['draft', 'CONTEXT-DRAFT', 'pr-draft-example/api-105'],
-      ['approval', 'CONTEXT-APPROVAL', 'pr-approval-example/api-106'],
+    for (const [search, row] of [
+      ['DEMO-201', 'prs-pr-DEMO-201-example-api-101'],
+      ['DEMO-105', 'prs-pr-DEMO-105-example-api-105'],
+      ['change 106', 'prs-pr-DEMO-106-example-api-106'],
     ]) {
       await pr.clear.click();
-      await pr.select('Section').selectOption(section);
       await pr.search.fill(search);
-      await expect.soft(prs.getByTestId('prs-filter-count')).toHaveText('1 of 7');
+      await expect.soft(prs.getByTestId('prs-filter-count')).toHaveText('1 of 8');
       await expect.soft(prs.getByTestId(row)).toBeVisible();
       await expect.soft(prs.getByTestId('prs-no-matches')).toBeHidden();
     }
     await pr.clear.click();
-    await pr.select('Section').selectOption('open');
+    await pr.select('Review state').selectOption('approved');
     await pr.search.fill('change 105');
-    await expect.soft(prs.getByTestId('prs-filter-count')).toHaveText('0 of 7');
+    await expect.soft(prs.getByTestId('prs-filter-count')).toHaveText('0 of 8');
     await expect.soft(prs.getByTestId('prs-no-matches')).toBeVisible();
-    dashboard.data.prs.prs = dashboard.data.prs.draftPrs;
-    dashboard.data.prs.groups = { Unticketed: dashboard.data.prs.draftPrs };
-    dashboard.data.prs.prsNeedingApprovals = [];
-    dashboard.data.prs.approvalGroups = {};
-    dashboard.data.prs.uatPromoteGroups = {};
+    dashboard.data.reviewTickets.tickets = dashboard.data.reviewTickets.tickets.filter(
+      (ticket) => ticket.key === 'DEMO-108',
+    );
+    dashboard.data.reviewTickets.total = 1;
     await prs.getByTestId('prs-refresh').click();
     await waitLoaded(page, 'prs');
     await pr.search.fill('');

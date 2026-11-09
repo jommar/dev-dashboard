@@ -5,7 +5,7 @@ const STORAGE_KEY = 'dev-dashboard.work-filters';
 const SCHEMAS = {
   prs: {
     search: null,
-    section: ['', 'open', 'draft', 'approval', 'uat'],
+    prefix: null,
     repo: null,
     review: ['', 'approved', 'changes_requested', 'awaiting', 'unknown'],
   },
@@ -18,7 +18,7 @@ const SCHEMAS = {
 };
 const SELECTS = {
   prs: [
-    ['section', 'Section'],
+    ['prefix', 'Ticket prefix'],
     ['repo', 'Repository'],
     ['review', 'Review state'],
   ],
@@ -46,6 +46,7 @@ function readViews() {
     for (const [view, schema] of Object.entries(SCHEMAS)) {
       const fields = saved.views[view];
       if (!fields || typeof fields !== 'object' || Array.isArray(fields)) continue;
+      if (view === 'prs') delete fields.prefix;
       const valid = Object.entries(schema).every(
         ([key, values]) =>
           fields[key] === undefined ||
@@ -61,7 +62,8 @@ function readViews() {
 
 function saveView(view, filters) {
   const views = readViews();
-  views[view] = filters;
+  views[view] = { ...filters };
+  if (view === 'prs') delete views[view].prefix;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, views }));
   } catch {
@@ -120,6 +122,7 @@ export function WorkFilters({
           <label key={field} className="work-filter-field">
             {label}
             <select
+              aria-label={label}
               data-filter={field}
               value={filters[field]}
               onChange={(event) => change(field, event.target.value)}

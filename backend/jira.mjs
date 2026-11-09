@@ -123,6 +123,57 @@ export function buildMyTicketsJql({ includeDone = false } = {}) {
   return `${base}${scope} ORDER BY updated DESC`;
 }
 
+export function buildReviewTicketsJql() {
+  return `assignee IS NOT EMPTY AND assignee != currentUser() AND status = "${READY_FOR_CODE_REVIEW_STATUS}" ORDER BY updated DESC`;
+}
+
+export async function fetchReviewReadyTickets({ snapshot } = {}) {
+  const cfg = jiraConfig(snapshot);
+  if (!cfg) throw new Error('Jira is not configured.');
+  const tickets = new Map();
+  const cursors = new Set();
+  let nextPageToken = null;
+  for (;;) {
+    const url = new URL(`${cfg.baseUrl}/rest/api/3/search/jql`);
+    url.searchParams.set('jql', buildReviewTicketsJql());
+    url.searchParams.set(
+      'fields',
+      ['summary', 'status', 'priority', 'updated', 'created', cfg.sprintField]
+        .filter(Boolean)
+        .join(','),
+    );
+    url.searchParams.set('maxResults', String(MY_TICKETS_PAGE_SIZE));
+    if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
+    const res = await fetch(url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: authorization(cfg.email, cfg.token),
+      },
+    });
+    if (!res.ok) throw new Error('Jira review search failed.');
+    const data = await res.json();
+    if (!Array.isArray(data?.issues) || typeof data.isLast !== 'boolean')
+      throw new Error('Invalid Jira review pagination.');
+    for (const issue of data.issues) {
+      const ticket = mapTicketIssue(issue, cfg);
+      if (!ticket || !ticket.key.trim()) throw new Error('Invalid Jira review ticket.');
+      if (!tickets.has(ticket.key)) tickets.set(ticket.key, ticket);
+    }
+    if (data.isLast) {
+      if (data.nextPageToken) throw new Error('Invalid Jira review pagination.');
+      return [...tickets.values()];
+    }
+    const cursor = data.nextPageToken;
+    if (typeof cursor !== 'string' || !cursor.trim() || cursors.has(cursor) || !data.issues.length)
+      throw new Error('Invalid Jira review pagination.');
+    cursors.add(cursor);
+    nextPageToken = cursor;
+  }
+}
+
 // ── Promote-to-UAT tickets (assignee = currentUser(), status = literal) ──
 // Feeds the "PR merge candidates to ops/development" section: tickets the
 // current user owns that have reached the Promote-to-UAT gate, cross-referenced

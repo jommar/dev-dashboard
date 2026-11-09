@@ -1,12 +1,31 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Button, Card, LoadingState } from '../components/Primitives.jsx';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Board,
+  BoardColumn,
+  BoardNote,
+  BoardPanel,
+  BoardSection,
+  BoardState,
+  RefreshControl,
+} from '../components/BoardShell.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
-import { PrActions } from '../components/PrActions.jsx';
-import { TicketPrCard } from '../components/PrCard.jsx';
+import { ReviewTicketCard } from '../components/ReviewTicketCard.jsx';
+import { ClaudePlaceholderDialog } from '../components/ClaudePlaceholderDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
-import { filterPrPayload, uniquePrs } from '../../ui/work-filters.js';
+import { hasCompletePrCoverage, reviewColumns } from '../../ui/review-board.js';
+import { ticketPrefix } from '../../ui/work-filters.js';
 import { PR_POLL_MS } from '../../ui/polling.js';
+
+const NO_TICKETS = Object.freeze([]);
+const LANE_HINTS = {
+  'to-review':
+    'No current approval or changes-request activity, no linked open PRs, or incomplete PR/review data. Evaluated across all linked open PRs in watched repositories; unknown data stays here.',
+  reviewing:
+    'PR/review data is complete and at least one linked open PR has an approval or standing changes request, but the ticket is not fully reviewed: another PR may await approval, a changes request may stand, or a draft may remain. Covers all linked open PRs in watched repositories; not live reviewer activity.',
+  reviewed:
+    'At least one linked open PR, and every linked open PR across watched repositories is currently approved by anyone, with complete PR/review data, no drafts and no standing changes requests.',
+};
 
 export function PrsPanel({ config, active }) {
   const api = useDashboardApi();
@@ -14,7 +33,9 @@ export function PrsPanel({ config, active }) {
   const [meta, setMeta] = useState('loading…');
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState('');
-  const [filters, setFilters] = useState({ search: '', section: '', repo: '', review: '' });
+  const [filters, setFilters] = useState({ search: '', prefix: '', repo: '', review: '' });
+  const [openClaudeKey, setOpenClaudeKey] = useState(null);
+  const boardRef = useRef(null);
   const dataRef = useRef(data);
   dataRef.current = data;
   const load = useCallback(
@@ -22,266 +43,162 @@ export function PrsPanel({ config, active }) {
       setLoading(true);
       if (!silent) setMeta(dataRef.current ? 'Refreshing…' : 'loading…');
       try {
-        const result = await api.getPrs();
-        if (result === null) {
-          setMeta(
-            dataRef.current
-              ? 'GitHub not configured — showing last update'
-              : 'GitHub not configured',
-          );
-          return;
-        }
+        const result = await api.getReviewTickets();
         setData(result);
         setMeta(
-          result.prsAvailable === false
-            ? 'GitHub is unavailable'
-            : `${(result.prs || []).filter((pr) => !pr.draft).length} open for ${result.login} (of ${result.total}) · updated ${new Date().toLocaleTimeString()}`,
+          `${result.total} tickets · updated ${new Date(result.updatedAt).toLocaleTimeString()}`,
         );
         setFailure('');
       } catch (error) {
-        if (!dataRef.current) {
-          setMeta('error');
-          setFailure(`Failed to load PRs: ${error.message}`);
-        } else setMeta(`Refresh failed — showing last update ${new Date().toLocaleTimeString()}`);
+        setFailure(`Failed to load review tickets: ${error.message}`);
+        setMeta(dataRef.current ? 'Refresh failed — showing last update' : 'error');
       } finally {
         setLoading(false);
       }
     },
     [api],
   );
-  const { countdown } = useActivePolling({ active, interval: PR_POLL_MS, load, loaded: !!data });
-  const filtered = useMemo(() => filterPrPayload(data || {}, filters), [data, filters]);
-  const all = uniquePrs(data || {});
-  const shown = uniquePrs(filtered).length;
-  const options = {
-    section: [
-      ['open', 'Open PRs'],
-      ['draft', 'Draft PRs'],
-      ['approval', 'Needs approval'],
-      ['uat', 'Merge candidates'],
-    ],
-    repo: [...new Set(all.map((pr) => pr.repo))].sort(),
-    review: [
-      ['approved', 'Approved'],
-      ['changes_requested', 'Changes requested'],
-      ['awaiting', 'Awaiting review'],
-      ['unknown', 'Unknown'],
-    ],
-  };
-  const uatData = {
-    ...filtered,
-    uatPromoteTotal: Object.values(filtered.uatPromoteGroups || {}).reduce(
-      (sum, group) => sum + group.prs.length,
-      0,
-    ),
-  };
-  const ticketCards = (groups, statuses, sprints, variant, options = {}) =>
-    Object.entries(groups || {}).map(([ticket, prs]) => (
-      <TicketPrCard
-        key={ticket}
-        ticket={ticket}
-        prs={prs}
-        jiraBase={config.jiraBase}
-        ticketStatus={statuses?.[ticket]}
-        sprint={sprints?.[ticket]}
-        variant={variant}
-        {...options}
-      />
-    ));
-  const openGroups = Object.entries(filtered.groups || {})
-    .map(([ticket, prs]) => [ticket, prs.filter((pr) => !pr.draft)])
-    .filter(([, prs]) => prs.length);
-  const draftCount = (filtered.draftPrs || []).length;
-  const approvalThreshold = Number.isFinite(Number(filtered.approvalThreshold))
-    ? Number(filtered.approvalThreshold)
-    : 1;
-  const approvalCount = (filtered.prsNeedingApprovals || filtered.prsNeedingApproval || []).length;
-  const uatCount = Number.isFinite(Number(uatData.uatPromoteTotal))
-    ? Number(uatData.uatPromoteTotal)
-    : 0;
-  return (
-    <section
-      id="panel-prs"
-      className="panel"
-      data-testid="panel-prs"
-      hidden={!active}
-      aria-busy={loading}
-    >
-      <header className="page-intro">
-        <p className="eyebrow">Review & delivery</p>
-        <h2>Pull Requests</h2>
-        <p>Your open changes and teammate PRs awaiting approval.</p>
-      </header>
-      <WorkFilters
-        id="prs-filter"
-        view="prs"
-        options={options}
-        total={all.length}
-        shown={shown}
-        onChange={setFilters}
-      />
-      <p
-        className="pr-empty"
-        data-testid="prs-no-matches"
-        hidden={!data || shown > 0 || all.length === 0}
-      >
-        No matches. Try changing or clearing filters.
-      </p>
-      <PrActions>
-        <section className="pr-open-section" data-testid="pr-open-section">
-          <h3 className="pr-section-heading" data-testid="open-prs-title">
-            <span className="section-label">Your open PRs</span>
-            <span className="pr-open-count" data-testid="prs-meta" role="status">
-              {meta}
-            </span>
-            <Button data-testid="prs-refresh" disabled={loading} onClick={() => load()}>
-              Refresh
-            </Button>
-            <span className="pr-next" data-testid="prs-next">
-              {countdown}
-            </span>
-          </h3>
-          <div id="prs-list" className="pr-open-groups" data-testid="prs-list">
-            {!data ? (
-              <LoadingState label="Loading pull requests…" testId="prs-loading" />
-            ) : failure ? (
-              <div className="pr-error" data-testid="prs-error">
-                {failure}
-              </div>
-            ) : filtered.prsAvailable === false ? (
-              <div className="pr-error" data-testid="prs-unavailable">
-                GitHub is unavailable. Refresh to try again.
-              </div>
-            ) : openGroups.length ? (
-              openGroups.map(([ticket, prs]) => (
-                <TicketPrCard
-                  key={ticket}
+  const { load: refresh, countdown } = useActivePolling({
+    active,
+    interval: PR_POLL_MS,
+    load,
+    loaded: !!data,
+  });
+  const rows = data?.tickets || NO_TICKETS;
+  const columns = useMemo(
+    () => reviewColumns(rows, data?.prCoverage, filters),
+    [rows, data?.prCoverage, filters],
+  );
+  const shown = columns.reduce((total, column) => total + column.tickets.length, 0);
+  const options = useMemo(
+    () => ({
+      prefix: [...new Set(rows.map((ticket) => ticketPrefix(ticket.key)).filter(Boolean))].sort(),
+      repo: [...new Set(rows.flatMap((ticket) => ticket.prs.map((pr) => pr.repo)))].sort(),
+      review: [
+        ['approved', 'Approved'],
+        ['changes_requested', 'Changes requested'],
+        ['awaiting', 'Awaiting review'],
+        ['unknown', 'Unknown'],
+      ],
+    }),
+    [rows],
+  );
+  const openClaudeTicket = openClaudeKey && rows.find((ticket) => ticket.key === openClaudeKey);
+  useEffect(() => {
+    if (openClaudeKey && (!active || !openClaudeTicket)) setOpenClaudeKey(null);
+  }, [active, openClaudeKey, openClaudeTicket]);
+  const resolveOpener = useCallback((key) => {
+    const panel = document.getElementById('panel-prs');
+    if (!panel || panel.hidden) return null;
+    return (
+      boardRef.current?.querySelector(`[data-testid="prs-claude-icon-${CSS.escape(key)}"]`) ||
+      panel.querySelector('[data-testid="prs-board"]') ||
+      panel.querySelector('[data-testid="prs-refresh"]')
+    );
+  }, []);
+  const board = useMemo(
+    () => (
+      <Board label="PR review board" testId="prs-board" frameRef={boardRef}>
+        {columns.map((column) => (
+          <BoardColumn
+            key={column.id}
+            id={column.id}
+            label={column.label}
+            hint={LANE_HINTS[column.id]}
+            count={column.tickets.length}
+            testIdPrefix="prs-column-"
+          >
+            {column.tickets.map((ticket) => (
+              <li key={ticket.key}>
+                <ReviewTicketCard
                   ticket={ticket}
-                  prs={prs}
-                  ticketStatus={filtered.ticketStatuses?.[ticket]}
-                  sprint={filtered.ticketSprints?.[ticket]}
                   jiraBase={config.jiraBase}
+                  prCoverage={data?.prCoverage}
+                  onOpenClaude={setOpenClaudeKey}
                 />
-              ))
-            ) : (
-              <div className="pr-empty">No open PRs.</div>
-            )}
-          </div>
-        </section>
-        {data ? (
+              </li>
+            ))}
+          </BoardColumn>
+        ))}
+      </Board>
+    ),
+    [columns, config.jiraBase, data?.prCoverage],
+  );
+  const coverageIncomplete = data && !hasCompletePrCoverage(data.prCoverage);
+  return (
+    <BoardPanel id="prs" active={active} busy={loading}>
+      <BoardSection
+        name="prs"
+        title="Pull Requests"
+        sub={
+          <span title="Other-assigned Ready For Code Review tickets · open PRs from watched repositories only. Reviewing means approvals or changes requested, not live reviewer activity.">
+            Ready For Code Review · watched repositories only
+          </span>
+        }
+        meta={meta}
+        controls={
+          <RefreshControl name="prs" loading={loading} countdown={countdown} onRefresh={refresh} />
+        }
+        filters={
+          <WorkFilters
+            id="prs-filter"
+            view="prs"
+            options={options}
+            total={rows.length}
+            shown={shown}
+            onChange={setFilters}
+            collapsible
+          />
+        }
+        notes={
           <>
-            <Card className="pr-section-card">
-              <div data-testid="pr-draft-container">
-                <section className="pr-draft-section" data-testid="pr-draft-section">
-                  <h3 className="pr-section-heading">
-                    Your draft PRs
-                    <span className="pr-approval-count-total" data-testid="pr-draft-count">
-                      {draftCount}
-                    </span>
-                  </h3>
-                  {filtered.prsAvailable === false ? (
-                    <div className="pr-error">GitHub is unavailable. Refresh to try again.</div>
-                  ) : !draftCount ? (
-                    <div className="pr-empty">No draft PRs.</div>
-                  ) : (
-                    <div className="pr-draft-groups">
-                      {ticketCards(
-                        filtered.draftGroups,
-                        filtered.ticketStatuses,
-                        filtered.ticketSprints,
-                        'pr-draft',
-                      )}
-                    </div>
-                  )}
-                </section>
-              </div>
-            </Card>
-            <Card className="pr-section-card">
-              <div data-testid="pr-approval-container">
-                <section className="pr-approval-section" data-testid="pr-approval-section">
-                  <h3 className="pr-section-heading" data-testid="pr-approval-heading">
-                    Open PRs needing approval ({approvalThreshold} required)
-                    <span className="pr-approval-count-total" data-testid="pr-approval-count">
-                      {approvalCount}
-                    </span>
-                  </h3>
-                  {(filtered.approvalDataAvailable ?? filtered.reviewDataAvailable) === false ||
-                  (filtered.approvalDataAvailable ?? filtered.reviewDataAvailable) === undefined ? (
-                    <div className="pr-approval-unavailable" data-testid="pr-approval-unavailable">
-                      Review data unavailable.
-                    </div>
-                  ) : !approvalCount ? (
-                    <div className="pr-approval-empty" data-testid="pr-approval-empty">
-                      No open PRs below the approval threshold.
-                    </div>
-                  ) : (
-                    <div className="pr-approval-groups">
-                      {ticketCards(
-                        filtered.approvalGroups,
-                        filtered.approvalTicketStatuses,
-                        filtered.approvalTicketSprints,
-                        'pr-approval',
-                        { required: approvalThreshold },
-                      )}
-                    </div>
-                  )}
-                </section>
-              </div>
-            </Card>
-            <Card className="pr-section-card">
-              <div data-testid="pr-uat-promote-container">
-                <section className="pr-approval-section" data-testid="pr-uat-promote-section">
-                  <h3 className="pr-section-heading" data-testid="pr-uat-promote-heading">
-                    PR merge candidates to ops/development
-                    <span className="pr-approval-count-total" data-testid="pr-uat-promote-count">
-                      {uatCount}
-                    </span>
-                  </h3>
-                  {uatData.uatPromoteAvailable === false ||
-                  uatData.uatPromoteAvailable === undefined ? (
-                    <div
-                      className="pr-approval-unavailable"
-                      data-testid="pr-uat-promote-unavailable"
-                    >
-                      Promote-to-UAT data unavailable.
-                    </div>
-                  ) : !uatCount ? (
-                    <div className="pr-approval-empty" data-testid="pr-uat-promote-empty">
-                      No PRs ready to merge to ops/development.
-                    </div>
-                  ) : (
-                    <div className="pr-approval-groups">
-                      {Object.entries(uatData.uatPromoteGroups || {}).map(([ticket, group]) => (
-                        <TicketPrCard
-                          key={ticket}
-                          ticket={ticket}
-                          prs={group.prs}
-                          ticketStatus={group.ticket?.status}
-                          sprint={group.ticket?.sprint}
-                          jiraBase={config.jiraBase}
-                          variant="pr-uat-promote"
-                        />
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </div>
-            </Card>
+            {data && failure && (
+              <BoardNote testId="prs-stale">
+                {failure} Showing the last successful update{' '}
+                {new Date(data.updatedAt).toLocaleTimeString()}; review progress may be stale.
+              </BoardNote>
+            )}
+            {coverageIncomplete && (
+              <BoardNote testId="prs-coverage">
+                PR discovery unavailable or incomplete for watched repositories. Known PRs are
+                shown; every ticket remains To Review until discovery completes.
+              </BoardNote>
+            )}
           </>
+        }
+      >
+        {!data ? (
+          failure ? (
+            <BoardState kind="error" testId="prs-error">
+              {failure}
+            </BoardState>
+          ) : (
+            <BoardState kind="loading" label="Loading review tickets…" testId="prs-loading" />
+          )
+        ) : !rows.length ? (
+          <BoardState testId="prs-empty">
+            No tickets assigned to others in Ready For Code Review.
+          </BoardState>
         ) : (
           <>
-            <div data-testid="pr-draft-container">
-              <LoadingState label="Loading drafts…" testId="pr-draft-loading" />
-            </div>
-            <div data-testid="pr-approval-container">
-              <LoadingState label="Loading approvals…" testId="pr-approval-loading" />
-            </div>
-            <div data-testid="pr-uat-promote-container">
-              <LoadingState label="Loading merge candidates…" testId="pr-uat-promote-loading" />
-            </div>
+            {!shown && (
+              <BoardState testId="prs-no-matches">
+                No matches. Try changing or clearing filters.
+              </BoardState>
+            )}
+            {board}
           </>
         )}
-      </PrActions>
-    </section>
+      </BoardSection>
+      {active && openClaudeTicket && (
+        <ClaudePlaceholderDialog
+          key={openClaudeTicket.key}
+          ticketKey={openClaudeTicket.key}
+          summary={openClaudeTicket.summary}
+          onClose={() => setOpenClaudeKey(null)}
+          resolveOpener={resolveOpener}
+        />
+      )}
+    </BoardPanel>
   );
 }

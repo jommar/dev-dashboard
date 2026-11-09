@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Replaced the Pull Requests screen's four PR sections with the shared review
+  board: one card per other-assigned Jira ticket in **Ready For Code Review**,
+  including tickets with no PRs, with all title-linked open PRs across current
+  watched repositories (drafts and configured specs repos included). **To Review**,
+  **Reviewing** and **Reviewed** derive from every linked PR before filters;
+  Reviewed needs a nonempty all-approved set, no drafts or standing changes
+  requests, and complete evidence. Missing discovery/review evidence stays
+  conservatively To Review. Added dynamic **Ticket prefix** alongside Search,
+  Repository and Review state, **Clear filters**, and hover/keyboard lane-header
+  help. The Claude button opens only a blank modal, not a workflow. New read-only
+  `GET /api/review-tickets`; Home, My Tickets, Slack, legacy PR APIs/CLI and the
+  diff viewer retain their behavior. Deploy the backend route before/with the UI.
 - On a My Tickets card the Slack chips and the Claude icon moved out of the top line into a row
   of their own under it (chips at the start, the icon at the right edge); the top line keeps the
   key, seal, priority, points and update age.

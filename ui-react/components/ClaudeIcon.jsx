@@ -41,16 +41,16 @@ const BADGES = {
 const isGrooming = (entry) =>
   entry?.state === 'none' && Boolean(entry.groom) && entry.groom.state !== 'none';
 
-export function ClaudeIcon({ ticketKey, entry: listed, onOpen }) {
+export function ClaudeIcon({ ticketKey, entry: listed, onOpen, label: overrideLabel, testId }) {
   const grooming = isGrooming(listed);
   const entry = grooming ? listed.groom : listed;
   const state = entry?.state ?? 'none';
-  const label = `Claude${grooming ? ' grooming' : ''}: ${claudePhrase(entry)}`;
+  const label = overrideLabel ?? `Claude${grooming ? ' grooming' : ''}: ${claudePhrase(entry)}`;
   return (
     <button
       type="button"
       className="claude-icon"
-      data-testid={`claude-icon-${ticketKey}`}
+      data-testid={testId ?? `claude-icon-${ticketKey}`}
       data-state={state}
       data-reason={entry?.reason ?? undefined}
       data-tooltip={label}

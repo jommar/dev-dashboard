@@ -1,7 +1,13 @@
 import { hasBuiltUi, serveBuiltUi, serveUi } from './static.mjs';
 import { parseLines } from './log-lines.mjs';
 import { DEFAULT_TAIL_LINES } from './config.mjs';
-import { fetchOpenPRs, groupByTicket, filterPrsByTicketStatus } from './github.mjs';
+import {
+  fetchOpenPRs,
+  groupByTicket,
+  filterPrsByTicketStatus,
+  PR_DISCOVERY_UNAVAILABLE,
+  PR_DISCOVERY_INCOMPLETE,
+} from './github.mjs';
 import {
   fetchMyTickets,
   fetchTicketMetadata,
@@ -11,6 +17,7 @@ import {
 import { fetchUatPromoteCandidates } from './uat-promote.mjs';
 import { enrichOpenPRs, filterPrsNeedingApprovals } from './review.mjs';
 import { fetchTicketPrs } from './ticket-prs.mjs';
+import { fetchReviewTickets } from './review-tickets.mjs';
 import { getOriginDiff } from './diff.mjs';
 import { fetchRelease } from './releases.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
@@ -68,6 +75,63 @@ function requireSessionId(sessionId) {
   if (!isSessionId(sessionId)) throw httpError('INVALID_SESSION', 'Invalid session id.', 400);
 }
 
+function reviewSprint(sprint) {
+  if (!sprint) return null;
+  const { id, name, state, startDate, endDate } = sprint;
+  return { id, name, state, startDate, endDate };
+}
+
+function reviewPr(pr) {
+  const { repo, number, title, url, owner, draft, updatedAt } = pr;
+  const { complete, state, approvers, changesRequesters, reviewDecision } = pr.review;
+  return {
+    repo,
+    number,
+    title,
+    url,
+    owner,
+    draft,
+    updatedAt,
+    review: { complete, state, approvers, changesRequesters, reviewDecision },
+  };
+}
+
+function reviewQueueResponse(data) {
+  const { available, complete, repos, reasons } = data.prCoverage;
+  const safeReasons = reasons.filter((reason) =>
+    [PR_DISCOVERY_UNAVAILABLE, PR_DISCOVERY_INCOMPLETE].includes(reason),
+  );
+  return {
+    total: data.total,
+    tickets: data.tickets.map((ticket) => {
+      const { key, summary, status, statusCategory, priority, updated, created } = ticket;
+      return {
+        key,
+        summary,
+        status,
+        statusCategory,
+        priority,
+        updated,
+        created,
+        sprint: reviewSprint(ticket.sprint),
+        sprints: ticket.sprints.map(reviewSprint),
+        prs: ticket.prs.map(reviewPr),
+      };
+    }),
+    prCoverage: {
+      available,
+      complete,
+      repos,
+      reasons: complete
+        ? []
+        : safeReasons.length
+          ? safeReasons
+          : [available ? PR_DISCOVERY_INCOMPLETE : PR_DISCOVERY_UNAVAILABLE],
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function createHttpHandler({ settings, manager, integrations = {} }) {
   const slack = integrations.slack || slackIntegration;
   const slackWatchStore = integrations.slackWatchStore || createSlackWatchStore();
@@ -87,6 +151,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     getOriginDiff,
     fetchRelease,
     fetchTicketPrs,
+    fetchReviewTickets,
     ...integrations,
   };
   const clients = new Set();
@@ -407,6 +472,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
           ...(await api.fetchMyTickets({ ...options, includeDone })),
           updatedAt: new Date().toISOString(),
         });
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/review-tickets') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        json(res, 200, reviewQueueResponse(await api.fetchReviewTickets(options)));
         return;
       }
       // Never fails the board: an unavailable result is still a 200 the board can render. A load

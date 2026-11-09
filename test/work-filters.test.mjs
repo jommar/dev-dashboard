@@ -2,6 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { capTiers } from '../ui/home-data.js';
 
+test('ticket prefix extracts only a complete fetched key without a fixed project list', async () => {
+  const { ticketPrefix } = await import('../ui/work-filters.js');
+  assert.equal(typeof ticketPrefix, 'function', 'ticketPrefix is a public pure helper');
+  for (const [key, expected] of [
+    [' alpha-17 ', 'ALPHA'],
+    ['ALPHAX-2', 'ALPHAX'],
+    ['custom_2-305', 'CUSTOM_2'],
+    ['', ''],
+    [null, ''],
+    ['ALPHA', ''],
+    ['ALPHA-no', ''],
+    ['ALPHA-17 extra text', ''],
+  ]) {
+    assert.equal(ticketPrefix(key), expected, JSON.stringify(key));
+  }
+});
+
 function freezeTree(value) {
   if (value && typeof value === 'object') {
     Object.values(value).forEach(freezeTree);

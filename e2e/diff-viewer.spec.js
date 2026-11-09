@@ -25,14 +25,14 @@ const unifiedDiff = [
 for (const [route, variant, number] of [
   ['home', 'home-action', 17],
   ['home', 'home-action', 18],
-  ['prs', 'pr-open', 17],
-  ['prs', 'pr-approval', 18],
+  ['prs', 'prs-ticket-DEMO-1', 17],
+  ['prs', 'prs-ticket-DEMO-2', 18],
 ]) {
   test(`${variant} ${number} opens shared diff viewer and copies loaded raw text without refetch`, async ({
     page,
     dashboard,
   }) => {
-    if (variant === 'pr-open') {
+    if (variant === 'prs-ticket-DEMO-1') {
       dashboard.data.diff = {
         ...dashboard.data.diff,
         repo: 'example/workspace',
@@ -41,7 +41,11 @@ for (const [route, variant, number] of [
       };
     }
     await page.goto(`/#/${route}`);
-    const trigger = page.getByTestId(`${variant}-view-diff-example/workspace-${number}`);
+    const trigger = page.getByTestId(
+      route === 'prs'
+        ? `prs-diff-DEMO-${number === 17 ? 1 : 2}-example-workspace-${number}`
+        : `${variant}-view-diff-example/workspace-${number}`,
+    );
     await expect(trigger).toHaveAccessibleName('View diff vs origin/ops/development');
     await trigger.click();
     const dialog = page.getByRole('dialog', { name: 'Diff viewer', exact: true });
@@ -74,7 +78,7 @@ for (const width of [1440, 390]) {
     dashboard.data.diff = { diff: unifiedDiff + '+' + 'long-line-'.repeat(100) + '\n' };
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/#/prs');
-    await page.getByTestId('pr-open-view-diff-example/workspace-17').click();
+    await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
     const viewer = page.getByTestId('diff-viewer');
     const content = page.getByTestId('diff-content');
     await expect(viewer).toBeVisible();
@@ -97,7 +101,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByTestId('diff-close')).toBeInViewport();
     await expect(page.getByTestId('diff-copy')).toBeInViewport();
     const directory = new URL(
-      '../../docs/dev-dashboard-redesign/verification/screenshots/',
+      '../.orchestrator/pr-review-kanban/scratch/screenshots/',
       import.meta.url,
     );
     await mkdir(directory, { recursive: true });
@@ -114,7 +118,7 @@ test('empty diff is explicit and copy preserves the exact empty payload', async 
 }) => {
   dashboard.data.diff = { diff: '' };
   await page.goto('/#/prs');
-  await page.getByTestId('pr-open-view-diff-example/workspace-17').click();
+  await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
   await expect(page.getByTestId('diff-viewer')).toContainText(
     /no (changes|differences)|empty diff/i,
   );
@@ -134,7 +138,7 @@ test('large rendering is bounded and warns while copy retains all raw content', 
     '\n+UNRENDERED_SENTINEL\n';
   dashboard.data.diff = { diff: raw };
   await page.goto('/#/prs');
-  await page.getByTestId('pr-open-view-diff-example/workspace-17').click();
+  await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
   await expect(page.getByTestId('diff-copy')).toBeEnabled();
   await expect(page.getByTestId('diff-viewer')).toContainText(/truncat|preview|limit/i);
   await expect(page.getByTestId('diff-status')).toHaveAttribute('aria-live', 'polite');
@@ -154,7 +158,7 @@ test('keyboard focus remains contained and Escape restores a reconciled polling 
   dashboard,
 }) => {
   await page.goto('/#/prs');
-  const trigger = page.getByTestId('pr-open-view-diff-example/workspace-17');
+  const trigger = page.getByTestId('prs-diff-DEMO-1-example-workspace-17');
   await expect(trigger).toBeVisible();
   await page.clock.install();
   await trigger.focus();
@@ -175,7 +179,7 @@ test('keyboard focus remains contained and Escape restores a reconciled polling 
   await trigger.evaluate((el) => {
     window.__originalDiffTrigger = el;
   });
-  dashboard.data.prs.prs[0].title = 'A replacement trigger after polling';
+  dashboard.data.reviewTickets.tickets[0].summary = 'A replacement trigger after polling';
   await page.clock.fastForward(91_000);
   await expect(page.getByTestId('prs-list')).toContainText('A replacement trigger after polling');
   expect(await page.evaluate(() => window.__originalDiffTrigger.isConnected)).toBe(true);
@@ -198,11 +202,11 @@ test('closing and reopening ignores a previous pending fetch', async ({ page, da
     } else await route.fulfill({ json: dashboard.data.diff });
   });
   await page.goto('/#/prs');
-  await page.getByTestId('pr-open-view-diff-example/workspace-17').click();
+  await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
   await expect.poll(() => calls).toBe(1);
   await expect(page.getByTestId('diff-copy')).toBeDisabled();
   await page.getByTestId('diff-close').click();
-  await page.getByTestId('pr-approval-view-diff-example/workspace-18').click();
+  await page.getByTestId('prs-diff-DEMO-2-example-workspace-18').click();
   await expect(page.getByTestId('diff-content')).toContainText('example.js');
   const oldResponse = page.waitForResponse(
     (response) => response.url().includes('/api/pr-diff') && response.url().includes('number=17'),
@@ -249,7 +253,7 @@ test('route changes close the viewer and late fetch results do not reopen it', a
 for (const result of ['success', 'failure']) {
   test(`late clipboard ${result} cannot overwrite a reopened viewer`, async ({ page }) => {
     await page.goto('/#/prs');
-    await page.getByTestId('pr-open-view-diff-example/workspace-17').click();
+    await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
     await expect(page.getByTestId('diff-copy')).toBeEnabled();
     await page.evaluate(() => {
       navigator.clipboard.writeText = () =>
@@ -261,7 +265,7 @@ for (const result of ['success', 'failure']) {
     await page.getByTestId('diff-copy').click();
     await expect(page.getByTestId('diff-copy')).toBeDisabled();
     await page.getByTestId('diff-close').click();
-    await page.getByTestId('pr-approval-view-diff-example/workspace-18').click();
+    await page.getByTestId('prs-diff-DEMO-2-example-workspace-18').click();
     await expect(page.getByTestId('diff-copy')).toBeEnabled();
     const before = await page.getByTestId('diff-status').textContent();
     await page.evaluate((result) => window.__finishDiffCopy(result), result);
@@ -290,7 +294,7 @@ for (const failure of ['load', 'clipboard']) {
     }
     await page.setViewportSize({ width: 667, height: 375 });
     await page.goto('/#/prs');
-    await page.getByTestId('pr-open-view-diff-example/workspace-17').click();
+    await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
     const content = page.getByTestId('diff-content');
     const status = page.getByTestId('diff-status');
     if (failure === 'clipboard') {
@@ -312,40 +316,53 @@ for (const failure of ['load', 'clipboard']) {
       await expect(page.getByTestId('diff-viewer').locator('.diff-truncation')).toBeVisible();
     }
     // Scroll any diagnostic/outer scroller and prove its final text is not clipped.
-    expect(
-      await status.evaluate((el) => {
-        const scrollers = [];
-        for (let parent = el; parent; parent = parent.parentElement) {
-          if (/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) {
-            parent.scrollTop = parent.scrollHeight;
-            scrollers.push(parent);
-          }
+    const diagnostics = await status.evaluate((el) => {
+      const scrollers = [];
+      for (let parent = el; parent; parent = parent.parentElement) {
+        if (/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) {
+          parent.scrollTop = parent.scrollHeight;
+          scrollers.push(parent);
         }
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-        let text;
-        while (walker.nextNode())
-          if (walker.currentNode.textContent.includes('END_OF_DIAGNOSTIC'))
-            text = walker.currentNode;
-        if (!text) return false;
-        const start = text.textContent.indexOf('END_OF_DIAGNOSTIC');
-        const range = document.createRange();
-        range.setStart(text, start);
-        range.setEnd(text, start + 'END_OF_DIAGNOSTIC'.length);
-        const rect = range.getBoundingClientRect();
-        let top = 0,
-          bottom = innerHeight;
-        for (let parent = el; parent; parent = parent.parentElement) {
-          if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(parent).overflowY)) {
-            const bounds = parent.getBoundingClientRect();
-            top = Math.max(top, bounds.top);
-            bottom = Math.min(bottom, bounds.bottom);
-          }
+        // Native modals are top-layer boundaries, outside background scrolling/clipping.
+        if (parent.matches(':modal')) break;
+      }
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let text;
+      while (walker.nextNode())
+        if (walker.currentNode.textContent.includes('END_OF_DIAGNOSTIC')) text = walker.currentNode;
+      if (!text) return false;
+      const start = text.textContent.indexOf('END_OF_DIAGNOSTIC');
+      const range = document.createRange();
+      range.setStart(text, start);
+      range.setEnd(text, start + 'END_OF_DIAGNOSTIC'.length);
+      const rect = range.getBoundingClientRect();
+      let top = 0,
+        bottom = innerHeight;
+      for (let parent = el; parent; parent = parent.parentElement) {
+        if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(parent).overflowY)) {
+          const bounds = parent.getBoundingClientRect();
+          top = Math.max(top, bounds.top);
+          bottom = Math.min(bottom, bounds.bottom);
         }
-        const reachable = rect.top >= top && rect.bottom <= bottom;
-        for (const parent of scrollers) parent.scrollTop = 0;
-        return reachable;
-      }),
-    ).toBe(true);
+        if (parent.matches(':modal')) break;
+      }
+      const reachable = rect.top >= top && rect.bottom <= bottom;
+      const geometry = {
+        reachable,
+        range: { top: rect.top, bottom: rect.bottom },
+        visible: { top, bottom },
+        ancestors: [...el.parentElement.closest('dialog').parentElement.children]
+          .filter((element) => element.tagName === 'DIV' || element.tagName === 'DIALOG')
+          .map((element) => ({
+            tag: element.tagName,
+            id: element.id,
+            bounds: element.getBoundingClientRect().toJSON(),
+          })),
+      };
+      for (const parent of scrollers) parent.scrollTop = 0;
+      return geometry;
+    });
+    expect(diagnostics.reachable, JSON.stringify(diagnostics)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
@@ -372,7 +389,7 @@ test('a queued hashchange for the current route does not dismiss a newly opened 
   page,
 }) => {
   await page.goto('/#/prs');
-  await expect(page.getByTestId('pr-open-view-diff-example/workspace-17')).toBeVisible();
+  await expect(page.getByTestId('prs-diff-DEMO-1-example-workspace-17')).toBeVisible();
   await page.getByTestId('tab-home').click();
   await expect(page.getByTestId('home-actions')).toBeVisible();
   await page.evaluate(async () => {
@@ -380,7 +397,7 @@ test('a queued hashchange for the current route does not dismiss a newly opened 
       window.addEventListener('hashchange', () => setTimeout(resolve, 0), { once: true }),
     );
     location.hash = '#/prs';
-    document.querySelector('[data-testid="pr-open-view-diff-example/workspace-17"]').click();
+    document.querySelector('[data-testid="prs-diff-DEMO-1-example-workspace-17"]').click();
     await delivered;
   });
   await expect(page.getByTestId('panel-prs')).toBeVisible();
@@ -394,7 +411,7 @@ test('missing clipboard API preserves the loaded patch and offers actionable rec
   dashboard,
 }) => {
   await page.goto('/#/prs');
-  await page.getByTestId('pr-open-view-diff-example/workspace-17').click();
+  await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
   await expect(page.getByTestId('diff-copy')).toBeEnabled();
   await page.evaluate(() => {
     window.__savedClipboard = navigator.clipboard;
@@ -427,7 +444,7 @@ test('loaded scroll survives polling and a removed opener restores focus to the 
     diff: '@@ -0,0 +1,200 @@\n' + ('+' + 'wide-row-'.repeat(100) + '\n').repeat(200),
   };
   await page.goto('/#/prs');
-  const trigger = page.getByTestId('pr-open-view-diff-example/workspace-17');
+  const trigger = page.getByTestId('prs-diff-DEMO-1-example-workspace-17');
   await expect(trigger).toBeVisible();
   await page.clock.install();
   await trigger.click();
@@ -441,8 +458,10 @@ test('loaded scroll survives polling and a removed opener restores focus to the 
   });
   expect(before.top).toBeGreaterThan(0);
   expect(before.left).toBeGreaterThan(0);
-  dashboard.data.prs.prs = [];
-  dashboard.data.prs.groups = {};
+  dashboard.data.reviewTickets.tickets = dashboard.data.reviewTickets.tickets.filter(
+    (ticket) => ticket.key !== 'DEMO-1',
+  );
+  dashboard.data.reviewTickets.total = dashboard.data.reviewTickets.tickets.length;
   await page.clock.fastForward(91_000);
   await expect(trigger).toHaveCount(0);
   expect(await content.evaluate((el) => ({ top: el.scrollTop, left: el.scrollLeft }))).toEqual(

@@ -333,3 +333,81 @@
 .pr-meta {
   margin-top: 8px;
 }
+
+/* Review-board cards add only ticket/PR content; board.css owns their shell and scrollers. */
+.review-ticket-key {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-decoration: none;
+}
+.review-ticket-sprint,
+.review-ticket-empty,
+.review-ticket-warning {
+  margin: var(--s1) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.review-ticket-warning {
+  color: var(--amber);
+}
+.review-ticket-prs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: var(--s1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.review-ticket-pr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  min-width: 0;
+}
+.review-ticket-pr-link {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  text-decoration: none;
+}
+.review-ticket-pr-link:hover,
+.review-ticket-key:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.review-ticket-pr-name {
+  color: var(--strong);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.review-ticket-pr-state {
+  color: var(--muted);
+}
+.review-ticket-pr-state[data-review-state='approved'] {
+  color: var(--green);
+}
+.review-ticket-pr-state[data-review-state='changes_requested'] {
+  color: var(--red);
+}
+.review-ticket-pr-state[data-review-state='unknown'] {
+  color: var(--amber);
+}
+.review-ticket-pr .view-diff {
+  min-height: 24px;
+  margin: 0;
+  padding: 0 var(--s2);
+  font-size: var(--fs-xs);
+}
+.review-ticket-pr .btn.subtle.view-diff {
+  width: auto;
+  white-space: nowrap;
+}

@@ -146,6 +146,149 @@ export async function fetchReviewData(prs, { snapshot } = {}) {
   }
 }
 
+const QUEUE_REVIEW_BATCH_SIZE = 50;
+const QUEUE_REVIEW_STATES = new Set([
+  'APPROVED',
+  'CHANGES_REQUESTED',
+  'DISMISSED',
+  'COMMENTED',
+  'PENDING',
+]);
+const QUEUE_REVIEW_DECISIONS = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED', null]);
+
+function unknownQueueReview() {
+  return {
+    complete: false,
+    state: 'unknown',
+    approvers: [],
+    changesRequesters: [],
+    reviewDecision: null,
+  };
+}
+
+function summarizeQueueReviews(nodes, reviewDecision) {
+  const opinions = new Map();
+  for (const node of nodes) {
+    if (!node || !QUEUE_REVIEW_STATES.has(node.state)) return unknownQueueReview();
+    if (node.state === 'COMMENTED' || node.state === 'PENDING') continue;
+    const login = node.author?.login;
+    const time = typeof node.submittedAt === 'string' ? Date.parse(node.submittedAt) : NaN;
+    if (typeof login !== 'string' || !login.trim() || !Number.isFinite(time))
+      return unknownQueueReview();
+    const key = login.toLowerCase();
+    const previous = opinions.get(key);
+    if (previous?.time === time && previous.state !== node.state) return unknownQueueReview();
+    if (!previous || time > previous.time) opinions.set(key, { login, state: node.state, time });
+  }
+  const approvers = [];
+  const changesRequesters = [];
+  for (const opinion of opinions.values()) {
+    if (opinion.state === 'APPROVED') approvers.push(opinion.login);
+    if (opinion.state === 'CHANGES_REQUESTED') changesRequesters.push(opinion.login);
+  }
+  const requested = reviewDecision === 'CHANGES_REQUESTED' || changesRequesters.length > 0;
+  const approved = reviewDecision === 'APPROVED' || approvers.length > 0;
+  return {
+    complete: true,
+    state: requested ? 'changes_requested' : approved ? 'approved' : 'awaiting',
+    approvers,
+    changesRequesters,
+    reviewDecision,
+  };
+}
+
+async function postQueueReviews(pending, config) {
+  try {
+    const res = await fetch(`${config.github.api}/graphql`, {
+      method: 'POST',
+      redirect: 'error',
+      headers: headers(config.credentials.githubToken),
+      body: JSON.stringify({
+        query: query(
+          pending.map((entry) => entry.pr),
+          Object.fromEntries(pending.map((entry, index) => [index, entry.cursor])),
+        ),
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json?.data && typeof json.data === 'object' ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+function readQueueReviewPage(json, alias, entry) {
+  if (!json || (json.errors !== undefined && !Array.isArray(json.errors))) return false;
+  const errors = json.errors || [];
+  if (
+    errors.some(
+      (error) => !Array.isArray(error?.path) || !error.path.length || error.path[0] === alias,
+    )
+  )
+    return false;
+  const pr = json.data[alias]?.pullRequest;
+  const page = pr?.reviews;
+  if (
+    !pr ||
+    !QUEUE_REVIEW_DECISIONS.has(pr.reviewDecision) ||
+    !Array.isArray(page?.nodes) ||
+    typeof page.pageInfo?.hasNextPage !== 'boolean' ||
+    (page.pageInfo.endCursor !== null && typeof page.pageInfo.endCursor !== 'string')
+  )
+    return false;
+  if (entry.decision !== undefined && entry.decision !== pr.reviewDecision) return false;
+  entry.decision = pr.reviewDecision;
+  entry.nodes.push(...page.nodes);
+  const cursor = page.pageInfo.endCursor;
+  if (cursor !== null && (!cursor.trim() || entry.cursors.has(cursor))) return false;
+  if (!page.pageInfo.hasNextPage) return true;
+  if (cursor === null || !page.nodes.length) return false;
+  entry.cursors.add(cursor);
+  entry.cursor = cursor;
+  return 'next';
+}
+
+export async function fetchQueueReviewData(prs, { snapshot } = {}) {
+  const config = captureConfiguration(snapshot);
+  const unique = new Map();
+  for (const pr of prs || []) {
+    if (
+      pr &&
+      typeof pr.repo === 'string' &&
+      /^[^/]+\/[^/]+$/.test(pr.repo) &&
+      validPrNumber(pr.number)
+    )
+      unique.set(`${pr.repo}#${pr.number}`, pr);
+  }
+  const reviews = Object.fromEntries([...unique.keys()].map((key) => [key, unknownQueueReview()]));
+  if (!config.credentials.githubToken) return { reviews };
+  const entries = [...unique].map(([key, pr]) => ({
+    key,
+    pr,
+    cursor: null,
+    cursors: new Set(),
+    nodes: [],
+    decision: undefined,
+  }));
+  for (let offset = 0; offset < entries.length; offset += QUEUE_REVIEW_BATCH_SIZE) {
+    let pending = entries.slice(offset, offset + QUEUE_REVIEW_BATCH_SIZE);
+    while (pending.length) {
+      const json = await postQueueReviews(pending, config);
+      const next = [];
+      for (const [index, entry] of pending.entries()) {
+        const verdict = readQueueReviewPage(json, `a${index}`, entry);
+        if (verdict === 'next') next.push(entry);
+        else if (verdict === true)
+          reviews[entry.key] = summarizeQueueReviews(entry.nodes, entry.decision);
+      }
+      pending = next;
+    }
+  }
+  return { reviews };
+}
+
 export function approvalCount(pr) {
   return new Set((pr && pr.reviews && pr.reviews.approvers) || []).size;
 }

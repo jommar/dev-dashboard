@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures.js';
 
-test('draft cards are amber masonry with wrapping sprints, working diff and draft-to-ready refresh', async ({
+test('draft tickets retain amber cues, wrapping sprints, working diff and draft-to-ready refresh on the board', async ({
   page,
   dashboard,
 }) => {
@@ -12,133 +12,95 @@ test('draft cards are amber masonry with wrapping sprints, working diff and draf
     startDate: '2026-10-01',
     endDate: '2026-10-14',
   };
+  const template = dashboard.data.reviewTickets.tickets[0];
   const prs = Array.from({ length: 8 }, (_, i) => ({
     number: i + 101,
     repo: 'example/workspace',
     owner: 'developer',
     draft: true,
-    tickets: [`DEMO-${i + 1}`],
     title: i === 0 ? 'Tall draft '.repeat(25) : `Draft change ${i + 1}`,
     url: `https://example.invalid/pull/${i + 101}`,
     updatedAt: '2026-10-06T12:00:00Z',
+    review: {
+      complete: true,
+      state: 'awaiting',
+      approvers: [],
+      changesRequesters: [],
+      reviewDecision: null,
+    },
   }));
   const ready = {
     ...prs[1],
     number: 200,
     draft: false,
-    tickets: ['DEMO-20'],
     title: 'Ready change',
   };
-  const approval = { ...ready, number: 201, owner: 'colleague', tickets: ['DEMO-21'] };
+  const ticket = (key, pr) => ({
+    ...template,
+    key,
+    summary: pr.title,
+    sprint,
+    sprints: [sprint],
+    prs: [pr],
+  });
   let payload = {
-    ...dashboard.data.prs,
-    login: 'developer',
-    prsAvailable: true,
-    total: 1,
-    prs: [ready],
-    groups: { 'DEMO-20': [ready] },
-    draftPrs: prs,
-    draftGroups: Object.fromEntries(prs.map((pr) => [pr.tickets[0], [pr]])),
-    ticketStatuses: { 'DEMO-20': 'Code Review', 'DEMO-1': 'In Progress' },
-    ticketSprints: { 'DEMO-20': sprint, 'DEMO-1': sprint },
-    prsNeedingApprovals: [approval],
-    approvalGroups: { 'DEMO-21': [approval] },
-    approvalTicketStatuses: { 'DEMO-21': 'Ready For Code Review' },
-    approvalTicketSprints: { 'DEMO-21': sprint },
-    uatPromoteAvailable: true,
-    uatPromoteTotal: 1,
-    uatPromoteGroups: {
-      'DEMO-22': { ticket: { status: 'Promote to UAT', sprint }, prs: [{ ...ready, number: 202 }] },
-    },
+    ...dashboard.data.reviewTickets,
+    total: 9,
+    tickets: [...prs.map((pr, index) => ticket(`DEMO-${index + 1}`, pr)), ticket('DEMO-20', ready)],
   };
   let failRefresh = false;
   let releaseRefresh;
   let pendingRefresh;
-  await page.route('**/api/prs', async (route) => {
+  await page.route('**/api/review-tickets', async (route) => {
     if (pendingRefresh) await pendingRefresh;
     if (failRefresh) return route.fulfill({ status: 502, json: { error: 'Synthetic outage' } });
     await route.fulfill({ json: structuredClone(payload) });
   });
   await page.goto('/#/prs');
-  const section = page.getByTestId('pr-draft-section');
-  await expect(section).toBeVisible();
-  await expect(section).toContainText('Your draft PRs');
-  await expect(page.getByTestId('pr-draft-count')).toHaveText('8');
-  await expect(section.locator('[data-pr-state="draft"].pill')).toHaveCount(8);
-  await expect(page.getByTestId('prs-list').locator('[data-pr-state="draft"]')).toHaveCount(0);
-  const draftCard = page.getByTestId('pr-draft-ticket-DEMO-1');
-  const appearance = async (card) =>
-    card.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        background: style.backgroundColor,
-        border: style.borderLeftColor,
-        borderWidth: parseFloat(style.borderLeftWidth),
-        borderStyle: style.borderLeftStyle,
-      };
-    });
-  const draftStyle = await appearance(draftCard);
-  expect(draftStyle).not.toEqual(await appearance(page.getByTestId('pr-open-ticket-DEMO-20')));
-  expect(draftStyle.background).not.toBe(
-    (await appearance(page.getByTestId('pr-open-ticket-DEMO-20'))).background,
+  const board = page.getByTestId('prs-board');
+  await expect(board).toBeVisible();
+  await expect(page.getByTestId('prs-filter-count')).toHaveText('9 of 9');
+  await expect(board.locator('[data-tone="warn"]')).toHaveCount(8);
+  await expect(page.getByTestId('prs-ticket-DEMO-20').locator('[data-tone="warn"]')).toHaveCount(0);
+  const draftCard = page.getByTestId('prs-ticket-DEMO-1');
+  const draftCue = draftCard.locator('[data-tone="warn"]');
+  await expect(draftCue).toHaveText('Draft');
+  const amber = await draftCue.evaluate((element) =>
+    [...getComputedStyle(element).color.matchAll(/[\d.]+/g)].map((match) => Number(match[0])),
   );
-  expect(draftStyle.borderWidth).toBeGreaterThan(0);
-  expect(draftStyle.borderStyle).not.toBe('none');
-  expect(draftStyle.borderStyle).not.toBe('hidden');
-  const amber = [...draftStyle.border.matchAll(/[\d.]+/g)].map((match) => Number(match[0]));
   expect(amber[0]).toBeGreaterThan(amber[1]);
   expect(amber[1]).toBeGreaterThan(amber[2]);
-  for (const [width, columns] of [
-    [390, 1],
-    [759, 1],
-    [760, 2],
-    [1699, 2],
-    [1700, 3],
-  ]) {
+  for (const width of [390, 599, 600, 759, 760, 1699, 1700]) {
     await page.setViewportSize({ width, height: 1000 });
-    const geometry = await section.evaluate((element) => {
-      const cards = [...element.querySelectorAll('article')];
-      const style = getComputedStyle(cards[0].parentElement);
-      return {
-        columns: style.columnCount,
-        gap: parseFloat(style.columnGap),
-        cards: cards.map((card) => {
-          const rect = card.getBoundingClientRect();
-          return {
-            x: rect.x,
-            y: rect.y,
-            bottom: rect.bottom,
-            fragments: card.getClientRects().length,
-            breakInside: getComputedStyle(card).breakInside,
-          };
-        }),
-      };
-    });
-    expect(geometry.columns, `draft masonry at ${width}`).toBe(String(columns));
-    expect(
-      new Set(geometry.cards.map((card) => Math.round(card.x))).size,
-      `visible draft columns at ${width}`,
-    ).toBe(columns);
-    expect(geometry.gap).toBeGreaterThan(0);
-    for (const card of geometry.cards) {
-      expect(card.fragments).toBe(1);
-      expect(card.breakInside).toBe('avoid');
-      const above = geometry.cards
-        .filter((other) => Math.abs(other.x - card.x) < 1 && other.bottom <= card.y)
-        .sort((a, b) => b.bottom - a.bottom)[0];
-      if (above) expect(card.y - above.bottom, 'vertical spacing').toBeGreaterThanOrEqual(8);
+    const columns = board.getByRole('group');
+    await expect(columns).toHaveCount(3);
+    const boxes = await Promise.all(
+      ['to-review', 'reviewing', 'reviewed'].map((lane) =>
+        page.getByTestId(`prs-column-${lane}`).boundingBox(),
+      ),
+    );
+    for (const box of boxes) {
+      expect(box.width, `column width at ${width}`).toBeCloseTo(
+        width <= 599 ? width * 0.82 : 280,
+        0,
+      );
+      expect(box.y).toBe(boxes[0].y);
     }
-    for (const [variant, key] of [
-      ['pr-open', 'DEMO-20'],
-      ['pr-draft', 'DEMO-1'],
-      ['pr-approval', 'DEMO-21'],
-      ['pr-uat-promote', 'DEMO-22'],
-    ]) {
-      const header = page.getByTestId(`${variant}-group-${key}`);
-      await expect(header).toContainText(sprint.name);
+    expect(boxes[1].x - boxes[0].x).toBeGreaterThan(boxes[0].width);
+    const first = await draftCard.boundingBox();
+    const second = await page.getByTestId('prs-ticket-DEMO-2').boundingBox();
+    expect(second.x).toBe(first.x);
+    expect(
+      second.y - first.y - first.height,
+      `vertical spacing at ${width}`,
+    ).toBeGreaterThanOrEqual(8);
+    expect(await draftCard.evaluate((element) => element.getClientRects().length)).toBe(1);
+    for (const key of ['DEMO-20', 'DEMO-1']) {
+      const card = page.getByTestId(`prs-ticket-${key}`);
+      await expect(card).toContainText(sprint.name);
       expect(
-        await header.evaluate((element) => {
-          const pill = element.querySelector('[data-sprint-state]');
+        await card.evaluate((element) => {
+          const pill = element.querySelector('.review-ticket-sprint');
           const head = element.getBoundingClientRect();
           const label = pill.getBoundingClientRect();
           return (
@@ -147,15 +109,27 @@ test('draft cards are amber masonry with wrapping sprints, working diff and draf
             pill.scrollWidth <= pill.clientWidth + 1
           );
         }),
-        `${variant} sprint fits at ${width}`,
+        `${key} sprint fits at ${width}`,
       ).toBe(true);
-      await expect(header.locator('img, script')).toHaveCount(0);
+      await expect(card.locator('img, script')).toHaveCount(0);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
   }
-  await page.getByTestId('pr-draft-view-diff-example/workspace-101').click();
+  const body = page.getByTestId('prs-column-body-to-review');
+  const head = page.getByTestId('prs-column-head-to-review');
+  const headTop = (await head.boundingBox()).y;
+  expect(await body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await body.evaluate((element) =>
+    element.scrollTo({ top: element.scrollHeight, behavior: 'instant' }),
+  );
+  expect(await body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(
+    await page.getByTestId('prs-column-body-reviewing').evaluate((element) => element.scrollTop),
+  ).toBe(0);
+  expect((await head.boundingBox()).y).toBe(headTop);
+  await page.getByTestId('prs-diff-DEMO-1-example-workspace-101').click();
   await expect(page.getByRole('dialog', { name: 'Diff viewer', exact: true })).toBeVisible();
   await expect(page.getByTestId('diff-content')).toContainText('example.js');
   expect(
@@ -167,12 +141,9 @@ test('draft cards are amber masonry with wrapping sprints, working diff and draf
   const promoted = { ...prs[0], draft: false };
   payload = {
     ...payload,
-    prs: [ready, promoted],
-    total: 2,
-    groups: { 'DEMO-20': [ready], 'DEMO-1': [promoted] },
-    draftPrs: prs.slice(1),
-    draftGroups: Object.fromEntries(prs.slice(1).map((pr) => [pr.tickets[0], [pr]])),
-    ticketStatuses: { ...payload.ticketStatuses, 'DEMO-1': 'Code Review' },
+    tickets: payload.tickets.map((item) =>
+      item.key === 'DEMO-1' ? { ...item, prs: [promoted] } : item,
+    ),
   };
   pendingRefresh = new Promise((resolve) => {
     releaseRefresh = resolve;
@@ -182,20 +153,37 @@ test('draft cards are amber masonry with wrapping sprints, working diff and draf
   await expect(draftCard).toBeVisible();
   releaseRefresh();
   pendingRefresh = null;
-  await expect(page.getByTestId('pr-open-example/workspace-101')).toBeVisible();
-  await expect(page.getByTestId('pr-draft-example/workspace-101')).toHaveCount(0);
-  await expect(page.getByTestId('pr-draft-count')).toHaveText('7');
+  await expect(page.getByTestId('prs-pr-DEMO-1-example-workspace-101')).toBeVisible();
+  await expect(draftCue).toHaveCount(0);
+  await expect(board.locator('[data-tone="warn"]')).toHaveCount(7);
   failRefresh = true;
   await page.getByTestId('prs-refresh').click();
   await expect(page.getByTestId('prs-meta')).toContainText('Refresh failed');
-  await expect(page.getByTestId('pr-draft-count')).toHaveText('7');
+  await expect(board.locator('[data-tone="warn"]')).toHaveCount(7);
   failRefresh = false;
-  payload = { ...payload, draftPrs: [], draftGroups: {} };
+  payload = {
+    ...payload,
+    tickets: payload.tickets.map((item) => ({
+      ...item,
+      prs: item.prs.map((pr) => ({ ...pr, draft: false })),
+    })),
+  };
   await page.getByTestId('prs-refresh').click();
-  await expect(section).toContainText('No draft PRs');
-  await expect(page.getByTestId('pr-draft-count')).toHaveText('0');
-  payload = { ...payload, prsAvailable: false, prs: [], groups: {} };
+  await expect(board.locator('[data-tone="warn"]')).toHaveCount(0);
+  await expect(page.getByTestId('prs-filter-count')).toHaveText('9 of 9');
+  payload = {
+    ...payload,
+    prCoverage: {
+      ...payload.prCoverage,
+      available: false,
+      complete: false,
+      reasons: ['unavailable'],
+    },
+  };
   await page.getByTestId('prs-refresh').click();
-  await expect(section).toContainText('GitHub is unavailable');
+  await expect(page.getByTestId('prs-coverage')).toContainText(
+    'PR discovery unavailable or incomplete',
+  );
+  await expect(board.locator('[data-testid^="prs-ticket-warning-"]')).toHaveCount(9);
   await expect(page.getByTestId('prs-refresh')).toBeEnabled();
 });

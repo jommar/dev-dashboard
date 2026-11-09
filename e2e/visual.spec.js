@@ -4,6 +4,9 @@ import { test, expect } from './fixtures.js';
 
 // prettier-ignore
 const screenshots = fileURLToPath(new URL('../../docs/dev-dashboard-redesign/verification/screenshots', import.meta.url));
+const prScreenshots = fileURLToPath(
+  new URL('../.orchestrator/pr-review-kanban/scratch/screenshots/', import.meta.url),
+);
 for (const [width, height] of [
   [1440, 900],
   [1024, 768],
@@ -17,7 +20,7 @@ for (const [width, height] of [
       const ready = {
         home: 'home-action-title-link-example/workspace-17',
         services: 'log-api',
-        prs: 'pr-open-title-link-example/workspace-17',
+        prs: 'prs-ticket-DEMO-1',
         'my-tickets': 'my-tickets-item-sample-active',
       };
       await expect(page.getByTestId(ready[route])).not.toBeEmpty();
@@ -32,18 +35,14 @@ for (const [width, height] of [
           ),
         ).toBe(expectedColumnCount);
       }
-      if (route === 'prs' && width < 760) {
-        // Unlike .home-cols (which leaves column-count unset below 960px),
-        // .pr-open-groups sets `columns: 1` explicitly as its base rule, so
-        // the resolved value below 760px is '1', not 'auto'.
-        expect(
-          await page.evaluate(
-            () => getComputedStyle(document.querySelector('#prs-list')).columnCount,
-          ),
-        ).toBe('1');
+      if (route === 'prs') {
+        await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(3);
+        const column = await page.getByTestId('prs-column-to-review').boundingBox();
+        expect(column.width).toBeCloseTo(width <= 599 ? width * 0.82 : 280, 0);
       }
-      await mkdir(screenshots, { recursive: true });
-      const path = `${screenshots}/mocked-${route}-${width}.png`;
+      const directory = route === 'prs' ? prScreenshots : screenshots;
+      await mkdir(directory, { recursive: true });
+      const path = `${directory}/mocked-${route}-${width}.png`;
       await page.screenshot({ path, fullPage: true });
       await testInfo.attach(`Mocked ${route} ${width}`, { path, contentType: 'image/png' });
     });
@@ -120,109 +119,142 @@ test('double-size layout and keyboard focus remain usable with reduced motion @r
   });
 });
 
-test('dense grouped PR lists retain consistent alignment @regression', async ({
+function denseReviewTickets(data, state = 'awaiting', firstNumber = 100) {
+  const base = data.reviewTickets.tickets[0];
+  const prs = Array.from({ length: 24 }, (_, index) => ({
+    ...base.prs[0],
+    number: index + firstNumber,
+    title: `${index + 1}. Synthetic review change`,
+    url: `https://example.invalid/pull/${index + firstNumber}`,
+    draft: false,
+    review: {
+      complete: true,
+      state,
+      approvers: state === 'approved' ? ['reviewer'] : [],
+      changesRequesters: [],
+      reviewDecision: null,
+    },
+  }));
+  data.reviewTickets.total = 2;
+  data.reviewTickets.tickets = [
+    {
+      ...base,
+      key: 'DEMO-100',
+      summary: 'Tall ticket with twenty open PRs',
+      prs: prs.slice(0, 20),
+    },
+    { ...base, key: 'DEMO-200', summary: 'Short ticket with four open PRs', prs: prs.slice(20) },
+  ];
+}
+
+test('dense ticket PR lists retain consistent alignment inside one board column @regression', async ({
   page,
   dashboard,
 }) => {
-  const base = dashboard.data.prs.prs[0];
-  const prs = Array.from({ length: 24 }, (_, index) => ({
-    ...base,
-    number: index + 100,
-    title: `${index + 1}. ${base.title}`,
-    url: `https://example.invalid/pull/${index + 100}`,
-  }));
-  dashboard.data.prs.prs = prs;
-  // Asymmetric split: a large card (20 PRs) and a small one (4). Two equal-size
-  // cards let the browser's column-balancer break exactly at the group
-  // boundary regardless of break-inside, masking a regression; only an
-  // asymmetric split forces the large card itself to fragment if the guard
-  // is missing.
-  dashboard.data.prs.groups = { Unticketed: prs.slice(0, 20), Workspace: prs.slice(20) };
+  denseReviewTickets(dashboard.data);
   await page.goto('/#/prs');
-  const top = page.getByTestId('pr-open-title-link-example/workspace-100');
-  const bottom = page.getByTestId('pr-open-title-link-example/workspace-119');
+  const top = page.getByTestId('prs-pr-DEMO-100-example-workspace-100');
+  const bottom = page.getByTestId('prs-pr-DEMO-100-example-workspace-119');
   await expect(top).toBeVisible();
-  // Top and bottom of the SAME (large) ticket-card: sharing an x proves the
-  // card never split across columns, which is the load-bearing break-inside
-  // guarantee.
   expect((await top.boundingBox()).x).toBe((await bottom.boundingBox()).x);
   expect((await top.boundingBox()).y).toBeLessThan((await bottom.boundingBox()).y);
+  await expect(
+    page.getByTestId('prs-column-to-review').getByTestId('prs-ticket-DEMO-100'),
+  ).toContainText('20 PRs');
+  await expect(page.getByTestId('prs-column-count-to-review')).toHaveText('2');
   expect(
-    await page.evaluate(() => getComputedStyle(document.querySelector('#prs-list')).columnCount),
-  ).toBe('2');
-  await mkdir(screenshots, { recursive: true });
-  await page.screenshot({ path: `${screenshots}/mocked-prs-dense.png`, fullPage: true });
+    await page
+      .getByTestId('prs-ticket-DEMO-100')
+      .evaluate((element) => element.getClientRects().length),
+  ).toBe(1);
+  expect(
+    await page
+      .getByTestId('prs-column-body-to-review')
+      .evaluate((element) => element.scrollHeight > element.clientHeight),
+  ).toBe(true);
+  await mkdir(prScreenshots, { recursive: true });
+  await page.screenshot({ path: `${prScreenshots}/mocked-prs-dense.png`, fullPage: true });
 });
 
-test('PR masonry reaches 3 columns at wide viewports @regression', async ({ page }) => {
+test('PR review board retains exactly three fixed-width columns at wide viewports @regression', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1700, height: 900 });
   await page.goto('/#/prs');
-  await expect(page.getByTestId('pr-open-title-link-example/workspace-17')).toBeVisible();
-  expect(
-    await page.evaluate(() => getComputedStyle(document.querySelector('#prs-list')).columnCount),
-  ).toBe('3');
+  await expect(page.getByTestId('prs-ticket-DEMO-1')).toBeVisible();
+  await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(3);
+  for (const lane of ['to-review', 'reviewing', 'reviewed'])
+    expect((await page.getByTestId(`prs-column-${lane}`).boundingBox()).width).toBe(280);
 });
 
-test('approval groups column-pack across breakpoints @regression', async ({ page, dashboard }) => {
-  const base = dashboard.data.prs.prs[0];
-  const approvals = Array.from({ length: 2 }, (_, index) => ({
-    ...base,
-    number: 300 + index,
-    title: `Approval candidate ${index + 1}`,
-    url: `https://example.invalid/pull/${300 + index}`,
-  }));
-  dashboard.data.prs.prsNeedingApprovals = approvals;
-  dashboard.data.prs.approvalGroups = { GroupA: [approvals[0]], GroupB: [approvals[1]] };
-
-  await page.setViewportSize({ width: 390, height: 844 });
+test('review columns share a top edge and scroll-snap across breakpoints @regression', async ({
+  page,
+}) => {
   await page.goto('/#/prs');
-  await expect(page.getByTestId('pr-approval-count')).toHaveText('2');
-  const columnCount = () =>
-    page.evaluate(
-      () => getComputedStyle(document.querySelector('.pr-approval-groups')).columnCount,
+  await expect(page.getByTestId('prs-ticket-DEMO-1')).toBeVisible();
+  for (const width of [390, 599, 600, 1440, 1700]) {
+    await page.setViewportSize({ width, height: 900 });
+    const board = page.getByTestId('prs-board');
+    await expect(board.getByRole('group')).toHaveCount(3);
+    const boxes = await Promise.all(
+      ['to-review', 'reviewing', 'reviewed'].map((lane) =>
+        page.getByTestId(`prs-column-${lane}`).boundingBox(),
+      ),
     );
-  expect(await columnCount()).toBe('1');
-
-  await page.setViewportSize({ width: 1440, height: 900 });
-  expect(await columnCount()).toBe('2');
-
-  await page.setViewportSize({ width: 1700, height: 900 });
-  expect(await columnCount()).toBe('3');
+    for (const box of boxes) {
+      expect(box.width).toBeCloseTo(width <= 599 ? width * 0.82 : 280, 0);
+      expect(box.y).toBe(boxes[0].y);
+    }
+    expect(boxes[1].x).toBeGreaterThan(boxes[0].x + boxes[0].width);
+    expect(await board.evaluate((element) => getComputedStyle(element).overflowX)).toMatch(
+      /auto|scroll/,
+    );
+    const snap = await board.evaluate((element) => getComputedStyle(element).scrollSnapType);
+    if (width <= 599) expect(snap).toBe('x mandatory');
+    else expect(['x', 'x proximity']).toContain(snap);
+    if (width <= 599)
+      expect(await board.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+        true,
+      );
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  }
 });
 
-test('approval card never splits across columns @regression', async ({ page, dashboard }) => {
-  const base = dashboard.data.prs.prs[0];
-  const approvals = Array.from({ length: 24 }, (_, index) => ({
-    ...base,
-    number: 400 + index,
-    title: `${index + 1}. Approval item`,
-    url: `https://example.invalid/pull/${400 + index}`,
-  }));
-  dashboard.data.prs.prsNeedingApprovals = approvals;
-  // Asymmetric split (20 vs 4): equal-height groups let the column-balancer
-  // break exactly at the group boundary regardless of break-inside, masking
-  // a regression; only an asymmetric split forces the large card itself to
-  // fragment if the guard is missing.
-  dashboard.data.prs.approvalGroups = {
-    TallGroup: approvals.slice(0, 20),
-    ShortGroup: approvals.slice(20),
-  };
-
+test('reviewed ticket cards never split and their column scrolls independently @regression', async ({
+  page,
+  dashboard,
+}) => {
+  denseReviewTickets(dashboard.data, 'approved', 400);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/#/prs');
-  const top = page.getByTestId('pr-approval-title-link-example/workspace-400');
-  const bottom = page.getByTestId('pr-approval-title-link-example/workspace-419');
+  const top = page.getByTestId('prs-pr-DEMO-100-example-workspace-400');
+  const bottom = page.getByTestId('prs-pr-DEMO-100-example-workspace-419');
   await expect(top).toBeVisible();
-  // Top and bottom of the SAME (large) approval card: sharing an x proves the
-  // card never split across columns, which is the load-bearing break-inside
-  // guarantee.
   expect((await top.boundingBox()).x).toBe((await bottom.boundingBox()).x);
   expect((await top.boundingBox()).y).toBeLessThan((await bottom.boundingBox()).y);
+  const body = page.getByTestId('prs-column-body-reviewed');
+  const head = page.getByTestId('prs-column-head-reviewed');
+  const headTop = (await head.boundingBox()).y;
+  await expect(page.getByTestId('prs-column-count-reviewed')).toHaveText('2');
+  expect(await body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await body.evaluate((element) =>
+    element.scrollTo({ top: element.scrollHeight, behavior: 'instant' }),
+  );
+  expect(await body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect((await head.boundingBox()).y).toBe(headTop);
   expect(
-    await page.evaluate(
-      () => getComputedStyle(document.querySelector('.pr-approval-groups')).columnCount,
-    ),
-  ).toBe('2');
+    await page.getByTestId('prs-column-body-to-review').evaluate((element) => element.scrollTop),
+  ).toBe(0);
+  const bodyBox = await body.boundingBox();
+  const lastBox = await page.getByTestId('prs-ticket-DEMO-200').boundingBox();
+  expect(lastBox.y).toBeGreaterThanOrEqual(bodyBox.y - 1);
+  expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(bodyBox.y + bodyBox.height + 1);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1)).toBe(
+    true,
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 test('my-tickets columns share one top edge and scroll inside the board @regression', async ({

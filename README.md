@@ -80,7 +80,9 @@ click. All seven views remain available:
   once connected, one card shows your recent `#ezat_claudio` threads as a board
   (the My Tickets layout) next to the thread watcher. Nothing else in the app
   depends on it. See [Slack](#slack).
-- **Pull Requests** — your open and draft PRs in separate sections, grouped by ticket.
+- **Pull Requests** — other-assigned Jira tickets in Ready For Code Review, grouped
+  automatically into To Review, Reviewing and Reviewed, including tickets without PRs.
+  See [PR review board](#open-prs).
 - **Releases** — the tickets of one Jira fix version (the picker defaults to the
   earliest unreleased EZAT version), each with its GitHub PRs, grouped by
   whether the work reached `ops/development`. It opens on your own tickets;
@@ -376,6 +378,7 @@ An agent can read the same logs three ways:
    - `POST /api/services/:id/{start|stop|restart}`
    - `GET /api/events` (SSE live status)
    - `GET /api/prs`
+   - `GET /api/review-tickets` (other-assigned review-ready Jira tickets with all linked open PRs in watched repos; see [PR review board](#open-prs))
    - `GET /api/my-tickets?includeDone=0|1`
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
@@ -440,8 +443,8 @@ Groups 1-3 mean somebody is waiting; group 4 is your own current work, so it
 reads last. Rows within a group are stalest-first — the longest-ignored item is
 the one actually blocking. The queue is capped at 12 rows, spent in group order
 so the most urgent rows are never the ones dropped, with an `N more not shown`
-line for the remainder. PR rows are rendered by the same `prItemHtml` the Pull
-Requests tab uses, so the two views cannot drift.
+line for the remainder. PR rows retain the legacy `prItemHtml` renderer;
+the Pull Requests board has its own ticket cards and eligibility rules.
 
 **Services** — one line per service: status pill, port link, and a Start/Stop
 button. No log viewport. It is fed entirely by the `/api/events` stream, which
@@ -485,11 +488,77 @@ wrong by a few percent looks entirely plausible.
 
 ## Open PRs
 
+The **Pull Requests** tab is a Jira-first review board using the same shared
+board shell as My Tickets and Slack. Each card is one Jira ticket assigned to
+someone other than Jira's authenticated current user, in **Ready For Code Review**.
+Your own and unassigned tickets are excluded; eligible tickets with no PRs remain.
+
+Each card lists every linked **open** PR across the **current watched repositories
+in Settings**, from any author, including drafts and any configured specs repo.
+Links come from ticket keys in PR titles, with the existing `TRIPS-n` → `TAP-n`
+alias. Multiple repositories share one ticket card, each PR labelled by repository;
+a PR naming two eligible tickets can appear on both cards. Closed/merged history,
+unwatched repos and branch-only/Jira-development links are not fetched. Unticketed
+PRs do not create cards. Cards retain Jira links, sprint cues, PR links and the
+existing diff action.
+
+### Automatic review lanes
+
+Progress is derived from **all linked open PRs before filters**, never saved or
+manually moved. With complete discovery and review evidence:
+
+- **Reviewed** requires at least one PR, every PR currently approved by anyone,
+  no drafts and no standing changes requests.
+- **Reviewing** means at least one current approval or standing changes request,
+  but not all work qualifies as Reviewed. An approved draft stays here. It does
+  not mean someone is currently reading the PR.
+- **To Review** covers the rest, including no linked PRs and drafts without
+  actionable review activity. Comments and pending reviews alone do not count.
+
+Missing/incomplete discovery takes priority and keeps **every ticket To Review**;
+unknown review evidence keeps the affected ticket there even if its other PRs are
+approved. Known PRs remain visible with an incomplete-data warning. Dismissed or
+superseded approvals do not count. CI and the configured minimum-approver threshold
+are not lane gates. Hover a lane heading or reach it with **Tab** for its meaning;
+Escape, blur or mouse leave dismisses the help.
+
+The tab reads `GET /api/review-tickets`, which pages Jira eligibility and watched-repo
+open PRs rather than using the legacy own-PR result cap. It returns
+`{ total, tickets, prCoverage: { available, complete, repos, reasons }, updatedAt }`;
+each ticket carries its linked `prs` and each PR its current review evidence.
+Coverage describes only the configured watched repos, not every GitHub repository.
+Jira failure is a queue error, not an empty queue. GitHub failure retains the Jira
+tickets and known PRs without implying completion or a confirmed absence of PRs.
+The read route is setup-gated, uses no-store responses and rejects cross-site or
+same-site browser requests before upstream reads. Deploy the backend route before
+or with the UI; there is no fallback to the old PR sections.
+
+While active, the board refreshes every **90 seconds** and shows a countdown;
+polling pauses while hidden or backgrounded. **Refresh** starts a guarded load and
+restarts the countdown. New PR/review evidence moves cards automatically in either
+direction while preserving scroll and focus. A failed refresh labels the retained
+snapshot as the last successful update, not current progress.
+
+The card's **Claude** button opens a genuinely blank placeholder: ticket heading,
+empty body and **Close** only. It has no workflow state, launch, prompt or answer
+controls and makes no Claude requests. Close, Escape or the backdrop dismisses it;
+it survives filtering/lane movement but closes on leaving the tab or ticket removal.
+The real [My Tickets Claude launcher](#claude-launcher) is unchanged.
+
 ### Local work filters
 
-Pull Requests has **Search**, **Section**, **Repository** and **Review state**
-filters across open, draft, approval and merge-candidate sections. Missing or
-unavailable review summaries are **Unknown**, separate from awaiting review.
+Pull Requests has **Search**, **Ticket prefix**, **Repository** and **Review state**.
+Prefix options are sorted unique project prefixes from all fetched ticket keys,
+not PR titles or currently visible cards; **All** is the default. Prefix matches
+exactly and combines with the other filters. A match keeps the whole ticket,
+every PR line and its original lane, so hiding a pending repo cannot manufacture
+Reviewed. Matching PR-free tickets remain under All repository/review states;
+a specific repository/review state requires a matching PR. Missing or unreadable
+review evidence is **Unknown**, separate from awaiting review. Counts are tickets,
+not PRs, and **Clear filters** resets all four controls. On narrow screens the
+dropdowns and Clear sit behind **Filters** beside Search. The old Section filter
+and four PR sections are retired on this screen only.
+
 My Tickets has **Search**, **Status**, **Sprint**, **Priority** and **Type**;
 sprint membership includes a ticket's full sprint history, using IDs when available.
 Home's Needs You block has **Search** and **Action type**, applied before its
@@ -499,65 +568,37 @@ lists; progress, points, KPIs and sprint history retain their full-data totals.
 Search is immediate, case-insensitive and literal (punctuation is not a regular
 expression). Search and dropdowns combine with AND over already fetched data,
 without extra requests or changing server eligibility. Counts show matching
-versus fetched items (unique PRs across groups); an empty filtered list says
+versus fetched items (tickets on the PR board); an empty filtered list says
 **No matches**. Fetch-cap and stale-data warnings still apply. **Include Done**
 remains the separate remote-scope control.
 
 **Clear filters** resets only its own view or Home block. Each set of filters
-survives tab switches, refreshes and reloads in versioned browser localStorage
-(`dev-dashboard.work-filters`). Malformed or unsupported saved state falls back
+survives tab switches and refreshes. Except for **Ticket prefix**, filters also
+survive reloads in versioned browser localStorage (`dev-dashboard.work-filters`).
+Prefix is not saved/restored and starts at All on a fresh mount; obsolete saved
+Section values are ignored. Malformed or unsupported saved state falls back
 to defaults; blocked/full storage leaves filtering usable in memory. A selected
 option missing from refreshed data stays selected until cleared, so it cannot
 silently broaden the list. Filters are browser-local and are not shared in URLs.
 
-The dashboard shows the authenticated GitHub user's open pull requests across
-the watched repos saved in Settings (defaulting to `TransActComm`'s
-`Portage-backend`, `Portage-frontend`, `TravelTracker`) —
-as **masonry cards grouped by ticket** on the dashboard, and via
-`node backend/cli.mjs prs` / `GET /api/prs`. Cards show the PR title, owner, its status
-(`draft`/`open`), the repo `#number`, and how long ago it was last updated,
-sorted newest-first within each ticket group.
+### Legacy PR feeds
 
-**Your open PRs** shows non-draft PRs. A ticket group only shows here while its
-Jira status is **Code Review**;
-groups whose ticket has moved to another status are hidden from this section
-(they may still appear elsewhere, e.g. under "needing approval" once ready for
-review). PRs with no linked ticket (`Unticketed`) are always shown regardless
-of status — there is no status to filter them on. If Jira status fetching fails,
-ticketed groups cannot be matched and only `Unticketed` PRs remain here.
-
-**Your draft PRs** shows your drafts in a separate section, independent of Jira
-status. Drafts are moved out of the visible **Your open PRs** section and grouped
-by their first linked ticket or `Unticketed`, newest-first within each group.
-Cards have an amber tint and rail, explicit `draft` badges, counts and the same
-diff action. Drafts remain visible when Jira metadata is unavailable; a GitHub
-failure makes the draft section unavailable.
-
-Ticket-group headers in every PR section — open, draft, needing approval and
-merge candidates to `ops/development` — show an optional sprint pill. Selection
-matches My Tickets: active → future → most recent closed, with the same sprint
-state styling and date tooltip. The pill is omitted when sprint data is
-unavailable or the group is `Unticketed`.
+`GET /api/prs` retains its existing own-PR, draft, approval-threshold and
+merge-candidate contracts; Home still reads this legacy API. The CLI's
+`node backend/cli.mjs prs` retains its own-PR and approval output.
+Neither is the new review queue. `/api/ticket-prs` remains the
+own-author PR feed used by My Tickets. Home, My Tickets, Slack and the existing
+diff viewer keep their behavior.
 
 Configure the GitHub owner, repositories and token through **Settings**. Missing
 credentials close the all-integrations setup gate; environment tokens are
 supported for [legacy migration](#automatic-legacy-migration).
 
-While the Pull Requests tab is active, the panel auto-refreshes every 90
-seconds with a silent background update (cards stay visible until the new
-payload arrives, and the DOM is only touched when something changed). Polling
-pauses when the tab is hidden or the page is backgrounded, and a countdown in
-the heading shows the time to the next refresh. A `Refresh` button forces an
-immediate reload.
-
 ### PR merge candidates to ops/development
 
-Below the approval section, a "PR merge candidates to ops/development" list
-shows your Jira tickets in **Promote to UAT** status whose linked PR (matched
-by ticket key, same grouping as above) is still open and targets
-`ops/development` — i.e. ready to merge now that the ticket reached
-Promote-to-UAT. Uses the saved GitHub and Jira connections; a fetch failure can
-make this section unavailable while the rest of the PR tab remains usable.
+The legacy PR API still supplies merge candidates: your Jira tickets in
+**Promote to UAT** whose linked PR is open and targets `ops/development`.
+This is no longer a section on Pull Requests; it is not one of the board's lanes.
 
 ## My Tickets
 
@@ -647,11 +688,12 @@ never green.
 **PR data** — the lines come from `GET /api/ticket-prs`, which the tab calls on its
 first load, on every 90 second poll and on **Refresh**. It lists **your** open PRs
 (authored by the GitHub user the saved token belongs to) in the watched
-repositories from Settings, drafts included and whatever their ticket's Jira status, unlike the Open PRs section,
-which keeps only Code Review groups. A PR is filed under every ticket key in its
+repositories from Settings, drafts included and whatever their ticket's Jira status.
+This is separate from the other-assigned [PR review board](#open-prs).
+A PR is filed under every ticket key in its
 title (`[TAP-1665]`, bare `PRT-1221`): `TRIPS-n` keys are filed under `TAP-n`,
 any other project's key as written, and a PR whose title has no ticket key is
-left out (the Pull Requests tab still lists it). A key repeated in one title
+left out (the legacy `/api/prs` feed still includes it). A key repeated in one title
 counts once, and each key's list is newest update first. Only the newest PRs up
 to **GitHub maximum results** (1 to 100) in Settings are fetched; `truncated`
 says there were more, and the tab then notes that some tickets may show no PR
@@ -850,7 +892,7 @@ close the setup gate and direct operational APIs return `409 SETUP_REQUIRED`.
 
 ### Review status
 
-Each PR card also shows its review state via a small badge in the meta row —
+The retained legacy PR renderer shows review state via a small badge in the meta row —
 `approved` (green), `changes requested` (red), or `awaiting review` (muted,
 dashed). Hover a badge for a tooltip naming who approved / requested changes.
 
@@ -866,16 +908,19 @@ user): it cannot be tied to a reviewer, so it counts only while it is the newest
 approval or change request on the PR, and a later approval overrides it.
 `approvals` and the [approval threshold](#approval-threshold) count approvers
 only, so a PR can show `changes requested` and still have approvals. The same
-rule feeds the My Tickets board, the Pull Requests tab and Home (they share one
+rule feeds the My Tickets board and Home's legacy PR data (they share one
 function, `summarizeReviews`), so on Home a PR with a standing change request
 sits in the changes-requested group, not in the one still waiting on approval.
 If the token cannot read review data, the dashboard can omit the badge when a
 runtime review fetch fails — open PRs are unaffected.
 Fresh/changed integration setup also requires the GraphQL access probe.
+The [PR review board](#automatic-review-lanes) uses a separate current-evidence
+normalizer, including dismissals and fail-closed completeness; its lane rules do
+not change this legacy contract.
 
 ### Approval threshold
 
-The Pull Requests view also includes a section for open PRs that have fewer than
+The legacy PR API/CLI includes open PRs that have fewer than
 the configured number of distinct approved reviewers. Configure **Minimum PR
 approvers** in Settings (defaults to `1`). Legacy `MIN_PR_APPROVER` is imported
 during migration.
@@ -886,10 +931,8 @@ review counts — a later `CHANGES_REQUESTED` review removes an earlier approval
 Settings rejects invalid, zero, negative, fractional and non-integer values;
 invalid legacy environment values use the default of `1` during migration.
 
-This is a separate open-PR view that excludes your own PRs, not a second filter
-of your own PRs. It is
-grouped by ticket and rendered as masonry cards using the same responsive layout
-as the Open PRs section.
+This is a separate open-PR feed that excludes your own PRs, not a second filter
+of your own PRs. It is grouped by ticket.
 The same filtered data is available from `GET /api/prs` in
 `approvalThreshold`, `reviewDataAvailable`, `prsNeedingApprovals`, and
 `approvalGroups`. The CLI prints the grouped section with `node backend/cli.mjs prs`.
@@ -897,9 +940,10 @@ When GitHub review data cannot be loaded, the normal open PR list remains
 available and the approval section is reported as unavailable rather than
 treating every PR as having zero approvals.
 
-On top of the approval-count filter, a ticket group only shows here while its
-Jira status is **Ready For Code Review** — same `Unticketed`-exempt,
-Jira-status-unavailable-hides-ticketed-groups rules as the Open PRs section above.
+In the legacy API, on top of the approval-count filter, a ticket group appears only while its Jira
+status is **Ready For Code Review**; `Unticketed` groups are exempt, and unavailable
+Jira status hides ticketed groups. This legacy threshold does not affect the new
+PR board's ticket membership or lanes.
 
 ### Ticket status
 
@@ -1543,7 +1587,7 @@ Everything is read from Jira: the project's versions, a JQL search for the
 version's tickets (`fixVersion = <id>`, plus `assignee = currentUser()` for
 Mine) and Jira's development-status (`dev-status`) endpoints for each ticket's
 PRs. **No GitHub call is made and no GitHub token is read.** Within each
-merge-state group the ticket cards are masonry-packed like the PR sections. The
+merge-state group the ticket cards are masonry-packed using CSS multi-columns. The
 shared [local work filters](#local-work-filters) are not mounted on this tab.
 
 ### Version picker
@@ -2274,6 +2318,7 @@ ui/
   work-filters.js       shared PR, ticket and action filtering (DOM-free)
   releases-data.js      release grouping and remembered version (DOM-free)
   ticket-board.js       My Tickets column order and CI / review wording (DOM-free)
+  review-board.js       PR ticket progress and whole-ticket filters (DOM-free)
   components/           domain-free helpers and tested card/diff data rendering
 
 ui-react/styles/        app-owned bespoke styles, imported by the Vite entry
@@ -2285,9 +2330,9 @@ cards, filters, listboxes, terminal output and status; domain-free selectors
 and established card/diff helpers preserve existing calculations, escaping
 and data-testid contracts. Masonry uses CSS multi-column packing with intact
 cards and sibling spacing at 760px and 1700px; Services retains an explicit
-CSS grid, Home blocks remain indivisible, and My Tickets and Slack are
+CSS grid, Home blocks remain indivisible, and My Tickets, Slack and Pull Requests are
 horizontally scrolling boards of columns that scroll on their own (see
-[My Tickets](#my-tickets)). Both are built on one shared board frame,
+[My Tickets](#my-tickets)). All three use one shared board frame,
 [`ui-react/components/BoardShell.jsx`](ui-react/components/BoardShell.jsx) with
 [`ui-react/styles/board.css`](ui-react/styles/board.css); how a new screen adopts
 it is in [`CLAUDE.md`](CLAUDE.md). Legacy DOM panel controllers,

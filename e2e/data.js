@@ -375,6 +375,46 @@ export function dashboardData() {
       approvalGroups: { Unticketed: [other] },
       approvalTicketStatuses: {},
     },
+    reviewTickets: {
+      total: 3,
+      tickets: [
+        [mine, 'DEMO-1'],
+        [other, 'DEMO-2'],
+        [null, 'DEMO-3'],
+      ].map(([pr, key]) => ({
+        key,
+        summary: pr ? pr.title : 'Review-ready ticket without an open PR',
+        status: 'Ready For Code Review',
+        statusCategory: 'In Progress',
+        priority: 'Medium',
+        updated: '2026-11-09T10:00:00Z',
+        created: '2026-11-01T10:00:00Z',
+        sprint,
+        sprints: [sprint],
+        prs: pr
+          ? [
+              {
+                repo: pr.repo,
+                number: pr.number,
+                title: pr.title,
+                url: pr.url,
+                owner: pr.owner,
+                draft: pr.draft,
+                updatedAt: pr.updatedAt,
+                review: {
+                  complete: true,
+                  state: pr.reviews.state || 'awaiting',
+                  approvers: pr.reviews.approvers,
+                  changesRequesters: pr.reviews.changesRequesters,
+                  reviewDecision: null,
+                },
+              },
+            ]
+          : [],
+      })),
+      prCoverage: { available: true, complete: true, repos: ['example/workspace'], reasons: [] },
+      updatedAt: '2026-11-09T10:00:00Z',
+    },
     tickets: {
       tickets,
       activeSprints: [sprint],
@@ -1495,6 +1535,7 @@ export function apiResponse(url, method, data, body) {
     if (url.pathname === '/api/settings') return { json: data.settings };
     if (url.pathname === '/api/services') return { json: { services: data.services } };
     if (url.pathname === '/api/prs') return { json: data.prs };
+    if (url.pathname === '/api/review-tickets') return { json: data.reviewTickets };
     if (url.pathname === '/api/ticket-prs') return { json: data.ticketPrs };
     if (url.pathname === '/api/my-tickets') {
       const includeDone = url.searchParams.get('includeDone') === '1';

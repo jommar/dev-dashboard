@@ -4,6 +4,12 @@ const contains = (values, search) =>
     .filter((value) => value != null)
     .some((value) => String(value).toLowerCase().includes(search.toLowerCase()));
 
+export function ticketPrefix(key) {
+  if (typeof key !== 'string') return '';
+  const match = key.trim().match(/^([A-Z0-9_]+)-\d+$/i);
+  return match ? match[1].toUpperCase() : '';
+}
+
 function rowMatches(row, search, context = []) {
   const sprints = row.sprints?.length ? row.sprints : [row.sprint];
   return contains(

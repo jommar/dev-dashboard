@@ -4,7 +4,7 @@
 // mean, stay with each screen; presentation is ui-react/styles/board.css.
 import { useRef } from 'react';
 import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
-import { Button, Card, LoadingState } from './Primitives.jsx';
+import { Button, Card, DashboardTooltip, LoadingState } from './Primitives.jsx';
 
 // The panel <section>. `board-panel` is what opts the page into the one-viewport fill layout.
 export function BoardPanel({ id, active, busy, children }) {
@@ -198,8 +198,13 @@ export function Board({ label, testId, frameRef, children }) {
 }
 
 // One column of the board: a header with its name and count, then a scrolling list of rows.
-export function BoardColumn({ id, label, count, testIdPrefix, kind, children }) {
+export function BoardColumn({ id, label, count, testIdPrefix, kind, hint, children }) {
   const titleId = `${testIdPrefix}title-${id}`;
+  const heading = (
+    <h3 className="board-column-title" id={titleId} tabIndex={hint ? 0 : undefined}>
+      {label}
+    </h3>
+  );
   return (
     <section
       className="board-column"
@@ -209,9 +214,13 @@ export function BoardColumn({ id, label, count, testIdPrefix, kind, children }) 
       aria-labelledby={titleId}
     >
       <div className="board-column-head" data-testid={`${testIdPrefix}head-${id}`}>
-        <h3 className="board-column-title" id={titleId}>
-          {label}
-        </h3>
+        {hint ? (
+          <DashboardTooltip title={hint} describeChild slotProps={{ transition: { timeout: 0 } }}>
+            {heading}
+          </DashboardTooltip>
+        ) : (
+          heading
+        )}
         <span className="board-column-count" data-testid={`${testIdPrefix}count-${id}`}>
           {count}
         </span>

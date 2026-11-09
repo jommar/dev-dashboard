@@ -175,6 +175,120 @@ export async function fetchOpenPRs({ mine = true, snapshot } = {}) {
   };
 }
 
+export const PR_DISCOVERY_UNAVAILABLE = 'GitHub discovery unavailable';
+export const PR_DISCOVERY_INCOMPLETE = 'GitHub discovery incomplete';
+const OPEN_PRS_PAGE_SIZE = 100;
+
+function nextOpenPrPage(link, current) {
+  if (!link) return null;
+  let next = null;
+  for (const entry of link.split(',')) {
+    const match = entry.trim().match(/^<([^>]+)>;\s*rel="([^"]+)"$/);
+    if (!match) throw new Error('Invalid GitHub pagination.');
+    if (!match[2].split(/\s+/).includes('next')) continue;
+    if (next) throw new Error('Invalid GitHub pagination.');
+    next = new URL(match[1]);
+  }
+  if (!next) return null;
+  const page = Number(next.searchParams.get('page'));
+  const size = next.searchParams.get('per_page');
+  if (
+    next.origin !== current.origin ||
+    next.pathname.toLowerCase() !== current.pathname.toLowerCase() ||
+    next.username ||
+    next.password ||
+    next.hash ||
+    next.searchParams.get('state') !== 'open' ||
+    !Number.isSafeInteger(page) ||
+    page !== Number(current.searchParams.get('page')) + 1 ||
+    (size !== null && size !== String(OPEN_PRS_PAGE_SIZE)) ||
+    [...next.searchParams.keys()].some(
+      (key) =>
+        !['state', 'per_page', 'page'].includes(key) || next.searchParams.getAll(key).length !== 1,
+    )
+  )
+    throw new Error('Invalid GitHub pagination.');
+  next.searchParams.set('per_page', String(OPEN_PRS_PAGE_SIZE));
+  return next;
+}
+
+export async function fetchAllOpenPRs({ snapshot } = {}) {
+  const config = captureConfiguration(snapshot);
+  const reposByIdentity = new Map();
+  for (const name of config.github.repos) {
+    const repo = `${config.github.org}/${name}`;
+    const identity = repo.toLowerCase();
+    if (!reposByIdentity.has(identity)) reposByIdentity.set(identity, repo);
+  }
+  const repos = [...reposByIdentity.values()];
+  const token = config.credentials.githubToken;
+  const prs = new Map();
+  if (!token)
+    return {
+      prs: [],
+      prCoverage: { available: false, complete: false, repos, reasons: [PR_DISCOVERY_UNAVAILABLE] },
+    };
+  let complete = true;
+  let available = repos.length === 0;
+  for (const repo of repos) {
+    const repoIdentity = repo.toLowerCase();
+    const pages = new Set();
+    let url = new URL(`${config.github.api}/repos/${repo}/pulls`);
+    url.searchParams.set('state', 'open');
+    url.searchParams.set('per_page', String(OPEN_PRS_PAGE_SIZE));
+    url.searchParams.set('page', '1');
+    try {
+      while (url) {
+        const res = await fetch(url, {
+          headers: headers(token),
+          redirect: 'error',
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!res.ok) throw new Error('GitHub discovery failed.');
+        const items = await res.json();
+        if (!Array.isArray(items)) throw new Error('Invalid GitHub discovery page.');
+        const page = JSON.stringify(items.map((item) => item?.number));
+        if (pages.has(page)) throw new Error('Repeated GitHub discovery page.');
+        pages.add(page);
+        available = true;
+        for (const item of items) {
+          if (item?.state === 'closed' || item?.merged_at) continue;
+          if (!item || item.state !== 'open' || typeof item.title !== 'string') {
+            complete = false;
+            continue;
+          }
+          const pr = mapItem({ ...item, labels: [] });
+          if (
+            !pr ||
+            pr.repo.toLowerCase() !== repoIdentity ||
+            new URL(pr.url).pathname.toLowerCase() !== `/${repoIdentity}/pull/${pr.number}`
+          ) {
+            complete = false;
+            continue;
+          }
+          if (typeof item.draft !== 'boolean') complete = false;
+          pr.owner = typeof pr.owner === 'string' ? pr.owner : null;
+          prs.set(`${repoIdentity}#${pr.number}`, pr);
+        }
+        const next = nextOpenPrPage(res.headers.get('link'), url);
+        if (next && !items.length) throw new Error('Invalid GitHub discovery page.');
+        url = next;
+      }
+    } catch {
+      complete = false;
+    }
+  }
+  return {
+    prs: [...prs.values()],
+    prCoverage: {
+      available,
+      complete,
+      repos,
+      reasons: complete ? [] : [available ? PR_DISCOVERY_INCOMPLETE : PR_DISCOVERY_UNAVAILABLE],
+    },
+  };
+}
+
 // The base branch a PR targets. The search API used by fetchOpenPRs returns an
 // issue-shaped payload with no base/head ref, so this is a separate per-PR
 // call to the pull request endpoint — used sparingly, only for PRs already

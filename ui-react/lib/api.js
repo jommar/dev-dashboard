@@ -91,6 +91,8 @@ export async function getPrs() {
   return res.json();
 }
 
+export const getReviewTickets = () => getJson('/api/review-tickets');
+
 export async function getMyTickets(includeDone = false) {
   const res = await fetch(`/api/my-tickets${includeDone ? '?includeDone=1' : ''}`);
   if (res.status === 401) return null;

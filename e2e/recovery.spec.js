@@ -30,7 +30,7 @@ for (const route of ['prs', 'my-tickets']) {
     await expect(list).toContainText(route === 'prs' ? 'Improve keyboard' : 'Preserve a readable');
     const before = await list.innerHTML();
     let fail = true;
-    await page.route(`**/api/${route}*`, (r) =>
+    await page.route(`**/api/${route === 'prs' ? 'review-tickets' : route}*`, (r) =>
       fail ? r.fulfill({ status: 503, body: 'Unavailable' }) : r.fallback(),
     );
     await page.getByTestId(`${route}-refresh`).click();
@@ -144,7 +144,7 @@ test('PR diff API failure does not claim clipboard success and can retry @regres
     fail ? route.fulfill({ status: 502, json: { error: 'Diff unavailable' } }) : route.fallback(),
   );
   await page.goto('/#/prs');
-  await page.getByTestId('pr-open-view-diff-example/workspace-17').click();
+  await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
   const copy = page.getByTestId('diff-copy');
   await expect(page.getByTestId('diff-status')).toContainText('Diff unavailable');
   await expect(copy).toBeDisabled();
