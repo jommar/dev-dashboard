@@ -23,8 +23,12 @@ const RESUME = {
   kind: 'resume',
   command: 'cd ~/pathwise && claude --resume 3f2b8c1e-5d4a-4e7b-9c60-1a2b3c4d5e6f',
 };
-// An entry's `goTo`: the command to join each phase's own session, or null for one with none.
-const sessions = (investigate = null, implement = null) => ({ investigate, implement });
+// An entry's `goTo`: the command to join each session (a phase's own, or the groom one), or null for one with none.
+const sessions = (investigate = null, implement = null, groom = null) => ({
+  investigate,
+  implement,
+  groom,
+});
 const LABEL = {
   investigate: 'Go to investigate and plan session',
   implement: 'Go to implement plan session',
@@ -586,12 +590,10 @@ test('scenario 42: a question id that names an object member renders empty and c
   await expect(dialog.getByTestId('claude-questions-save')).toBeDisabled();
 });
 
-// The Slack chip keeps its place beside the card's figures and the icon alone takes the row's free
-// space. If both pushed right, the free space would be split between them and the chip would drift
-// away from the figures. At 1440 px the icon wraps onto its own line on a card with a chip, at 390 px
-// it does not.
+// The Slack chip and the icon share a links row under the card's figures: the chip at the row's
+// start, the icon at the card's right edge, on a card with a chip and on one without.
 for (const width of [1440, 390]) {
-  test(`scenario 43: the Slack chip stays beside the figures and the icon keeps the card's right edge at ${width}px`, async ({
+  test(`scenario 43: the Slack chip starts the links row under the figures and the icon keeps the card's right edge at ${width}px`, async ({
     page,
     dashboard,
   }) => {
@@ -600,12 +602,15 @@ for (const width of [1440, 390]) {
     const chipId = `slack-thread-link-${BOARD_THREAD_TS.needsReply}`;
     await expect(page.getByTestId(chipId)).toBeVisible();
     const updated = await page.getByTestId('my-tickets-item-updated-TAP-9002').boundingBox();
+    const links = await page.getByTestId('my-tickets-item-links-TAP-9002').boundingBox();
     const chip = await page.getByTestId(chipId).boundingBox();
-    expect(chip.y, 'the chip is on the figures row').toBeLessThan(updated.y + updated.height);
-    expect(
-      chip.x - (updated.x + updated.width),
-      'gap from the figures to the chip',
-    ).toBeLessThanOrEqual(16);
+    expect(chip.y, 'the chip is below the figures').toBeGreaterThanOrEqual(
+      updated.y + updated.height,
+    );
+    expect(chip.y + chip.height, 'the chip is inside the links row').toBeLessThanOrEqual(
+      links.y + links.height,
+    );
+    expect(chip.x - links.x, 'the chip starts the links row').toBeLessThanOrEqual(4);
     // How far the icon's right edge is from its own card's.
     const inset = async (key) => {
       const card = await page.getByTestId(`my-tickets-item-${key}`).boundingBox();
@@ -1045,7 +1050,7 @@ for (const [width, stacked] of [
 
     let dialog = await openDialog(page);
     const rows = dialog.locator('.claude-actions > li');
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(3);
     const [investigate, implement] = [rows.nth(0), rows.nth(1)];
     for (const [row, phase] of [
       [investigate, 'investigate'],

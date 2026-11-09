@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- On a My Tickets card the Slack chips and the Claude icon moved out of the top line into a row
+  of their own under it (chips at the start, the icon at the right edge); the top line keeps the
+  key, seal, priority, points and update age.
+- Added **Groom ticket** to the Claude dialog: a third row, with its own **Go to session**,
+  that starts a background session named `<KEY>-groom` running your `groom-ticket` skill. It is
+  independent of the investigate and implement workflow: any ticket in any Jira status, no
+  flags, no `status.json`, no gates, and neither it nor the workflow blocks the other (only a
+  running groom session refuses another Groom launch). The prompt keeps the session read-only
+  (no Jira write, no Slack post) until you say write in the session, has it put open decisions
+  in the output as lettered options, and has it write `groom.md` under
+  `~/pathwise/.orchestrator/<key in lower case>/` plus a chat summary; the dashboard shows the
+  path once the session is done but does not read the file. `POST /api/claude/launch` accepts
+  `phase: "groom"`; ticket entries gain `groom: { state, reason }`, `blocks.groom` and
+  `goTo.groom` (nothing else in an entry changes), and `launch.json` gains a `groom` record
+  that an Investigate launch keeps. The card's icon follows the groom session only for a ticket
+  with no workflow record. The groom prompt is a fourth editable prompt, `prompts/groom.md`,
+  taking `{KEY}` and `{SLUG}` only; `npm run claude:prompts` now writes four files and the
+  Prompts editor lists four (its `{STATUS_FILE}` warning is skipped for a prompt that does not
+  take it).
+- The built-in investigate prompt now asks the session to give every question lettered options
+  (a, b, c) inline in the question text, with a recommended default, and to keep each question
+  under 450 characters (the card cuts questions off at 500). The shape of `questions` is
+  unchanged. A `prompts/investigate.md` written earlier keeps its own wording: add the
+  instruction by hand or reset the prompt.
 - The three Claude prompts can now be edited in the app. **Prompts**, at the left of the
   Claude dialog's footer, swaps the dialog body for an editor (**Back**, also at the left,
   returns). Each prompt shows a badge (`default`, `custom` or `unusable file`), a text box, its

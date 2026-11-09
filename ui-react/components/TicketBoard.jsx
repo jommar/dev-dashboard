@@ -257,6 +257,8 @@ function TicketCard({
             {updated}
           </span>
         )}
+      </div>
+      <div className="my-tickets-card-links" data-testid={testId('links')}>
         <SlackThreadLinks
           links={slackLinks}
           onOpen={(thread) => onOpenThread?.({ ...thread, selectedTicketKey: ticket.key })}

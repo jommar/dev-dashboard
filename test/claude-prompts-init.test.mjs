@@ -1,4 +1,4 @@
-// claude-prompts-init.test.mjs — the starter prompt files: `npm run claude:prompts` writes the three
+// claude-prompts-init.test.mjs — the starter prompt files: `npm run claude:prompts` writes the four
 // built-in messages (placeholders intact) into the prompts folder, never over a file that is there.
 // Every test runs in a temp folder; the dashboard's real `prompts` folder is only ever looked at.
 import test from 'node:test';
@@ -14,9 +14,12 @@ import {
   IMPLEMENT,
   IMPLEMENT_TEMPLATE,
   INVESTIGATE,
+  GROOM,
+  GROOM_TEMPLATE,
   INVESTIGATE_TEMPLATE,
   KEY,
   answeredMap,
+  groomPrompt,
   implementPrompt,
   launchRecord,
   launcherEnvironment,
@@ -29,11 +32,12 @@ import {
   statusFile,
 } from './claude-launcher-fixture.mjs';
 
-// The three starter files, in the order they are reported.
+// The four starter files, in the order they are reported.
 const STARTERS = [
   ['investigate.md', INVESTIGATE_TEMPLATE],
   ['implement.md', IMPLEMENT_TEMPLATE],
   ['answers.md', ANSWERS_TEMPLATE],
+  ['groom.md', GROOM_TEMPLATE],
 ];
 
 function tempRoot(t) {
@@ -63,7 +67,7 @@ const snapshot = (dir) =>
       ]),
   );
 
-test('scenario 130: it creates the prompts folder and writes the three built-in texts, placeholders intact', async (t) => {
+test('scenario 130: it creates the prompts folder and writes the four built-in texts, placeholders intact', async (t) => {
   const dir = path.join(tempRoot(t), 'nested', 'prompts');
 
   const result = await initPrompts({ dir, fs });
@@ -73,7 +77,12 @@ test('scenario 130: it creates the prompts folder and writes the three built-in 
     STARTERS.map(([name]) => ({ name, path: path.join(dir, name), status: 'wrote' })),
     'one report per file, in order',
   );
-  assert.deepEqual(fs.readdirSync(dir).sort(), ['answers.md', 'implement.md', 'investigate.md']);
+  assert.deepEqual(fs.readdirSync(dir).sort(), [
+    'answers.md',
+    'groom.md',
+    'implement.md',
+    'investigate.md',
+  ]);
   for (const [name, template] of STARTERS) {
     const text = fs.readFileSync(path.join(dir, name), 'utf8');
     assert.equal(text.trim(), template, `${name} is the built-in text`);
@@ -82,6 +91,8 @@ test('scenario 130: it creates the prompts folder and writes the three built-in 
     assert.ok(fs.readFileSync(path.join(dir, 'investigate.md'), 'utf8').includes(placeholder));
   for (const placeholder of ['{CHANGE}', '{QUESTION_IDS}'])
     assert.ok(fs.readFileSync(path.join(dir, 'answers.md'), 'utf8').includes(placeholder));
+  for (const placeholder of ['{KEY}', '{SLUG}'])
+    assert.ok(fs.readFileSync(path.join(dir, 'groom.md'), 'utf8').includes(placeholder));
 });
 
 test('scenario 131: a file that is already there is kept as it is, and only the missing ones are written', async (t) => {
@@ -102,6 +113,7 @@ test('scenario 131: a file that is already there is kept as it is, and only the 
       ['investigate.md', 'kept'],
       ['implement.md', 'wrote'],
       ['answers.md', 'kept'],
+      ['groom.md', 'wrote'],
     ],
   );
   const after = snapshot(dir);
@@ -265,4 +277,13 @@ test("scenario 136: the starter files are in the store's file format, so the sto
   for (const [name, template] of STARTERS) await store.write(name.replace(/\.md$/, ''), template);
   for (const [name] of STARTERS)
     assert.equal(fs.readFileSync(path.join(dir, name), 'utf8'), before[name].text, name);
+});
+
+test('scenario 203: the starter groom file gives the same groom prompt as no file at all', async (t) => {
+  const env = await launcherEnvironment(t);
+  await initPrompts({ dir: env.promptsDir, fs });
+
+  await env.launcher.launch({ key: KEY, phase: GROOM });
+
+  assert.equal(env.cli.launches()[0].args.at(-1), groomPrompt(KEY));
 });

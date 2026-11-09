@@ -11,6 +11,9 @@ import { isSessionId } from './slack-watch-store.mjs';
 export const INVESTIGATE = 'investigate-and-plan';
 export const IMPLEMENT = 'implement-plan';
 export const PHASES = [INVESTIGATE, IMPLEMENT];
+// Grooming is no phase of the workflow: it has a record and a session of its own, and none of the
+// workflow rules (flags, answers, gates, the icon state) look at it.
+export const GROOM = 'groom';
 
 const TICKET_KEY = /^[A-Z]{1,10}-\d{1,7}$/;
 const QUESTION_ID = /^[A-Za-z0-9_-]{1,32}$/;
@@ -111,6 +114,18 @@ export function implementBlock(status, launch, planPresent) {
   return isDone(status) ? null : 'plan_not_done';
 }
 
+// The part every launch.json record shares, { name, launchedAt, id }, or null when the value is not
+// shaped like a record. An id that is not a short id is no id.
+function readRecord(record) {
+  if (!record || typeof record !== 'object') return null;
+  if (!isText(record.name) || !Number.isFinite(record.launchedAt)) return null;
+  return {
+    name: record.name,
+    launchedAt: record.launchedAt,
+    id: isShortId(record.id) ? record.id : null,
+  };
+}
+
 // A map of question id to hash, keeping only the text values.
 const textHashes = (hashes) =>
   hashes && typeof hashes === 'object'
@@ -123,18 +138,19 @@ const textHashes = (hashes) =>
 // send to the session recorded, { at, answers } with `answers` shaped like `answered`, or null.
 export function readLaunch(launch) {
   return PHASES.flatMap((phase) => {
-    const record = launch?.[phase];
-    if (!record || typeof record !== 'object') return [];
-    if (!isText(record.name) || !Number.isFinite(record.launchedAt)) return [];
-    const id = isShortId(record.id) ? record.id : null;
+    const base = readRecord(launch?.[phase]);
+    if (!base) return [];
+    const record = launch[phase];
     const sent =
       record.sent && typeof record.sent === 'object'
         ? { at: record.sent.at, answers: textHashes(record.sent.answers) }
         : null;
-    const answered = textHashes(record.answered);
-    return [{ phase, name: record.name, launchedAt: record.launchedAt, id, answered, sent }];
+    return [{ phase, ...base, answered: textHashes(record.answered), sent }];
   });
 }
+
+// The groom record of launch.json, shaped like a phase record, or null.
+export const readGroom = (launch) => readRecord(launch?.[GROOM]);
 
 // The record of the phase launched last: the one the card shows and an answer is saved on.
 export const currentRecord = (launch) =>
@@ -226,15 +242,32 @@ function goToFor(session) {
     : null;
 }
 
-// How to join each phase's own session: `{ investigate, implement }`, each a goToFor result for the
-// session its record resolves to. A phase with no record, or no listing, has nothing to join.
-function goToBoth(launch, entries) {
+// How to join each own session: `{ investigate, implement, groom }`, each a goToFor result for the
+// session its record resolves to. A record that is missing, or no listing, has nothing to join.
+function goToAll(launch, entries) {
   const records = readLaunch(launch);
-  const side = (phase) => {
-    const record = records.find((found) => found.phase === phase);
-    return record && entries ? goToFor(resolveSession(entries, record)) : null;
+  const join = (record) => (record && entries ? goToFor(resolveSession(entries, record)) : null);
+  const phase = (name) => join(records.find((found) => found.phase === name));
+  return {
+    investigate: phase(INVESTIGATE),
+    implement: phase(IMPLEMENT),
+    groom: join(readGroom(launch)),
   };
-  return { investigate: side(INVESTIGATE), implement: side(IMPLEMENT) };
+}
+
+// The state of the groom session: its own small table, apart from the workflow's.
+function groomState(record, entries, now) {
+  if (!record) return { state: 'none', reason: null };
+  if (!entries) return { state: 'unknown', reason: 'listing_unavailable' };
+  const session = resolveSession(entries, record);
+  if (session && !KNOWN_STATES.includes(session.state))
+    return { state: 'unknown', reason: 'unrecognised_state' };
+  if (isRunning(session, record, now))
+    return { state: 'working', reason: session ? 'running' : 'starting' };
+  if (!session) return { state: 'failed', reason: 'session_missing' };
+  return session.state === 'blocked'
+    ? { state: 'waiting', reason: 'blocked' }
+    : { state: 'done', reason: 'finished' };
 }
 
 // The entry for one ticket. `status` and `launch` are the parsed files (null when a file is not a
@@ -268,6 +301,8 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
   const running = state === 'working' ? record.phase : null;
   const busy = (asked) =>
     state === 'unknown' ? 'listing_unavailable' : running && runningBlock(running, asked);
+  const groomRecord = readGroom(launch);
+  const groom = groomState(groomRecord, entries, now);
   const blocks = {
     investigate: busy(INVESTIGATE) || null,
     implement: busy(IMPLEMENT) || implementBlock(status, launch, planPresent),
@@ -275,6 +310,8 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     answer:
       busy(running) ||
       (status === null ? 'status_unreadable' : questions.length === 0 ? 'no_questions' : null),
+    // Only a groom session of its own blocks grooming; the workflow never does.
+    groom: !entries ? 'listing_unavailable' : groom.state === 'working' ? 'session_running' : null,
   };
   return {
     phase: record?.phase ?? null,
@@ -284,7 +321,8 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     questions,
     unanswered,
     unsent: sendable && state !== 'working' && state !== 'unknown',
+    groom,
     blocks,
-    goTo: goToBoth(launch, entries),
+    goTo: goToAll(launch, entries),
   };
 }

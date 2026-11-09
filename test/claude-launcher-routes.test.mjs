@@ -6,6 +6,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   EARLIER_ID,
+  FIRST_ID,
+  GROOM,
+  GROOM_NAME,
   IMPLEMENT,
   IMPLEMENT_NAME,
   INVESTIGATE,
@@ -15,6 +18,7 @@ import {
   UNTRUSTED_OUTPUT,
   answeredMap,
   claudeHttpFixture,
+  groomPrompt,
   launchRecord,
   listed,
   question,
@@ -45,6 +49,7 @@ const ENTRY_KEYS = [
   'blocks',
   'goTo',
   'unsent',
+  'groom',
 ];
 const BAD_KEYS = ['../etc', 'tap-1', 'TAP-1/../x', 'TAP-', ' TAP-1', 'TAP-12345678'];
 
@@ -286,6 +291,7 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     investigate: 'session_running',
     implement: 'investigate_running',
     answer: 'session_running',
+    groom: null,
   });
 
   f.seed(KEY, {
@@ -309,6 +315,7 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     investigate: 'implement_running',
     implement: 'session_running',
     answer: 'session_running',
+    groom: null,
   });
   assert.equal(f.cli.launches().length, 0, 'nothing is spawned');
 });
@@ -482,17 +489,22 @@ test('scenario 116: the ticket list gives a go-to command per phase, each from i
       command: `cd ~/pathwise && claude --resume ${sessionUuid(EARLIER_ID)}`,
     },
     implement: { kind: 'attach', command: `claude attach ${IMPLEMENT_ID}` },
+    groom: null,
   });
   assert.deepEqual(
     body.tickets[SECOND_KEY].goTo,
-    { investigate: null, implement: null },
+    { investigate: null, implement: null, groom: null },
     'a ticket folder with no launch',
   );
 
   f.cli.failListing();
   const unavailable = (await f.http.bare('GET', TICKETS)).json();
   assert.equal(unavailable.listing, 'unavailable');
-  assert.deepEqual(unavailable.tickets[KEY].goTo, { investigate: null, implement: null });
+  assert.deepEqual(unavailable.tickets[KEY].goTo, {
+    investigate: null,
+    implement: null,
+    groom: null,
+  });
 });
 
 // ---- prompt files over HTTP ----
@@ -532,4 +544,97 @@ test('scenario 127: a save with an unusable answers file is 200 with a failed se
   assert.deepEqual(retry.json().send, { status: 'sent' });
   const [{ args }] = f.cli.resumes();
   assert.equal(args.at(-1), `Read ${f.statusPath()} for ${KEY}: answers q1, q2`);
+});
+
+// ---- groom over HTTP ----
+
+test('scenario 220: the launch route takes the groom phase and answers with the session and the refreshed entry', async (t) => {
+  const f = await claudeHttpFixture(t);
+
+  const res = await f.http.json('POST', LAUNCH, { key: KEY, phase: GROOM });
+
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(
+    [body.ok, body.key, body.phase, body.name, body.id],
+    [true, KEY, GROOM, GROOM_NAME, FIRST_ID],
+  );
+  assert.deepEqual(body.ticket.groom, { state: 'working', reason: 'running' });
+  assert.equal(body.ticket.state, 'none', 'the workflow is not started');
+  assert.equal(body.ticket.blocks.groom, 'session_running');
+  assert.equal(f.cli.launches().length, 1, 'one session');
+  assert.equal(f.cli.launches()[0].args.at(-1), groomPrompt(KEY));
+});
+
+test('scenario 220: a second groom launch while the session works is a 409 refusal', async (t) => {
+  const f = await claudeHttpFixture(t);
+  assert.equal((await f.http.json('POST', LAUNCH, { key: KEY, phase: GROOM })).status, 200);
+
+  const again = await f.http.json('POST', LAUNCH, { key: KEY, phase: GROOM });
+
+  assert.equal(again.status, 409);
+  assert.equal(again.json().code, 'CLAUDE_REFUSED');
+  assert.deepEqual(again.json().errors, ['session_running']);
+  assert.equal(f.cli.launches().length, 1, 'nothing more is started');
+});
+
+test('scenario 220: only the exact phase name groom is a phase', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.recorder.clearCalls();
+
+  for (const phase of [
+    'Groom',
+    'GROOM',
+    'groom ',
+    'groom-ticket',
+    'grooming',
+    '',
+    null,
+    7,
+    ['groom'],
+  ]) {
+    const res = await f.http.json('POST', LAUNCH, { key: KEY, phase });
+    assert.equal(res.status, 400, `phase ${JSON.stringify(phase)}: status`);
+    assert.equal(res.json().code, 'INVALID_TICKET', `phase ${JSON.stringify(phase)}: code`);
+  }
+
+  assert.deepEqual(f.recorder.calls, [], 'no file or directory is touched');
+  assert.equal(f.cli.calls.length, 0, 'no listing and no launch');
+});
+
+test('scenario 221: the ticket list shows a groomed ticket whose folder holds only launch.json', async (t) => {
+  const f = await claudeHttpFixture(t);
+  await f.http.json('POST', LAUNCH, { key: KEY, phase: GROOM });
+  assert.deepEqual(fs.readdirSync(f.ticketDir()), ['launch.json'], 'no status.json');
+
+  const body = (await f.http.bare('GET', TICKETS)).json();
+
+  assert.equal(body.listing, 'ok');
+  assert.deepEqual(Object.keys(body.tickets), [KEY]);
+  const entry = body.tickets[KEY];
+  for (const field of ENTRY_KEYS) assert.ok(field in entry, `an entry carries ${field}`);
+  assert.deepEqual(entry.groom, { state: 'working', reason: 'running' });
+  assert.deepEqual([entry.phase, entry.state, entry.reason], [null, 'none', null]);
+  assert.deepEqual(entry.goTo, {
+    investigate: null,
+    implement: null,
+    groom: { kind: 'attach', command: `claude attach ${FIRST_ID}` },
+  });
+  assert.equal(entry.blocks.groom, 'session_running');
+  assert.equal(entry.blocks.investigate, null, 'the workflow is not blocked by it');
+
+  f.cli.setListing(
+    f.cli.listing.map((entry) => {
+      const done = { ...entry, state: 'done' };
+      delete done.pid;
+      return done;
+    }),
+  );
+  const finished = (await f.http.bare('GET', TICKETS)).json().tickets[KEY];
+  assert.deepEqual(finished.groom, { state: 'done', reason: 'finished' });
+  assert.equal(finished.blocks.groom, null);
+  assert.deepEqual(finished.goTo.groom, {
+    kind: 'resume',
+    command: `cd ~/pathwise && claude --resume ${sessionUuid(FIRST_ID)}`,
+  });
 });

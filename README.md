@@ -283,7 +283,7 @@ oversized bodies `413`. Responses use sanitized errors. A setup revocation
 closes existing SSE streams with a `setup-required` event; the browser returns
 to Settings on that event or an operational `SETUP_REQUIRED` response.
 
-The Slack routes and the three `/api/claude/*` routes (see
+The Slack routes and the `/api/claude/*` routes (see
 [Claude launcher](#claude-launcher)) also answer before setup is complete, because
 they need neither GitHub nor Jira.
 
@@ -584,11 +584,12 @@ pinned by [`test/ticket-board.test.mjs`](test/ticket-board.test.mjs).
 
 **Cards** — the Jira key (a link that opens Jira in a new tab), a priority mark
 (chevrons or bars; the priority's name is its tooltip and accessible name), story
-points (`5 pt`, absent when unestimated), time since the last update, and the
-[Slack chips](#slack-threads) at the right end. Below are the summary, clamped to
+points (`5 pt`, absent when unestimated) and time since the last update. A row under
+them holds the [Slack chips](#slack-threads) at its start and the
+[Claude icon](#claude-launcher) at its right edge. Below are the summary, clamped to
 two lines with the full text in its tooltip, and one line per open PR. The status
 and the issue type are not on the card: the column names the status, and Type
-stays a filter. The [Claude icon](#claude-launcher) is the last item of that top line.
+stays a filter.
 
 **PR lines** — one link per PR, opening it in a new tab: a CI glyph, `repo #number`
 (the repository name without its owner), the review state in words, up to two
@@ -764,7 +765,7 @@ same frame, so all of this holds there too (see [UI layout](#ui-layout)).
 ### Slack threads
 
 A ticket whose key heads a thread you started in `#ezat_claudio` gets a small
-Slack chip at the right end of its card's top line — one per matching thread,
+Slack chip at the start of the links row under its card's figures — one per matching thread,
 newest activity first. The chip is a speech bubble with the thread's reply count
 beside it, and a filled dot when the thread needs a reply (its accessible name
 says so in words). Clicking it opens a dialog with the conversation in Slack
@@ -927,29 +928,34 @@ backlog.
 ## Claude launcher
 
 Each card on the **My Tickets** board ends its top line with a **Claude icon**. It shows where
-the ticket stands with Claude and opens a dialog with one row per phase, each holding two buttons:
+the ticket stands with Claude and opens a dialog with one row per action, each holding two buttons:
 
 - **Investigate and plan** starts a background Claude session that investigates the ticket,
   writes a plan and stops at the approval gate.
 - **Implement plan** starts a second session that builds the plan you approved.
+- **Groom ticket** starts a third, independent session that runs your `groom-ticket` skill on
+  the ticket, whatever its Jira status. It is not part of the investigate and implement
+  workflow: see [Groom ticket](#groom-ticket).
 - **Go to session**, one beside each of those, copies the command that joins or resumes that
-  phase's own session in a terminal. Its accessible name is the full one, `Go to investigate and
-plan session` or `Go to implement plan session`.
+  row's own session in a terminal. Its accessible name is the full one, `Go to investigate and
+plan session`, `Go to implement plan session` or `Go to groom ticket session`.
 
-Both launches are fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
-session after the ticket and the phase, `<KEY>-investigate-and-plan` or `<KEY>-implement-plan`, and
-returns. It never opens a terminal and never removes a session. It stops and resumes a session in
+Each launch is fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
+session after the ticket and the phase, `<KEY>-investigate-and-plan`, `<KEY>-implement-plan` or
+`<KEY>-groom`, and returns. It never opens a terminal and never removes a session. It stops and resumes a session in
 one case only: sending your saved answers back to the planning session (see
 [Saving and sending answers](#saving-and-sending-answers)), and it never sends text into a running
 one. The Jira summary never reaches the launch: the request carries only the key and the phase. By
-default both prompts are the built-in text with the key, the key in lower case and the path of the
-ticket's `status.json` filled in (you can replace them, see [Custom prompts](#custom-prompts)), so
-the summary is never part of what a session is told to do. The built-in prompts tell the session
+default the prompts are the built-in text with the key and the key in lower case filled in, and
+for the two workflow phases the path of the ticket's `status.json` too (you can replace them, see
+[Custom prompts](#custom-prompts)), so the summary is never part of what a session is told to do. The built-in prompts tell the session
 to use your `orchestrator` skill
 (step 1 for Investigate and plan, step 3 for Implement plan) and to treat ticket text as data. The
 planning session writes `02-plan.md`, `02-checklist.md` and `02-spec.md` in
 `~/pathwise/.orchestrator/<key in lower case>/`, creates no branch, commit, push or pull request,
-and writes the questions it would have asked you into `status.json` instead. Once every question
+and writes the questions it would have asked you into `status.json` instead, each with lettered
+options (a, b, c) inline in the question text and a recommended default, in under 450
+characters because the dashboard cuts a question off at 500. Once every question
 has an answer you saved, the dashboard sends the answers back to that same planning session, which
 is told to update the plan, checklist and spec and then set `done`. The implement
 session treats starting it as your approval, does not commit, push or open a pull request, and
@@ -975,11 +981,13 @@ leaves its changes in a worktree with a short report beside the plan.
   Investigate and plan while Implement plan runs (`Implement plan is running.`). A saved answer is
   always refused as `session_running`. The running reason comes before `not_planned`,
   `plan_missing` and `questions_unanswered`. A launch is also refused when
-  `claude agents --json --all` cannot be read, because the decision rests on it.
+  `claude agents --json --all` cannot be read, because the decision rests on it. A groom session
+  neither blocks nor is blocked by these: only a running groom session refuses another Groom
+  ticket launch.
 - **Local state.** Everything the dashboard knows about a ticket's Claude work is in
   `claude/<KEY>/` in the dashboard directory. `/claude/` is gitignored and `claude` is in
   `.dockerignore`. Sessions get that folder (and only it, not the dashboard's source) through
-  `--add-dir`.
+  `--add-dir`. A groom session gets no `--add-dir`: it writes nothing there.
 
 ### Icon and dialog
 
@@ -996,9 +1004,12 @@ label and tooltip read `Claude: <state word>`.
 | Red, cross                   | `plan not done`                                                            | The plan flag is `true`, the plan file exists and nothing is waiting to be sent, but the session has not set `done`. Check the session before implementing.                                                     |
 | Muted, no badge              | `not started`, `status unavailable`                                        | Nothing was launched for the ticket; or the CLI listing failed or showed a state the dashboard does not know.                                                                                                   |
 
-The icon shows the ticket's current phase, the one launched last. The dialog opens from it as a
-native modal: the ticket key and summary, the state word, then the two phase rows, each with its
-run button and its own **Go to session** button side by side (they stack at 480px wide and
+The icon shows the ticket's current phase, the one launched last. Grooming does not count: it
+shows only for a ticket with no workflow record, then with the same four looks, from the groom
+session's own state, and its label and tooltip read `Claude grooming: <phrase>`. The dialog opens
+from it as a native modal: the ticket key and summary, the state word (workflow only), then the
+two phase rows and the **Groom ticket** row, each with its run button and its own **Go to
+session** button side by side (they stack at 480px wide and
 below). A disabled button says why in a line under its row, for example
 `A Claude session is already running for this ticket.` or `No session to join`. When the state is
 `plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows under the
@@ -1095,7 +1106,8 @@ which session belongs to which phase and a re-run reuses its session name.
     "answered": { "q1": "<sha-256 hex of the id, question and answer you saved>" },
     "sent": { "at": "<ISO time>", "answers": { "q1": "<the same hash, at the time of the send>" } }
   },
-  "implement-plan": { "name": "ABC-123-implement-plan", "launchedAt": 1731100500000, "id": null }
+  "implement-plan": { "name": "ABC-123-implement-plan", "launchedAt": 1731100500000, "id": null },
+  "groom": { "name": "ABC-123-groom", "launchedAt": 1731100900000, "id": "ef56ab78" }
 }
 ```
 
@@ -1107,7 +1119,9 @@ one phase's session is never taken for the other's, and a session of the same na
 earlier is never taken for either. Sessions launched before names were per phase keep their old
 name and are still tracked by their saved `id` (or, with none saved, by that recorded name). An
 Investigate launch drops the `implement-plan` entry, and with the rest of the investigate record
-whatever `sent` it held. `answered` appears once you save an answer (see below). `sent` is on the
+whatever `sent` it held; it keeps the `groom` entry, and a Groom launch replaces only that one.
+The `groom` entry has no flags or answers, and a groom launch writes no `status.json` and leaves
+an existing one alone. `answered` appears once you save an answer (see below). `sent` is on the
 investigate record only. It is written when answers were really delivered to the session, and again
 at each re-send, and holds the time and the hash of every question (the same hash as `answered`)
 at that moment. It is written only after the resume succeeded, so a failed send leaves it as it
@@ -1224,9 +1238,41 @@ whole `claude/` folder, `launch.json` included, so a hostile session could forge
 real protection is that Implement plan is a manual click, made after you read the plan (the
 dialog shows its path) and the answers you saved yourself.
 
+### Groom ticket
+
+**Groom ticket** runs your `groom-ticket` skill (from `~/pathwise/.claude/skills/groom-ticket/`)
+on a ticket, in a background session named `<KEY>-groom`. It stands apart from the workflow: any
+ticket in any Jira status can be groomed, nothing but the key is needed, and there are no flags,
+no `status.json` and no gates either way. A running groom session does not stop Investigate,
+Implement or a saved answer, and those do not stop it; only a running groom session refuses
+another Groom launch (`session_running`, and `listing_unavailable` when the CLI listing fails).
+
+- **Read-only until you say so.** The built-in prompt tells the session the skill's read-only rule
+  holds for the whole session: no Jira write and no Slack post until you tell it to in a later
+  message. That is the prompt's instruction, not something the dashboard enforces; the session
+  still runs under your permission mode. It asks nothing in chat: it puts each open decision in
+  the output with lettered options and a recommended default.
+- **Output.** The session writes `~/pathwise/.orchestrator/<key in lower case>/groom.md`
+  (overwriting an earlier one) and ends with a chat summary of at most ten lines: the readiness
+  verdict, the open decisions with their options and that path. While the groom session is
+  `done` the dialog shows the path under the row. The dashboard does not read `groom.md` and
+  cannot answer the decisions: use the row's **Go to session** and reply in the session.
+- **State.** The ticket entry gains `groom: { state, reason }`, `blocks.groom` and `goTo.groom`.
+  `state` is `none` (never groomed), `working` (`running` or `starting`), `waiting` (`blocked`),
+  `done` (`finished`), `failed` (`session_missing`) or `unknown` (`listing_unavailable` or
+  `unrecognised_state`). `blocks.groom` is `listing_unavailable`, `session_running` or `null`.
+  Nothing else in the entry (`state`, `reason`, `phase`, `flags`, `questions`, `unsent`, the other
+  `blocks` and `goTo` sides) changes because of grooming, so a ticket that was only groomed is
+  `state` `none` there. The card's icon follows the groom session only for such a ticket.
+- **Launch.** `POST /api/claude/launch` with `phase` `groom`. It lists sessions fresh, reads the
+  `groom` prompt before writing anything (an unusable `prompts/groom.md` is `CLAUDE_REFUSED` with
+  `prompt_unreadable`), records the session in `launch.json` and starts it with no `--add-dir`.
+  A failed start rolls the record back, except after `timed_out`.
+
 ### Custom prompts
 
-The two launch prompts and the message sent with your answers are templates. By default they are
+The three launch prompts (investigate, implement, groom) and the message sent with your answers
+are templates. By default they are
 the built-in text. You can change each one in the app (see **Edit in the app** below) or by hand.
 Both edit the same file, a file of that name in the `prompts/` folder of the dashboard (the repo
 root, next to `claude/`), so a hand edit and an app edit always agree:
@@ -1236,16 +1282,18 @@ root, next to `claude/`), so a hand edit and an app edit always agree:
 | `prompts/investigate.md` | the Investigate and plan prompt          | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
 | `prompts/implement.md`   | the Implement plan prompt                | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
 | `prompts/answers.md`     | the message sent with your saved answers | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+| `prompts/groom.md`       | the Groom ticket prompt                  | `{KEY}`, `{SLUG}`                                                |
 
 `{KEY}` is the ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
 `{STATUS_FILE}` the absolute path of the ticket's `status.json`, `{QUESTION_IDS}` the ids of the new
 or changed answers joined with `, `, and `{CHANGE}` is `answers` on a first send and
-`changed answers` on a re-send. Any other `{WORD}` stays in the text as written. The file is read
+`changed answers` on a re-send. Any other `{WORD}` stays in the text as written, so in
+`groom.md`, which has no status file, `{STATUS_FILE}` is left as literal text. The file is read
 as UTF-8, trimmed, and otherwise used as written.
 
 - **Edit in the app.** **Prompts**, at the left of the Claude dialog's footer, swaps the dialog's
   body for an editor in the same dialog. The footer then holds **Back**, at the left where
-  **Prompts** was, and **Close**. The editor loads the three prompts once when it opens, not on
+  **Prompts** was, and **Close**. The editor loads the four prompts once when it opens, not on
   the dialog's 15 second refresh; if the load fails it shows the error and a **Retry** button.
   Each prompt has:
   - a badge: `default` (no file, so the built-in text), `custom` (a usable file) or
@@ -1265,12 +1313,13 @@ as UTF-8, trimmed, and otherwise used as written.
   write wins). **Back**, **Close** and Escape discard text you have not saved; the answers you
   were typing in the dialog survive **Back**.
 
-- **A missing `{STATUS_FILE}` is a warning, never a block.** While the text in a box lacks the
-  literal `{STATUS_FILE}`, the editor says so under the box as you type: "This prompt does not
+- **A missing `{STATUS_FILE}` is a warning, never a block.** While the text in the box of a prompt
+  that takes `{STATUS_FILE}` (never the groom prompt) lacks the literal `{STATUS_FILE}`, the
+  editor says so under the box as you type: "This prompt does not
   contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done
   will not work." **Save** stays enabled and the server never refuses a prompt for it.
 - **Absent means built-in.** A missing file is never an error. `npm run claude:prompts` creates
-  `prompts/` and writes the three built-in templates into it, placeholders intact, for you to edit
+  `prompts/` and writes the four built-in templates into it, placeholders intact, for you to edit
   by hand. It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that
   exists. It needs no Settings setup.
 - **Applied at once.** The files are read on every launch and every send, never cached, so an edit
@@ -1313,9 +1362,14 @@ as UTF-8, trimmed, and otherwise used as written.
   The folder is outside it, gitignored (`/prompts/`) and in `.dockerignore`. That is a grant, not a
   sandbox: a session runs as your user and under your permission mode.
 
-Each built-in prompt carries the protocol the dashboard relies on: the questions go into
-`status.json`, the phase flag (and `done`) is set as the very last action, and the session never
-asks in chat. The dashboard does not check that a custom file keeps it. A prompt that drops it
+Each built-in investigate and implement prompt carries the protocol the dashboard relies on: the
+questions go into `status.json`, the phase flag (and `done`) is set as the very last action, and
+the session never asks in chat. The built-in investigate prompt also tells the session to give
+every question lettered options (a, b, c) inline in the question text, with its recommended
+default, and to keep each question under 450 characters. That wording lives in the built-in text
+only: a `prompts/investigate.md` you made earlier keeps its own words until you add the
+instruction by hand or press **Reset to default**. The dashboard does not check that a custom
+file keeps any of this. A prompt that drops it
 leaves sessions red (`ended without finishing`, `plan not done`) and **Implement plan** locked; the
 editor's `{STATUS_FILE}` warning is the only guard. To go back to the built-in text, press **Reset
 to default** or delete the file.
@@ -1327,14 +1381,15 @@ to default** or delete the file.
 | `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below) |
 | `POST /api/claude/launch`           | body `{ key, phase }`; answers `{ ok: true, key, phase, name, id, ticket }`                                                                    |
 | `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                             |
-| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; `prompts` is the three entries below, in the order investigate, implement, answers                                    |
+| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; `prompts` is the four entries below, in the order investigate, implement, answers, groom                              |
 | `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                         |
 | `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                            |
 
 `tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
 board shows it as not started). With no ticket folder the route answers without running the CLI;
 otherwise concurrent callers share one `claude agents --json --all`. An entry is
-`{ phase, state, reason, flags, questions[], unanswered, unsent, blocks, goTo }`:
+`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, blocks, goTo }`
+(`groom` and `blocks.groom` are described under [Groom ticket](#groom-ticket)):
 
 - `phase` is `investigate-and-plan`, `implement-plan` or `null` (nothing launched). `flags` holds
   the two phase flags and `done`, as read (`done` is `false` when missing).
@@ -1345,7 +1400,7 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
   icon's state word comes from `reason`.
 - Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
   `unanswered` counts the open ones.
-- `blocks` is `{ investigate, implement, answer }`, each a reason string or `null` (why that
+- `blocks` is `{ investigate, implement, answer, groom }`, each a reason string or `null` (why that
   action is refused now). It is what the dialog words beside a disabled item. While Investigate
   and plan runs it is `session_running`, `investigate_running` and `session_running`; while
   Implement plan runs it is `implement_running`, `session_running` and `session_running`. The
@@ -1356,13 +1411,13 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
 - `unsent` is `true` when the answers are complete, the plan flag is `true`, Implement plan was
   never launched, they differ from the last send and no session works: the conditions under which
   a **Save answers** would send. The same conditions make `answers_not_sent` the Implement block.
-- `goTo` is always `{ investigate, implement }`, each side `{ kind, command }` (`kind` is `attach`
+- `goTo` is always `{ investigate, implement, groom }`, each side `{ kind, command }` (`kind` is `attach`
   or `resume`) or `null`: `null` for a phase with no launch record, a session that cannot be
-  joined, or an unavailable listing, so a ticket never launched has both sides `null`. It used to
+  joined, or an unavailable listing, so a ticket never launched has every side `null`. It used to
   be one `{ kind, command }` or `null` for the current phase only, so anything reading `goTo`
   must now read a side.
 
-`launch` takes `phase` `investigate-and-plan` or `implement-plan`; a leftover `summary` property in
+`launch` takes `phase` `investigate-and-plan`, `implement-plan` or `groom`; a leftover `summary` property in
 the body is ignored. Its answer has `name` (the phase's session name), `id` (the session's
 8-character id, or `null` while the listing does not show the session yet) and `ticket` (the
 refreshed entry). `answers` takes
@@ -1391,7 +1446,7 @@ so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 
 | Status | Code             | When                                                                                                                                                                                                                                        |
 | ------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase                                                                                                                                                                      |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the three                                                                                                                                                                  |
 | `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record               |
 | `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                |
 | `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable` or `status_unreadable`            |
@@ -1440,7 +1495,7 @@ nothing was sent.` and that the session received nothing (attach to it).
    `prompts/investigate.md` (keep the rest), and launch **Investigate and plan** on a throwaway
    ticket. Confirm the session's first message contains your line. Delete the file, launch again
    once the first session has finished, and confirm the built-in text is back.
-10. Open a ticket's Claude dialog and press **Prompts**. Confirm the three prompts load with the
+10. Open a ticket's Claude dialog and press **Prompts**. Confirm the four prompts load with the
     badge `default` (or `custom` if you kept a file), and that deleting `{STATUS_FILE}` from a box
     shows the warning while **Save** stays enabled. Add a line you will recognise at the top of
     **Investigate and plan prompt**, press **Save**, and confirm `Saved.`, the badge `custom` and
@@ -1448,6 +1503,14 @@ nothing was sent.` and that the session received nothing (attach to it).
     ticket and confirm the session's first message contains your line. Then reopen **Prompts**,
     press **Reset to default**, and confirm `Reset to default.`, the badge `default`, the file
     gone, and that the next launch (once the first session has finished) is the built-in text.
+11. On a throwaway ticket, press **Groom ticket**, with and without a workflow already started.
+    Confirm a session `<KEY>-groom` starts (`claude agents` lists it) and that Investigate and
+    plan can launch while it works. Confirm no `claude/<KEY>/status.json` appears or changes for
+    a groom-only ticket, that `~/pathwise/.orchestrator/<key in lower case>/groom.md` is written,
+    that the session ends with a chat summary and that nothing was written to Jira or Slack. The
+    row's **Go to session** must join or resume it. Launch Investigate and plan afterwards and
+    confirm the groom row's **Go to session** still works, and that a question the session writes
+    has lettered options inline.
 
 Also taken as assumptions until then: `--bg` prints a standalone 8-character id, a session name of
 39 characters or fewer is listed unabbreviated, a tool call denied in a background session ends it

@@ -1,5 +1,5 @@
-// claude-prompts.test.mjs — the prompt store: the one module that knows the three prompt files
-// (`investigate.md`, `implement.md`, `answers.md` in the prompts folder). It reads them under the
+// claude-prompts.test.mjs — the prompt store: the one module that knows the four prompt files
+// (`investigate.md`, `implement.md`, `answers.md`, `groom.md` in the prompts folder). It reads them under the
 // rules the launcher already uses (a missing file is the built-in text, a file that cannot be used
 // is `unusable`), lists them for the editor, writes one whole or not at all, and removes one.
 //
@@ -13,6 +13,8 @@ import path from 'node:path';
 import {
   ANSWERS_TEMPLATE,
   BAD_PROMPT_FILES,
+  GROOM_TEMPLATE,
+  INVESTIGATE_TEMPLATE,
   PROMPT_MAX_CHARS,
   PROMPT_NAMES,
   fsChanges,
@@ -59,7 +61,7 @@ test('scenario 140: with no files and no folder every prompt is the built-in tex
   assert.deepEqual(
     list,
     NAMES.map((name) => entry(name, 'default')),
-    'three entries, in this order, each with its label, placeholders and the built-in text',
+    'four entries, in this order, each with its label, placeholders and the built-in text',
   );
   assert.equal(fs.existsSync(p.promptsDir), false, 'listing creates no folder');
   assert.deepEqual(fsChanges(p.recorder), [], 'and changes nothing');
@@ -83,6 +85,7 @@ test('scenario 140: a file that is usable is custom with its trimmed text, place
     ),
     entry('implement', 'default'),
     entry('answers', 'custom', 'only {CHANGE}'),
+    entry('groom', 'default'),
   ]);
 });
 
@@ -106,12 +109,12 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
     assert.deepEqual(
       list,
       NAMES.map((name) => entry(name, 'unusable')),
-      'every one of the three',
+      'every one of the four',
     );
     for (const name of NAMES)
       assert.deepEqual(await p.store.read(name), entry(name, 'unusable'), `read ${name}`);
 
-    // Only one of them is bad: the other two keep their own source.
+    // Only two of them are bad: the others keep their own source.
     fs.rmSync(p.file('implement'), { recursive: true, force: true });
     fs.rmSync(p.file('answers'), { recursive: true, force: true });
     p.put('answers', 'fine {KEY}');
@@ -121,6 +124,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
         ['investigate', 'unusable'],
         ['implement', 'default'],
         ['answers', 'custom'],
+        ['groom', 'unusable'],
       ],
     );
   });
@@ -209,6 +213,8 @@ const BAD_NAMES = [
   'hasOwnProperty',
   'Investigate',
   'investigate.md',
+  'Groom',
+  'groom.md',
   'investigate/',
   '../investigate',
   'investigate/../answers',
@@ -221,7 +227,7 @@ const BAD_NAMES = [
   7,
 ];
 
-test('scenario 143: only the three names are known, anything else is refused before any file is looked at', async (t) => {
+test('scenario 143: only the four names are known, anything else is refused before any file is looked at', async (t) => {
   const p = await promptStore(t);
   // Where `../investigate` would land if a name were put into a path.
   const sentinel = path.join(p.root, 'investigate.md');
@@ -256,7 +262,7 @@ test('scenario 144: write keeps the trimmed text and one newline, and answers wi
     assert.equal(p.bytes(name), 'First {KEY} line $&\n\n    indented {STATUS_FILE}\n  last\n');
     assert.deepEqual(await p.store.read(name), saved, 'and read gives the same');
   }
-  assert.deepEqual(p.files(), ['answers.md', 'implement.md', 'investigate.md']);
+  assert.deepEqual(p.files(), ['answers.md', 'groom.md', 'implement.md', 'investigate.md']);
 });
 
 test('scenario 144: writing the text it gave back leaves the file as it was', async (t) => {
@@ -520,6 +526,7 @@ test('scenario 150: a file that contains a NUL byte is unusable, shown with the 
     entry('investigate', 'unusable'),
     entry('implement', 'unusable'),
     entry('answers', 'custom', 'a fine text'),
+    entry('groom', 'default'),
   ]);
   assert.deepEqual(await p.store.read('investigate'), entry('investigate', 'unusable'));
 });
@@ -599,4 +606,56 @@ test('scenario 153: the store exports the file format, trimmed text and one newl
     await p.store.write(name, text);
     assert.equal(p.bytes(name), promptFileText(text), JSON.stringify(text));
   }
+});
+
+// ---- the groom prompt, the fourth name ----
+
+test('scenario 200: the names are investigate, implement, answers and groom, in that order', async () => {
+  const { PROMPT_NAMES: names, PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+
+  assert.deepEqual(names, ['investigate', 'implement', 'answers', 'groom']);
+  assert.deepEqual(Object.keys(PROMPT_TEMPLATES), names);
+  assert.equal(PROMPT_TEMPLATES.groom, GROOM_TEMPLATE, 'the built-in text, word for word');
+});
+
+test('scenario 200: the groom entry has its label and only {KEY} and {SLUG} as placeholders', async (t) => {
+  const p = await promptStore(t);
+
+  const groom = await p.store.read('groom');
+
+  assert.deepEqual(groom, {
+    name: 'groom',
+    label: 'Groom ticket prompt',
+    source: 'default',
+    text: GROOM_TEMPLATE,
+    placeholders: ['{KEY}', '{SLUG}'],
+  });
+  assert.deepEqual((await p.store.list())[3], groom, 'the fourth entry of the list');
+  assert.ok(!groom.text.includes('{STATUS_FILE}'), 'the built-in text has no status file');
+  assert.ok(groom.text.includes('`groom-ticket` skill'), 'it runs the groom-ticket skill');
+  assert.ok(groom.text.includes('.orchestrator/{SLUG}/groom.md'), 'and names its deliverable');
+  assert.ok(
+    groom.text.includes(
+      'until the user tells you to write in a later message of this session. Write no file ' +
+        'except `.orchestrator/{SLUG}/groom.md` and scratch files under `.orchestrator/{SLUG}/`, ' +
+        'and do not edit the skill itself.',
+    ),
+    'it may write only its deliverable and scratch files, and never the skill',
+  );
+});
+
+test('scenario 202: the investigate text asks for lettered options inside each question, and nothing else changed', async (t) => {
+  const p = await promptStore(t);
+
+  const { text } = await p.store.read('investigate');
+
+  assert.equal(text, INVESTIGATE_TEMPLATE);
+  const paragraphs = text.split('\n\n');
+  assert.equal(paragraphs.length, 5, 'the same five paragraphs');
+  const questions = paragraphs.find((paragraph) => paragraph.startsWith('Questions:'));
+  assert.ok(questions.includes('its options inline as (a) ..., (b) ..., (c) ...'));
+  assert.ok(questions.includes('Always put lettered options (a, b, c) inside the question text'));
+  assert.ok(questions.includes('under 450 characters'));
+  assert.ok(questions.includes('Do not change the shape of the array or add keys.'));
+  assert.ok(!questions.includes('best-guess default'), 'the old wording is gone');
 });

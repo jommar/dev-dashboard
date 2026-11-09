@@ -3,8 +3,9 @@
    Tokens only, no literal colours. */
 
 /* ---- Icon -----------------------------------------------------------------
-   The last item of the card's top row, pushed to its right edge. The mark takes the state's
-   colour and the badge in its corner takes the state's shape, so colour is never the only cue. */
+   The last item of the card's links row (under the figures), pushed to its right edge. The mark
+   takes the state's colour and the badge in its corner takes the state's shape, so colour is never
+   the only cue. */
 .claude-icon {
   display: inline-flex;
   align-items: center;
@@ -22,11 +23,6 @@
   transition:
     color 150ms var(--ease-out),
     background-color 150ms var(--ease-out);
-}
-/* The icon takes the row's free space, so the Slack chip no longer does: with both pushing right
-   they split it and leave a gap between them. The chip stays beside the card's figures. */
-.board-card-top .my-ticket-slack {
-  margin-left: var(--s1);
 }
 .claude-icon:hover {
   background: var(--panel);

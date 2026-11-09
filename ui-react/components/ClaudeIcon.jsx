@@ -1,8 +1,9 @@
 // ClaudeIcon.jsx — the Claude entry point on a My Tickets card. The button shows where the
 // ticket stands with Claude and opens the panel's one Claude dialog. The state is a word in the
 // label and tooltip, and a badge shape beside the mark (a ring for working, a dot for waiting, a
-// check for done, a cross for failed), so colour never carries it alone. Presentational only: the
-// entry comes from useClaudeTickets and the click hands the ticket key to the panel.
+// check for done, a cross for failed), so colour never carries it alone. A ticket with no workflow
+// record shows its groom session instead (same looks, and the words say grooming). Presentational
+// only: the entry comes from useClaudeTickets and the click hands the ticket key to the panel.
 
 // What an entry's reason reads as; a state with no reason of its own is "not started".
 const PHRASES = {
@@ -14,6 +15,7 @@ const PHRASES = {
   plan_not_done: 'plan not done',
   plan_ready: 'plan ready',
   implemented: 'implemented',
+  finished: 'finished',
   plan_missing: 'plan file missing',
   ended_without_flag: 'ended without finishing',
   session_missing: 'session no longer listed',
@@ -35,9 +37,15 @@ const BADGES = {
   failed: <path d="M15.6 15.6l4.8 4.8m0-4.8-4.8 4.8" />,
 };
 
-export function ClaudeIcon({ ticketKey, entry, onOpen }) {
+// Grooming is not part of the workflow, so it stands in only while the workflow has not started.
+const isGrooming = (entry) =>
+  entry?.state === 'none' && Boolean(entry.groom) && entry.groom.state !== 'none';
+
+export function ClaudeIcon({ ticketKey, entry: listed, onOpen }) {
+  const grooming = isGrooming(listed);
+  const entry = grooming ? listed.groom : listed;
   const state = entry?.state ?? 'none';
-  const label = `Claude: ${claudePhrase(entry)}`;
+  const label = `Claude${grooming ? ' grooming' : ''}: ${claudePhrase(entry)}`;
   return (
     <button
       type="button"

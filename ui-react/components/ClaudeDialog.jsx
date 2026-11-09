@@ -17,6 +17,7 @@ import { copyText } from '../../ui/dom.js';
 
 const INVESTIGATE = 'investigate-and-plan';
 const IMPLEMENT = 'implement-plan';
+const GROOM = 'groom';
 
 // Why an action is blocked or failed, as one sentence. The server sends the reason; the wording is
 // the dashboard's, and it serves both the hint beside a disabled item and the line after a failure.
@@ -67,13 +68,15 @@ function sendText({ send, ticket }) {
 const GO_TO_LABEL = {
   investigate: 'Go to investigate and plan session',
   implement: 'Go to implement plan session',
+  groom: 'Go to groom ticket session',
 };
 
 // A ticket the server lists nothing for has not been started.
 const NOT_STARTED = {
   questions: [],
-  goTo: { investigate: null, implement: null },
-  blocks: { investigate: null, implement: 'not_planned', answer: 'no_questions' },
+  goTo: { investigate: null, implement: null, groom: null },
+  groom: { state: 'none', reason: null },
+  blocks: { investigate: null, implement: 'not_planned', answer: 'no_questions', groom: null },
 };
 
 const failureText = ({ errors, error }) =>
@@ -156,7 +159,7 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
   useEffect(() => {
     const focused = document.activeElement;
     if (!focused || focused === document.body || focused.disabled) closeButton.current?.focus();
-  }, [busy, blocks.investigate, blocks.implement, blocks.answer]);
+  }, [busy, blocks.investigate, blocks.implement, blocks.answer, blocks.groom]);
 
   const run = async (action) => {
     setBusy(true);
@@ -246,6 +249,26 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
                 {entry.reason === 'plan_ready' && (
                   <span className="claude-action-hint" data-testid="claude-plan-hint">
                     {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`}
+                  </span>
+                )}
+              </ClaudeRow>
+              <ClaudeRow
+                phase="groom"
+                label="Groom ticket"
+                disabled={busy || Boolean(blocks.groom)}
+                hint={REASON_TEXT[blocks.groom]}
+                onRun={() => run(() => launch(ticketKey, GROOM))}
+                noSession={!goTo.groom}
+                onGoTo={() => copyCommand('groom')}
+              >
+                <span className="claude-action-hint" data-testid="claude-groom-note">
+                  Works on any ticket, on its own. Needs no plan and changes nothing in Jira until
+                  you say so.
+                </span>
+                {/* Where the result is, once the session has finished. */}
+                {entry.groom?.state === 'done' && (
+                  <span className="claude-action-hint" data-testid="claude-groom-path">
+                    {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/groom.md`}
                   </span>
                 )}
               </ClaudeRow>

@@ -85,7 +85,7 @@ function PromptCard({ initial }) {
       <p className="claude-note claude-prompt-placeholders">
         {`Placeholders: ${placeholders.join(', ')}`}
       </p>
-      {!draft.includes(STATUS_FILE) && (
+      {placeholders.includes(STATUS_FILE) && !draft.includes(STATUS_FILE) && (
         <p
           className="claude-prompt-warning"
           role="status"

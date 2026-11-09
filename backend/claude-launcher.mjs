@@ -22,6 +22,7 @@ import { SETTLE_MS } from './slack-watcher.mjs';
 import { createPromptStore } from './claude-prompts.mjs';
 import {
   ANSWER_MAX_LENGTH,
+  GROOM,
   IMPLEMENT,
   INVESTIGATE,
   PHASES,
@@ -34,6 +35,7 @@ import {
   isQuestionId,
   isShortId,
   isTicketKey,
+  readGroom,
   readLaunch,
   readQuestions,
   resolveSession,
@@ -55,7 +57,7 @@ const MAX_TICKETS = 500;
 const PLAN_FILE = '02-plan.md';
 const RESET_STATUS = { [INVESTIGATE]: false, [IMPLEMENT]: false, done: false, questions: [] };
 
-const PROMPT_NAME = { [INVESTIGATE]: 'investigate', [IMPLEMENT]: 'implement' };
+const PROMPT_NAME = { [INVESTIGATE]: 'investigate', [IMPLEMENT]: 'implement', [GROOM]: 'groom' };
 
 // Fills `{NAME}` placeholders from `values`. A function replaces them, so a `$` in a value or in the
 // template is never a replacement pattern, and a name that is not in `values` stays as written.
@@ -148,10 +150,11 @@ export function createClaudeLauncher({
     return source === 'unusable' ? null : text;
   }
 
-  const promptValues = (key) => ({
+  // A groom prompt has no status file, so `{STATUS_FILE}` stays as written in it.
+  const promptValues = (key, phase) => ({
     KEY: key,
     SLUG: key.toLowerCase(),
-    STATUS_FILE: statusPath(key),
+    ...(phase !== GROOM && { STATUS_FILE: statusPath(key) }),
   });
 
   function ticketKeys() {
@@ -218,9 +221,14 @@ export function createClaudeLauncher({
 
   async function launchLocked(key, phase) {
     const entries = await freshListing();
-    const status = readObject(statusPath(key));
+    // Grooming has no status file: it is never read, written or restored for it.
+    const status = phase === GROOM ? null : readObject(statusPath(key));
     const launched = readObject(launchPath(key));
-    requireNoRunningSession(entries, launched, phase);
+    if (phase === GROOM) {
+      // Only a groom session of its own refuses a groom launch, and it refuses nothing else.
+      const earlier = readGroom(launched.value);
+      if (earlier && sessionRunning(entries, earlier, now())) throw refused('session_running');
+    } else requireNoRunningSession(entries, launched, phase);
     if (phase === IMPLEMENT) {
       const reason = implementBlock(statusOf(status), launched.value, planExists(key));
       if (reason) throw refused(reason);
@@ -237,12 +245,17 @@ export function createClaudeLauncher({
       const earlier = readLaunch(launched.value).find((found) => found.phase === IMPLEMENT);
       if (earlier && Object.keys(earlier.answered).length) record.answered = earlier.answered;
     }
-    const nextLaunch = { ...(phase === IMPLEMENT && launched.value), [phase]: record };
+    // A new investigate run starts the workflow over, but the groom record is not part of it.
+    const kept =
+      phase === INVESTIGATE
+        ? { ...(launched.value?.[GROOM] && { [GROOM]: launched.value[GROOM] }) }
+        : launched.value;
+    const nextLaunch = { ...kept, [phase]: record };
     const nextStatus =
       phase === IMPLEMENT ? implementStatus(status.value, launched.value) : RESET_STATUS;
     const rollback = () => {
       restore(launchPath(key), launched);
-      restore(statusPath(key), status);
+      if (status) restore(statusPath(key), status);
       // A first launch that failed leaves no folder, so the list never polls the CLI for it.
       try {
         fs.rmdirSync(ticketDir(key));
@@ -252,12 +265,13 @@ export function createClaudeLauncher({
     let result;
     try {
       writeJson(launchPath(key), nextLaunch);
-      writeJson(statusPath(key), nextStatus);
+      if (phase !== GROOM) writeJson(statusPath(key), nextStatus);
       result = await claudeSessions.launch({
         name,
-        prompt: fillTemplate(template, promptValues(key)),
+        prompt: fillTemplate(template, promptValues(key, phase)),
         cwd: launchDirectory,
-        addDir: stateDir,
+        // A groom session writes nothing to the state folder, so it gets no access to it.
+        ...(phase !== GROOM && { addDir: stateDir }),
       });
     } catch (error) {
       rollback();
@@ -277,7 +291,7 @@ export function createClaudeLauncher({
   }
 
   async function launch({ key, phase }) {
-    if (!isTicketKey(key) || !PHASES.includes(phase))
+    if (!isTicketKey(key) || ![...PHASES, GROOM].includes(phase))
       throw invalid('INVALID_TICKET', 'Invalid ticket or phase.');
     return withTicketLock(key, () => launchLocked(key, phase));
   }

@@ -4,6 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FIRST_ID,
+  GROOM,
+  GROOM_NAME,
   HOUR_MS,
   IMPLEMENT,
   IMPLEMENT_NAME,
@@ -34,9 +36,10 @@ const resumeFor = (id) => ({
   kind: 'resume',
   command: `cd ~/pathwise && claude --resume ${sessionUuid(id)}`,
 });
-// `goTo` is always one command per phase; a phase that has none to give is null.
-const GO_TO_NONE = { investigate: null, implement: null };
-const investigateOnly = (command) => ({ investigate: command, implement: null });
+// `goTo` is always one command per phase and one for the groom session; one that has none to give
+// is null.
+const GO_TO_NONE = { investigate: null, implement: null, groom: null };
+const investigateOnly = (command) => ({ investigate: command, implement: null, groom: null });
 
 // The entry for one ticket. Defaults: an investigate run launched an hour ago, its session listed
 // and done, flag true, `done` true, no question, the plan on disk.
@@ -203,6 +206,7 @@ test('scenario 15: an unavailable listing is unknown, blocks every action and ha
     investigate: 'listing_unavailable',
     implement: 'listing_unavailable',
     answer: 'listing_unavailable',
+    groom: 'listing_unavailable',
   });
 });
 
@@ -400,11 +404,13 @@ const BLOCKS_WHILE_INVESTIGATING = {
   investigate: 'session_running',
   implement: 'investigate_running',
   answer: 'session_running',
+  groom: null,
 };
 const BLOCKS_WHILE_IMPLEMENTING = {
   investigate: 'implement_running',
   implement: 'session_running',
   answer: 'session_running',
+  groom: null,
 };
 
 test('scenario 65: while the investigate session runs, implement says investigate is running', async () => {
@@ -650,6 +656,7 @@ test('scenario 82: while the investigate session works the entry is working, sen
         investigate: 'session_running',
         implement: 'investigate_running',
         answer: 'session_running',
+        groom: null,
       },
       label,
     );
@@ -770,7 +777,7 @@ test('scenario 111: both phases launched give both commands at once, each from i
   ];
   for (const [label, entries, expected] of rows) {
     const entry = await derive({ status: bothStatus, launch: bothLaunched(), entries });
-    assert.deepEqual(entry.goTo, expected, label);
+    assert.deepEqual(entry.goTo, { ...expected, groom: null }, label);
     assert.equal(
       entry.phase,
       IMPLEMENT,
@@ -794,6 +801,7 @@ test('scenario 112: each phase finds its own session by the saved id, whatever e
   assert.deepEqual(entry.goTo, {
     investigate: resumeFor(INVESTIGATE_ID),
     implement: resumeFor(IMPLEMENT_ID),
+    groom: null,
   });
 });
 
@@ -812,6 +820,7 @@ test('scenario 113: older records without an id resolve by name and start time, 
   assert.deepEqual(entry.goTo, {
     investigate: resumeFor(INVESTIGATE_ID),
     implement: attachFor(IMPLEMENT_ID),
+    groom: null,
   });
 
   const earlierRun = await derive({
@@ -824,7 +833,7 @@ test('scenario 113: older records without an id resolve by name and start time, 
   });
   assert.deepEqual(
     earlierRun.goTo,
-    { investigate: resumeFor(INVESTIGATE_ID), implement: null },
+    { investigate: resumeFor(INVESTIGATE_ID), implement: null, groom: null },
     'an implement session that started before its launch is another run',
   );
 });
@@ -847,6 +856,7 @@ test('scenario 114: a phase with no record has no command, even when a session c
   assert.deepEqual(onlyImplement.goTo, {
     investigate: null,
     implement: resumeFor(IMPLEMENT_ID),
+    groom: null,
   });
 });
 
@@ -864,7 +874,7 @@ test('scenario 115: a session in an unknown state gives no command for its phase
     });
     assert.deepEqual(
       unrecognisedInvestigate.goTo,
-      { investigate: null, implement: attachFor(IMPLEMENT_ID) },
+      { investigate: null, implement: attachFor(IMPLEMENT_ID), groom: null },
       `investigate ${label}`,
     );
 
@@ -878,8 +888,365 @@ test('scenario 115: a session in an unknown state gives no command for its phase
     });
     assert.deepEqual(
       unrecognisedImplement.goTo,
-      { investigate: resumeFor(INVESTIGATE_ID), implement: null },
+      { investigate: resumeFor(INVESTIGATE_ID), implement: null, groom: null },
       `implement ${label}`,
     );
   }
+});
+
+// ---- the groom record: a session of its own, outside the workflow ----
+
+const GROOM_ID = 'cccc0003';
+const groomRecord = (extra = {}) =>
+  launchRecord({ name: GROOM_NAME, launchedAt: START_MS - HOUR_MS, id: GROOM_ID, ...extra });
+const groomEntry = (extra = {}) => listed({ id: GROOM_ID, name: GROOM_NAME, ...extra });
+// A ticket that was only groomed: launch.json holds the groom record and status.json does not exist,
+// which the launcher reads as an empty object.
+const groomed = (overrides = {}) =>
+  derive({
+    status: {},
+    launch: { [GROOM]: groomRecord() },
+    entries: [groomEntry()],
+    planPresent: false,
+    ...overrides,
+  });
+const WITHOUT_GROOM = (entry) => {
+  const { goTo, blocks, ...rest } = entry;
+  delete rest.groom;
+  return {
+    ...rest,
+    goTo: { investigate: goTo.investigate, implement: goTo.implement },
+    blocks: { investigate: blocks.investigate, implement: blocks.implement, answer: blocks.answer },
+  };
+};
+
+test('scenario 210: groom is a name of its own and the workflow phases stay two', async () => {
+  const state = await import('../backend/claude-ticket-state.mjs');
+
+  assert.equal(state.GROOM, 'groom');
+  assert.deepEqual(state.PHASES, [INVESTIGATE, IMPLEMENT], 'groom is not a workflow phase');
+  assert.equal(state.sessionName(KEY, state.GROOM), GROOM_NAME);
+  assert.equal(GROOM_NAME, 'TAP-1234-groom');
+  assert.deepEqual(state.readLaunch({ [GROOM]: groomRecord() }), [], 'readLaunch ignores groom');
+  assert.equal(state.currentRecord({ [GROOM]: groomRecord() }), null, 'no current phase');
+});
+
+test('scenario 211: readGroom gives the groom record of launch.json, validated like a phase record', async () => {
+  const { readGroom } = await import('../backend/claude-ticket-state.mjs');
+  assert.equal(typeof readGroom, 'function', 'the module exports readGroom');
+
+  const record = readGroom({ [GROOM]: groomRecord() });
+  assert.equal(record.name, GROOM_NAME);
+  assert.equal(record.launchedAt, START_MS - HOUR_MS);
+  assert.equal(record.id, GROOM_ID);
+  assert.equal(
+    readGroom({ [GROOM]: groomRecord(), [INVESTIGATE]: launchRecord() }).name,
+    GROOM_NAME,
+    'beside a workflow record',
+  );
+  assert.equal(readGroom({ [GROOM]: groomRecord({ id: null }) }).id, null, 'no id');
+  for (const id of ['AB12CD34', 'ab12cd3', 'ab12cd345', 'ab12cd3g', 7, {}]) {
+    assert.equal(readGroom({ [GROOM]: groomRecord({ id }) }).id, null, `id ${JSON.stringify(id)}`);
+  }
+});
+
+test('scenario 211: readGroom is null when there is no record or it is not shaped like one', async () => {
+  const { readGroom } = await import('../backend/claude-ticket-state.mjs');
+  const record = groomRecord();
+  const bad = {
+    'a launch that is null': null,
+    'a launch that is not an object': 'groom',
+    'a launch with no groom': { [INVESTIGATE]: launchRecord() },
+    'a groom that is null': { [GROOM]: null },
+    'a groom that is a string': { [GROOM]: 'TAP-1234-groom' },
+    'a name that is not text': { [GROOM]: { ...record, name: 7 } },
+    'no name': { [GROOM]: { launchedAt: record.launchedAt, id: record.id } },
+    'a launch time that is not a number': { [GROOM]: { ...record, launchedAt: '1' } },
+    'a launch time that is not finite': { [GROOM]: { ...record, launchedAt: Infinity } },
+    'no launch time': { [GROOM]: { name: record.name, id: record.id } },
+  };
+  for (const [label, launch] of Object.entries(bad)) assert.equal(readGroom(launch), null, label);
+});
+
+const NOW_MS = START_MS;
+const GROOM_STATES = [
+  ['a working session', { entries: [groomEntry({ state: 'working' })] }, 'working', 'running'],
+  [
+    'a launch ten seconds ago that is not listed yet',
+    { launch: { [GROOM]: groomRecord({ launchedAt: NOW_MS - 10_000, id: null }) }, entries: [] },
+    'working',
+    'starting',
+  ],
+  ['a blocked session', { entries: [groomEntry({ state: 'blocked' })] }, 'waiting', 'blocked'],
+  ['a finished session', { entries: [groomEntry({ state: 'done' })] }, 'done', 'finished'],
+  [
+    'a finished session that is still idle',
+    { entries: [groomEntry({ state: 'done', pid: 4242, status: 'idle' })] },
+    'done',
+    'finished',
+  ],
+  [
+    'a session in a state the dashboard does not know',
+    { entries: [groomEntry({ state: 'stopped' })] },
+    'unknown',
+    'unrecognised_state',
+  ],
+  ['a listing that is not available', { entries: null }, 'unknown', 'listing_unavailable'],
+  [
+    'a session that is not listed an hour after its launch',
+    { entries: [] },
+    'failed',
+    'session_missing',
+  ],
+  [
+    'a launch time an hour in the future that is not listed',
+    { launch: { [GROOM]: groomRecord({ launchedAt: NOW_MS + HOUR_MS, id: null }) }, entries: [] },
+    'failed',
+    'session_missing',
+  ],
+];
+
+for (const [label, arrangement, state, reason] of GROOM_STATES) {
+  test(`scenario 212: ${label} is groom ${state} (${reason})`, async () => {
+    const entry = await groomed(arrangement);
+
+    assert.deepEqual(entry.groom, { state, reason });
+  });
+}
+
+test('scenario 212: a ticket with no groom record has groom none, whatever else it holds', async () => {
+  for (const launch of [null, {}, { [INVESTIGATE]: launchRecord({ id: FIRST_ID }) }]) {
+    const entry = await derive({ launch, entries: [listed({ id: FIRST_ID })] });
+    assert.deepEqual(entry.groom, { state: 'none', reason: null }, JSON.stringify(launch));
+  }
+  const unavailable = await derive({ entries: null });
+  assert.deepEqual(unavailable.groom, { state: 'none', reason: null }, 'even with no listing');
+});
+
+test('scenario 212: a groom record that is not shaped like one is no record', async () => {
+  const entry = await groomed({ launch: { [GROOM]: { name: 7, launchedAt: START_MS, id: null } } });
+
+  assert.deepEqual(entry.groom, { state: 'none', reason: null });
+  assert.equal(entry.goTo.groom, null);
+  assert.equal(entry.blocks.groom, null);
+});
+
+test('scenario 213: a ticket that was only groomed reads as a ticket never started', async () => {
+  for (const [label, entries] of [
+    ['working', [groomEntry({ state: 'working' })]],
+    ['done', [groomEntry({ state: 'done' })]],
+    ['missing', []],
+  ]) {
+    const entry = await groomed({ entries });
+
+    assert.equal(entry.state, 'none', `${label}: state`);
+    assert.equal(entry.reason, null, `${label}: reason`);
+    assert.equal(entry.phase, null, `${label}: phase`);
+    assert.deepEqual(
+      entry.flags,
+      { [INVESTIGATE]: false, [IMPLEMENT]: false, done: false },
+      `${label}: flags`,
+    );
+    assert.deepEqual(entry.questions, [], `${label}: questions`);
+    assert.equal(entry.unanswered, 0, `${label}: unanswered`);
+    assert.equal(entry.unsent, false, `${label}: unsent`);
+    assert.deepEqual(
+      WITHOUT_GROOM(entry).blocks,
+      { investigate: null, implement: 'not_planned', answer: 'no_questions' },
+      `${label}: the workflow blocks are those of a ticket never started`,
+    );
+  }
+});
+
+test('scenario 214: a groom record changes no workflow field of the entry', async () => {
+  const both = { status: bothStatus, launch: bothLaunched() };
+  const arrangements = {
+    'a finished plan': {},
+    'a working investigate session': { entries: [workingEntry({ id: FIRST_ID })] },
+    'a plan waiting for an answer': {
+      status: statusFile({ investigate: true, questions: [question('q1')] }),
+    },
+    'a failed plan': { status: statusFile(), entries: [listed({ id: FIRST_ID })] },
+    'both phases launched': {
+      ...both,
+      entries: [listed({ id: INVESTIGATE_ID }), listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME })],
+    },
+    'an implement session that works': {
+      ...both,
+      entries: [
+        listed({ id: INVESTIGATE_ID }),
+        workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+      ],
+    },
+    'no listing': { entries: null },
+  };
+  for (const [label, arrangement] of Object.entries(arrangements)) {
+    const plain = await derive(arrangement);
+    const base = { launch: { [INVESTIGATE]: launchRecord({ id: FIRST_ID }) }, ...arrangement };
+    const entries =
+      arrangement.entries === null
+        ? null
+        : [
+            ...(arrangement.entries ?? [listed({ id: FIRST_ID })]),
+            groomEntry({ state: 'working' }),
+          ];
+    const withGroom = await derive({
+      ...arrangement,
+      launch: { ...base.launch, [GROOM]: groomRecord() },
+      entries,
+    });
+
+    assert.deepEqual(WITHOUT_GROOM(withGroom), WITHOUT_GROOM(plain), label);
+    assert.notEqual(withGroom.groom.state, 'none', `${label}: the groom record was read`);
+  }
+});
+
+test('scenario 214: a groom launch newer than the workflow does not become the current phase', async () => {
+  const entry = await derive({
+    status: statusFile({ investigate: true, implement: true }),
+    launch: { ...bothLaunched(), [GROOM]: groomRecord({ launchedAt: START_MS - 1_000 }) },
+    entries: [
+      listed({ id: INVESTIGATE_ID }),
+      listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+      groomEntry({ state: 'working', startedAt: START_MS - 500 }),
+    ],
+  });
+
+  assertEntry(entry, { state: 'done', reason: 'implemented', phase: IMPLEMENT });
+  assert.deepEqual(entry.groom, { state: 'working', reason: 'running' });
+});
+
+test('scenario 215: a running groom session blocks only groom, and only while it works', async () => {
+  const workflow = {
+    status: statusFile({ investigate: true, questions: [question('q1')] }),
+    launch: { [INVESTIGATE]: launchRecord({ id: FIRST_ID }), [GROOM]: groomRecord() },
+  };
+  const withGroom = (groom, extra = {}) =>
+    derive({ ...workflow, ...extra, entries: [listed({ id: FIRST_ID }), groom] });
+
+  const working = await withGroom(groomEntry({ state: 'working' }));
+  assert.deepEqual(
+    working.blocks,
+    {
+      investigate: null,
+      implement: 'questions_unanswered',
+      answer: null,
+      groom: 'session_running',
+    },
+    'investigate, implement and answers are as without a groom session',
+  );
+  const starting = await derive({
+    ...workflow,
+    launch: { ...workflow.launch, [GROOM]: groomRecord({ launchedAt: NOW_MS - 10_000, id: null }) },
+    entries: [listed({ id: FIRST_ID })],
+  });
+  assert.equal(starting.blocks.groom, 'session_running', 'inside its start window');
+
+  for (const state of ['done', 'blocked']) {
+    const entry = await withGroom(groomEntry({ state }));
+    assert.equal(entry.blocks.groom, null, `a ${state} groom session blocks nothing`);
+  }
+  const missing = await derive({ ...workflow, entries: [listed({ id: FIRST_ID })] });
+  assert.equal(missing.blocks.groom, null, 'a session that is gone blocks nothing');
+});
+
+test('scenario 215: a running workflow session never blocks groom', async () => {
+  const running = [
+    [
+      'investigate',
+      { [INVESTIGATE]: launchRecord({ id: FIRST_ID }) },
+      [workingEntry({ id: FIRST_ID })],
+    ],
+    [
+      'implement',
+      bothLaunched(),
+      [listed({ id: INVESTIGATE_ID }), workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME })],
+    ],
+  ];
+  for (const [label, launch, sessions] of running) {
+    const entry = await derive({
+      status: bothStatus,
+      launch: { ...launch, [GROOM]: groomRecord() },
+      entries: [...sessions, groomEntry()],
+    });
+
+    assert.equal(entry.state, 'working', `${label}: the workflow is working`);
+    assert.equal(entry.blocks.groom, null, `${label}: groom is not blocked`);
+  }
+  const startingInvestigate = await derive({
+    launch: { [INVESTIGATE]: launchRecord({ launchedAt: NOW_MS - 10_000, id: null }) },
+    entries: [],
+    status: statusFile(),
+  });
+  assert.equal(startingInvestigate.blocks.groom, null, 'not while investigate is starting either');
+});
+
+test('scenario 215: groom is blocked when the listing is not available, like every action', async () => {
+  const groomOnly = await groomed({ entries: null });
+  assert.equal(groomOnly.blocks.groom, 'listing_unavailable', 'a groom-only ticket');
+  const workflow = await derive({ entries: null });
+  assert.equal(workflow.blocks.groom, 'listing_unavailable', 'a workflow ticket');
+});
+
+test('scenario 216: goTo.groom joins the groom session by the command for its state, and no other key moves', async () => {
+  const rows = [
+    [
+      'a working session',
+      groomEntry({ state: 'working', pid: 4242, status: 'busy' }),
+      attachFor(GROOM_ID),
+    ],
+    ['a blocked session', groomEntry({ state: 'blocked' }), attachFor(GROOM_ID)],
+    [
+      'an idle live session',
+      groomEntry({ state: 'done', pid: 4242, status: 'idle' }),
+      attachFor(GROOM_ID),
+    ],
+    ['a finished session', groomEntry({ state: 'done' }), resumeFor(GROOM_ID)],
+    ['a state that is not known', groomEntry({ state: 'stopped' }), null],
+  ];
+  for (const [label, session, expected] of rows) {
+    const entry = await groomed({ entries: [session] });
+    assert.deepEqual(entry.goTo, { ...GO_TO_NONE, groom: expected }, label);
+  }
+  assert.equal((await groomed({ entries: [] })).goTo.groom, null, 'a session that is not listed');
+  assert.equal((await groomed({ entries: null })).goTo.groom, null, 'no listing');
+  assert.equal(
+    (await derive({ entries: [groomEntry()] })).goTo.groom,
+    null,
+    'a ticket with no groom record, even with a session of that name',
+  );
+});
+
+test('scenario 216: goTo.groom finds the session by the saved id, or by name and start time without one', async () => {
+  const newerSameName = groomEntry({ id: 'dddd0004', startedAt: START_MS - 1_000 });
+  const byId = await groomed({ entries: [groomEntry(), newerSameName] });
+  assert.deepEqual(byId.goTo.groom, resumeFor(GROOM_ID), 'the id wins over a newer same-name run');
+
+  const noId = { [GROOM]: groomRecord({ id: null }) };
+  const start = START_MS - HOUR_MS;
+  const byName = await groomed({
+    launch: noId,
+    entries: [groomEntry({ startedAt: start + 5_000 })],
+  });
+  assert.deepEqual(byName.goTo.groom, resumeFor(GROOM_ID));
+  const earlier = await groomed({ launch: noId, entries: [groomEntry({ startedAt: start - 1 })] });
+  assert.equal(earlier.goTo.groom, null, 'a session that started before the launch is another run');
+});
+
+test('scenario 216: each of the three records gets the command of its own session', async () => {
+  const entry = await derive({
+    status: bothStatus,
+    launch: { ...bothLaunched(), [GROOM]: groomRecord() },
+    entries: [
+      listed({ id: INVESTIGATE_ID }),
+      workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+      groomEntry({ state: 'blocked' }),
+    ],
+  });
+
+  assert.deepEqual(entry.goTo, {
+    investigate: resumeFor(INVESTIGATE_ID),
+    implement: attachFor(IMPLEMENT_ID),
+    groom: attachFor(GROOM_ID),
+  });
 });

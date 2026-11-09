@@ -11,6 +11,10 @@ import {
   BAD_PROMPT_FILES,
   EARLIER_ID,
   FIRST_ID,
+  GROOM,
+  GROOM_NAME,
+  GROOM_TEMPLATE,
+  HOUR_MS,
   IMPLEMENT,
   IMPLEMENT_NAME,
   IMPLEMENT_TEMPLATE,
@@ -24,6 +28,7 @@ import {
   START_MS,
   UNTRUSTED_OUTPUT,
   answeredMap,
+  groomPrompt,
   implementPrompt,
   investigateParagraphs,
   launchRecord,
@@ -1160,6 +1165,7 @@ test('scenario 73: a session the launcher just started for investigate blocks im
     investigate: 'session_running',
     implement: 'investigate_running',
     answer: 'session_running',
+    groom: null,
   });
 });
 
@@ -1189,6 +1195,7 @@ test('scenario 74: a session the launcher just started for implement blocks inve
     investigate: 'implement_running',
     implement: 'session_running',
     answer: 'session_running',
+    groom: null,
   });
 });
 
@@ -2072,13 +2079,14 @@ test('scenario 121: with no answers file the message sent is the built-in text, 
   );
 });
 
-test('scenario 121: the built-in templates are exported as the three texts, placeholders in them', async () => {
+test('scenario 121: the built-in templates are exported as the four texts, placeholders in them', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
   assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
   assert.deepEqual(PROMPT_TEMPLATES, {
     investigate: INVESTIGATE_TEMPLATE,
     implement: IMPLEMENT_TEMPLATE,
     answers: ANSWERS_TEMPLATE,
+    groom: GROOM_TEMPLATE,
   });
 });
 
@@ -2385,4 +2393,584 @@ test('scenario 125: a save that does not send never reads the answers file', asy
   unchanged.writePrompt('answers', '   ');
   const same = await unchanged.launcher.answer(answerBody(BOTH_ANSWERS));
   assert.deepEqual(same.send, { status: 'skipped', reason: 'unchanged' });
+});
+
+// ---- groom: a session of its own, outside the workflow ----
+
+const GROOM_ID = 'cccc0003';
+const groomLaunchBody = () => launchBody(GROOM);
+// A groom record as launch.json holds it for a session launched an hour ago.
+const earlierGroom = (extra = {}) =>
+  launchRecord({ name: GROOM_NAME, launchedAt: START_MS - HOUR_MS, id: GROOM_ID, ...extra });
+const groomSession = (extra = {}) => listed({ id: GROOM_ID, name: GROOM_NAME, ...extra });
+const statusWrites = (env) =>
+  env.recorder.calls.filter(
+    ({ method, args }) =>
+      !READS.has(method) &&
+      args.some((arg) => typeof arg === 'string' && arg.includes('status.json')),
+  );
+
+test('scenario 230: a groom launch runs the fixed command without access to the state folder', async (t) => {
+  const env = await launcherEnvironment(t);
+
+  const result = await env.launcher.launch(groomLaunchBody());
+
+  const [launch] = env.cli.launches();
+  assert.equal(env.cli.launches().length, 1, 'claude runs once');
+  assert.deepStrictEqual(launch.args, ['--bg', '-n', GROOM_NAME, '--', groomPrompt(KEY)]);
+  assert.ok(!launch.args.includes('--add-dir'), 'no --add-dir');
+  assert.ok(
+    launch.args.every((arg) => !arg.includes(env.stateDir)),
+    'the state folder is in no argument',
+  );
+  assert.equal(launch.options.cwd, path.join(env.home, 'pathwise'));
+  assert.ok(!launch.options.shell, 'no shell');
+  assert.equal(launch.options.timeout, LAUNCH_TIMEOUT_MS);
+
+  assert.deepEqual(Object.keys(result).sort(), ['id', 'key', 'name', 'ok', 'phase', 'ticket']);
+  assert.deepEqual(
+    [result.ok, result.key, result.phase, result.name, result.id],
+    [true, KEY, GROOM, GROOM_NAME, FIRST_ID],
+  );
+  assert.deepEqual(result.ticket.groom, { state: 'working', reason: 'running' });
+  assert.equal(result.ticket.state, 'none', 'the workflow stays not started');
+});
+
+test('scenario 230: the sessions module starts a session with no --add-dir when it is given none', async (t) => {
+  const env = await launcherEnvironment(t);
+  const cwd = path.join(env.home, 'pathwise');
+
+  await env.sessions.launch({ name: 'one', prompt: 'a prompt', cwd });
+  await env.sessions.launch({ name: 'two', prompt: 'a prompt', cwd, addDir: env.stateDir });
+
+  const [bare, shared] = env.cli.launches();
+  assert.deepStrictEqual(bare.args, ['--bg', '-n', 'one', '--', 'a prompt']);
+  assert.deepStrictEqual(shared.args, [
+    '--bg',
+    '--add-dir',
+    env.stateDir,
+    '-n',
+    'two',
+    '--',
+    'a prompt',
+  ]);
+});
+
+test('scenario 231: a groom launch writes launch.json with the groom record and no status.json', async (t) => {
+  const env = await launcherEnvironment(t);
+  assert.equal(fs.existsSync(env.ticketDir()), false, 'no folder for the ticket yet');
+
+  await env.launcher.launch(groomLaunchBody());
+
+  assert.deepEqual(fs.readdirSync(env.ticketDir()), ['launch.json']);
+  assert.deepEqual(env.parsed().launch, {
+    [GROOM]: { name: GROOM_NAME, launchedAt: START_MS, id: FIRST_ID },
+  });
+  assert.equal(env.files().status, null, 'no status.json');
+  assert.equal(env.mode(env.ticketDir()), 0o700, 'folder mode');
+  assert.equal(env.mode(env.launchPath()), 0o600, 'launch.json mode');
+});
+
+test('scenario 231: a groom launch never writes, resets or rewrites an existing status.json', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: earlierGroom() } });
+  env.cli.setListing([listed({ id: EARLIER_ID }), groomSession()]);
+  const before = env.files();
+  env.recorder.clearCalls();
+
+  await env.launcher.launch(groomLaunchBody());
+
+  assert.equal(env.files().status, before.status, 'status.json is byte for byte as it was');
+  assert.deepEqual(statusWrites(env), [], 'it is not even written back');
+});
+
+test('scenario 232: a groom launch keeps the workflow records of launch.json as they are', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env, { questions: [question('q1', 'Portage-backend')] });
+  const before = env.parsed().launch;
+
+  await env.launcher.launch(groomLaunchBody());
+
+  assert.deepEqual(env.parsed().launch, {
+    ...before,
+    [GROOM]: { name: GROOM_NAME, launchedAt: START_MS, id: FIRST_ID },
+  });
+});
+
+const GROOM_ARRANGEMENTS = {
+  'a ticket never started': () => {},
+  'a plan that is waiting on questions': (env) =>
+    seedPlanned(env, { questions: [question('q1')], done: false }),
+  'a plan whose file is missing': (env) => seedPlanned(env, { plan: false }),
+  'a status file that cannot be parsed': (env) => env.seed(KEY, { status: '{ not json' }),
+  'a working investigate session': (env) => {
+    seedPlanned(env);
+    env.cli.setListing([workingEntry({ id: EARLIER_ID })]);
+  },
+  'a working implement session': (env) => {
+    seedPlanned(env);
+    env.seed(KEY, {
+      launch: {
+        ...env.parsed().launch,
+        [IMPLEMENT]: launchRecord({
+          name: IMPLEMENT_NAME,
+          launchedAt: START_MS - 1_800_000,
+          id: SECOND_ID,
+        }),
+      },
+    });
+    env.cli.setListing([
+      listed({ id: EARLIER_ID }),
+      workingEntry({ id: SECOND_ID, name: IMPLEMENT_NAME }),
+    ]);
+  },
+};
+
+for (const [label, arrange] of Object.entries(GROOM_ARRANGEMENTS)) {
+  test(`scenario 233: groom has no precondition and ignores the workflow (${label})`, async (t) => {
+    const env = await launcherEnvironment(t);
+    arrange(env);
+    const before = env.files();
+
+    const result = await env.launcher.launch(groomLaunchBody());
+
+    assert.equal(result.ok, true);
+    assert.equal(env.cli.launches().length, 1, 'the session starts');
+    assert.equal(env.files().status, before.status, 'status.json is untouched');
+  });
+}
+
+test('scenario 234: only {KEY} and {SLUG} are filled in the groom prompt, anything else stays as written', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.writePrompt(
+    'groom',
+    'Groom {KEY} in {SLUG}: {STATUS_FILE} {QUESTION_IDS} {CHANGE} {NOPE} $& $1 {KEY}',
+  );
+
+  await env.launcher.launch(groomLaunchBody());
+
+  assert.equal(
+    launchedPrompt(env),
+    `Groom ${KEY} in ${SLUG}: {STATUS_FILE} {QUESTION_IDS} {CHANGE} {NOPE} $& $1 ${KEY}`,
+  );
+});
+
+test('scenario 234: with no groom.md the groom prompt is the built-in text, byte for byte', async (t) => {
+  const env = await launcherEnvironment(t);
+  assert.equal(fs.existsSync(env.promptsDir), false, 'there is no prompts folder');
+
+  await env.launcher.launch(groomLaunchBody());
+
+  const prompt = launchedPrompt(env);
+  assert.equal(prompt, groomPrompt(KEY));
+  assert.ok(
+    prompt.includes(
+      `Write no file except \`.orchestrator/${SLUG}/groom.md\` and scratch files under ` +
+        `\`.orchestrator/${SLUG}/\`, and do not edit the skill itself.`,
+    ),
+    'the file-write limit is in the launched prompt',
+  );
+  assert.ok(!/\{[A-Z_]+\}/.test(prompt), 'no placeholder is left in it');
+  assert.ok(!prompt.includes(env.stateDir) && !prompt.includes('status.json'), 'no state path');
+});
+
+test('scenario 234: groom.md is read on every launch and replaces only the groom prompt', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.writePrompt('groom', '  first {KEY}  \n');
+  await env.launcher.launch(groomLaunchBody());
+  finishSessions(env);
+  env.writePrompt('groom', 'second {SLUG}');
+  await env.launcher.launch(groomLaunchBody());
+  finishSessions(env);
+  fs.rmSync(env.promptPath('groom'));
+  await env.launcher.launch(groomLaunchBody());
+  finishSessions(env);
+  env.launcher.launch(launchBody()).catch(() => {});
+  await until(() => env.cli.launches().length === 4);
+
+  assert.equal(launchedPrompt(env, 0), `first ${KEY}`);
+  assert.equal(launchedPrompt(env, 1), `second ${SLUG}`);
+  assert.equal(launchedPrompt(env, 2), groomPrompt(KEY));
+  assert.equal(
+    launchedPrompt(env, 3),
+    renderTemplate(INVESTIGATE_TEMPLATE, { statusPath: env.statusPath() }),
+    'the investigate prompt is not the groom file',
+  );
+});
+
+test('scenario 235: a groom file that cannot be used refuses the launch before anything is written', async (t) => {
+  for (const { label, arrange } of BAD_PROMPT_FILES) {
+    const env = await launcherEnvironment(t);
+    fs.mkdirSync(env.promptsDir, { recursive: true });
+    arrange(env.promptPath('groom'));
+
+    await assertRejects(
+      () => env.launcher.launch(groomLaunchBody()),
+      refused('prompt_unreadable'),
+      label,
+    );
+
+    assert.equal(
+      fs.existsSync(env.ticketDir()),
+      false,
+      `${label}: the ticket folder is never made`,
+    );
+    assert.deepEqual(writesUnder(env, env.stateDir), [], `${label}: nothing is written`);
+    assert.equal(env.cli.launches().length, 0, `${label}: no session is started`);
+  }
+});
+
+test('scenario 235: a bad groom file leaves an existing ticket as it was', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: earlierGroom() } });
+  const before = env.files();
+  env.writePrompt('groom', '  \n');
+
+  await assertRejects(
+    () => env.launcher.launch(groomLaunchBody()),
+    refused('prompt_unreadable'),
+    'relaunch',
+  );
+
+  assert.deepEqual(env.files(), before);
+  assert.deepEqual(writesUnder(env, env.stateDir), []);
+  assert.equal(env.cli.launches().length, 0);
+});
+
+test('scenario 235: a bad file of another prompt is not in the way of groom, and a bad groom file is not in the way of the others', async (t) => {
+  const groom = await launcherEnvironment(t);
+  fs.mkdirSync(groom.promptsDir, { recursive: true });
+  for (const name of ['investigate', 'implement', 'answers']) fs.mkdirSync(groom.promptPath(name));
+  await groom.launcher.launch(groomLaunchBody());
+  assert.equal(launchedPrompt(groom), groomPrompt(KEY), 'groom');
+
+  const investigate = await launcherEnvironment(t);
+  fs.mkdirSync(investigate.promptsDir, { recursive: true });
+  fs.mkdirSync(investigate.promptPath('groom'));
+  await investigate.launcher.launch(launchBody());
+  assert.equal(
+    launchedPrompt(investigate),
+    renderTemplate(INVESTIGATE_TEMPLATE, { statusPath: investigate.statusPath() }),
+    'investigate',
+  );
+});
+
+test('scenario 236: a groom launch is refused while the groom session works', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: earlierGroom() } });
+  env.cli.setListing([listed({ id: EARLIER_ID }), groomSession({ state: 'working', pid: 4242 })]);
+  const before = env.files();
+  env.recorder.clearCalls();
+
+  await assertRejects(
+    () => env.launcher.launch(groomLaunchBody()),
+    refused('session_running'),
+    'working',
+  );
+
+  assert.deepEqual(env.files(), before, 'both files are unchanged');
+  assert.deepEqual(writesUnder(env, env.stateDir), [], 'nothing is written');
+  assert.equal(env.cli.launches().length, 0, 'nothing is started');
+});
+
+test('scenario 236: a groom launch is refused inside the start window of the last one, and allowed after it', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.seed(KEY, { launch: { [GROOM]: earlierGroom({ launchedAt: START_MS - 5_000, id: null }) } });
+  env.cli.setListing([]);
+  await assertRejects(
+    () => env.launcher.launch(groomLaunchBody()),
+    refused('session_running'),
+    'five seconds',
+  );
+  assert.equal(env.cli.launches().length, 0);
+
+  env.seed(KEY, { launch: { [GROOM]: earlierGroom({ launchedAt: START_MS - 31_000, id: null }) } });
+  const result = await env.launcher.launch(groomLaunchBody());
+  assert.equal(result.ok, true, 'a session that never showed up does not block for ever');
+  assert.equal(env.cli.launches().length, 1);
+});
+
+test('scenario 236: a finished groom session is launched again, and the record is replaced', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.seed(KEY, { launch: { [GROOM]: earlierGroom() } });
+  env.cli.setListing([groomSession({ state: 'done' })]);
+
+  const result = await env.launcher.launch(groomLaunchBody());
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(env.parsed().launch, {
+    [GROOM]: { name: GROOM_NAME, launchedAt: START_MS, id: FIRST_ID },
+  });
+});
+
+test('scenario 237: a groom launch fails closed when the listing command fails, and writes nothing', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.cli.failListing();
+
+  await assertRejects(
+    () => env.launcher.launch(groomLaunchBody()),
+    failed('listing_unavailable'),
+    'listing',
+  );
+
+  assert.equal(fs.existsSync(env.ticketDir()), false);
+  assert.deepEqual(writesUnder(env, env.stateDir), []);
+  assert.equal(env.cli.launches().length, 0);
+});
+
+const START_FAILURES = [
+  ['an untrusted workspace', { exitCode: 1, stdout: UNTRUSTED_OUTPUT }, 'untrusted_workspace'],
+  ['a spawn error', { spawnError: 'ENOENT' }, 'spawn_failed'],
+];
+
+for (const [label, outcome, reason] of START_FAILURES) {
+  test(`scenario 238: ${label} fails the first groom launch and leaves no ticket folder`, async (t) => {
+    const env = await launcherEnvironment(t);
+    env.cli.failLaunch(outcome);
+
+    await assertRejects(() => env.launcher.launch(groomLaunchBody()), failed(reason), label);
+
+    assert.equal(fs.existsSync(env.ticketDir()), false, 'no folder');
+    assert.deepEqual((await env.launcher.list()).tickets, {}, 'nothing listed');
+  });
+
+  test(`scenario 238: ${label} puts launch.json back as it was and never touches status.json`, async (t) => {
+    const env = await launcherEnvironment(t);
+    seedPlanned(env);
+    env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: earlierGroom() } });
+    env.cli.setListing([listed({ id: EARLIER_ID }), groomSession()]);
+    const before = env.files();
+    env.cli.failLaunch(outcome);
+    env.recorder.clearCalls();
+
+    await assertRejects(() => env.launcher.launch(groomLaunchBody()), failed(reason), label);
+
+    assert.deepEqual(env.files(), before, 'both files are as they were');
+    assert.deepEqual(statusWrites(env), [], 'status.json is not written at any point');
+  });
+
+  test(`scenario 238: ${label} on a ticket with only a groom record leaves launch.json and no status.json`, async (t) => {
+    const env = await launcherEnvironment(t);
+    env.seed(KEY, { launch: { [GROOM]: earlierGroom() } });
+    env.cli.setListing([groomSession()]);
+    const before = env.files();
+    env.cli.failLaunch(outcome);
+
+    await assertRejects(() => env.launcher.launch(groomLaunchBody()), failed(reason), label);
+
+    assert.deepEqual(env.files(), before);
+    assert.deepEqual(fs.readdirSync(env.ticketDir()), ['launch.json']);
+  });
+}
+
+test('scenario 238: a timeout keeps the new groom record so the card reads starting, and blocks a second launch', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.cli.failLaunch({ timeout: true });
+
+  await assertRejects(() => env.launcher.launch(groomLaunchBody()), failed('timed_out'), 'timeout');
+
+  assert.deepEqual(env.parsed().launch, {
+    [GROOM]: { name: GROOM_NAME, launchedAt: START_MS, id: null },
+  });
+  assert.equal(env.files().status, null, 'still no status.json');
+  const { tickets } = await env.launcher.list();
+  assert.deepEqual(tickets[KEY].groom, { state: 'working', reason: 'starting' });
+  assert.equal(tickets[KEY].state, 'none');
+  env.cli.failLaunch(null);
+  await assertRejects(
+    () => env.launcher.launch(groomLaunchBody()),
+    refused('session_running'),
+    'again',
+  );
+});
+
+test('scenario 239: the groom record gets the id of the listed session, and none when the listing fails after the start', async (t) => {
+  const listed1 = await launcherEnvironment(t);
+  await listed1.launcher.launch(groomLaunchBody());
+  assert.equal(listed1.parsed().launch[GROOM].id, FIRST_ID);
+
+  const failing = await launcherEnvironment(t);
+  failing.cli.failListingAfterLaunch();
+  const result = await failing.launcher.launch(groomLaunchBody());
+  assert.equal(result.ok, true);
+  assert.equal(result.id, null);
+  assert.deepEqual(result.ticket.groom, { state: 'unknown', reason: 'listing_unavailable' });
+  assert.equal(failing.parsed().launch[GROOM].id, null);
+
+  const unlisted = await launcherEnvironment(t);
+  unlisted.cli.failLaunch({ stdout: 'backgrounded cafe0001\n' });
+  unlisted.cli.setListing([]);
+  const none = await unlisted.launcher.launch(groomLaunchBody());
+  assert.equal(none.id, null, 'a printed id that is not listed and no session of the name');
+});
+
+test('scenario 240: an investigate launch keeps the groom record and is not blocked by the groom session', async (t) => {
+  const env = await launcherEnvironment(t);
+  const groom = earlierGroom();
+  env.seed(KEY, { launch: { [GROOM]: groom } });
+  env.cli.setListing([groomSession({ state: 'working', pid: 4242 })]);
+
+  const result = await env.launcher.launch(launchBody());
+
+  assert.equal(result.ok, true, 'a working groom session does not refuse investigate');
+  assert.deepEqual(env.parsed().launch, {
+    [GROOM]: groom,
+    [INVESTIGATE]: { name: INVESTIGATE_NAME, launchedAt: START_MS, id: FIRST_ID },
+  });
+  assert.deepEqual(env.parsed().status, RESET_STATUS);
+  assert.deepEqual(result.ticket.groom, { state: 'working', reason: 'running' });
+});
+
+test('scenario 240: relaunching investigate resets the plan but still keeps the groom record', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  const groom = earlierGroom();
+  env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: groom } });
+  env.cli.setListing([listed({ id: EARLIER_ID }), groomSession()]);
+
+  await env.launcher.launch(launchBody());
+
+  const { launch, status } = env.parsed();
+  assert.deepEqual(launch[GROOM], groom, 'groom is kept');
+  assert.deepEqual(
+    launch[INVESTIGATE],
+    { name: INVESTIGATE_NAME, launchedAt: START_MS, id: FIRST_ID },
+    'the investigate record is the new one, with no answers or send',
+  );
+  assert.deepEqual(status, RESET_STATUS);
+});
+
+test('scenario 240: a refused or failed investigate launch leaves the groom record where it was', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: earlierGroom() } });
+  env.cli.setListing([workingEntry({ id: EARLIER_ID }), groomSession()]);
+  const before = env.files();
+  await assertRejects(
+    () => env.launcher.launch(launchBody()),
+    refused('session_running'),
+    'refused',
+  );
+  assert.deepEqual(env.files(), before);
+
+  env.cli.setListing([listed({ id: EARLIER_ID }), groomSession()]);
+  env.cli.failLaunch({ spawnError: 'ENOENT' });
+  await assertRejects(() => env.launcher.launch(launchBody()), failed('spawn_failed'), 'failed');
+  assert.deepEqual(env.files(), before);
+});
+
+test('scenario 241: an implement launch keeps the groom record', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  const groom = earlierGroom();
+  env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: groom } });
+  env.cli.setListing([listed({ id: EARLIER_ID }), groomSession()]);
+
+  const result = await env.launcher.launch(launchBody(IMPLEMENT));
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(env.parsed().launch[GROOM], groom);
+  assert.equal(env.parsed().launch[INVESTIGATE].id, EARLIER_ID, 'the investigate record stays');
+  assert.equal(env.parsed().launch[IMPLEMENT].id, FIRST_ID);
+});
+
+test('scenario 242: a groom relaunch replaces only the groom record, answers and send included', async (t) => {
+  const env = await launcherEnvironment(t);
+  const questions = [question('q1', 'Portage-backend'), question('q2', 'Portage-frontend')];
+  seedPlanned(env, { questions });
+  const before = env.parsed();
+  env.seed(KEY, { launch: { ...before.launch, [GROOM]: earlierGroom() } });
+  env.cli.setListing([listed({ id: EARLIER_ID }), groomSession({ state: 'done' })]);
+
+  await env.launcher.launch(groomLaunchBody());
+
+  const after = env.parsed();
+  assert.deepEqual(after.launch[INVESTIGATE], before.launch[INVESTIGATE], 'investigate record');
+  assert.ok(after.launch[INVESTIGATE].sent, 'the send record is kept');
+  assert.ok(Object.keys(after.launch[INVESTIGATE].answered).length, 'and the answer hashes');
+  assert.deepEqual(after.launch[GROOM], { name: GROOM_NAME, launchedAt: START_MS, id: FIRST_ID });
+  assert.deepEqual(after.status, before.status, 'status.json');
+});
+
+test('scenario 243: saving and sending answers never touch the groom record, and a working groom session does not refuse them', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED });
+  const groom = earlierGroom();
+  env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: groom } });
+  env.fake.setListing([...finishedListing(), groomSession({ state: 'working', pid: 4242 })]);
+
+  const result = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(result.send, { status: 'sent' }, 'the planning session is resumed');
+  assert.deepEqual(env.parsed().launch[GROOM], groom, 'the groom record is as it was');
+  assert.equal(env.fake.resumes().length, 1);
+  assert.equal(env.fake.resumes()[0].sessionId, sessionUuid(EARLIER_ID), 'the investigate session');
+  assert.deepEqual(result.ticket.groom, { state: 'working', reason: 'running' });
+});
+
+test('scenario 244: two groom launches at once spawn once and the second is refused', async (t) => {
+  const env = await launcherEnvironment(t);
+
+  const [first, second] = await settleTogether(env, [
+    () => env.launcher.launch(groomLaunchBody()),
+    () => env.launcher.launch(groomLaunchBody()),
+  ]);
+
+  assert.equal(first.status, 'fulfilled');
+  assertSessionRunning(second, 'second groom launch');
+  assert.equal(env.cli.launches().length, 1, 'one spawn');
+});
+
+test('scenario 244: a second groom launch while the first CLI call hangs past the start window waits and is refused', async (t) => {
+  const env = await launcherEnvironment(t);
+  const hold = env.cli.holdLaunch();
+  const first = env.launcher.launch(groomLaunchBody());
+  await until(() => env.cli.launches().length > 0);
+  env.clock.advance(31_000);
+  const settled = Promise.allSettled([first, env.launcher.launch(groomLaunchBody())]);
+  await sleep(50);
+  hold.release();
+
+  const [started, second] = await settled;
+
+  assert.equal(started.status, 'fulfilled');
+  assertSessionRunning(second, 'second groom launch');
+  assert.equal(env.cli.launches().length, 1, 'one spawn');
+});
+
+test('scenario 244: a groom launch and an investigate launch at once both start, and launch.json keeps both records', async (t) => {
+  const env = await launcherEnvironment(t);
+
+  const [groomed, investigated] = await settleTogether(env, [
+    () => env.launcher.launch(groomLaunchBody()),
+    () => env.launcher.launch(launchBody()),
+  ]);
+
+  assert.equal(groomed.status, 'fulfilled', 'groom');
+  assert.equal(investigated.status, 'fulfilled', 'investigate');
+  assert.equal(env.cli.launches().length, 2, 'two sessions');
+  const { launch } = env.parsed();
+  assert.deepEqual(Object.keys(launch).sort(), [GROOM, INVESTIGATE].sort());
+  assert.equal(launch[GROOM].name, GROOM_NAME);
+  assert.equal(launch[INVESTIGATE].name, INVESTIGATE_NAME);
+  assert.notEqual(launch[GROOM].id, launch[INVESTIGATE].id);
+});
+
+test('scenario 245: a groom-only folder is listed with the groom entry', async (t) => {
+  const env = await launcherEnvironment(t);
+  await env.launcher.launch(groomLaunchBody());
+
+  const { listing, tickets } = await env.launcher.list();
+
+  assert.equal(listing, 'ok');
+  assert.deepEqual(Object.keys(tickets), [KEY]);
+  assert.deepEqual(tickets[KEY].groom, { state: 'working', reason: 'running' });
+  assert.equal(tickets[KEY].state, 'none');
+  assert.deepEqual(tickets[KEY].goTo.groom, {
+    kind: 'attach',
+    command: `claude attach ${FIRST_ID}`,
+  });
 });

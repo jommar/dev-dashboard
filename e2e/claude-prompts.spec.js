@@ -8,7 +8,7 @@ import {
   ticketBoardData,
 } from './data.js';
 
-// The prompt editor inside the Claude dialog. The fake API (e2e/data.js) lists three prompt files,
+// The prompt editor inside the Claude dialog. The fake API (e2e/data.js) lists four prompt files,
 // `dashboard.data.claude.prompts.entries` by name (investigate, implement, answers), each `default`,
 // `custom` or `unusable`; a spec changes an entry before the editor opens, and queues a response for
 // the next prompt request in `prompts.failures`. PUT and DELETE are recorded in `claude.calls`.
@@ -22,11 +22,12 @@ import {
 // `.claude-dialog-body` (classes: neither has a test id).
 
 const KEY = 'TAP-9001';
-const NAMES = ['investigate', 'implement', 'answers'];
+const NAMES = ['investigate', 'implement', 'answers', 'groom'];
 const LABELS = {
   investigate: 'Investigate and plan prompt',
   implement: 'Implement plan prompt',
   answers: 'Answers message',
+  groom: 'Groom ticket prompt',
 };
 const WARNING =
   'This prompt does not contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done will not work.';
@@ -177,7 +178,12 @@ test('scenario 55: Prompts opens the editor in place of the answers, and Back re
   await expect(dialog.getByTestId('claude-questions-progress')).toHaveCount(0);
 
   // Three prompts, each with its label, source badge, saved text and placeholders.
-  const sources = { investigate: 'default', implement: 'custom', answers: 'default' };
+  const sources = {
+    investigate: 'default',
+    implement: 'custom',
+    answers: 'default',
+    groom: 'default',
+  };
   const texts = {
     ...CLAUDE_PROMPT_DEFAULTS,
     implement: 'Build the plan for {KEY}. Record progress in {STATUS_FILE}.',
@@ -199,7 +205,10 @@ test('scenario 55: Prompts opens the editor in place of the answers, and Back re
     await expect(prompt.warning).toHaveCount(0);
   }
   // A line of placeholders per prompt: three prompts name {KEY}, {SLUG} and {STATUS_FILE}, and only
-  // the answers message adds {QUESTION_IDS} and {CHANGE}.
+  // the answers message adds {QUESTION_IDS} and {CHANGE}; grooming has no status file and lists
+  // {KEY} and {SLUG} alone. The warning for a missing {STATUS_FILE} is checked above for all four:
+  // grooming never has one to miss.
+  await expect(view.getByText(/\{KEY\}\W+\{SLUG\}\W*$/)).toHaveCount(1);
   await expect(view.getByText(/\{KEY\}\W+\{SLUG\}\W+\{STATUS_FILE\}/)).toHaveCount(3);
   await expect(view.getByText(/\{QUESTION_IDS\}\W+\{CHANGE\}/)).toHaveCount(1);
 
@@ -234,7 +243,7 @@ test('scenario 56: a prompt is saved and reset, shows what is unsaved, and warns
   await investigate.box.fill(built);
   await expect(investigate.dirty).toHaveCount(0);
   await expect(investigate.save).toBeDisabled();
-  for (const other of ['implement', 'answers']) {
+  for (const other of ['implement', 'answers', 'groom']) {
     const prompt = promptOf(dialog, other);
     await expect(prompt.dirty).toHaveCount(0);
     await expect(prompt.save).toBeDisabled();
@@ -250,6 +259,13 @@ test('scenario 56: a prompt is saved and reset, shows what is unsaved, and warns
   await expect(investigate.warning).toHaveCount(0);
   await investigate.box.fill('Work out the plan for {KEY}.');
   await expect(investigate.warning).toHaveText(WARNING);
+  // Only a prompt whose placeholders include {STATUS_FILE} can miss it: grooming has none.
+  const groom = promptOf(dialog, 'groom');
+  await groom.box.fill('Groom ticket {KEY} and say what is missing.');
+  await expect(groom.dirty).toBeVisible();
+  await expect(groom.warning).toHaveCount(0);
+  await groom.box.fill(CLAUDE_PROMPT_DEFAULTS.groom);
+  await expect(groom.dirty).toHaveCount(0);
 
   // Save sends the text, and what the server returns becomes the prompt's saved state.
   await investigate.save.click();

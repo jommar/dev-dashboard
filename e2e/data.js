@@ -1177,9 +1177,12 @@ function watchLinkFromParsed({ key, link }) {
 // and changes `tickets` the way the server's answer would, so a spec can assert what the dialog
 // sent and what the icon shows afterwards. Invented data only.
 const CLAUDE_ATTACH = { kind: 'attach', command: 'claude attach ab12cd34' };
-// `goTo` on an entry is `{ investigate, implement }`: each side is `{ kind, command }` for that
-// phase's own session, or null when nothing of that phase can be joined.
-const CLAUDE_NO_SESSIONS = { investigate: null, implement: null };
+// `goTo` on an entry is `{ investigate, implement, groom }`: each side is `{ kind, command }` for
+// that session, or null when nothing of it can be joined. Groom is not a phase of the workflow: the
+// entry's `groom` is `{ state, reason }` of its own (`none`, `working`, `waiting`, `done`, `failed`
+// or `unknown`) and the top-level `state` and `reason` follow the workflow only.
+const CLAUDE_NO_SESSIONS = { investigate: null, implement: null, groom: null };
+const CLAUDE_NO_GROOM = { state: 'none', reason: null };
 
 export function claudeQuestion(id, question, answer = null) {
   return { id, question, answer };
@@ -1206,6 +1209,14 @@ function claudeDerived(entry) {
       answer: 'listing_unavailable',
     },
   }[entry.state];
+  // A groom session blocks only another groom launch; the workflow never blocks it nor is blocked.
+  const groomState = entry.groom?.state ?? 'none';
+  const groom =
+    groomState === 'working'
+      ? 'session_running'
+      : groomState === 'unknown' || entry.state === 'unknown'
+        ? 'listing_unavailable'
+        : null;
   // The server's order: open questions, then answers never sent (a stale `done` cannot be trusted),
   // then a plan not marked done.
   const implement = unanswered
@@ -1219,16 +1230,20 @@ function claudeDerived(entry) {
     ...entry,
     unanswered,
     unsent: Boolean(entry.unsent),
-    blocks: held ?? {
-      investigate: null,
-      implement: planned ? implement : 'not_planned',
-      answer: entry.questions.length ? null : 'no_questions',
+    groom: entry.groom ?? CLAUDE_NO_GROOM,
+    blocks: {
+      ...(held ?? {
+        investigate: null,
+        implement: planned ? implement : 'not_planned',
+        answer: entry.questions.length ? null : 'no_questions',
+      }),
+      groom,
     },
   };
 }
 
 // One ticket's entry in the shape GET /api/claude/tickets returns. Pass `flags`, `questions`,
-// `goTo`, `phase` or `unsent` to override the first-launch defaults.
+// `goTo`, `phase`, `unsent` or `groom` to override the first-launch defaults.
 export function claudeEntry(state, reason, overrides = {}) {
   return claudeDerived({
     phase: 'investigate-and-plan',
@@ -1249,6 +1264,7 @@ const CLAUDE_PROMPT_LABELS = {
   investigate: 'Investigate and plan prompt',
   implement: 'Implement plan prompt',
   answers: 'Answers message',
+  groom: 'Groom ticket prompt',
 };
 const CLAUDE_PROMPT_PLACEHOLDERS = ['{KEY}', '{SLUG}', '{STATUS_FILE}'];
 export const CLAUDE_PROMPT_DEFAULTS = {
@@ -1256,6 +1272,8 @@ export const CLAUDE_PROMPT_DEFAULTS = {
   implement: 'Build the plan for {KEY} in the folder {SLUG} and record progress in {STATUS_FILE}.',
   answers:
     'The answers for {KEY} changed. Changes: {CHANGE}. Questions: {QUESTION_IDS}. Update the plan and write {STATUS_FILE}.',
+  // Grooming has no status file: its built-in text and placeholders never mention one.
+  groom: 'Groom ticket {KEY} and write the result under the folder {SLUG} as groom.md.',
 };
 
 export function claudePromptEntry(name, source = 'default', text = CLAUDE_PROMPT_DEFAULTS[name]) {
@@ -1267,7 +1285,9 @@ export function claudePromptEntry(name, source = 'default', text = CLAUDE_PROMPT
     placeholders:
       name === 'answers'
         ? [...CLAUDE_PROMPT_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}']
-        : CLAUDE_PROMPT_PLACEHOLDERS,
+        : name === 'groom'
+          ? ['{KEY}', '{SLUG}']
+          : CLAUDE_PROMPT_PLACEHOLDERS,
   };
 }
 
@@ -1359,19 +1379,44 @@ function claudeResponse(url, method, { claude }, body) {
     };
   if (method !== 'POST') return null;
   claude.calls.push({ method, path: pathname, body: structuredClone(body) });
+  if (pathname === '/api/claude/launch' && body?.phase === 'groom') {
+    // Grooming has a session and a record of its own and leaves the workflow's entry as it was.
+    const current = claude.tickets[body.key] ?? claudeEntry('none', null);
+    const ticket = claudeDerived({
+      ...current,
+      groom: { state: 'working', reason: 'starting' },
+      goTo: { ...current.goTo, groom: CLAUDE_ATTACH },
+    });
+    claude.tickets[body.key] = ticket;
+    return {
+      json: {
+        ok: true,
+        key: body.key,
+        phase: 'groom',
+        name: `${body.key}-groom`,
+        id: 'ab12cd34',
+        ticket: structuredClone(ticket),
+      },
+    };
+  }
   if (
     pathname === '/api/claude/launch' &&
     ['investigate-and-plan', 'implement-plan'].includes(body?.phase)
   ) {
     // An implement launch keeps the plan's flag and questions; only an investigate launch resets them.
-    const earlier = body.phase === 'implement-plan' ? claude.tickets[body.key] : null;
+    // Either keeps the groom record and its session.
+    const current = claude.tickets[body.key];
+    const earlier = body.phase === 'implement-plan' ? current : null;
     const ticket = claudeEntry('working', 'starting', {
       phase: body.phase,
+      groom: current?.groom ?? CLAUDE_NO_GROOM,
       // The launched phase has a live session; an implement launch keeps the investigate side.
-      goTo:
-        body.phase === 'implement-plan'
-          ? { investigate: earlier?.goTo?.investigate ?? null, implement: CLAUDE_ATTACH }
-          : { investigate: CLAUDE_ATTACH, implement: null },
+      goTo: {
+        investigate:
+          body.phase === 'implement-plan' ? (earlier?.goTo?.investigate ?? null) : CLAUDE_ATTACH,
+        implement: body.phase === 'implement-plan' ? CLAUDE_ATTACH : null,
+        groom: current?.goTo?.groom ?? null,
+      },
       ...(earlier && {
         flags: { ...earlier.flags, 'implement-plan': false },
         questions: earlier.questions,

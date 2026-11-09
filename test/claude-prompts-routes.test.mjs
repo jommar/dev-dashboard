@@ -1,5 +1,5 @@
 // claude-prompts-routes.test.mjs — the prompt routes on the production HTTP handler: list, save and
-// reset the three prompt files from the app. The prompt store, the launcher and the app are real,
+// reset the four prompt files from the app. The prompt store, the launcher and the app are real,
 // over a temp prompts folder and the CLI double; an edit made through a route is what the next
 // launch and the next send read.
 //
@@ -12,6 +12,8 @@ import path from 'node:path';
 import {
   ANSWERS_TEMPLATE,
   EARLIER_ID,
+  GROOM,
+  GROOM_TEMPLATE,
   IMPLEMENT,
   IMPLEMENT_TEMPLATE,
   INVESTIGATE,
@@ -24,6 +26,7 @@ import {
   claudeHttpFixture,
   dashboardSandbox,
   fsChanges,
+  groomPrompt,
   launchRecord,
   listed,
   promptEntry,
@@ -79,7 +82,7 @@ const assertFailed = (res, label) => {
 
 // ---- GET /api/claude/prompts ----
 
-test('scenario 170: GET lists the three prompts in order, each the built-in text when there is no file', async (t) => {
+test('scenario 170: GET lists the four prompts in order, each the built-in text when there is no file', async (t) => {
   const f = await claudeHttpFixture(t);
 
   const res = await list(f);
@@ -105,6 +108,7 @@ test('scenario 171: GET shows a usable file as custom with its trimmed text, the
     promptEntry('investigate', 'custom', 'Work on {KEY} now.'),
     promptEntry('implement', 'default'),
     promptEntry('answers', 'custom', 'Read {STATUS_FILE}: {CHANGE} {QUESTION_IDS}'),
+    promptEntry('groom', 'default'),
   ]);
 });
 
@@ -119,6 +123,7 @@ test('scenario 171: GET shows a file that cannot be used as unusable, with the b
     promptEntry('investigate', 'default'),
     promptEntry('implement', 'unusable'),
     promptEntry('answers', 'default'),
+    promptEntry('groom', 'default'),
   ]);
 });
 
@@ -156,12 +161,13 @@ test('scenario 173: PUT saves the trimmed text with one newline and answers with
   }
   assert.deepEqual(fs.readdirSync(f.promptsDir).sort(), [
     'answers.md',
+    'groom.md',
     'implement.md',
     'investigate.md',
   ]);
   assert.deepEqual(
     (await list(f)).json().prompts.map(({ source }) => source),
-    ['custom', 'custom', 'custom'],
+    ['custom', 'custom', 'custom', 'custom'],
   );
 });
 
@@ -261,7 +267,7 @@ test('scenario 180: DELETE removes the file and answers with the built-in entry,
   assert.deepEqual(fs.readdirSync(f.promptsDir), ['implement.md'], 'the other file stays');
   assert.deepEqual(
     (await list(f)).json().prompts.map(({ source }) => source),
-    ['default', 'custom', 'default'],
+    ['default', 'custom', 'default', 'default'],
   );
 });
 
@@ -298,7 +304,7 @@ const UNKNOWN_PATHS = [
   PROMPTS,
 ];
 
-test('scenario 183: any name but the three is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
+test('scenario 183: any name but the four is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
   const f = await claudeHttpFixture(t);
   // Where `../investigate` and `../answers` would land if a name became part of a path.
   fs.writeFileSync(path.join(f.root, 'investigate.md'), 'outside');
@@ -427,7 +433,7 @@ test('scenario 185: the prompt routes answer while setup is incomplete, like the
   const removed = await reset(f, 'implement');
 
   assert.equal(listed.status, 200);
-  assert.equal(listed.json().prompts.length, 3);
+  assert.equal(listed.json().prompts.length, 4);
   assert.equal(saved.status, 200);
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.json().prompt, promptEntry('implement', 'default'));
@@ -591,6 +597,7 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['investigate', 'custom', 'my own {KEY}'],
       ['implement', 'unusable', IMPLEMENT_TEMPLATE],
       ['answers', 'default', ANSWERS_TEMPLATE],
+      ['groom', 'default', GROOM_TEMPLATE],
     ],
   );
   assert.equal(replies.save.status, 200);
@@ -606,6 +613,7 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['investigate', 'default'],
       ['implement', 'unusable'],
       ['answers', 'custom'],
+      ['groom', 'default'],
     ],
   );
   assert.deepEqual(fs.readdirSync(sandbox.elsewhere), [], 'nothing went to the working folder');
@@ -655,4 +663,22 @@ test('scenario 193: the launcher exports the CLAUDE_FAILED error that the prompt
   assert.equal(error.code, 'CLAUDE_FAILED');
   assert.equal(error.status, 502);
   assert.deepEqual(error.errors, ['prompt_not_changed']);
+});
+
+// ---- the groom prompt over the routes ----
+
+test('scenario 205: an edit of the groom prompt through the route is in the next groom launch, and a reset takes it out', async (t) => {
+  const f = await claudeHttpFixture(t);
+  const prompt = (index) => f.cli.launches()[index].args.at(-1);
+  await put(f, 'groom', 'Groom {KEY} in {SLUG}, never {STATUS_FILE}.');
+
+  const first = await launch(f, GROOM);
+  assert.equal(first.status, 200);
+  assert.equal(prompt(0), `Groom ${KEY} in ${SLUG}, never {STATUS_FILE}.`);
+
+  finishSessions(f);
+  await reset(f, 'groom');
+  assert.equal((await launch(f, GROOM)).status, 200);
+  assert.equal(prompt(1), groomPrompt(KEY));
+  assert.equal(GROOM_TEMPLATE.includes('{STATUS_FILE}'), false);
 });
