@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, seedVelocitySnapshot } from './fixtures.js';
 
 test('shell exposes seven semantic navigation links @smoke', async ({ page }) => {
   await page.goto('/#/home');
@@ -51,12 +51,14 @@ test('shell preserves direct routes, keyboard activation and history @smoke', as
 
 test('populated routes fit a mobile viewport without horizontal overflow @regression', async ({
   page,
+  dashboard,
 }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
   await expect(page.getByTestId('home-meta')).not.toContainText('loading');
-  await expect(page.getByTestId('home-actions-loading')).toHaveCount(0);
-  await expect(page.getByTestId('home-services-loading')).toHaveCount(0);
+  await expect(page.getByTestId('home-velocity-loading')).toHaveCount(0);
+  await expect(page.getByTestId('home-velocity-chart')).toContainText('Nexus Sprint 2');
   await testInfo.attach('mocked-home-mobile', {
     body: await page.screenshot({ fullPage: true }),
     contentType: 'image/png',

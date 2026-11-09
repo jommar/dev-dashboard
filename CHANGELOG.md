@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Replaced Home's Sprint/KPI/Needs You/Services widgets with team/person velocity:
+  explicit Generate/Refresh saves an all-team browser snapshot, restored without
+  automatic fetching or expiry. Team defaults to Nexus and persists; Everyone/person
+  views and alphabetical same-window comparison stay local. Current-assignee/status
+  sprint-membership caveats remain explicit; failed refreshes retain last-good data
+  and storage failures show an unsaved warning. Added `GET /api/team-velocity`;
+  dedicated screens and the standalone velocity report remain unchanged.
 - Added **Start code review** to the Pull Requests Claude dialog, replacing its blank body with
   review-session status and launch/error feedback. The PR-only icon tooltip is removed; its
   accessible name and My Tickets tooltips remain. The same button handles initial review and

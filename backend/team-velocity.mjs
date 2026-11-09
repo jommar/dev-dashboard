@@ -6,14 +6,13 @@
 // Fetching is capped like my-tickets (TEAM_VELOCITY_MAX_ISSUES per query), so
 // very old history is a floor, not a total. Everything below the fetch is
 // pure and DOM-free so node --test can reach it (see
-// test/team-velocity.test.mjs); charts render through the dashboard's own
-// velocityChartHtml so the report can never drift from the Home tab.
+// test/team-velocity.test.mjs). The per-board chart is a stacked column by
+// status, local to this report (the Home tab keeps its own velocity chart).
 import fs from 'node:fs';
 import { jiraConfig } from './jira.mjs';
 import { captureConfiguration } from './settings.mjs';
-import { velocityChartHtml } from '../ui/components/home-cards.js';
 
-export const TEAM_VELOCITY_MAX_ISSUES = 200;
+export const TEAM_VELOCITY_MAX_ISSUES = 5000;
 export const DEFAULT_KEEP_SPRINTS = 8;
 
 function authorization(email, token) {
@@ -58,32 +57,33 @@ async function searchJql(cfg, jql, max) {
   return issues.slice(0, max);
 }
 
-// Raw Done issues across closed sprints plus everything in open sprints (the
-// caller filters to Done — open sprints still hold in-progress work).
+// Every issue (any status) in closed and open sprints.
 export async function fetchTeamIssues({ max = TEAM_VELOCITY_MAX_ISSUES, snapshot } = {}) {
   const cfg = jiraConfig(snapshot);
   if (!cfg) {
     throw new Error('no JIRA_BASE_URL, JIRA_EMAIL, or JIRA_TOKEN in environment — will not prompt');
   }
-  const [openIssues, doneClosed] = await Promise.all([
+  const [openIssues, closedIssues] = await Promise.all([
     searchJql(cfg, 'sprint in openSprints() ORDER BY updated DESC', max),
-    searchJql(
-      cfg,
-      'statusCategory = Done AND sprint in closedSprints() ORDER BY updated DESC',
-      max,
-    ),
+    searchJql(cfg, 'sprint in closedSprints() ORDER BY updated DESC', max),
   ]);
-  return [
-    ...doneClosed,
-    ...openIssues.filter((i) => i?.fields?.status?.statusCategory?.name === 'Done'),
-  ];
+  return [...closedIssues, ...openIssues];
+}
+
+// Jira status category -> chart band. Anything that is neither Done nor In
+// Progress (To Do, or no category) counts as not started.
+function statusBandOf(issue) {
+  const category = issue?.fields?.status?.statusCategory?.name;
+  if (category === 'Done') return 'done';
+  if (category === 'In Progress') return 'inProgress';
+  return 'notStarted';
 }
 
 function storyPointsOf(raw) {
   return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null;
 }
 
-// Board -> sprintKey -> { sprint, points, count, unestimated, byUser }. A
+// Board -> sprintKey -> { sprint, points, count, unestimated, byUser, byStatus }. A
 // carried ticket counts toward every listed sprint, matching
 // sprintProgressFor's scoping rule in ui/home-data.js.
 export function buildTeamBoards(issues, { snapshot } = {}) {
@@ -95,6 +95,7 @@ export function buildTeamBoards(issues, { snapshot } = {}) {
     const sprints = (Array.isArray(raw) ? raw : []).filter((s) => s && s.name);
     const pts = storyPointsOf(fields[pointsField]);
     const who = fields.assignee?.displayName || '(unassigned)';
+    const band = statusBandOf(issue);
     for (const sp of sprints) {
       if (sp.state !== 'closed' && sp.state !== 'active') continue;
       const board = boardOf(sp.name);
@@ -113,12 +114,14 @@ export function buildTeamBoards(issues, { snapshot } = {}) {
           count: 0,
           unestimated: 0,
           byUser: new Map(),
+          byStatus: { done: 0, inProgress: 0, notStarted: 0 },
         });
       }
       const entry = bySprint.get(key);
       entry.points += pts || 0;
       entry.count += 1;
       if (pts === null) entry.unestimated += 1;
+      entry.byStatus[band] += pts || 0;
       if (!entry.byUser.has(who)) entry.byUser.set(who, { points: 0, count: 0 });
       const cell = entry.byUser.get(who);
       cell.points += pts || 0;
@@ -154,12 +157,65 @@ function shortSprint(name) {
   return m ? m[1] : name;
 }
 
+// Stack order, bottom to top: finished work at the base, not-started on top.
+const STATUS_BANDS = [
+  { key: 'done', label: 'Completed', color: '#41d07c' },
+  { key: 'inProgress', label: 'In progress', color: '#4aa6ff' },
+  { key: 'notStarted', label: 'Not started', color: '#7d8794' },
+];
+
+function fmtPoints(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+// Stacked column per sprint: completed (green), in progress (blue) and not
+// started (grey) points, in the same order in every column.
+export function stackedStatusChartHtml(series) {
+  const entries = series || [];
+  if (!entries.length) return '<p class="tv-empty">No sprint data yet</p>';
+  const max = Math.max(0, ...entries.map((e) => e.points));
+  const unestimated = entries.reduce((sum, e) => sum + e.unestimated, 0);
+  const sumOf = (key) => entries.reduce((sum, e) => sum + e.byStatus[key], 0);
+  const legend = STATUS_BANDS.map(
+    (b) =>
+      `<span class="tv-legend-item"><span class="tv-swatch" style="background:${b.color}"></span>${b.label} <span class="tv-n">${esc(fmtPoints(sumOf(b.key)))}</span></span>`,
+  ).join('');
+  const columns = entries
+    .map((e) => {
+      const height = max > 0 ? (e.points / max) * 100 : 0;
+      const parts = STATUS_BANDS.filter((b) => e.byStatus[b.key] > 0);
+      const hint = `${e.sprint.name}: ${fmtPoints(e.points)} points — ${STATUS_BANDS.map((b) => `${b.label.toLowerCase()} ${fmtPoints(e.byStatus[b.key])}`).join(', ')}`;
+      const segments = parts
+        .map(
+          (b) =>
+            `<span class="tv-seg" style="flex:${e.byStatus[b.key]} 1 0;background:${b.color}" title="${b.label}: ${esc(fmtPoints(e.byStatus[b.key]))}"></span>`,
+        )
+        .join('');
+      return (
+        `<div class="velocity-column" role="listitem" aria-label="${esc(hint)}">` +
+        `<span class="velocity-value">${esc(fmtPoints(e.points))}</span>` +
+        `<div class="velocity-track"><div class="tv-stack" style="height:${height.toFixed(2).replace(/\.00$/, '')}%" title="${esc(hint)}">${segments}</div></div>` +
+        `<span class="velocity-label" title="${esc(e.sprint.name)}">${esc(shortSprint(e.sprint.name))}</span>` +
+        '</div>'
+      );
+    })
+    .join('');
+  const total = entries.reduce((sum, e) => sum + e.points, 0);
+  const note = unestimated ? `<span class="velocity-note">${unestimated} unestimated</span>` : '';
+  return (
+    '<div class="velocity-chart">' +
+    `<div class="tv-legend">${legend}</div>` +
+    `<div class="velocity-bars" role="list" aria-label="Story points by sprint and status">${columns}</div>` +
+    `<div class="velocity-summary"><span>${esc(fmtPoints(total))} pts total</span>${note}</div>` +
+    '</div>'
+  );
+}
+
 // boards: Map of board -> sprint Map, as built by buildTeamBoards.
 //
 // The report is a single portable file: Tailwind via CDN for the page shell,
-// and a self-contained <style> block (dashboard tokens + the velocity-chart
-// rules, same values as ui/styles) for the chart, whose markup still comes
-// from velocityChartHtml. No relative links — the file can be passed around
+// and a self-contained <style> block (dashboard tokens + the chart rules) for
+// the stacked chart. No relative links — the file can be passed around
 // and opened anywhere with internet access.
 export function renderTeamVelocityHtml(
   boards,
@@ -195,7 +251,7 @@ export function renderTeamVelocityHtml(
         return `<tr><th scope="row">${esc(u)}</th>${cells}</tr>`;
       })
       .join('');
-    sections += `<section class="mb-8">\n<h2 class="text-[13px] font-semibold mb-3">${esc(board)}</h2>\n${velocityChartHtml(series)}\n<div class="tv-table-wrap"><table class="tv-table">${head}${rows}</table></div>\n</section>`;
+    sections += `<section class="mb-8">\n<h2 class="text-[13px] font-semibold mb-3">${esc(board)}</h2>\n${stackedStatusChartHtml(series)}\n<div class="tv-table-wrap"><table class="tv-table">${head}${rows}</table></div>\n</section>`;
   }
   return `<!DOCTYPE html>
 <html lang="en">
@@ -222,7 +278,11 @@ export function renderTeamVelocityHtml(
   }
   .velocity-value { color: var(--text); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .velocity-track { display: flex; align-items: flex-end; min-height: 120px; border-bottom: 1px solid var(--border); background: linear-gradient(to top, var(--panel2), transparent 65%); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
-  .velocity-bar { display: block; width: 100%; min-height: 2px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: var(--green); }
+  .tv-stack { display: flex; flex-direction: column-reverse; width: 100%; min-height: 2px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; overflow: hidden; }
+  .tv-seg { display: block; min-height: 1px; }
+  .tv-legend { display: flex; flex-wrap: wrap; gap: var(--s4); margin-bottom: var(--s3); font-size: var(--fs-sm); }
+  .tv-legend-item { display: inline-flex; align-items: center; gap: var(--s2); }
+  .tv-swatch { width: 10px; height: 10px; border-radius: 2px; }
   .velocity-label { overflow: hidden; color: var(--muted); font-size: var(--fs-xs); line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
   .velocity-summary { display: flex; justify-content: space-between; gap: var(--s3); margin-top: var(--s3); color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
   .velocity-note { color: var(--amber); }
@@ -238,7 +298,7 @@ export function renderTeamVelocityHtml(
 </head>
 <body class="max-w-[1400px] mx-auto p-6">
   <h1 class="text-lg font-semibold">Team velocity</h1>
-  <p class="text-[12px] mb-6" style="color: var(--muted)">Done story points by sprint, per person. Last ${keep} sprints per board · snapshot ${esc(date)}.</p>
+  <p class="text-[12px] mb-6" style="color: var(--muted)">Story points of all tickets (any status) by sprint, per person. Last ${keep} sprints per board · snapshot ${esc(date)}.</p>
   ${sections}
 </body>
 </html>

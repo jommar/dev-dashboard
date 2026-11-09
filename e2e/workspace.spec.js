@@ -1,29 +1,16 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, seedVelocitySnapshot } from './fixtures.js';
 
-test('Home leads with the action queue in reading and visual order @regression', async ({
+test('Home keeps one velocity pane in the shared workspace @regression', async ({
   page,
+  dashboard,
 }) => {
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
-  const queue = page.getByTestId('home-actions-block');
-  await expect(page.getByTestId('home-actions')).toContainText('Improve keyboard');
-  for (const id of [
-    'home-kpi-row',
-    'home-sprint-block',
-    'home-velocity-block',
-    'home-services-block',
-  ]) {
-    const later = page.getByTestId(id);
-    expect(
-      await queue.evaluate(
-        (el, testId) =>
-          Boolean(
-            el.compareDocumentPosition(document.querySelector(`[data-testid="${testId}"]`)) &
-            Node.DOCUMENT_POSITION_FOLLOWING,
-          ),
-        id,
-      ),
-    ).toBe(true);
-    expect((await queue.boundingBox()).y).toBeLessThanOrEqual((await later.boundingBox()).y);
+  await expect(page.getByTestId('home-title')).toHaveText('Velocity');
+  await expect(page.getByTestId('home-velocity-chart')).toBeVisible();
+  await expect(page.getByTestId('home-velocity-team')).toHaveValue('Nexus');
+  for (const id of ['home-kpi-row', 'home-sprint-block', 'home-services-block']) {
+    await expect(page.getByTestId(id)).toHaveCount(0);
   }
 });
 
@@ -57,13 +44,13 @@ test('changed refreshes preserve work-list keyboard focus @regression', async ({
   dashboard,
 }) => {
   await page.goto('/#/prs');
-  const link = page.getByTestId('pr-open-title-link-example/workspace-17');
+  const link = page.getByTestId('prs-pr-DEMO-1-example-workspace-17');
   await expect(link).toBeVisible();
   await page.clock.install();
   await link.focus();
-  dashboard.data.prs.prs[0].title = 'Updated while reading';
+  dashboard.data.reviewTickets.tickets[0].prs[0].title = 'Updated while reading';
   await page.clock.fastForward(91_000);
-  await expect(link).toHaveText('Updated while reading');
+  await expect(link).toHaveAccessibleName(/Updated while reading/);
   await expect(link).toBeFocused();
 });
 

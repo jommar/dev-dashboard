@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from './fixtures.js';
+import { test, expect, seedVelocitySnapshot } from './fixtures.js';
 
 // prettier-ignore
 const screenshots = fileURLToPath(new URL('../../docs/dev-dashboard-redesign/verification/screenshots', import.meta.url));
@@ -13,12 +13,16 @@ for (const [width, height] of [
   [390, 844],
 ]) {
   for (const route of ['home', 'services', 'prs', 'my-tickets']) {
-    test(`mocked ${route} presentation ${width} @regression`, async ({ page }, testInfo) => {
+    test(`mocked ${route} presentation ${width} @regression`, async ({
+      page,
+      dashboard,
+    }, testInfo) => {
       await page.setViewportSize({ width, height });
       await page.emulateMedia({ reducedMotion: 'reduce' });
+      if (route === 'home') await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
       await page.goto(`/#/${route}`);
       const ready = {
-        home: 'home-action-title-link-example/workspace-17',
+        home: 'home-velocity-chart',
         services: 'log-api',
         prs: 'prs-ticket-DEMO-1',
         'my-tickets': 'my-tickets-item-sample-active',
@@ -28,12 +32,21 @@ for (const [width, height] of [
         true,
       );
       if (route === 'home') {
-        const expectedColumnCount = width >= 760 ? '2' : '1';
-        expect(
-          await page.evaluate(
-            () => getComputedStyle(document.querySelector('.home-cols')).columnCount,
-          ),
-        ).toBe(expectedColumnCount);
+        await expect(page.getByTestId('home-title')).toHaveText('Velocity');
+        await expect(page.getByTestId('home-velocity-team')).toHaveAccessibleName('Team');
+        await expect(page.getByTestId('home-velocity-team')).toHaveValue('Nexus');
+        await expect(page.getByTestId('home-refresh')).toBeVisible();
+        const pane = page.getByTestId('home-list').locator('.board-pane');
+        await expect(pane).toHaveCount(1);
+        await expect(pane.getByTestId('home-velocity-chart')).toContainText('Nexus Sprint 2');
+        for (const id of [
+          'home-actions-block',
+          'home-services-block',
+          'home-kpi-row',
+          'home-sprint-block',
+        ]) {
+          await expect(page.getByTestId(id)).toHaveCount(0);
+        }
       }
       if (route === 'prs') {
         await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(3);
@@ -49,18 +62,30 @@ for (const [width, height] of [
   }
 }
 
-test('dense long content and sprint warnings fit mobile without losing actions @regression', async ({
+test('long velocity team and sprint names and coverage warnings fit mobile @regression', async ({
   page,
   dashboard,
 }, testInfo) => {
-  const name = 'VeryLongUnbrokenWorkspaceSprintName'.repeat(5);
-  dashboard.data.tickets.activeSprints[0].name = name;
-  dashboard.data.tickets.truncated = true;
-  dashboard.data.prs.prs[0].title = 'LongTitle'.repeat(30);
+  const teamName = 'VeryLongUnbrokenTeamName'.repeat(5);
+  const sprintName = 'VeryLongUnbrokenWorkspaceSprintName'.repeat(5);
+  const board = dashboard.data.teamVelocity.boards.find(({ name }) => name === 'Nexus');
+  board.name = teamName;
+  for (const entry of board.series) entry.sprint.name = `${sprintName} ${entry.sprint.id}`;
+  for (const person of board.people) {
+    for (const [index, entry] of person.series.entries()) {
+      entry.sprint = { ...board.series[index].sprint };
+    }
+  }
+  dashboard.data.teamVelocity.coverage.possibleTruncation = true;
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#/home');
-  await expect(page.getByTestId('home-sprint-truncated')).toBeVisible();
-  await expect(page.getByTestId('home-actions')).toContainText('LongTitle');
+  await page.getByTestId('home-velocity-team').selectOption(teamName);
+  await expect(page.getByTestId('home-velocity-team')).toHaveValue(teamName);
+  await expect(page.getByTestId('home-velocity-data')).toContainText(sprintName);
+  await expect(page.getByTestId('home-velocity-coverage')).toBeVisible();
+  await expect(page.getByTestId('home-velocity-coverage')).toContainText(/limit|5,?000/i);
+  await expect(page.getByTestId('home-refresh')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await mkdir(screenshots, { recursive: true });
   const path = `${screenshots}/mocked-home-long-warnings-mobile.png`;
@@ -69,27 +94,31 @@ test('dense long content and sprint warnings fit mobile without losing actions @
 });
 
 test('empty workspace renders honest states @regression', async ({ page, dashboard }) => {
-  dashboard.data.prs = {
-    ...dashboard.data.prs,
-    prs: [],
-    groups: {},
-    prsNeedingApprovals: [],
-    approvalGroups: {},
-  };
-  dashboard.data.tickets = { tickets: [], activeSprints: [], allSprints: [], truncated: false };
+  dashboard.data.teamVelocity.boards = [];
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
-  await expect(page.getByTestId('home-actions-empty')).toBeVisible();
-  await expect(page.getByTestId('home-sprint-none')).toBeVisible();
+  await expect(page.getByTestId('home-velocity-empty')).toHaveText(
+    'No velocity history for Nexus.',
+  );
+  await expect(page.getByTestId('home-velocity-team')).toHaveValue('Nexus');
+  await expect(page.getByTestId('home-velocity-chart')).toHaveCount(0);
   await mkdir(screenshots, { recursive: true });
   await page.screenshot({ path: `${screenshots}/mocked-home-empty.png`, fullPage: true });
 });
 
-test('stale content stays legible with source warning @regression', async ({ page }) => {
+test('stale content stays legible with source warning @regression', async ({ page, dashboard }) => {
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
-  await expect(page.getByTestId('home-actions')).toContainText('Improve keyboard');
-  await page.route('**/api/prs', (route) => route.fulfill({ status: 503, body: 'Unavailable' }));
+  await expect(page.getByTestId('home-velocity-chart')).toContainText('Nexus Sprint 2');
+  await page.route('**/api/team-velocity', (route) =>
+    route.fulfill({ status: 503, body: 'Unavailable' }),
+  );
   await page.getByTestId('home-refresh').click();
-  await expect(page.getByTestId('home-meta')).toContainText('GitHub stale');
+  await expect(page.getByTestId('home-velocity-stale')).toBeVisible();
+  await expect(page.getByTestId('home-velocity-stale')).toContainText(
+    /stale|last (successful|update)/i,
+  );
+  await expect(page.getByTestId('home-velocity-chart')).toContainText('Nexus Sprint 2');
   await mkdir(screenshots, { recursive: true });
   await page.screenshot({ path: `${screenshots}/mocked-home-stale.png`, fullPage: true });
 });

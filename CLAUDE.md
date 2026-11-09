@@ -43,10 +43,9 @@ whole app feels consistent regardless of which container a given screen width la
 
 **Applied to:**
 
-- `.home-cols` (`ui-react/styles/home.css`) — Home's three top-level blocks (Sprint, Services, Needs You).
 - `.pr-open-groups` / `.pr-draft-groups` and `.pr-approval-groups`
   (`ui-react/styles/prs.css`) — retained legacy group rules, not the current Pull Requests layout.
-  Do not remove legacy PR styles/helpers as part of board work; Home still uses shared PR rendering.
+  Do not remove legacy PR styles/helpers as part of Home or board work.
 
 **Not masonry, intentionally:**
 
@@ -58,9 +57,6 @@ whole app feels consistent regardless of which container a given screen width la
   with `scroll-snap-type: x mandatory`, so the next column peeks in and snaps (`proximity` above
   that). How a board fills the viewport, and how a screen adopts it, is under "UI layout: the
   shared board" below.
-- `.home-block` itself (inside `.home-cols`) is `break-inside: avoid` — it's one packed *unit*, not a
-  grid of cards, so it never gets its own internal columns (that would split a single ordered action
-  queue across columns, which isn't what masonry is for here).
 - `services.css`'s `.grid` (Services tab) sets explicit `grid-template-columns` per breakpoint — a
   real multi-column grid, appropriate because service cards are roughly uniform height, not a
   masonry candidate.
@@ -76,13 +72,27 @@ should masonry-pack, use the pattern above verbatim — don't reach for `display
 packs like the others.**
 
 **A second gotcha the same migration can hide:** `display: grid; gap: <n>px;` gives every stacked item
-a deterministic gap regardless of layout. `columns:` + `column-gap` only spaces columns *horizontally*
+a deterministic gap regardless of layout. `columns:` + `column-gap` only spaces columns _horizontally_
 — vertical spacing between two items sharing a column depends entirely on the item's own margin, so
 dropping `gap` without adding the `.card + .card { margin-top: <n>px; }` sibling rule silently shrinks
 inter-item spacing to whatever margin the card already had (often smaller than the old `gap`). This bit
 the `.my-ticket-status-group` migration once already — caught by review, not by any test, since no test
 asserted a spacing amount. When migrating a `display: grid` container to `columns:`, add the sibling
 margin rule in the same edit, every time, not just for the container you're most focused on.
+
+## Home: manual velocity snapshot
+
+Home uses `BoardPanel` / `BoardSection` with one velocity pane, not masonry or
+legacy Sprint/Services/Needs You/PR widgets. It lazily restores a validated
+all-team/person localStorage snapshot through `ui/home-velocity.js`; only explicit
+Generate velocity / Refresh may call `/api/team-velocity`. No polling hook,
+countdown, TTL or mount/activation/focus/visibility recovery fetch belongs here.
+Team defaults to Nexus and persists separately; Everyone/person selection is
+local and resets on Team change/reload. Keep the original Generated timestamp,
+current-assignee/status/estimate sprint-membership caveats, last-good data on
+failed generation and the separate unsaved-snapshot warning on storage failure.
+Do not infer historical delivered work or change the standalone report. Other
+screens' polling and shared board contracts below remain unchanged.
 
 ## UI layout: the shared board (My Tickets, Slack, Pull Requests)
 
@@ -105,8 +115,7 @@ contract, so a refactor never renames them):
 - `RefreshControl` (Refresh button and `refresh in N s` countdown) takes the `load` that
   `useActivePolling` returns, so a click restarts the countdown and goes through the hook's
   in-flight guard; all three board screens do this. Pull Requests intentionally adopted the shared
-  `.board-next` countdown. Home keeps its own button and `.pr-next` span (body font, `--fs-sm`,
-  against `.board-next` in mono, `--fs-xs`); retained legacy PR styles do not govern the PR board.
+  `.board-next` countdown; retained legacy PR styles do not govern the PR board.
 - `BoardTabs` is a segmented switch between views of one board (Slack's Started, Mentions and Watch
   threads). My Tickets has no `BoardTabs`: its filter row is `WorkFilters`. It is a real tab set:
   give it the same `name` as its `BoardSection` and pass the selected tab there as `activeTab`, and
@@ -126,6 +135,7 @@ contract, so a refactor never renames them):
 
 **Shared by the two screens that open Slack threads** (My Tickets chips, the Slack board), each
 once, with the differences passed in rather than forked:
+
 - `ui-react/hooks/useSlackThreadDialog.jsx` — the activity clock, the rule that a thread past the
   cutoff closes its dialog, the `slack-session-changed` listener, the dialog's session-mismatch
   handler and the `<SlackThreadDialog>` element. The panel keeps `openThread` (its own session code

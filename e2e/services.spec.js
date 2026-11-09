@@ -92,14 +92,14 @@ test('independent follow and scroll survive stream updates; hidden panels do not
   expect(dashboard.requests.filter((r) => r.path.startsWith('/api/logs/')).length).toBe(count);
 });
 
-test('Home service command errors never strand controls @regression', async ({ page }) => {
+test('worker service command errors never strand controls @regression', async ({ page }) => {
   await page.route('**/api/services/worker/start', (route) =>
     route.fulfill({ status: 500, json: { error: 'Cannot start worker' } }),
   );
-  await page.goto('/#/home');
-  const button = page.getByTestId('home-svc-toggle-worker');
+  await page.goto('/#/services');
+  const button = page.getByTestId('start-worker');
   await button.click();
-  await expect(page.getByTestId('home-control-feedback')).toContainText('Cannot start worker');
+  await expect(page.getByTestId('control-feedback-worker')).toContainText('Cannot start worker');
   await expect(button).toBeEnabled();
 });
 
@@ -139,9 +139,22 @@ test('bulk commands lock conflicting controls across routes until settled @regre
   await expect(page.getByTestId('stop-api')).toBeDisabled();
   await expect(page.getByTestId('restart-all')).toBeDisabled();
   await page.getByTestId('tab-home').click();
-  await expect(page.getByTestId('home-svc-toggle-api')).toBeDisabled();
+  await expect(page.getByTestId('panel-home')).toBeVisible();
+  await expect(page.getByTestId('home-refresh')).toHaveText('Generate velocity');
+  await page.getByTestId('tab-services').click();
+  for (const action of ['start', 'stop', 'restart']) {
+    await expect(page.getByTestId(`${action}-all`)).toBeDisabled();
+    for (const { id } of dashboard.data.services) {
+      await expect(page.getByTestId(`${action}-${id}`)).toBeDisabled();
+    }
+  }
   release();
-  await expect(page.getByTestId('home-svc-toggle-api')).toBeEnabled();
+  for (const action of ['start', 'stop', 'restart']) {
+    await expect(page.getByTestId(`${action}-all`)).toBeEnabled();
+    for (const { id } of dashboard.data.services) {
+      await expect(page.getByTestId(`${action}-${id}`)).toBeEnabled();
+    }
+  }
   expect(calls).toHaveLength(dashboard.data.services.length);
 });
 

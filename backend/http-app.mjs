@@ -18,6 +18,7 @@ import { fetchUatPromoteCandidates } from './uat-promote.mjs';
 import { enrichOpenPRs, filterPrsNeedingApprovals } from './review.mjs';
 import { fetchTicketPrs } from './ticket-prs.mjs';
 import { fetchReviewTickets } from './review-tickets.mjs';
+import { fetchHomeVelocity } from './home-velocity.mjs';
 import { getOriginDiff } from './diff.mjs';
 import { fetchRelease } from './releases.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
@@ -153,6 +154,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     fetchRelease,
     fetchTicketPrs,
     fetchReviewTickets,
+    fetchHomeVelocity,
     ...integrations,
   };
   const clients = new Set();
@@ -473,6 +475,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
           ...(await api.fetchMyTickets({ ...options, includeDone })),
           updatedAt: new Date().toISOString(),
         });
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/team-velocity') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        json(res, 200, await api.fetchHomeVelocity(options));
         return;
       }
       if (req.method === 'GET' && pathname === '/api/review-tickets') {

@@ -92,6 +92,7 @@ export async function getPrs() {
 }
 
 export const getReviewTickets = () => getJson('/api/review-tickets');
+export const getTeamVelocity = () => getJson('/api/team-velocity');
 
 export async function getMyTickets(includeDone = false) {
   const res = await fetch(`/api/my-tickets${includeDone ? '?includeDone=1' : ''}`);

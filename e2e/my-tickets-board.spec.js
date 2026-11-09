@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs';
-import { test, expect } from './fixtures.js';
+import { test, expect, seedVelocitySnapshot } from './fixtures.js';
 import {
   ticketBoardData,
   withFollowUpCases,
@@ -649,13 +649,16 @@ test('Include Done refetches tickets but not PR status @regression', async ({
   expect(prRequests(dashboard)).toBe(prs);
 });
 
-// The Home filters are the plain row: no disclosure, no toggle, no collapsed region.
-test('Home filters never fold away @regression', async ({ page }) => {
+// Home has one always-available Team scope, independent of My Tickets' disclosure.
+test('Home Team selection never folds away @regression', async ({ page, dashboard }) => {
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
-  const filter = page.locator('#home-actions-filter');
-  await expect(filter).toBeAttached();
-  await expect(filter.locator('[aria-expanded]')).toHaveCount(0);
-  expect(await filter.getAttribute('data-collapsible')).toBeNull();
+  const team = page.getByTestId('home-velocity-team');
+  await expect(team).toBeVisible();
+  await expect(team).toHaveAccessibleName('Team');
+  await expect(team).toHaveValue('Nexus');
+  await team.selectOption('Mobile');
+  await expect(page.getByTestId('home-velocity-chart')).toContainText('Mobile Sprint 11');
 });
 
 test.describe('narrow filters', () => {

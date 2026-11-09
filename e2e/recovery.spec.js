@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, seedVelocitySnapshot } from './fixtures.js';
 
 test('startup can retry configuration and reconnects with one stream @regression', async ({
   page,
@@ -44,27 +44,27 @@ for (const route of ['prs', 'my-tickets']) {
   });
 }
 
-test('Home retains each last-good source independently on partial refresh @regression', async ({
+test('Home retains last-good velocity on failed refresh @regression', async ({
   page,
   dashboard,
 }) => {
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
-  await expect(page.getByTestId('home-actions')).toContainText('Improve keyboard');
-  const sprint = await page.getByTestId('home-sprint').innerHTML();
-  await page.route('**/api/my-tickets*', (r) => r.fulfill({ status: 503, body: 'Unavailable' }));
-  dashboard.data.prs.prs[0].title = 'A fresh pull request title';
+  const chart = page.getByTestId('home-velocity-chart');
+  await expect(chart).toContainText('Nexus Sprint 2');
+  const before = await chart.innerHTML();
+  await page.route('**/api/team-velocity', (r) => r.fulfill({ status: 503, body: 'Unavailable' }));
   await page.getByTestId('home-refresh').click();
-  await expect(page.getByTestId('home-actions')).toContainText('A fresh pull request title');
-  await expect(page.getByTestId('home-meta')).toContainText('stale');
-  expect(await page.getByTestId('home-sprint').innerHTML()).toBe(sprint);
+  await expect(page.getByTestId('home-velocity-stale')).toBeVisible();
+  expect(await chart.innerHTML()).toBe(before);
 });
 
-test('Home viewer copy reports clipboard failures and retries @regression', async ({
+test('PR viewer copy reports clipboard failures and retries @regression', async ({
   page,
   dashboard,
 }) => {
-  await page.goto('/#/home');
-  await page.getByTestId('home-action-view-diff-example/workspace-17').click();
+  await page.goto('/#/prs');
+  await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
   const copy = page.getByTestId('diff-copy');
   await expect(copy).toBeEnabled();
   await page.evaluate(() => {
@@ -85,23 +85,24 @@ test('Home viewer copy reports clipboard failures and retries @regression', asyn
   expect(dashboard.requests.filter((r) => r.path.startsWith('/api/pr-diff'))).toHaveLength(1);
 });
 
-test('initial partial failures are unavailable, not unconfigured, and back off @regression', async ({
+test('initial velocity generation failure is unavailable, not empty, and never auto-retries @regression', async ({
   page,
   dashboard,
 }) => {
-  await page.route('**/api/my-tickets*', (route) =>
+  await page.route('**/api/team-velocity', (route) =>
     route.fulfill({ status: 503, body: 'Unavailable' }),
   );
   await page.goto('/#/home');
-  await expect(page.getByTestId('home-sprint-unavailable')).toBeVisible();
-  await expect(page.getByTestId('home-actions')).toContainText('Improve keyboard');
-  await expect(page.getByTestId('home-meta')).toContainText('Jira unavailable');
+  await expect(page.getByTestId('home-refresh')).toHaveText('Generate velocity');
+  await page.getByTestId('home-refresh').click();
+  await expect(page.getByTestId('home-velocity-error')).toBeVisible();
+  await expect(page.getByTestId('home-velocity-empty')).toHaveCount(0);
+  await expect(page.getByTestId('home-velocity-chart')).toHaveCount(0);
+  await expect(page.getByTestId('home-refresh')).toBeEnabled();
   await page.clock.install();
-  const before = dashboard.requests.filter((r) => r.path.startsWith('/api/my-tickets')).length;
+  const before = dashboard.requests.filter((r) => r.path === '/api/team-velocity').length;
   await page.clock.fastForward(10_000);
-  expect(dashboard.requests.filter((r) => r.path.startsWith('/api/my-tickets')).length).toBe(
-    before,
-  );
+  expect(dashboard.requests.filter((r) => r.path === '/api/team-velocity').length).toBe(before);
 });
 
 test('a pending diff survives a changed poll and does not submit twice @regression', async ({
@@ -118,14 +119,14 @@ test('a pending diff survives a changed poll and does not submit twice @regressi
     await wait;
     await route.fulfill({ json: dashboard.data.diff });
   });
-  await page.goto('/#/home');
+  await page.goto('/#/prs');
   await page.clock.install();
-  const trigger = page.getByTestId('home-action-view-diff-example/workspace-17');
+  const trigger = page.getByTestId('prs-diff-DEMO-1-example-workspace-17');
   await trigger.click();
   await expect(page.getByTestId('diff-copy')).toBeDisabled();
-  dashboard.data.prs.prs[0].title = 'Changed while loading diff';
+  dashboard.data.reviewTickets.tickets[0].summary = 'Changed while loading diff';
   await page.clock.fastForward(91_000);
-  await expect(page.getByTestId('home-actions')).toContainText('Changed while loading diff');
+  await expect(page.getByTestId('prs-list')).toContainText('Changed while loading diff');
   await expect(page.getByTestId('diff-viewer')).toBeVisible();
   await expect(page.getByTestId('diff-copy')).toBeDisabled();
   release();

@@ -6,14 +6,15 @@ import {
   buildTeamBoards,
   fetchTeamIssues,
   renderTeamVelocityHtml,
+  stackedStatusChartHtml,
 } from '../backend/team-velocity.mjs';
 import { SPRINT_FIELD, POINTS_FIELD } from '../backend/jira.mjs';
 
 const sprint = (id, name, state, endDate) => ({ id, name, state, endDate });
-const issue = (key, who, points, sprints) => ({
+const issue = (key, who, points, sprints, category = 'Done') => ({
   key,
   fields: {
-    status: { name: 'Done', statusCategory: { name: 'Done' } },
+    status: { name: category, statusCategory: { name: category } },
     assignee: who ? { displayName: who } : null,
     [POINTS_FIELD]: points,
     [SPRINT_FIELD]: sprints,
@@ -107,7 +108,7 @@ test('boardSeries orders chronologically and keeps the most recent', () => {
   );
 });
 
-test('renderTeamVelocityHtml reuses the dashboard chart and escapes names', () => {
+test('renderTeamVelocityHtml renders the stacked chart and escapes names', () => {
   const byUser = new Map([['<Ann & Co>', { points: 5, count: 1 }]]);
   const boards = new Map([
     [
@@ -121,6 +122,7 @@ test('renderTeamVelocityHtml reuses the dashboard chart and escapes names', () =
             count: 1,
             unestimated: 0,
             byUser,
+            byStatus: { done: 5, inProgress: 0, notStarted: 0 },
           },
         ],
       ]),
@@ -129,7 +131,8 @@ test('renderTeamVelocityHtml reuses the dashboard chart and escapes names', () =
   ]);
   const html = renderTeamVelocityHtml(boards, { keep: 8, date: '2026-09-04' });
   assert.match(html, /<h2 class="[^"]*">Nexus<\/h2>/);
-  assert.match(html, /data-testid="home-velocity-chart"/);
+  assert.match(html, /class="velocity-chart"/);
+  assert.match(html, /class="tv-seg"/);
   assert.match(html, /snapshot 2026-09-04/);
   assert.doesNotMatch(html, /<h2>Empty<\/h2>/);
   assert.doesNotMatch(html, /<Ann/);
@@ -155,4 +158,41 @@ test('fetchTeamIssues throws when Jira is not configured', async () => {
     if (prev.email !== undefined) process.env.JIRA_EMAIL = prev.email;
     if (prev.token !== undefined) process.env.JIRA_TOKEN = prev.token;
   }
+});
+
+test('buildTeamBoards totals points by status band per sprint', () => {
+  const s17 = [sprint(1404, 'Nexus Sprint 17', 'active', '2026-09-11')];
+  const boards = buildTeamBoards([
+    issue('N-1', 'Ann', 5, s17, 'Done'),
+    issue('N-2', 'Bob', 3, s17, 'In Progress'),
+    issue('N-3', 'Ann', 2, s17, 'Done'),
+    issue('N-4', 'Ann', 1, s17, 'To Do'),
+    issue('N-5', 'Bob', 4, s17, 'No Category'),
+  ]);
+  assert.deepEqual(boards.get('Nexus').get('1404').byStatus, {
+    done: 7,
+    inProgress: 3,
+    notStarted: 5,
+  });
+});
+
+test('stackedStatusChartHtml stacks completed, in progress, not started', () => {
+  const entry = (name, byStatus) => ({
+    sprint: sprint(name, name, 'closed', '2026-09-11'),
+    points: byStatus.done + byStatus.inProgress + byStatus.notStarted,
+    count: 1,
+    unestimated: 0,
+    byStatus,
+  });
+  const html = stackedStatusChartHtml([
+    entry('Nexus Sprint 1', { done: 8, inProgress: 2, notStarted: 0 }),
+    entry('Nexus Sprint 2', { done: 0, inProgress: 0, notStarted: 4 }),
+  ]);
+  assert.ok(html.indexOf('#41d07c') < html.indexOf('#4aa6ff'), 'completed (green) is the base');
+  assert.match(html, /#7d8794/);
+  assert.match(html, /style="flex:8 1 0;background:#41d07c"/);
+  assert.match(html, /style="height:100%"/);
+  assert.match(html, /style="height:40%"/);
+  assert.doesNotMatch(html, /flex:0 1 0/);
+  assert.equal(stackedStatusChartHtml([]), '<p class="tv-empty">No sprint data yet</p>');
 });

@@ -23,8 +23,6 @@ const unifiedDiff = [
 ].join('\n');
 
 for (const [route, variant, number] of [
-  ['home', 'home-action', 17],
-  ['home', 'home-action', 18],
   ['prs', 'prs-ticket-DEMO-1', 17],
   ['prs', 'prs-ticket-DEMO-2', 18],
 ]) {
@@ -42,9 +40,7 @@ for (const [route, variant, number] of [
     }
     await page.goto(`/#/${route}`);
     const trigger = page.getByTestId(
-      route === 'prs'
-        ? `prs-diff-DEMO-${number === 17 ? 1 : 2}-example-workspace-${number}`
-        : `${variant}-view-diff-example/workspace-${number}`,
+      `prs-diff-DEMO-${number === 17 ? 1 : 2}-example-workspace-${number}`,
     );
     await expect(trigger).toHaveAccessibleName('View diff vs origin/ops/development');
     await trigger.click();
@@ -231,8 +227,8 @@ test('route changes close the viewer and late fetch results do not reopen it', a
     await pending;
     await route.fulfill({ json: { diff: '+LATE_ROUTE_RESULT\n' } });
   });
-  await page.goto('/#/home');
-  await page.getByTestId('home-action-view-diff-example/workspace-17').click();
+  await page.goto('/#/prs');
+  await page.getByTestId('prs-diff-DEMO-1-example-workspace-17').click();
   await expect.poll(() => started).toBe(true);
   await page.evaluate(() => {
     location.hash = '#/services';
@@ -243,9 +239,9 @@ test('route changes close the viewer and late fetch results do not reopen it', a
   release();
   await response;
   await page.evaluate(() => {
-    location.hash = '#/home';
+    location.hash = '#/prs';
   });
-  await expect(page.getByTestId('home-actions')).toBeVisible();
+  await expect(page.getByTestId('prs-list')).toBeVisible();
   await expect(page.getByTestId('diff-viewer')).toBeHidden();
   expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes)).toEqual([]);
 });
@@ -391,7 +387,8 @@ test('a queued hashchange for the current route does not dismiss a newly opened 
   await page.goto('/#/prs');
   await expect(page.getByTestId('prs-diff-DEMO-1-example-workspace-17')).toBeVisible();
   await page.getByTestId('tab-home').click();
-  await expect(page.getByTestId('home-actions')).toBeVisible();
+  await expect(page.getByTestId('panel-home')).toBeVisible();
+  await expect(page.getByTestId('home-refresh')).toHaveText('Generate velocity');
   await page.evaluate(async () => {
     const delivered = new Promise((resolve) =>
       window.addEventListener('hashchange', () => setTimeout(resolve, 0), { once: true }),

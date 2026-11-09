@@ -66,8 +66,8 @@ disclosure (a menu icon on phones), while the first three links stay visible.
 The menu supports Tab, Enter and Escape and closes on navigation or an outside
 click. All seven views remain available:
 
-- **Home** — the overview: sprint progress, KPI tiles, the "needs you" queue and
-  a compact service health strip. See [Home](#home). Use its tab or click the
+- **Home** — manually generated, browser-saved team/person sprint velocity.
+  See [Home](#home). Use its tab or click the
   **EZAT Dev Dashboard** title to return to it.
 - **My Tickets** — Jira tickets assigned to you (`assignee = currentUser()`) as a
   kanban board with one column per status, each card carrying your open PRs
@@ -267,7 +267,7 @@ does not itself grant new acceptance; check/save settings when required.
 ### Setup gate and APIs
 
 Until ready, operational HTTP APIs (services, logs, controls, events, PRs,
-tickets, releases and diff) return `409 SETUP_REQUIRED` before doing their work.
+tickets, team velocity, releases and diff) return `409 SETUP_REQUIRED` before doing their work.
 The page, static assets and these setup endpoints remain available:
 
 | Endpoint                      | Contract                                                                                                                                                                                                                                                             |
@@ -380,6 +380,7 @@ An agent can read the same logs three ways:
    - `GET /api/prs`
    - `GET /api/review-tickets` (other-assigned review-ready Jira tickets with all linked open PRs in watched repos; see [PR review board](#open-prs))
    - `GET /api/my-tickets?includeDone=0|1`
+   - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
    - `GET /api/claude/tickets`, `POST /api/claude/launch` and `POST /api/claude/answers` (see [Claude launcher](#claude-launcher))
@@ -387,104 +388,97 @@ An agent can read the same logs three ways:
 
 ## Home
 
-The landing view, and the one screen meant to answer _"what should I be doing
-right now?"_. Reach it through the Home tab or page title once setup is ready;
-it is where a bare URL or an unknown hash lands in ready mode.
+The landing view is a **Velocity** workspace, replacing the Sprint, KPI,
+Needs You and Services widgets. Reach it through the Home tab or page title
+once setup is ready; a bare URL or unknown hash also lands here in ready mode.
+The dedicated My Tickets, Pull Requests, Slack and Services screens are unchanged.
 
-Home adds **no new endpoints and no new upstream calls**. It composes
-[`/api/prs`](#open-prs), `/api/my-tickets` and the `/api/events` service stream,
-all of which the other tabs already use.
+**Generate velocity** explicitly loads Jira sprint history and saves one aggregate
+snapshot for every team and person in this browser. Later visits restore it
+immediately, including its original **Generated** local date/time. **Refresh**
+explicitly replaces it. Home never fetches velocity automatically: no mount,
+reload, tab activation, focus, visibility, polling, countdown or TTL refresh,
+even for old, missing or invalid saved data. Without a usable snapshot, Generate
+remains an actionable empty state. Home no longer requests personal tickets or
+PRs; the application's shared service feed still operates independently.
 
-**KPI tiles** — Open PRs · Needs review · My tickets in sprint · Done this
-sprint. Each tile links to the tab that explains it. A tile shows `—` rather
-than `0` when the number is genuinely unknown (integration data or review data
-unavailable) — hover it for the reason.
+**Team** defaults to **Nexus** and remembers explicit changes across reloads.
+An unavailable saved team stays selected with a named no-history state, rather
+than silently switching teams. **Person** defaults to **Everyone** (the whole
+team); selecting a person or a row in the alphabetical **People** breakdown
+scopes the chart locally, with no request. Completed-point totals use the same
+displayed sprint window for everyone, including zero totals, Unassigned and
+Unknown assignee where present. This is not a productivity ranking. Display
+labels are disambiguated consistently across the selector, rows and chart.
+Person selection is not persisted: Team changes and reloads reset Everyone;
+Refresh retains the selected person only if that identity still exists for the
+selected team. Both selectors remain usable during generation.
 
-**Sprint** — the selected sprint, with its date range, days remaining and
-a stacked bar of your tickets in that sprint by status category. A selector
-lists every sprint found on your fetched tickets (active first, then future,
-then closed most-recent-first), defaulting to the active sprint; KPIs stay
-active-scoped regardless of the selection. Tickets are
-scoped by their whole `sprints` list, not just the sprint shown on the row, so a
-ticket carried into a later sprint still counts toward the active one. A
-previous sprint is a floor, not a total: the ticket query is capped and
-assigned-to-me only, so the existing "totals may be incomplete" warning applies
-to old sprints too.
+**Sprint history · story points** shows up to eight latest active/closed sprints
+per team, oldest to newest, with Completed, In progress and Not started stacks
+on a zero-based scale. Future sprints are excluded; missing end dates sort as
+oldest, not invented dates. Totals and exact sprint/status values are available
+without hovering; zero estimates remain zero and unestimated memberships are
+counted separately. Activating a sprint bar opens its details, reveals the
+selected row and focuses its heading; simply restoring, filtering or refreshing
+does not move focus there. Narrow charts scroll horizontally inside the pane.
 
-The bar is weighted by **story points**, not ticket count, because the two
-disagree in the direction that matters: a sprint reading 21 of 27 tickets done
-(78%) can be 91 of 108 points done (84%), and it is the second figure that gets
-quoted at sprint review. Ticket counts stay in the legend beside the points, so
-nothing is lost.
+### Snapshot semantics and failure safety
 
-Click any legend item to **expand the tickets behind it** in place — key,
-summary, status, type and its points, linked to Jira. Bands expand
-independently and stay open across refreshes; the rows are Home's own compact
-ticket rows (`WorkTicketRow`), not the cards the [My Tickets](#my-tickets) board uses.
+- Points use the **current Jira status, estimate and assignee at generation**
+  for each retained sprint membership, not historical ownership or delivered
+  points at sprint closure. Teams derive from sprint names, not Jira board IDs.
+  Carried issues count in each sprint membership, not as unique delivered work.
+- History completeness is **not verified**. A possible 5,000-issue query-limit
+  warning is conservative; absence of that warning does not prove completeness.
+  Name-based identity fallback may merge same-name people and changes on rename.
+- A failed Refresh or invalid response retains the last-good chart, saved data
+  and Generated time, with an explicit stale/error note and manual retry. A
+  failed first Generate leaves Generate available. Concurrent generation is guarded.
+- A storage quota/access failure does not discard successfully generated data:
+  it stays usable in memory with **Could not save velocity in this browser; this
+  update may not survive reload.** Reload restores a previous valid saved
+  snapshot, if available, or the empty state; it never triggers recovery fetching.
+  A later successful save clears the warning. Team preference storage failure is
+  nonfatal, but the choice may not survive reload.
 
-Two honesty rules, because a progress bar is easy to lie with:
+### API and browser storage
 
-- A ticket with no estimate adds no width, so it would silently vanish. The
-  count is stated next to the total (`3 unestimated`) and is itself a fourth
-  drill-down — the useful thing to do with that number is go and estimate them.
-- If **nothing** in the sprint is estimated, a points bar would render three
-  empty bands and read as "no work". The bar falls back to counting tickets and
-  labels itself `no estimates`; no `pts` figure is shown at all.
+`GET /api/team-velocity` returns `{ boards, keep, coverage, updatedAt }`.
+Each alphabetically ordered board is `{ name, series, people }`; each person is
+`{ id, displayName, series }`, aligned and zero-filled to the same team sprint
+window. Series entries contain `{ sprint: { id, name, state, endDate }, points,
+count, unestimated, byStatus: { done, inProgress, notStarted } }`. `keep` is 8;
+`coverage` is `{ completeness: 'unknown', possibleTruncation,
+maxIssuesPerQuery: 5000 }`, and `updatedAt` is the successful generation timestamp.
+The response contains aggregates and pseudonymous person IDs, not raw issues,
+account IDs, emails or credentials; pseudonymization is not anonymization.
 
-**Needs you** — one merged queue, most urgent first, each group labelled with
-why it is listed:
+The read route is [setup-gated](#setup-gate-and-apis), sends no-store responses,
+and rejects cross-site/same-site browser requests before Jira reads with sanitized
+`403 OPERATION_FAILED`. Upstream failure returns a sanitized `502` rather than
+an empty success. There is no server-side team/person filter; those views use
+the saved all-team result locally.
 
-1. your PRs with changes requested
-2. teammates waiting on a review
-3. your PRs still waiting on approval
-4. your tickets in progress
+Browser-local localStorage records are separate from work filters:
 
-Groups 1-3 mean somebody is waiting; group 4 is your own current work, so it
-reads last. Rows within a group are stalest-first — the longest-ignored item is
-the one actually blocking. The queue is capped at 12 rows, spent in group order
-so the most urgent rows are never the ones dropped, with an `N more not shown`
-line for the remainder. PR rows retain the legacy `prItemHtml` renderer;
-the Pull Requests board has its own ticket cards and eligibility rules.
+- `dev-dashboard.home-velocity`: `{ version: 1, team }`, defaulting to Nexus
+  when absent/invalid; written only on explicit Team changes.
+- `dev-dashboard.home-velocity.snapshot`: `{ version: 2, snapshot }`, holding
+  the entire API aggregate and original timestamp. Only validated whitelisted
+  fields are restored/saved. Invalid structure, impossible arithmetic,
+  inconsistent team/person totals and old/personless snapshots are rejected without
+  repair, overwriting on read or automatic fetch. Legitimate fractional values
+  are preserved with floating-point tolerance. Explicit Generate is required
+  when no usable snapshot exists; valid empty results remain generated snapshots.
 
-**Services** — one line per service: status pill, port link, and a Start/Stop
-button. No log viewport. It is fed entirely by the `/api/events` stream, which
-pushes a full snapshot on connect, so the strip costs no extra request. The page
-opens **one** `EventSource` in `app.js` and fans it out to every panel that
-shows service state, rather than one connection per panel.
-
-Home refreshes on the same 90s cadence as the other data tabs, with the same
-discipline: one 1s ticker drives both the countdown and the refresh, polling
-pauses while the view is hidden or the page is backgrounded, and each region is
-diffed so a silent tick never disturbs scroll or focus. GitHub and Jira are
-loaded independently — an ordinary fetch failure degrades only its own
-sections, and the meta line says `some data stale` rather than blanking the
-page.
-
-### Two honest caveats
-
-- **"Needs review" is not "review requested from you."** GitHub's requested
-  reviewers are never fetched ([`backend/review.mjs`](backend/review.mjs) asks only for
-  submitted reviews), so that is not knowable without a new call. The tile and
-  queue group mean: _open PRs by other people, under the approval threshold,
-  that you have not reviewed yet_ — drafts excluded.
-- **Home asks for `includeDone=1`**, because the default my-tickets query drops
-  Done tickets and sprint progress needs them. That shares the
-  `MY_TICKETS_MAX_ISSUES` cap of 200. The JQL sorts by `updated DESC` for this
-  reason: it used to sort by status name, which meant truncation dropped To Do
-  first (`Done` < `In Progress` < `To Do`) and biased every total toward
-  "finished". Nothing downstream depends on that order — `groupTicketsByStatus`
-  re-sorts every group — so the sort only decides what is lost, and stalest is
-  the honest thing to lose. If the cap is hit, `/api/my-tickets` returns
-  `truncated: true` and the Sprint block says its totals may be incomplete
-  rather than reporting a confident, wrong number.
-
-The derivation behind all of the above — the counting, the point summing, the
-sprint scoping and the urgency ordering — lives in
-[`ui/home-data.js`](ui/home-data.js), which is DOM-free precisely so it can be
-tested: see [`test/home-data.test.mjs`](test/home-data.test.mjs). The sprint
-bar's arithmetic and its honesty rules are pinned separately in
-[`test/home-cards.test.mjs`](test/home-cards.test.mjs), since a bar that is
-wrong by a few percent looks entirely plausible.
+The adapter is [`backend/home-velocity.mjs`](backend/home-velocity.mjs), snapshot
+validation/storage is [`ui/home-velocity.js`](ui/home-velocity.js), and chart
+interaction is [`ui-react/components/TeamVelocityChart.jsx`](ui-react/components/TeamVelocityChart.jsx).
+Coverage lives in `test/home-velocity.test.mjs`, `test/home-velocity-route.test.mjs`,
+`test/home-velocity-preferences.test.mjs` and `e2e/home-velocity.spec.js`.
+Home reuses the server's team aggregation helpers without generating or changing
+`team-velocity.html`; the standalone CLI/report remains separate and unchanged.
 
 ## Open PRs
 
@@ -571,9 +565,6 @@ and four PR sections are retired on this screen only.
 
 My Tickets has **Search**, **Status**, **Sprint**, **Priority** and **Type**;
 sprint membership includes a ticket's full sprint history, using IDs when available.
-Home's Needs You block has **Search** and **Action type**, applied before its
-12-row cap. Home's Sprint **Search** and **Status** affect only expanded ticket
-lists; progress, points, KPIs and sprint history retain their full-data totals.
 
 Search is immediate, case-insensitive and literal (punctuation is not a regular
 expression). Search and dropdowns combine with AND over already fetched data,
@@ -582,7 +573,7 @@ versus fetched items (tickets on the PR board); an empty filtered list says
 **No matches**. Fetch-cap and stale-data warnings still apply. **Include Done**
 remains the separate remote-scope control.
 
-**Clear filters** resets only its own view or Home block and saves that reset.
+**Clear filters** resets only its own view and saves that reset.
 Each set of filters survives tab switches, refreshes and reloads in version-1
 browser localStorage (`dev-dashboard.work-filters`), including all four PR values:
 Search, Ticket prefix, Repository and Review state. With no valid saved choices,
@@ -597,10 +588,10 @@ silently broaden the list. Filters are browser-local and are not shared in URLs.
 ### Legacy PR feeds
 
 `GET /api/prs` retains its existing own-PR, draft, approval-threshold and
-merge-candidate contracts; Home still reads this legacy API. The CLI's
+merge-candidate contracts. The CLI's
 `node backend/cli.mjs prs` retains its own-PR and approval output.
 Neither is the new review queue. `/api/ticket-prs` remains the
-own-author PR feed used by My Tickets. Home, My Tickets, Slack and the existing
+own-author PR feed used by My Tickets. My Tickets, Slack and the existing
 diff viewer keep their behavior.
 
 Configure the GitHub owner, repositories and token through **Settings**. Missing
@@ -921,9 +912,7 @@ user): it cannot be tied to a reviewer, so it counts only while it is the newest
 approval or change request on the PR, and a later approval overrides it.
 `approvals` and the [approval threshold](#approval-threshold) count approvers
 only, so a PR can show `changes requested` and still have approvals. The same
-rule feeds the My Tickets board and Home's legacy PR data (they share one
-function, `summarizeReviews`), so on Home a PR with a standing change request
-sits in the changes-requested group, not in the one still waiting on approval.
+rule feeds the My Tickets board through the shared `summarizeReviews` function.
 If the token cannot read review data, the dashboard can omit the badge when a
 runtime review fetch fails — open PRs are unaffected.
 Fresh/changed integration setup also requires the GraphQL access probe.
@@ -2389,7 +2378,8 @@ ui-react/
   styles.css            theme variables plus the established bespoke panel CSS
 ui/
   dom.js                esc / slug / clamp / copyText / timeAgo
-  home-data.js          Home's counting / sprint scoping / urgency ordering (DOM-free)
+  home-data.js          retained legacy Home counting / sprint / urgency helpers
+  home-velocity.js      Home Team preference and validated aggregate snapshot storage
   work-filters.js       shared PR, ticket and action filtering (DOM-free)
   releases-data.js      release grouping and remembered version (DOM-free)
   ticket-board.js       My Tickets column order and CI / review wording (DOM-free)
@@ -2405,7 +2395,7 @@ cards, filters, listboxes, terminal output and status; domain-free selectors
 and established card/diff helpers preserve existing calculations, escaping
 and data-testid contracts. Masonry uses CSS multi-column packing with intact
 cards and sibling spacing at 760px and 1700px; Services retains an explicit
-CSS grid, Home blocks remain indivisible, and My Tickets, Slack and Pull Requests are
+CSS grid, Home uses one velocity pane in the shared board shell, and My Tickets, Slack and Pull Requests are
 horizontally scrolling boards of columns that scroll on their own (see
 [My Tickets](#my-tickets)). All three use one shared board frame,
 [`ui-react/components/BoardShell.jsx`](ui-react/components/BoardShell.jsx) with

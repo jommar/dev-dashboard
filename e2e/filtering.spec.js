@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, seedVelocitySnapshot } from './fixtures.js';
 
 const STORAGE_KEY = 'dev-dashboard.work-filters';
 const literal = '[fix].* <img> &';
@@ -526,156 +526,38 @@ test('ticket filters send no requests while the initial Slack session check is p
   expect(statusRequests).toBe(2);
 });
 
-test('Home filters the full Needs You queue before twelve rows and only filters Sprint drilldowns, preserving aggregates', async ({
+test('Home Team filtering changes only chart scope and keeps shared work filters independent', async ({
   page,
   dashboard,
 }) => {
-  test.setTimeout(60_000);
   populateFilters(dashboard.data);
-  const template = dashboard.data.prs.prs[0];
-  const crowded = Array.from({ length: 13 }, (_, index) => ({
-    ...template,
-    number: 200 + index,
-    title: `Urgent change ${index}`,
-    tickets: [],
-  }));
-  dashboard.data.prs.prs = crowded;
-  dashboard.data.prs.groups = { Unticketed: crowded };
-  dashboard.data.prs.total = 13;
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.clock.install();
-  await page.goto('/#/home');
+  const slackLoaded = waitForSlackListing(page);
+  const prsLoaded = page.waitForResponse('**/api/ticket-prs');
+  await page.goto('/#/my-tickets');
+  await waitLoaded(page, 'my-tickets');
+  await Promise.all([slackLoaded, prsLoaded]);
+  const mine = controls(page.getByTestId('panel-my-tickets'));
+  await mine.search.fill('DEMO-1');
+  const workFilters = await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY);
+  await page.getByTestId('tab-home').click();
+  await expect(page.getByTestId('home-velocity-chart')).toContainText('Nexus Sprint 2');
+  const snapshot = structuredClone(dashboard.data.teamVelocity);
+  const select = page.getByTestId('home-velocity-team');
+  await expectNoFetches(dashboard, async () => {
+    await select.selectOption('Mobile');
+    await expect(page.getByTestId('home-velocity-chart')).toContainText('Mobile Sprint 11');
+    await expect(page.getByTestId('home-velocity-chart')).not.toContainText('Nexus Sprint');
+  });
+  expect(dashboard.data.teamVelocity).toEqual(snapshot);
+  expect(await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY)).toBe(workFilters);
+  await page.getByTestId('tab-my-tickets').click();
+  await expect(mine.search).toHaveValue('DEMO-1');
+  await page.getByTestId('tab-home').click();
+  await expect(select).toHaveValue('Mobile');
+  await page.getByTestId('home-refresh').click();
   await waitLoaded(page, 'home');
-  const queue = page.getByTestId('home-actions-block');
-  const action = controls(queue);
-  const sprint = page.getByTestId('home-sprint-block');
-  const drilldown = controls(sprint);
-  const card = page.getByTestId('home-sprint-Workspace-Sprint');
-  const aggregateSnapshot = async () => ({
-    kpis: await page.getByTestId('home-kpi-row').textContent(),
-    history: await page.getByTestId('home-velocity').innerHTML(),
-    total: await card.getByTestId('home-sprint-Workspace-Sprint-total').textContent(),
-    legend: await card.locator('[data-band]').allTextContents(),
-    widths: await card
-      .locator('.sprint-band')
-      .evaluateAll((elements) => elements.map((element) => element.style.width)),
-    unestimated: await card.getByTestId('home-sprint-Workspace-Sprint-unestimated').textContent(),
-  });
-  await expect(page.getByTestId('kpi-value-my-prs')).toHaveText('13');
-  await expect(page.getByTestId('kpi-value-sprint-tickets')).toHaveText('5');
-  await expect(page.getByTestId('kpi-value-sprint-done')).toHaveText('1');
-  await expect(card.getByTestId('home-sprint-Workspace-Sprint-total')).toHaveText(
-    '3 of 18 pts · 5 tickets',
-  );
-  const before = await aggregateSnapshot();
-
-  await test.step('lower-priority actions survive filtering before cap and count all matching rows', async () => {
-    await expect(queue.locator('.pr-item, .action-ticket')).toHaveCount(12);
-    await expect(page.getByTestId('home-action-ticket-DEMO-1')).toHaveCount(0);
-    await expectNoFetches(dashboard, async () => {
-      await expect(action.search).toBeVisible();
-      await action.select('Action type').selectOption('in-progress');
-      await expect(queue.locator('.action-ticket')).toHaveCount(3);
-      await expect(queue.getByTestId('home-actions-filter-count')).toHaveText('3 of 17');
-      await expect(page.getByTestId('home-actions-more')).toHaveCount(0);
-      await action.search.fill('[FIX].* <IMG> &');
-      await expect(queue.locator('.action-ticket')).toHaveCount(3);
-      await action.search.fill('DEMO-1');
-      await expect(page.getByTestId('home-action-ticket-DEMO-1')).toBeVisible();
-      await expect(queue.locator('.action-ticket')).toHaveCount(1);
-      await expect(queue.getByTestId('home-actions-filter-count')).toHaveText('1 of 17');
-      await action.search.fill('^');
-      await expect(queue.getByTestId('home-actions-no-matches')).toContainText('No matches');
-      await expect(page.getByTestId('home-actions-empty')).toHaveCount(0);
-      await action.clear.click();
-      await action.select('Action type').selectOption('changes-requested');
-      await expect(queue.locator('.pr-item')).toHaveCount(12);
-      await expect(page.getByTestId('home-actions-more')).toHaveText('1 more not shown');
-      await expect(queue.getByTestId('home-actions-filter-count')).toHaveText('13 of 17');
-      await action.select('Action type').selectOption('in-progress');
-      await action.search.fill('DEMO-1');
-    });
-    expect(await aggregateSnapshot()).toEqual(before);
-  });
-
-  await test.step('Sprint search and status affect only expanded rows and leave counts, points and history intact', async () => {
-    await card.getByTestId('home-sprint-Workspace-Sprint-count-active').click();
-    const rows = page.getByTestId('sprint-1-list-active');
-    await expect(rows.locator('.my-ticket')).toHaveCount(3);
-    await expectNoFetches(dashboard, async () => {
-      await drilldown.search.fill('[FIX].* <IMG> &');
-      await drilldown.select('Status').selectOption('In Progress');
-      await expect(rows.locator('.my-ticket')).toHaveCount(3);
-      await drilldown.search.fill('DEMO-1');
-      await expect(rows.getByTestId('sprint-1-list-active-item-DEMO-1')).toBeVisible();
-      await expect(rows.locator('.my-ticket')).toHaveCount(1);
-      await expect(sprint.getByTestId('home-sprint-filter-count')).toHaveText('1 of 5');
-      await drilldown.search.fill('^');
-      await expect(sprint.getByTestId('home-sprint-no-matches')).toContainText('No matches');
-      await expect(sprint.locator('.my-ticket')).toHaveCount(0);
-      await expect(page.getByTestId('home-sprint-truncated')).toBeVisible();
-      await drilldown.search.fill('DEMO-1');
-    });
-    expect(await aggregateSnapshot()).toEqual(before);
-    await page.getByTestId('home-refresh').click();
-    await waitLoaded(page, 'home');
-    await expect(action.search).toHaveValue('DEMO-1');
-    await expect(drilldown.search).toHaveValue('DEMO-1');
-    await page.route('**/api/prs', (route) => route.fulfill({ status: 502, body: 'Unavailable' }));
-    await page.getByTestId('home-refresh').click();
-    await expect(page.getByTestId('home-meta')).toContainText('GitHub stale');
-    await expectNoFetches(dashboard, async () => {
-      await action.search.fill('impossible');
-      await expect(page.getByTestId('home-meta')).toContainText('GitHub stale');
-      await action.search.fill('DEMO-1');
-      await expect(page.getByTestId('home-action-ticket-DEMO-1')).toBeVisible();
-    });
-    await page.unroute('**/api/prs');
-    await page.getByTestId('tab-services').click();
-    await page.getByTestId('tab-home').click();
-    await expect(action.select('Action type')).toHaveValue('in-progress');
-    await expect(drilldown.select('Status')).toHaveValue('In Progress');
-    await page.reload();
-    await waitLoaded(page, 'home');
-    await expect(action.search).toHaveValue('DEMO-1');
-    await expect(action.select('Action type')).toHaveValue('in-progress');
-    await expect(drilldown.search).toHaveValue('DEMO-1');
-    await expect(drilldown.select('Status')).toHaveValue('In Progress');
-    expect(await aggregateSnapshot()).toEqual(before);
-    await expectNoFetches(dashboard, async () => {
-      await action.clear.click();
-      await expect(action.search).toHaveValue('');
-      await expect(action.select('Action type')).toHaveValue('');
-      await expect(drilldown.search).toHaveValue('DEMO-1');
-      await drilldown.clear.click();
-      await expect(drilldown.search).toHaveValue('');
-      await expect(drilldown.select('Status')).toHaveValue('');
-    });
-    expect(await aggregateSnapshot()).toEqual(before);
-  });
-
-  await test.step('Home clears stale counts and options when rows or integrations disappear', async () => {
-    await action.select('Action type').selectOption('in-progress');
-    await drilldown.select('Status').selectOption('In Progress');
-    dashboard.data.tickets = { tickets: [], activeSprints: [], allSprints: [], truncated: false };
-    await page.getByTestId('home-refresh').click();
-    await waitLoaded(page, 'home');
-    await expect.soft(sprint.getByTestId('home-sprint-filter-count')).toHaveText('0 of 0');
-    await expect.soft(drilldown.select('Status')).toHaveValue('In Progress');
-    await expect.soft(drilldown.select('Status').locator('option[value="Done"]')).toHaveCount(0);
-    await drilldown.clear.click();
-    await expect
-      .soft(drilldown.select('Status').locator('option[value="In Progress"]'))
-      .toHaveCount(0);
-    await page.route('**/api/prs', (route) => route.fulfill({ status: 401, body: 'Unconfigured' }));
-    await page.route('**/api/my-tickets?includeDone=1', (route) =>
-      route.fulfill({ status: 401, body: 'Unconfigured' }),
-    );
-    await page.getByTestId('home-refresh').click();
-    await waitLoaded(page, 'home');
-    await expect.soft(queue.getByTestId('home-actions-filter-count')).toHaveText('0 of 0');
-    await expect.soft(sprint.getByTestId('home-sprint-filter-count')).toHaveText('0 of 0');
-    await expect.soft(action.select('Action type')).toHaveValue('in-progress');
-    await action.clear.click();
-    await expect.soft(action.select('Action type').locator('option')).toHaveCount(1);
-  });
+  await expect(page.getByTestId('home-velocity-chart')).toContainText('Mobile Sprint 11');
+  expect(dashboard.data.teamVelocity).toEqual(snapshot);
 });

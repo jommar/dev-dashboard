@@ -53,6 +53,53 @@ test('getTicketPrs resolves to unavailable instead of throwing, so PRs never blo
 
 const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), { status });
 
+test('getTeamVelocity requests one shared team snapshot without filtering parameters', async (t) => {
+  const payload = {
+    boards: [],
+    keep: 8,
+    coverage: { completeness: 'unknown', possibleTruncation: false, maxIssuesPerQuery: 5000 },
+    updatedAt: '2026-11-09T12:00:00Z',
+  };
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse(payload);
+  });
+  assert.deepEqual(await api.getTeamVelocity(), payload);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], '/api/team-velocity');
+  assert.ok(!calls[0][1]?.method || calls[0][1].method === 'GET');
+});
+
+test('getTeamVelocity rejects failures and notifies the existing setup listener', async (t) => {
+  let notifications = 0;
+  const unsubscribe = api.onSetupRequired(() => notifications++);
+  t.after(unsubscribe);
+  t.mock.method(globalThis, 'fetch', async () =>
+    jsonResponse({ code: 'SETUP_REQUIRED', error: 'Finish setup' }, 409),
+  );
+  await assert.rejects(() => api.getTeamVelocity(), {
+    message: 'Finish setup',
+    code: 'SETUP_REQUIRED',
+    status: 409,
+  });
+  assert.equal(notifications, 1);
+  t.mock.restoreAll();
+  t.mock.method(globalThis, 'fetch', async () =>
+    jsonResponse({ error: 'Velocity unavailable' }, 502),
+  );
+  await assert.rejects(() => api.getTeamVelocity(), {
+    message: 'Velocity unavailable',
+    status: 502,
+  });
+  assert.equal(notifications, 1);
+  t.mock.restoreAll();
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw new TypeError('network down');
+  });
+  await assert.rejects(() => api.getTeamVelocity(), /network down/);
+});
+
 test('review API: existing launchClaude posts only key/action and preserves independent review entry', async (t) => {
   const calls = [];
   const ticket = {

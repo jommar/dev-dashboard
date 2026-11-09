@@ -218,6 +218,123 @@ function releasesData() {
   };
 }
 
+export function homeVelocityData() {
+  const entry = (team, id, points, byStatus, extra = {}) => ({
+    sprint: {
+      id,
+      name: `${team} Sprint ${id}`,
+      state: 'closed',
+      endDate: `2026-10-${String(id).padStart(2, '0')}T12:00:00Z`,
+    },
+    points,
+    count: 4,
+    unestimated: 1,
+    byStatus,
+    ...extra,
+  });
+  const snapshot = {
+    boards: [
+      {
+        name: 'Mobile',
+        series: [entry('Mobile', 11, 7, { done: 5, inProgress: 2, notStarted: 0 })],
+      },
+      {
+        name: 'Nexus',
+        series: [
+          entry(
+            'Nexus',
+            1,
+            0,
+            { done: 0, inProgress: 0, notStarted: 0 },
+            {
+              sprint: { id: null, name: 'Nexus Sprint 1', state: 'closed', endDate: null },
+              count: 1,
+              unestimated: 0,
+            },
+          ),
+          entry('Nexus', 2, 4.75, { done: 2.5, inProgress: 1.25, notStarted: 1 }),
+          entry('Nexus', 3, 0, { done: 0, inProgress: 0, notStarted: 0 }, { unestimated: 4 }),
+          entry(
+            'Nexus',
+            4,
+            8,
+            { done: 3, inProgress: 3, notStarted: 2 },
+            {
+              sprint: {
+                id: 4,
+                name: 'Nexus Sprint 4',
+                state: 'active',
+                endDate: '2026-10-04T12:00:00Z',
+              },
+            },
+          ),
+        ],
+      },
+    ],
+    keep: 8,
+    coverage: { completeness: 'unknown', possibleTruncation: false, maxIssuesPerQuery: 5000 },
+    updatedAt: '2026-11-09T12:34:56Z',
+  };
+  const [mobile, nexus] = snapshot.boards;
+  mobile.people = [
+    {
+      id: `person:${'c'.repeat(64)}`,
+      displayName: 'Bea Mobile',
+      series: structuredClone(mobile.series),
+    },
+  ];
+  const personEntry = (teamEntry, points, byStatus, count, unestimated = 0) => ({
+    sprint: structuredClone(teamEntry.sprint),
+    points,
+    byStatus,
+    count,
+    unestimated,
+  });
+  nexus.people = [
+    {
+      id: `person:${'a'.repeat(64)}`,
+      displayName: 'Alex Example',
+      series: [
+        personEntry(nexus.series[0], 0, { done: 0, inProgress: 0, notStarted: 0 }, 1),
+        personEntry(nexus.series[1], 2.5, { done: 2.5, inProgress: 0, notStarted: 0 }, 1),
+        personEntry(nexus.series[2], 0, { done: 0, inProgress: 0, notStarted: 0 }, 1, 1),
+        personEntry(nexus.series[3], 3, { done: 3, inProgress: 0, notStarted: 0 }, 1),
+      ],
+    },
+    {
+      id: `person:${'b'.repeat(64)}`,
+      displayName: 'Alex Example',
+      series: [
+        personEntry(nexus.series[0], 0, { done: 0, inProgress: 0, notStarted: 0 }, 0),
+        personEntry(nexus.series[1], 1.25, { done: 0, inProgress: 1.25, notStarted: 0 }, 1),
+        personEntry(nexus.series[2], 0, { done: 0, inProgress: 0, notStarted: 0 }, 1, 1),
+        personEntry(nexus.series[3], 3, { done: 0, inProgress: 3, notStarted: 0 }, 1),
+      ],
+    },
+    {
+      id: 'unassigned',
+      displayName: 'Unassigned',
+      series: [
+        personEntry(nexus.series[0], 0, { done: 0, inProgress: 0, notStarted: 0 }, 0),
+        personEntry(nexus.series[1], 1, { done: 0, inProgress: 0, notStarted: 1 }, 1),
+        personEntry(nexus.series[2], 0, { done: 0, inProgress: 0, notStarted: 0 }, 1, 1),
+        personEntry(nexus.series[3], 2, { done: 0, inProgress: 0, notStarted: 2 }, 1),
+      ],
+    },
+    {
+      id: 'unknown',
+      displayName: 'Unknown assignee',
+      series: [
+        personEntry(nexus.series[0], 0, { done: 0, inProgress: 0, notStarted: 0 }, 0),
+        personEntry(nexus.series[1], 0, { done: 0, inProgress: 0, notStarted: 0 }, 1, 1),
+        personEntry(nexus.series[2], 0, { done: 0, inProgress: 0, notStarted: 0 }, 1, 1),
+        personEntry(nexus.series[3], 0, { done: 0, inProgress: 0, notStarted: 0 }, 1, 1),
+      ],
+    },
+  ];
+  return snapshot;
+}
+
 export function dashboardData() {
   const sprint = {
     id: 1,
@@ -440,6 +557,7 @@ export function dashboardData() {
     ),
     diff: { diff: '--- a/example.js\n+++ b/example.js\n@@ -1 +1 @@\n-old\n+new\n' },
     releases: releasesData(),
+    teamVelocity: homeVelocityData(),
     slack: slackData(),
     claude: claudeData(),
   };
@@ -1563,6 +1681,7 @@ export function apiResponse(url, method, data, body) {
     if (url.pathname === '/api/config') return { json: data.config };
     if (url.pathname === '/api/settings') return { json: data.settings };
     if (url.pathname === '/api/services') return { json: { services: data.services } };
+    if (url.pathname === '/api/team-velocity') return { json: data.teamVelocity };
     if (url.pathname === '/api/prs') return { json: data.prs };
     if (url.pathname === '/api/review-tickets') return { json: data.reviewTickets };
     if (url.pathname === '/api/ticket-prs') return { json: data.ticketPrs };
