@@ -354,6 +354,9 @@
 .review-ticket-warning {
   color: var(--amber);
 }
+.review-ticket-assignee-name {
+  color: var(--accent);
+}
 .review-ticket-prs {
   display: flex;
   flex-direction: column;

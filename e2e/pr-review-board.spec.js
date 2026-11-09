@@ -35,8 +35,19 @@ test('ticket cards show assignee names and a readable fallback without changing 
   delete dashboard.data.reviewTickets.tickets[2].assignee;
   await page.goto('/#/prs');
   await expect(page.getByTestId('prs-ticket-assignee-DEMO-1')).toHaveText('Assignee: Alex Example');
+  const assignee = page.getByTestId('prs-ticket-assignee-DEMO-1');
+  const palette = await ticket(page).evaluate((element) => ({
+    accent: getComputedStyle(element.querySelector('.review-ticket-key')).color,
+    muted: getComputedStyle(element.querySelector('.review-ticket-sprint')).color,
+  }));
+  await expect(assignee).toHaveCSS('color', palette.muted);
+  await expect(assignee.locator('span')).toHaveCSS('color', palette.accent);
   for (const key of ['DEMO-2', 'DEMO-3']) {
     await expect(page.getByTestId(`prs-ticket-assignee-${key}`)).toHaveText('Assignee: Unassigned');
+    await expect(page.getByTestId(`prs-ticket-assignee-${key}`).locator('span')).toHaveCSS(
+      'color',
+      palette.muted,
+    );
   }
   await expect(ticket(page).getByTestId('prs-ticket-link-DEMO-1')).toBeVisible();
   await expect(ticket(page).getByTestId('prs-claude-icon-DEMO-1')).toBeEnabled();

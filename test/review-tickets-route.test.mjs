@@ -115,6 +115,25 @@ test('review queue route is setup-gated before its integration runs', async (t) 
   assert.deepEqual(calls, []);
 });
 
+test('review queue route preserves assigned and unassigned display names without private user fields', async (t) => {
+  const result = {
+    ...PAYLOAD,
+    tickets: [
+      { ...ticket('DEMO-1', [PR]), assignee: 'Alex Example', accountId: 'private-account-id' },
+      { ...ticket('DEMO-2', []), assignee: null },
+    ],
+  };
+  const { request } = await endpoint(t, { result });
+  const response = await request();
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    response.json.tickets.map(({ assignee }) => assignee),
+    ['Alex Example', null],
+  );
+  assert.equal(response.text.includes('private-account-id'), false);
+  assertNoSecrets(response.text);
+});
+
 test('review queue route freezes the exact nested safe response contract, including PR-free Jira tickets', async (t) => {
   const privateFields = {
     credentials: { githubToken, jiraToken },

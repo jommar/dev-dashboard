@@ -61,7 +61,10 @@ export function ReviewTicketCard({ ticket, jiraBase, prCoverage, onOpenClaude })
         {ticket.summary}
       </p>
       <p className="review-ticket-assignee" data-testid={`prs-ticket-assignee-${ticket.key}`}>
-        Assignee: {ticket.assignee || 'Unassigned'}
+        Assignee:{' '}
+        <span className={ticket.assignee ? 'review-ticket-assignee-name' : undefined}>
+          {ticket.assignee || 'Unassigned'}
+        </span>
       </p>
       {ticket.sprint?.name && <p className="review-ticket-sprint">{ticket.sprint.name}</p>}
       {!discoveryComplete || reviewIncomplete ? (

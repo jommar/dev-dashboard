@@ -104,10 +104,11 @@ function reviewQueueResponse(data) {
   return {
     total: data.total,
     tickets: data.tickets.map((ticket) => {
-      const { key, summary, status, statusCategory, priority, updated, created } = ticket;
+      const { key, summary, assignee, status, statusCategory, priority, updated, created } = ticket;
       return {
         key,
         summary,
+        assignee,
         status,
         statusCategory,
         priority,
