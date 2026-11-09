@@ -360,6 +360,7 @@ test('board continuation: HTTP query forwards the token and returns the advanced
     let status;
     let body;
     const res = {
+      setHeader() {},
       writeHead(value) {
         status = value;
       },

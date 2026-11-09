@@ -1241,10 +1241,58 @@ export function claudeEntry(state, reason, overrides = {}) {
   });
 }
 
+// The prompt editor's fake: the three prompt files by name, each an entry as GET /api/claude/prompts
+// lists it. `source` is `default` (no file; the built-in text), `custom` (a usable file) or `unusable`
+// (a file that cannot be used; the built-in text is shown so a fix can be saved). The texts are
+// invented and short; the built-ins hold the placeholders the real ones do, so none of them warns.
+const CLAUDE_PROMPT_LABELS = {
+  investigate: 'Investigate and plan prompt',
+  implement: 'Implement plan prompt',
+  answers: 'Answers message',
+};
+const CLAUDE_PROMPT_PLACEHOLDERS = ['{KEY}', '{SLUG}', '{STATUS_FILE}'];
+export const CLAUDE_PROMPT_DEFAULTS = {
+  investigate: 'Work out the plan for {KEY} and record progress in {STATUS_FILE}.',
+  implement: 'Build the plan for {KEY} in the folder {SLUG} and record progress in {STATUS_FILE}.',
+  answers:
+    'The answers for {KEY} changed. Changes: {CHANGE}. Questions: {QUESTION_IDS}. Update the plan and write {STATUS_FILE}.',
+};
+
+export function claudePromptEntry(name, source = 'default', text = CLAUDE_PROMPT_DEFAULTS[name]) {
+  return {
+    name,
+    label: CLAUDE_PROMPT_LABELS[name],
+    source,
+    text: source === 'custom' ? text : CLAUDE_PROMPT_DEFAULTS[name],
+    placeholders:
+      name === 'answers'
+        ? [...CLAUDE_PROMPT_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}']
+        : CLAUDE_PROMPT_PLACEHOLDERS,
+  };
+}
+
+// What the server answers when it cannot write or remove a prompt file (a folder in its place, a
+// prompts folder it cannot write to): a failed Claude action with the reason `prompt_not_changed`,
+// for Save and Reset alike. A spec queues it in `prompts.failures`.
+export const claudePromptNotChanged = () =>
+  claudeFailure(502, 'CLAUDE_FAILED', ['prompt_not_changed']);
+
 // `sends` is a queue of outcomes the next answers saves report as `send`, for a spec that needs a
-// failure or a skip the fake would not choose itself.
+// failure or a skip the fake would not choose itself. `prompts.failures` is a queue of responses
+// the next requests to the prompt routes get instead of the fake's own answer, whatever the method.
 function claudeData() {
-  return { listing: 'ok', tickets: {}, calls: [], sends: [] };
+  return {
+    listing: 'ok',
+    tickets: {},
+    calls: [],
+    sends: [],
+    prompts: {
+      entries: Object.fromEntries(
+        Object.keys(CLAUDE_PROMPT_LABELS).map((name) => [name, claudePromptEntry(name)]),
+      ),
+      failures: [],
+    },
+  };
 }
 
 const claudeFailure = (status, code, errors = []) => ({
@@ -1264,8 +1312,43 @@ function claudeSend(entry) {
 // Only the paths the specs drive are modelled: a launch of either phase that starts a session, and
 // answers that fill in existing questions. Anything else is left unanswered, so the run aborts it
 // as unexpected network and the spec's author extends this.
+// GET lists the three prompts; PUT saves one as a custom file (trimmed, non-empty, at most 20,000
+// characters, as the server checks); DELETE removes the file so the built-in text applies again.
+// A PUT or a DELETE is recorded in `claude.calls`.
+function claudePromptsResponse(pathname, method, { prompts, calls }, body) {
+  const [, name] =
+    pathname.match(/^\/api\/claude\/prompts(?:\/(investigate|implement|answers))?$/) ?? [];
+  if (!pathname.startsWith('/api/claude/prompts') || (pathname !== '/api/claude/prompts' && !name))
+    return null;
+  if (method !== 'GET') calls.push({ method, path: pathname, body: structuredClone(body) });
+  const failure = prompts.failures.shift();
+  if (failure) return failure;
+  if (method === 'GET' && !name)
+    return {
+      json: {
+        ok: true,
+        prompts: Object.keys(CLAUDE_PROMPT_LABELS).map((each) =>
+          structuredClone(prompts.entries[each]),
+        ),
+      },
+    };
+  if (method === 'PUT' && name) {
+    const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    if (!text || text.length > 20_000) return claudeFailure(400, 'INVALID_PROMPT');
+    prompts.entries[name] = claudePromptEntry(name, 'custom', text);
+    return { json: { ok: true, prompt: structuredClone(prompts.entries[name]) } };
+  }
+  if (method === 'DELETE' && name) {
+    prompts.entries[name] = claudePromptEntry(name);
+    return { json: { ok: true, prompt: structuredClone(prompts.entries[name]) } };
+  }
+  return null;
+}
+
 function claudeResponse(url, method, { claude }, body) {
   const { pathname } = url;
+  const prompts = claudePromptsResponse(pathname, method, claude, body);
+  if (prompts) return prompts;
   if (method === 'GET' && pathname === '/api/claude/tickets')
     return {
       json: {

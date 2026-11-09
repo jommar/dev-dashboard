@@ -113,7 +113,7 @@
   overflow-y: auto;
 }
 /* Always in view: only the body scrolls. Progress and the last result sit on the left and may wrap;
-   the buttons sit on the right. */
+   the buttons sit on the right, except the first (Prompts, or Back), which sits on the left. */
 .claude-dialog-foot {
   display: flex;
   flex: none;
@@ -124,6 +124,10 @@
   padding: var(--s3) var(--s5);
   border-top: 1px solid var(--border);
   background: var(--panel2);
+}
+/* Two classes: the button primitive's own `margin: 0` outranks a single one. */
+.claude-dialog-foot .claude-dialog-foot-start {
+  margin-right: auto;
 }
 .claude-dialog-foot-status {
   flex: 1 1 14rem;
@@ -157,6 +161,7 @@
   }
   .claude-dialog-foot-status {
     flex-basis: 100%;
+    order: -1;
   }
 }
 
@@ -259,6 +264,88 @@
 .claude-question-input:disabled {
   color: var(--muted);
   cursor: not-allowed;
+}
+
+/* ---- Prompt editor ---------------------------------------------------------
+   The dialog body while it shows the prompt files: one stacked block per prompt. Nothing is wider
+   than the body, so a long unbroken line wraps in its box instead of pushing the dialog sideways. */
+.claude-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-width: 0;
+}
+.claude-prompts-retry {
+  align-self: flex-start;
+}
+.claude-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+  padding-top: var(--s4);
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.claude-prompt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+}
+.claude-prompt-title {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-md);
+}
+.claude-prompt-dirty {
+  color: var(--amber);
+  font-size: var(--fs-xs);
+}
+/* About six lines empty, about twenty at most, then it scrolls; a monospace box, as the text is
+   code-like. The width is fixed, or content sizing would shrink it to its text. */
+.claude-prompt-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: calc(6lh + 14px);
+  max-height: calc(20lh + 14px);
+  padding: 6px var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  field-sizing: content;
+  overflow-y: auto;
+  resize: none;
+}
+.claude-prompt-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.claude-prompt-placeholders {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+/* Amber, with words: a warning never rests on colour alone, and it never stops Save. */
+.claude-prompt-warning {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--amber);
+  border-radius: var(--radius-sm);
+  color: var(--amber);
+  font-size: var(--fs-sm);
+}
+.claude-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+.claude-prompt-status {
+  flex: 1 1 10rem;
+  min-width: 0;
 }
 
 .claude-error {

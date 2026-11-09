@@ -257,6 +257,16 @@ export const launchClaude = (key, phase) =>
 export const answerClaude = (key, answers) =>
   watchRequest('/api/claude/answers', { method: 'POST', body: { key, answers } });
 
+// The prompt files behind the launcher: all three listed, and one saved or reset by name. A save
+// or a reset answers with the prompt's new entry.
+export const getClaudePrompts = () => watchRequest('/api/claude/prompts');
+
+export const saveClaudePrompt = (name, text) =>
+  watchRequest(`/api/claude/prompts/${name}`, { method: 'PUT', body: { text } });
+
+export const resetClaudePrompt = (name) =>
+  watchRequest(`/api/claude/prompts/${name}`, { method: 'DELETE' });
+
 export function subscribeServices(onSnapshot, onConnection = () => {}) {
   const source = new EventSource('/api/events');
   source.addEventListener('setup-required', () => {

@@ -19,7 +19,8 @@ import { parseSlackLink } from './slack-link.mjs';
 import { withAttachedSessions } from './slack-model.mjs';
 import { createSlackWatchStore, isSessionId } from './slack-watch-store.mjs';
 import { createClaudeSessions } from './claude-sessions.mjs';
-import { createClaudeLauncher } from './claude-launcher.mjs';
+import { createClaudeLauncher, failed } from './claude-launcher.mjs';
+import { PROMPT_NAMES, createPromptStore } from './claude-prompts.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
 
 const MAX_LINKS_PER_REQUEST = 50;
@@ -73,6 +74,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const claudeSessions =
     integrations.claudeSessions || createClaudeSessions({ store: slackWatchStore });
   const claudeLauncher = integrations.claudeLauncher || createClaudeLauncher({ claudeSessions });
+  const claudePrompts = integrations.claudePrompts || createPromptStore();
   const slackWatcher =
     integrations.slackWatcher ||
     createSlackWatcher({ slack, store: slackWatchStore, settings, sessions: claudeSessions });
@@ -186,7 +188,31 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       const { key, answers } = await readJson(req);
       return claudeLauncher.answer({ key, answers });
     },
+    'GET /api/claude/prompts': () => ({ ok: true, prompts: claudePrompts.list() }),
   };
+  // A prompt store call: its refusal of a bad text passes as it is, anything the disk does is a
+  // failed Claude action.
+  const promptCall = (operation) => {
+    try {
+      return { ok: true, prompt: operation() };
+    } catch (error) {
+      if (error.code === 'INVALID_PROMPT') throw error;
+      throw failed('prompt_not_changed');
+    }
+  };
+  // One route pair per known name, so nothing else in a path ever reaches the store.
+  const promptRoutes = Object.fromEntries(
+    PROMPT_NAMES.flatMap((name) => [
+      [
+        `PUT /api/claude/prompts/${name}`,
+        async (req) => {
+          const { text } = await readJson(req);
+          return promptCall(() => claudePrompts.write(name, text));
+        },
+      ],
+      [`DELETE /api/claude/prompts/${name}`, () => promptCall(() => claudePrompts.remove(name))],
+    ]),
+  );
   const guard = () => {
     if (!settings.getSetupStatus().ready)
       throw Object.assign(new Error('Complete Settings setup.'), {
@@ -195,6 +221,9 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       });
   };
   const handler = async function handler(req, res) {
+    // Every reply carries these, whichever path sends it: the dashboard may not be framed.
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
     try {
       const host = req.headers.host;
       let authority;
@@ -312,7 +341,8 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       // The watch routes need Slack and the host only, never GitHub or Jira setup; the Claude
       // routes need the claude CLI and this directory only.
       const routeKey = `${req.method} ${pathname}`;
-      const tableRoute = slackWatchRoutes[routeKey] || claudeRoutes[routeKey];
+      const tableRoute =
+        slackWatchRoutes[routeKey] || claudeRoutes[routeKey] || promptRoutes[routeKey];
       if (tableRoute) {
         json(res, 200, await tableRoute(req));
         return;
@@ -498,6 +528,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'WATCH_PAUSED',
         'INVALID_TICKET',
         'INVALID_ANSWER',
+        'INVALID_PROMPT',
         'CLAUDE_REFUSED',
         'CLAUDE_FAILED',
       ];

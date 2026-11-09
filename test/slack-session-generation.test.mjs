@@ -145,6 +145,7 @@ test('status HTTP contract exposes only the current opaque version', async () =>
     await handler(
       { method: 'GET', url: '/api/slack/status', headers: { host: 'localhost' }, socket: {} },
       {
+        setHeader() {},
         writeHead(code, value) {
           status = code;
           headers = value;

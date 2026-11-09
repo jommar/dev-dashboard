@@ -11,7 +11,7 @@ export function credentialIdentity(value) {
 // A credential file (and every directory above it) must be a real file owned by
 // this user's config tree — never a symlink, which could redirect the token
 // somewhere unreadable by us and writable by someone else.
-function checkAncestors(file, fs) {
+export function checkAncestors(file, fs) {
   let directory = path.dirname(path.resolve(file));
   while (true) {
     try {

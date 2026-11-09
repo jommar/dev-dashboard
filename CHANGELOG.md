@@ -2,15 +2,43 @@
 
 ## Unreleased
 
+- The three Claude prompts can now be edited in the app. **Prompts**, at the left of the
+  Claude dialog's footer, swaps the dialog body for an editor (**Back**, also at the left,
+  returns). Each prompt shows a badge (`default`, `custom` or `unusable file`), a text box, its
+  placeholders, **Save**, **Reset to default** (deletes the file), an `Unsaved changes` tag and
+  a live warning, which never blocks **Save**, when the text lacks `{STATUS_FILE}`. It edits
+  the same `prompts/*.md` files, so hand edits and app edits agree, and a saved prompt applies
+  from the next launch or send. New routes, outside the setup gate and behind the same checks
+  as the other mutating Claude routes: `GET /api/claude/prompts`,
+  `PUT /api/claude/prompts/<name>` (body `{ text }`) and `DELETE /api/claude/prompts/<name>`,
+  with `<name>` `investigate`, `implement` or `answers`. A text that is empty, over 20,000
+  characters or holding a NUL byte, once trimmed, is `400` `INVALID_PROMPT`, and a file holding
+  a NUL byte is unusable (`prompt_unreadable`); a missing `{STATUS_FILE}` is never refused. A
+  save or reset the disk refuses is `502` `CLAUDE_FAILED` with `prompt_not_changed`, which the
+  editor words. A symlinked `prompts/` folder is read but can be neither saved to nor reset, a
+  symlinked prompt file is followed on read, and a folder in a prompt file's place can be
+  neither replaced nor removed. Limits: anything that can reach the dashboard port without
+  browser headers (a local user, or a container or VM sharing the host's loopback) can change
+  the prompts and the settings, the same trust boundary as the settings route; and a prompt of
+  control characters can be valid yet too big to save through the 64 KiB body limit (ASCII,
+  CJK and emoji at the cap fit). The file rules now live in one module,
+  `backend/claude-prompts.mjs`, shared by the launcher and the routes (`npm run claude:prompts`
+  keeps its own create-only write). The footer's **Prompts** and **Back** sit on the left in
+  every state.
+- Every reply the dashboard server sends now carries `X-Frame-Options: DENY` and
+  `Content-Security-Policy: frame-ancestors 'none'`, so the dashboard cannot be embedded in an
+  iframe (an IDE panel, for example). The policy has no other directive. Only the dashboard
+  server sends them: `npm run dev:ui` runs Vite, a separate server, and `vite.config.js` sets
+  no such headers, so the pages Vite serves itself are not covered.
 - The Claude launch prompts and the message sent with saved answers can now be replaced by
   files: `prompts/investigate.md`, `prompts/implement.md` and `prompts/answers.md` in the
   dashboard folder. A missing file means the built-in text, and `npm run claude:prompts`
   writes the built-in templates there to edit, never overwriting a file. The files are read on
   every launch or send, so an edit applies at once, and they take `{KEY}`, `{SLUG}`,
   `{STATUS_FILE}` (`answers.md` also `{QUESTION_IDS}` and `{CHANGE}`); an unknown `{WORD}` stays
-  as written. A file that cannot be used (unreadable, a folder, empty, over 20,000 characters)
-  is `prompt_unreadable`: a launch is refused with nothing written (`CLAUDE_REFUSED`) and a send
-  fails with the answers saved, so the next save retries. The folder is outside `claude/`,
+  as written. A file that cannot be used (unreadable, a folder, empty, holding a NUL byte, over
+  20,000 characters) is `prompt_unreadable`: a launch is refused with nothing written
+  (`CLAUDE_REFUSED`) and a send fails with the answers saved, so the next save retries. The folder is outside `claude/`,
   which launched sessions are given, and is gitignored and dockerignored. The dashboard does
   not check that a custom prompt keeps the `status.json` protocol, so one that drops it leaves
   sessions red and Implement plan locked; delete the file to go back.

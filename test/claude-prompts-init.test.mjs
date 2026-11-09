@@ -245,3 +245,24 @@ test('scenario 135: the starter answers file gives the same message as no file a
     }),
   );
 });
+
+test("scenario 136: the starter files are in the store's file format, so the store reads them back and a save changes nothing", async (t) => {
+  const { createPromptStore, promptFileText } = await import('../backend/claude-prompts.mjs');
+  assert.equal(typeof promptFileText, 'function', 'the store exports promptFileText');
+  const dir = path.join(tempRoot(t), 'prompts');
+
+  await initPrompts({ dir, fs });
+
+  for (const [name, template] of STARTERS)
+    assert.equal(fs.readFileSync(path.join(dir, name), 'utf8'), promptFileText(template), name);
+  const store = createPromptStore({ promptsDir: dir, fs });
+  assert.deepEqual(
+    (await store.list()).map(({ name, source, text }) => [`${name}.md`, source, text]),
+    STARTERS.map(([name, template]) => [name, 'custom', template]),
+    'read back as custom, with the built-in text',
+  );
+  const before = snapshot(dir);
+  for (const [name, template] of STARTERS) await store.write(name.replace(/\.md$/, ''), template);
+  for (const [name] of STARTERS)
+    assert.equal(fs.readFileSync(path.join(dir, name), 'utf8'), before[name].text, name);
+});

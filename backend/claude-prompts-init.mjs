@@ -5,7 +5,7 @@
 import fsDefault from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CLAUDE_PROMPTS_DIR, PROMPT_TEMPLATES } from './claude-launcher.mjs';
+import { CLAUDE_PROMPTS_DIR, PROMPT_TEMPLATES, promptFileText } from './claude-prompts.mjs';
 
 // One { name, path, status } per starter file, status `wrote` or `kept`.
 export async function initPrompts({ dir, fs = fsDefault }) {
@@ -15,7 +15,7 @@ export async function initPrompts({ dir, fs = fsDefault }) {
     const file = path.join(dir, name);
     try {
       // `wx` fails on an existing file, so nothing is ever replaced, even by a racing writer.
-      fs.writeFileSync(file, `${text}\n`, { flag: 'wx' });
+      fs.writeFileSync(file, promptFileText(text), { flag: 'wx' });
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
       return { name, path: file, status: 'kept' };

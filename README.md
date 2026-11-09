@@ -1011,8 +1011,11 @@ two lines to about twelve, then scrolls; that is CSS only (`field-sizing: conten
 without it shows a fixed-height box that scrolls. Password-manager overlays are turned off on the
 boxes. A question that has a saved answer shows a tick (accessible name `Answered`); a draft you
 have not saved does not count. The footer is pinned below the scrolling body, so **Save answers**
-is on screen without scrolling. It holds the count (`N of M answered`), the line saying what the
-last save did, **Save answers** and **Close**. **Save answers** saves only the answers you changed
+is on screen without scrolling. At its left is **Prompts**, which opens the prompt editor (see
+[Custom prompts](#custom-prompts)); it is there whether or not the ticket has questions, so with
+none the footer holds **Prompts** and **Close**. With questions it also holds the count
+(`N of M answered`), the line saying what the last save did and **Save answers**.
+**Save answers** saves only the answers you changed
 and, when every question has one, sends them to the session (see
 [Saving and sending answers](#saving-and-sending-answers)). It is enabled when you changed an
 answer, or when every question is answered but the answers were not sent (the retry). The boxes
@@ -1224,8 +1227,9 @@ dialog shows its path) and the answers you saved yourself.
 ### Custom prompts
 
 The two launch prompts and the message sent with your answers are templates. By default they are
-the built-in text. To change one, put a file of that name in the `prompts/` folder of the
-dashboard (the repo root, next to `claude/`):
+the built-in text. You can change each one in the app (see **Edit in the app** below) or by hand.
+Both edit the same file, a file of that name in the `prompts/` folder of the dashboard (the repo
+root, next to `claude/`), so a hand edit and an app edit always agree:
 
 | File                     | Replaces                                 | Placeholders                                                     |
 | ------------------------ | ---------------------------------------- | ---------------------------------------------------------------- |
@@ -1239,20 +1243,70 @@ or changed answers joined with `, `, and `{CHANGE}` is `answers` on a first send
 `changed answers` on a re-send. Any other `{WORD}` stays in the text as written. The file is read
 as UTF-8, trimmed, and otherwise used as written.
 
+- **Edit in the app.** **Prompts**, at the left of the Claude dialog's footer, swaps the dialog's
+  body for an editor in the same dialog. The footer then holds **Back**, at the left where
+  **Prompts** was, and **Close**. The editor loads the three prompts once when it opens, not on
+  the dialog's 15 second refresh; if the load fails it shows the error and a **Retry** button.
+  Each prompt has:
+  - a badge: `default` (no file, so the built-in text), `custom` (a usable file) or
+    `unusable file` (a file that exists but cannot be used, see below; the box then holds the
+    built-in text and a note says that saving replaces the file and Reset removes it, and to
+    check that a folder is not in its place if either fails);
+  - a text box with the prompt's text (the file's trimmed text for `custom`), the placeholders it
+    takes, and an `Unsaved changes` tag while the box differs from what is saved;
+  - **Save**, enabled only when the box differs from what is saved and is not blank. It writes the
+    trimmed text and one newline to `prompts/<name>.md`, creating the folder if it is missing;
+  - **Reset to default**, enabled unless the badge says `default`. It deletes the file;
+  - a result line: `Saved.`, `Reset to default.` or why the request failed (see **A save can
+    fail** below).
+
+  A saved prompt applies from the next launch or send. A save replaces the whole file with the
+  box's text, so a file you changed by hand while the editor was open is overwritten (the last
+  write wins). **Back**, **Close** and Escape discard text you have not saved; the answers you
+  were typing in the dialog survive **Back**.
+
+- **A missing `{STATUS_FILE}` is a warning, never a block.** While the text in a box lacks the
+  literal `{STATUS_FILE}`, the editor says so under the box as you type: "This prompt does not
+  contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done
+  will not work." **Save** stays enabled and the server never refuses a prompt for it.
 - **Absent means built-in.** A missing file is never an error. `npm run claude:prompts` creates
-  `prompts/` and writes the three built-in templates into it, placeholders intact, for you to edit.
-  It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that exists. It
-  needs no Settings setup.
+  `prompts/` and writes the three built-in templates into it, placeholders intact, for you to edit
+  by hand. It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that
+  exists. It needs no Settings setup.
 - **Applied at once.** The files are read on every launch and every send, never cached, so an edit
-  applies to the next one with no restart. nodemon does not watch `.md` files, so `npm run dev`
-  does not restart either.
+  (in the app or by hand) applies to the next one with no restart. A save is atomic (a temporary
+  file renamed into place), so a launch never reads half a prompt. nodemon does not watch `.md`
+  files, so `npm run dev` does not restart either.
+- **A save can fail.** The save goes through the same write as the dashboard's token files: the
+  saved file is mode `600`, and it fails if the `prompts/` folder or any folder above it is a
+  symbolic link, or if a folder is in the file's place. **Reset to default** refuses a symlinked
+  `prompts/` (or a symlinked folder above it) the same way, removing nothing, and cannot remove a
+  folder in the file's place. Reading is looser: a symlinked `prompts/` folder is read as usual
+  (it is used and shown, but can be neither saved to nor reset), and a prompt file that is itself
+  a symbolic link is followed on read; **Save** replaces the link with a regular file. A refused
+  save or reset is `502` `CLAUDE_FAILED` with `prompt_not_changed`, and the editor says "The
+  prompt file could not be changed. Check that prompts/ is a real folder you can write to, with
+  nothing in the place of the file." A text the server refuses (`INVALID_PROMPT`, see below) shows
+  the reply's `error` text, `INVALID PROMPT`.
+- **Size.** The 20,000 limit counts JavaScript string length, so an emoji counts as two. The save
+  request is a JSON body of at most 64 KiB, and a prompt of 20,000 ASCII or CJK characters, or
+  10,000 emoji, fits (up to about 60 KB). A prompt that is valid but too big to save is possible only with
+  control characters, which JSON writes as six bytes each; **Save** then fails with `413`
+  `BODY_TOO_LARGE`, and the file can still be used and read.
+- **Who can change a prompt.** The Host, Origin and `Sec-Fetch-Site` checks stop a web page in
+  your browser, but anything that can reach the dashboard port without browser headers can change
+  the prompts, and the settings: a local user, or a container or VM that shares the host's
+  loopback (`curl` works by design). It is the same trust boundary as the settings route, which
+  such a caller can use too; there is no owner-only channel. Prompts steer every later launch, so
+  run the dashboard only where everything that can reach `127.0.0.1` is trusted.
 - **A bad file is an error, not a fallback.** A file that exists but cannot be used (it cannot be
-  read, it is not a regular file such as a folder, it is empty, or it is over 20,000 characters
-  once trimmed) is `prompt_unreadable`, and the built-in text is not used in its place. A launch
-  is then refused with `CLAUDE_REFUSED` and `prompt_unreadable`, after the other launch refusals
-  and before anything is written or started, so no state file changes. A send fails with `send`
-  `failed` and `prompt_unreadable` before the session is listed, stopped or touched: the answers
-  stay saved, `done` is untouched and the next **Save answers** retries. The dialog says
+  read, it is not a regular file such as a folder, it is empty, it holds a NUL byte, or it is over
+  20,000 characters once trimmed) is `prompt_unreadable`, and the built-in text is not used in
+  its place. A launch is then refused with `CLAUDE_REFUSED` and `prompt_unreadable`, after the
+  other launch refusals and before anything is written or started, so no state file changes. A
+  send fails with `send` `failed` and `prompt_unreadable` before the session is listed, stopped
+  or touched: the answers stay saved, `done` is untouched and the next **Save answers** retries.
+  The dialog says
   `A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.`
 - **Why not under `claude/`.** Sessions are given `claude/` (`--add-dir`), and a session that has
   read untrusted ticket text must not be handed a way to rewrite the prompt of the next launch.
@@ -1262,16 +1316,20 @@ as UTF-8, trimmed, and otherwise used as written.
 Each built-in prompt carries the protocol the dashboard relies on: the questions go into
 `status.json`, the phase flag (and `done`) is set as the very last action, and the session never
 asks in chat. The dashboard does not check that a custom file keeps it. A prompt that drops it
-leaves sessions red (`ended without finishing`, `plan not done`) and **Implement plan** locked.
-To go back to the built-in text, delete the file.
+leaves sessions red (`ended without finishing`, `plan not done`) and **Implement plan** locked; the
+editor's `{STATUS_FILE}` warning is the only guard. To go back to the built-in text, press **Reset
+to default** or delete the file.
 
 ### Routes and errors
 
-| Route                      | Purpose                                                                                                                                        |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/claude/tickets`  | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below) |
-| `POST /api/claude/launch`  | body `{ key, phase }`; answers `{ ok: true, key, phase, name, id, ticket }`                                                                    |
-| `POST /api/claude/answers` | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                             |
+| Route                               | Purpose                                                                                                                                        |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below) |
+| `POST /api/claude/launch`           | body `{ key, phase }`; answers `{ ok: true, key, phase, name, id, ticket }`                                                                    |
+| `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                             |
+| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; `prompts` is the three entries below, in the order investigate, implement, answers                                    |
+| `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                         |
+| `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                            |
 
 `tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
 board shows it as not started). With no ticket folder the route answers without running the CLI;
@@ -1314,21 +1372,34 @@ written when any entry is invalid. The empty array `[]` is also accepted: it sav
 the send decision (the retry). The reply's `send` is described under
 [Saving and sending answers](#saving-and-sending-answers).
 
-The three routes bypass the `SETUP_REQUIRED` gate like the Slack routes, because they need
-neither GitHub nor Jira. They run behind the same Host, Origin, `Sec-Fetch-Site` and JSON
+A prompt entry is `{ name, label, source, text, placeholders }`. `name` is `investigate`,
+`implement` or `answers` (a path with any other name matches no prompt route) and `label` is
+`Investigate and plan prompt`, `Implement plan prompt` or `Answers message`. `source` is
+`default` (no file), `custom` (a usable file) or `unusable` (a file that exists but cannot be
+used). `text` is the file's trimmed text for `custom` and the built-in text for the other two, so
+a fix can be saved from it, and `placeholders` lists the `{WORD}`s the prompt takes. `PUT` needs a
+string `text` that is not empty once trimmed, at most 20,000 characters once trimmed and free of
+NUL bytes; anything else, a missing `text` included, is `400` `INVALID_PROMPT` and nothing is
+written. A text without
+`{STATUS_FILE}` is never refused. See [Custom prompts](#custom-prompts) for what a saved file does.
+
+The three launcher routes and the three prompt routes bypass the `SETUP_REQUIRED` gate like the
+Slack routes, because they need neither GitHub nor Jira. They run behind the same Host, Origin, `Sec-Fetch-Site` and JSON
 `Content-Type` checks (`403` and `415`), a local POST that sends none of those headers is accepted
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 `Cache-Control: no-store`. Failures answer `{ code, error, errors[] }`, with `errors[0]` the reason:
 
-| Status | Code             | When                                                                                                                                                                                                                             |
-| ------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase                                                                                                                                                           |
-| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record    |
-| `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable` or `status_unreadable` |
-| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist) or `spawn_failed`                                                       |
+| Status | Code             | When                                                                                                                                                                                                                                        |
+| ------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase                                                                                                                                                                      |
+| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record               |
+| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                |
+| `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable` or `status_unreadable`            |
+| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused) |
 
-`INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt and the
-name are never logged or returned beyond the validated `id` and the computed `name`.
+`INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt a
+launch sends and the name are never logged or returned beyond the validated `id` and the computed
+`name`; only the prompt routes return prompt text, the saved or built-in template.
 
 ### Manual check before first use
 
@@ -1369,6 +1440,14 @@ nothing was sent.` and that the session received nothing (attach to it).
    `prompts/investigate.md` (keep the rest), and launch **Investigate and plan** on a throwaway
    ticket. Confirm the session's first message contains your line. Delete the file, launch again
    once the first session has finished, and confirm the built-in text is back.
+10. Open a ticket's Claude dialog and press **Prompts**. Confirm the three prompts load with the
+    badge `default` (or `custom` if you kept a file), and that deleting `{STATUS_FILE}` from a box
+    shows the warning while **Save** stays enabled. Add a line you will recognise at the top of
+    **Investigate and plan prompt**, press **Save**, and confirm `Saved.`, the badge `custom` and
+    `prompts/investigate.md` holding your text. Launch **Investigate and plan** on a throwaway
+    ticket and confirm the session's first message contains your line. Then reopen **Prompts**,
+    press **Reset to default**, and confirm `Reset to default.`, the badge `default`, the file
+    gone, and that the next launch (once the first session has finished) is the built-in text.
 
 Also taken as assumptions until then: `--bg` prints a standalone 8-character id, a session name of
 39 characters or fewer is listed unabbreviated, a tool call denied in a background session ends it
@@ -2163,3 +2242,14 @@ treat those names as a contract and don't rename them.
 - The manager is an in-process class (`backend/manager.mjs`); the CLI and the HTTP
   server both use the same `Manager`, so `logs` is consistent whether the
   dashboard is running or not.
+- **The dashboard cannot be framed.** Every reply the dashboard server sends (the API, the built
+  UI, the `ui/` files, the `403`s and the `404`s; the handler in `backend/http-app.mjs` sets the
+  headers before it looks at the request) carries `X-Frame-Options: DENY` and
+  `Content-Security-Policy: frame-ancestors 'none'`. A browser that honours them refuses to
+  render the dashboard inside an iframe, for example an IDE panel that embeds it; open it in a
+  browser tab instead. The policy holds that one directive and restricts nothing else. This
+  covers only the dashboard server (port 6500 by default). `npm run dev:ui` is Vite, a separate
+  server, and `vite.config.js` sets no frame headers: the pages and modules Vite serves itself
+  are not covered, and the only thing the config does to the `/api/*` requests it proxies is
+  rewrite their `Origin` and `Host`, with nothing on the replies. Production serves the built UI
+  from the dashboard server, so it is covered.

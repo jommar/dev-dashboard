@@ -4,11 +4,15 @@
 // ticket), so its drafts, errors and copy status begin empty each time. The body holds one row per
 // phase (its run button and its Go to session button side by side, then what a disabled button
 // says, in words, under them) and, when the planning session asked any, the numbered questions as
-// auto-growing text boxes. The footer stays in view beside the body's scroll: it holds Save answers
-// (linked to the questions form by its id), the progress, the result of the last save, and Close.
+// auto-growing text boxes. The footer stays in view beside the body's scroll: it holds Prompts
+// (on the left), Save answers (linked to the questions form by its id), the progress, the result of
+// the last save, and Close. Prompts swaps the body for the prompt editor, still in this one dialog:
+// the footer then holds Back (the same button, so it keeps focus) and Close, and everything this
+// component holds (answer drafts, copy status, the last send result) is there when Back returns.
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
+import { ClaudePromptsEditor } from './ClaudePromptsEditor.jsx';
 import { copyText } from '../../ui/dom.js';
 
 const INVESTIGATE = 'investigate-and-plan';
@@ -125,6 +129,7 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
   const [drafts, setDrafts] = useState({});
   const [sendResult, setSendResult] = useState('');
   const [copy, setCopy] = useState(null);
+  const [editingPrompts, setEditingPrompts] = useState(false);
 
   // Open once, trap focus (the browser does that for a modal) and give focus back to the ticket's
   // icon, which the key fully determines (a click does not focus a button in every browser).
@@ -214,131 +219,147 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
       </header>
 
       <div className="claude-dialog-body">
-        <ul className="claude-actions">
-          <ClaudeRow
-            phase="investigate"
-            label="Investigate and plan"
-            disabled={busy || Boolean(blocks.investigate)}
-            hint={REASON_TEXT[blocks.investigate]}
-            onRun={() => run(() => launch(ticketKey, INVESTIGATE))}
-            noSession={!goTo.investigate}
-            onGoTo={() => copyCommand('investigate')}
-          />
-          <ClaudeRow
-            phase="implement"
-            label="Implement plan"
-            disabled={busy || Boolean(blocks.implement)}
-            hint={REASON_TEXT[blocks.implement]}
-            onRun={() => run(() => launch(ticketKey, IMPLEMENT))}
-            noSession={!goTo.implement}
-            onGoTo={() => copyCommand('implement')}
-          >
-            {/* Starting the session is the user's approval, so where the plan is stays in view. */}
-            {entry.reason === 'plan_ready' && (
-              <span className="claude-action-hint" data-testid="claude-plan-hint">
-                {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`}
-              </span>
+        {editingPrompts ? (
+          <ClaudePromptsEditor />
+        ) : (
+          <>
+            <ul className="claude-actions">
+              <ClaudeRow
+                phase="investigate"
+                label="Investigate and plan"
+                disabled={busy || Boolean(blocks.investigate)}
+                hint={REASON_TEXT[blocks.investigate]}
+                onRun={() => run(() => launch(ticketKey, INVESTIGATE))}
+                noSession={!goTo.investigate}
+                onGoTo={() => copyCommand('investigate')}
+              />
+              <ClaudeRow
+                phase="implement"
+                label="Implement plan"
+                disabled={busy || Boolean(blocks.implement)}
+                hint={REASON_TEXT[blocks.implement]}
+                onRun={() => run(() => launch(ticketKey, IMPLEMENT))}
+                noSession={!goTo.implement}
+                onGoTo={() => copyCommand('implement')}
+              >
+                {/* Starting the session is the user's approval, so where the plan is stays in view. */}
+                {entry.reason === 'plan_ready' && (
+                  <span className="claude-action-hint" data-testid="claude-plan-hint">
+                    {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`}
+                  </span>
+                )}
+              </ClaudeRow>
+            </ul>
+
+            {error && (
+              <p className="claude-error" role="alert" data-testid="claude-error">
+                {error}
+              </p>
             )}
-          </ClaudeRow>
-        </ul>
 
-        {error && (
-          <p className="claude-error" role="alert" data-testid="claude-error">
-            {error}
-          </p>
-        )}
+            {/* Always rendered, so a screen reader hears its text change rather than appear. */}
+            <div className="claude-goto" role="status">
+              {copied?.copied && (
+                <span data-testid={`claude-goto-copied-${copied.side}`}>Copied</span>
+              )}
+              {copied?.copied === false && "Couldn't copy — copy the command manually"}
+            </div>
+            {copied?.copied === false && (
+              <input
+                className="claude-goto-fallback"
+                data-testid={`claude-goto-fallback-${copied.side}`}
+                readOnly
+                value={copied.command}
+                aria-label="Session command"
+                onFocus={(event) => event.currentTarget.select()}
+              />
+            )}
 
-        {/* Always rendered, so a screen reader hears its text change rather than appear. */}
-        <div className="claude-goto" role="status">
-          {copied?.copied && <span data-testid={`claude-goto-copied-${copied.side}`}>Copied</span>}
-          {copied?.copied === false && "Couldn't copy — copy the command manually"}
-        </div>
-        {copied?.copied === false && (
-          <input
-            className="claude-goto-fallback"
-            data-testid={`claude-goto-fallback-${copied.side}`}
-            readOnly
-            value={copied.command}
-            aria-label="Session command"
-            onFocus={(event) => event.currentTarget.select()}
-          />
-        )}
+            {entry.reason === 'answers_not_sent' && (
+              <p className="claude-note" data-testid="claude-answers-hint">
+                {REASON_TEXT.answers_not_sent}
+              </p>
+            )}
 
-        {entry.reason === 'answers_not_sent' && (
-          <p className="claude-note" data-testid="claude-answers-hint">
-            {REASON_TEXT.answers_not_sent}
-          </p>
-        )}
-
-        {questions.length > 0 && (
-          <form
-            id={formId}
-            className="claude-questions"
-            data-testid="claude-questions"
-            onSubmit={save}
-          >
-            <p className="claude-note">
-              Save as you go. Nothing is sent to the session until every question has an answer.
-            </p>
-            <ol className="claude-question-list">
-              {questions.map(({ id, question, answer: saved }, index) => (
-                <li key={id} className="claude-question">
-                  {/* The number and the tick sit outside the label, so its name is the question. */}
-                  <div className="claude-question-head">
-                    <span className="claude-question-number" aria-hidden="true">
-                      {index + 1}
-                    </span>
-                    <label htmlFor={`${formId}-${id}`}>{question}</label>
-                    {saved?.trim() && (
-                      <span
-                        className="claude-question-answered"
-                        role="img"
-                        aria-label="Answered"
-                        data-testid={`claude-question-answered-${id}`}
-                      >
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden="true"
-                          focusable="false"
-                        >
-                          <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
-                        </svg>
-                      </span>
-                    )}
-                  </div>
-                  <textarea
-                    id={`${formId}-${id}`}
-                    className="claude-question-input"
-                    data-testid={`claude-question-${id}`}
-                    rows={2}
-                    maxLength={2000}
-                    autoComplete="off"
-                    data-lpignore="true"
-                    data-1p-ignore="true"
-                    data-bwignore="true"
-                    value={Object.hasOwn(drafts, id) ? drafts[id] : (saved ?? '')}
-                    disabled={Boolean(blocks.answer)}
-                    onChange={(event) => {
-                      const { value } = event.target;
-                      setDrafts((current) => ({ ...current, [id]: value }));
-                    }}
-                  />
-                </li>
-              ))}
-            </ol>
-          </form>
+            {questions.length > 0 && (
+              <form
+                id={formId}
+                className="claude-questions"
+                data-testid="claude-questions"
+                onSubmit={save}
+              >
+                <p className="claude-note">
+                  Save as you go. Nothing is sent to the session until every question has an answer.
+                </p>
+                <ol className="claude-question-list">
+                  {questions.map(({ id, question, answer: saved }, index) => (
+                    <li key={id} className="claude-question">
+                      {/* The number and the tick sit outside the label, so its name is the question. */}
+                      <div className="claude-question-head">
+                        <span className="claude-question-number" aria-hidden="true">
+                          {index + 1}
+                        </span>
+                        <label htmlFor={`${formId}-${id}`}>{question}</label>
+                        {saved?.trim() && (
+                          <span
+                            className="claude-question-answered"
+                            role="img"
+                            aria-label="Answered"
+                            data-testid={`claude-question-answered-${id}`}
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                              focusable="false"
+                            >
+                              <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+                            </svg>
+                          </span>
+                        )}
+                      </div>
+                      <textarea
+                        id={`${formId}-${id}`}
+                        className="claude-question-input"
+                        data-testid={`claude-question-${id}`}
+                        rows={2}
+                        maxLength={2000}
+                        autoComplete="off"
+                        data-lpignore="true"
+                        data-1p-ignore="true"
+                        data-bwignore="true"
+                        value={Object.hasOwn(drafts, id) ? drafts[id] : (saved ?? '')}
+                        disabled={Boolean(blocks.answer)}
+                        onChange={(event) => {
+                          const { value } = event.target;
+                          setDrafts((current) => ({ ...current, [id]: value }));
+                        }}
+                      />
+                    </li>
+                  ))}
+                </ol>
+              </form>
+            )}
+          </>
         )}
       </div>
 
       <footer className="claude-dialog-foot">
-        {questions.length > 0 && (
+        {/* One button for both views, so the keyboard focus it holds survives the swap. */}
+        <Button
+          className="claude-dialog-foot-start"
+          data-testid={editingPrompts ? 'claude-prompts-back' : 'claude-prompts-open'}
+          onClick={() => setEditingPrompts(!editingPrompts)}
+        >
+          {editingPrompts ? 'Back' : 'Prompts'}
+        </Button>
+        {!editingPrompts && questions.length > 0 && (
           <>
             <div className="claude-dialog-foot-status">
               <p className="claude-note" data-testid="claude-questions-progress">

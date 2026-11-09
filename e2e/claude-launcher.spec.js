@@ -47,6 +47,16 @@ const PLAN_NOT_DONE = 'Claude has not marked the plan done. Check the session be
 const ANSWERS_NOT_SENT =
   'All questions are answered, but they have not been sent to the session. Press Save answers to send them.';
 
+// How far a footer control's left edge is from the footer's content-box left edge (inside its border
+// and padding). A control that starts the footer is within a few pixels of it, whatever the width.
+const insetFromStart = (foot, testId) =>
+  foot.evaluate((footer, id) => {
+    const box = footer.getBoundingClientRect();
+    const style = getComputedStyle(footer);
+    const start = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+    return footer.querySelector(`[data-testid="${id}"]`).getBoundingClientRect().left - start;
+  }, testId);
+
 const isPath = (path) => (url) => url.pathname === path;
 const claudeReads = ({ requests }) =>
   requests.filter(({ method, path }) => method === 'GET' && path.startsWith('/api/claude/tickets'))
@@ -154,10 +164,23 @@ test('scenario 22: the icon opens a dialog with its four items and Escape closes
       'No session to join',
     );
   }
-  // With no questions the footer holds Close and nothing else.
+  // With no questions the footer holds Prompts, on the left, and Close, and nothing else.
   const foot = dialog.locator('.claude-dialog-foot');
-  await expect(foot.getByRole('button')).toHaveCount(1);
+  await expect(foot.getByRole('button')).toHaveCount(2);
+  await expect(foot.getByTestId('claude-prompts-open')).toBeVisible();
   await expect(foot.getByTestId('claude-dialog-close')).toBeVisible();
+  const prompts = await foot.getByTestId('claude-prompts-open').boundingBox();
+  const close = await foot.getByTestId('claude-dialog-close').boundingBox();
+  expect(prompts.x + prompts.width, 'Prompts is left of Close').toBeLessThanOrEqual(close.x);
+  // Prompts really starts the footer (Close alone sits at its end): at a desktop width, then on a
+  // phone, where the footer reflows under the same dialog.
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      Math.abs(await insetFromStart(foot, 'claude-prompts-open')),
+      `Prompts starts the footer at ${width}px`,
+    ).toBeLessThanOrEqual(4);
+  }
   for (const id of ['claude-questions-save', 'claude-questions-progress', 'claude-send-result']) {
     await expect(dialog.getByTestId(id)).toHaveCount(0);
   }
@@ -1106,6 +1129,11 @@ for (const width of [1440, 390]) {
         await expect(dialog.getByTestId(id), `${id} is on screen`).toBeInViewport({ ratio: 1 });
       }
       await expect(foot).toBeInViewport({ ratio: 1 });
+      // Prompts starts the footer (the answers controls keep their places after it).
+      expect(
+        Math.abs(await insetFromStart(foot, 'claude-prompts-open')),
+        `Prompts starts the footer at ${width}px`,
+      ).toBeLessThanOrEqual(4);
     };
     await onScreen();
 

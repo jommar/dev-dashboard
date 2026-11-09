@@ -4,12 +4,14 @@
 //
 // No real `claude` ever runs here. Every backend module is imported inside the helper that needs
 // it, so a scenario fails by itself when its module or method is missing.
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import {
   START_MS,
   createClock,
@@ -623,7 +625,14 @@ function httpRequest(base, method, pathname, { body, headers = {} } = {}) {
       res.on('data', (chunk) => {
         text += chunk;
       });
-      res.on('end', () => resolve({ status: res.statusCode, text, json: () => JSON.parse(text) }));
+      res.on('end', () =>
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          text,
+          json: () => JSON.parse(text),
+        }),
+      );
     });
     req.on('error', reject);
     // A reply that never comes (a save waiting on a timer nobody advances) must not hang the run.
@@ -634,11 +643,44 @@ function httpRequest(base, method, pathname, { body, headers = {} } = {}) {
   });
 }
 
+// A request whose path is sent exactly as given. `httpRequest` goes through a URL parser, which
+// resolves `..` segments before the server sees them; this one does not.
+function exactRequest(port, method, requestPath, { body, headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, method, path: requestPath, headers },
+      (res) => {
+        let text = '';
+        res.on('data', (chunk) => {
+          text += chunk;
+        });
+        res.on('end', () =>
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            text,
+            json: () => JSON.parse(text),
+          }),
+        );
+      },
+    );
+    req.on('error', reject);
+    req.setTimeout(5_000, () => req.destroy(new Error('no reply within 5 s')));
+    req.end(
+      body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+    );
+  });
+}
+
 // The production handler on a loopback port with every Claude collaborator injected, so no real
-// `claude` runs and no real `~/.config` is touched. `ready` is the setup gate's answer.
+// `claude` runs and no real `~/.config` is touched. `ready` is the setup gate's answer. The prompt
+// routes get a store over the temp prompts folder and the same recording `fs` as the launcher, so
+// an edit made through a route is what the launcher reads and no request can reach the
+// dashboard's own `prompts` folder.
 export async function claudeHttpFixture(t, { ready = true } = {}) {
   const env = await launcherEnvironment(t);
   const { createHttpHandler } = await import('../backend/http-app.mjs');
+  const { createPromptStore } = await import('../backend/claude-prompts.mjs');
   const settings = {
     getSetupStatus: () => ({ ready }),
     getPublicSettings: () => ({}),
@@ -655,6 +697,7 @@ export async function claudeHttpFixture(t, { ready = true } = {}) {
       slackWatcher: watcher,
       claudeSessions: env.sessions,
       claudeLauncher: env.launcher,
+      claudePrompts: createPromptStore({ promptsDir: env.promptsDir, fs: env.recorder.fs }),
     },
   });
   const server = http.createServer(handler);
@@ -674,6 +717,8 @@ export async function claudeHttpFixture(t, { ready = true } = {}) {
       port,
       server,
       raw: (method, pathname, options) => httpRequest(base, method, pathname, options),
+      // The path exactly as written, with no `..` resolved on the way.
+      exact: (method, requestPath, options) => exactRequest(port, method, requestPath, options),
       json: (method, pathname, body) =>
         httpRequest(base, method, pathname, {
           body,
@@ -733,6 +778,57 @@ export const BAD_PROMPT_FILES = [
   },
 ];
 
+// The calls recorded by `recordingFs` that write, make, move or remove something (reads are not
+// listed, so a harmless change in how a file is read never counts as a change).
+const CHANGING_CALLS = new Set([
+  'writeFileSync',
+  'appendFileSync',
+  'writeSync',
+  'mkdirSync',
+  'mkdtempSync',
+  'renameSync',
+  'rmSync',
+  'rmdirSync',
+  'unlinkSync',
+  'copyFileSync',
+  'cpSync',
+  'symlinkSync',
+  'linkSync',
+  'truncateSync',
+  'ftruncateSync',
+  'chmodSync',
+  'chownSync',
+  'utimesSync',
+]);
+export const fsChanges = (recorder) =>
+  recorder.calls.filter(({ method }) => CHANGING_CALLS.has(method));
+
+// What the prompt store and the prompt routes give for one prompt: `name` is `investigate`,
+// `implement` or `answers`, `source` is `default`, `custom` or `unusable`, and `text` is the
+// built-in text unless a custom one is given.
+export const PROMPT_NAMES = ['investigate', 'implement', 'answers'];
+const PROMPT_LABELS = {
+  investigate: 'Investigate and plan prompt',
+  implement: 'Implement plan prompt',
+  answers: 'Answers message',
+};
+const PROMPT_TEXTS = {
+  investigate: INVESTIGATE_TEMPLATE,
+  implement: IMPLEMENT_TEMPLATE,
+  answers: ANSWERS_TEMPLATE,
+};
+const LAUNCH_PLACEHOLDERS = ['{KEY}', '{SLUG}', '{STATUS_FILE}'];
+export const promptEntry = (name, source, text = PROMPT_TEXTS[name]) => ({
+  name,
+  label: PROMPT_LABELS[name],
+  source,
+  text,
+  placeholders:
+    name === 'answers'
+      ? [...LAUNCH_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}']
+      : LAUNCH_PLACEHOLDERS,
+});
+
 // ---- the launcher's timers: fake ones that fire only when a test advances them ----
 
 // The fake timers of the Slack watcher, which also keep every delay ever asked for in `scheduled`,
@@ -786,4 +882,113 @@ export async function resolvesWithin(promise, label, { timeoutMs = 500 } = {}) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---- a copy of the dashboard in a temp folder, served by its own handler in a child process ----
+
+// The copy's server: the production handler with default collaborators (nothing injected but the
+// Slack watcher), on a loopback port. `request` resolves `{ status, headers, text }`; with
+// `headersOnly` it stops reading as soon as the reply starts (a stream that never ends).
+const SANDBOX_SERVER = `
+import http from 'node:http';
+import { createHttpHandler } from './backend/http-app.mjs';
+
+export async function start() {
+  const settings = {
+    getSetupStatus: () => ({ ready: true }),
+    getPublicSettings: () => ({ jira: { baseUrl: '' }, local: {} }),
+    getSnapshot: () => ({}),
+  };
+  const manager = { list: () => [], logs: () => '', onUpdate: null };
+  const watcher = { isDisabled: () => true, stop() {}, list: () => ({}), refreshSchedule() {} };
+  const handler = createHttpHandler({
+    settings,
+    manager,
+    integrations: { slack: {}, slackWatcher: watcher },
+  });
+  const server = http.createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const request = ({ method = 'GET', path, headers = {}, body, headersOnly = false }) =>
+    new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, method, path, headers }, (res) => {
+        const reply = (text) => resolve({ status: res.statusCode, headers: res.headers, text });
+        if (headersOnly) {
+          res.destroy();
+          reply('');
+          return;
+        }
+        let text = '';
+        res.on('data', (chunk) => (text += chunk));
+        res.on('end', () => reply(text));
+      });
+      req.on('error', reject);
+      req.end(body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body));
+    });
+  const stop = async () => {
+    handler.close();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  };
+  return { port, request, stop };
+}
+`;
+
+// Reads a list of requests from its argument, makes them in order and prints what came back.
+const SANDBOX_PROBE = `
+import { start } from './sandbox-server.mjs';
+
+const { request, stop } = await start();
+const results = {};
+for (const item of JSON.parse(process.argv[2])) results[item.label] = await request(item);
+await stop();
+process.stdout.write(JSON.stringify(results), () => process.exit(0));
+`;
+
+// A copy of the dashboard's `backend` and `ui` in a temp folder (`sandbox.copy`), so the dashboard
+// folder the handler works out for itself, and the `prompts`, `dist` and `claude` folders under
+// it, are the copy's. `sandbox.requests` serves them from a child process with a temp HOME and a
+// working folder that is neither the copy nor the repository, and answers what came back by
+// label. Nothing here reads or writes the dashboard's own `prompts`, `dist` or `claude` folders.
+export function dashboardSandbox(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-dashboard-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const copy = path.join(root, 'dashboard');
+  const home = path.join(root, 'home');
+  const elsewhere = path.join(root, 'elsewhere');
+  for (const folder of [copy, home, elsewhere]) fs.mkdirSync(folder);
+  for (const name of ['backend', 'ui'])
+    fs.cpSync(new URL(`../${name}`, import.meta.url), path.join(copy, name), { recursive: true });
+  fs.copyFileSync(new URL('../package.json', import.meta.url), path.join(copy, 'package.json'));
+  fs.symlinkSync(
+    fileURLToPath(new URL('../node_modules', import.meta.url)),
+    path.join(copy, 'node_modules'),
+  );
+  fs.writeFileSync(path.join(copy, 'sandbox-server.mjs'), SANDBOX_SERVER);
+  fs.writeFileSync(path.join(copy, 'sandbox-probe.mjs'), SANDBOX_PROBE);
+  return {
+    copy,
+    elsewhere,
+    // A file in the copy, folders made as needed.
+    write(relative, text) {
+      const file = path.join(copy, relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, text);
+    },
+    // `list` is `[{ label, method, path, headers, body, headersOnly }]`.
+    requests(list) {
+      const run = spawnSync(
+        process.execPath,
+        [path.join(copy, 'sandbox-probe.mjs'), JSON.stringify(list)],
+        {
+          cwd: elsewhere,
+          env: { ...process.env, HOME: home },
+          encoding: 'utf8',
+          timeout: 60_000,
+        },
+      );
+      if (run.status !== 0) throw new Error(`the copy's server failed: ${run.stderr || run.error}`);
+      return JSON.parse(run.stdout);
+    },
+  };
 }

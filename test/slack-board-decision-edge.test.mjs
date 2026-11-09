@@ -410,6 +410,7 @@ test('decision safety: auth timeout sends a replaceable empty partial through th
     let status;
     let body;
     const res = {
+      setHeader() {},
       writeHead(value) {
         status = value;
       },
