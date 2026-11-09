@@ -13,6 +13,7 @@ import { ReviewTicketCard } from '../components/ReviewTicketCard.jsx';
 import { ClaudePlaceholderDialog } from '../components/ClaudePlaceholderDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
+import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { hasCompletePrCoverage, reviewColumns } from '../../ui/review-board.js';
 import { ticketPrefix } from '../../ui/work-filters.js';
 import { PR_POLL_MS } from '../../ui/polling.js';
@@ -84,6 +85,7 @@ export function PrsPanel({ config, active }) {
     [rows],
   );
   const openClaudeTicket = openClaudeKey && rows.find((ticket) => ticket.key === openClaudeKey);
+  const claude = useClaudeTickets({ active: active && Boolean(openClaudeTicket) });
   useEffect(() => {
     if (openClaudeKey && (!active || !openClaudeTicket)) setOpenClaudeKey(null);
   }, [active, openClaudeKey, openClaudeTicket]);
@@ -195,6 +197,8 @@ export function PrsPanel({ config, active }) {
           key={openClaudeTicket.key}
           ticketKey={openClaudeTicket.key}
           summary={openClaudeTicket.summary}
+          entry={claude.byTicket[openClaudeTicket.key]}
+          launch={claude.launch}
           onClose={() => setOpenClaudeKey(null)}
           resolveOpener={resolveOpener}
         />

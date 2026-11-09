@@ -202,21 +202,24 @@ test('review ticket cards use shared card surfaces and safe repo-labelled links 
   assert.doesNotMatch(card, /innerHTML|dangerouslySetInnerHTML|draggable|onDrag/);
 });
 
-test('the PR Claude entry reuses the presentational icon with placeholder words and scoped test ids', () => {
+test('the PR Claude entry opts out of shared tooltips but retains code-review naming and scoped test ids', () => {
   const icon = read('components/ClaudeIcon.jsx');
   const props = icon.match(/export function ClaudeIcon\(\{([\s\S]*?)\}\)/)?.[1] ?? '';
   assert.match(props, /\btestId\b/);
   assert.match(props, /\blabel\b/);
+  assert.match(props, /\btooltip\s*=\s*true/, 'tooltips remain the shared default');
   assert.match(icon, /claude-icon-\$\{ticketKey\}/, 'the My Tickets default id is retained');
   const card = read('components/ReviewTicketCard.jsx');
   const control = card.match(/<ClaudeIcon\b[\s\S]*?\/>/)?.[0] ?? '';
   assert.match(control, /testId=/);
   assert.match(control, /label=/);
-  assert.match(control, /placeholder/i);
+  assert.match(control, /tooltip=\{false\}/);
+  assert.match(control, /Claude code review for \$\{ticket\.key\}/);
+  assert.doesNotMatch(control, /placeholder/i);
   assert.doesNotMatch(control, /\bentry=/, 'no invented workflow state is passed to the icon');
 });
 
-test('ClaudePlaceholderDialog is separate, labelled, safely rendered and has an empty body with Close only', () => {
+test('ClaudePlaceholderDialog keeps the native shell and adds only review launch and feedback beside Close', () => {
   const dialog = read('components/ClaudePlaceholderDialog.jsx');
   assert.match(dialog, /export function ClaudePlaceholderDialog\b/);
   assert.match(dialog, /<dialog\b/);
@@ -224,20 +227,24 @@ test('ClaudePlaceholderDialog is separate, labelled, safely rendered and has an 
   assert.match(dialog, /aria-labelledby=\{/);
   assert.match(dialog, /\{ticketKey\}/);
   assert.match(dialog, /\{summary\}/);
-  assert.match(dialog, /<div\b[^>]*className="claude-dialog-body"[^>]*(?:\/>|>\s*<\/div>)/);
+  assert.match(dialog, /data-testid="prs-claude-dialog-body"/);
+  assert.match(dialog, /Start code review/);
+  assert.match(dialog, /pr-review-transact/);
+  assert.match(dialog, /claudePhrase/);
+  assert.match(dialog, /disabled=/);
   assert.equal(
     (dialog.match(/<(?:Button|button)\b/g) ?? []).length,
-    1,
-    'Close is the only control',
+    2,
+    'Start code review and Close are the only controls',
   );
   assert.match(dialog, />\s*Close\s*<\/(?:Button|button)>/);
   assert.doesNotMatch(
     dialog,
-    /<ClaudeDialog\b|ClaudePromptsEditor|ClaudeRow|claude-dialog-state|<form\b|<input\b|<textarea\b|innerHTML|dangerouslySetInnerHTML/,
+    /<ClaudeDialog\b|ClaudePromptsEditor|ClaudeRow|<form\b|<input\b|<textarea\b|innerHTML|dangerouslySetInnerHTML|Go to session/,
   );
 });
 
-test('the placeholder uses native modal cleanup, parent-owned Escape and genuine backdrop presses', () => {
+test('the review dialog uses native modal cleanup, parent-owned Escape and genuine backdrop presses', () => {
   const dialog = read('components/ClaudePlaceholderDialog.jsx');
   assert.match(dialog, /\.showModal\(\)/);
   assert.match(dialog, /addEventListener\(['"]cancel['"]/);
@@ -252,7 +259,7 @@ test('the placeholder uses native modal cleanup, parent-owned Escape and genuine
   assert.match(dialog, /onClose/);
 });
 
-test('placeholder selection lives outside lane cards and restores focus only through its PR-scoped opener', () => {
+test('review dialog selection lives outside lane cards and restores focus only through its PR-scoped opener', () => {
   const panel = read('panels/PrsPanel.jsx');
   const dialog = read('components/ClaudePlaceholderDialog.jsx');
   assert.match(panel, /const \[\w*[Cc]laude\w*,\s*set\w+\] = useState\(null\)/);
@@ -285,7 +292,10 @@ test('placeholder selection lives outside lane cards and restores focus only thr
   );
 });
 
-test('the review screen and placeholder mount no real Claude workflow, request or progress persistence', () => {
+test('the review screen reuses the existing Claude hook without a workflow dialog, direct transport or progress store', () => {
+  const panel = read('panels/PrsPanel.jsx');
+  assert.match(panel, /useClaudeTickets\(\{/);
+  assert.match(panel, /<ClaudePlaceholderDialog\b[\s\S]*?\blaunch=/);
   const sources = [
     'panels/PrsPanel.jsx',
     'components/ReviewTicketCard.jsx',
@@ -295,7 +305,7 @@ test('the review screen and placeholder mount no real Claude workflow, request o
     .join('\n');
   assert.doesNotMatch(
     sources,
-    /useClaudeTickets|(?:from ['"][^'"]*\/ClaudeDialog\.jsx)|<ClaudeDialog\b|ClaudePromptsEditor|claudePhrase|\b(?:launchClaude|answerClaude|getClaudeTickets|getClaudePrompts|saveClaudePrompt|resetClaudePrompt)\b|\/api\/claude\//,
+    /(?:from ['"][^'"]*\/ClaudeDialog\.jsx)|<ClaudeDialog\b|ClaudePromptsEditor|\b(?:launchClaude|answerClaude|getClaudeTickets|getClaudePrompts|saveClaudePrompt|resetClaudePrompt)\b|\/api\/claude\//,
   );
   assert.doesNotMatch(
     sources,

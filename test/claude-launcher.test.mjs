@@ -24,11 +24,15 @@ import {
   KEY,
   PROMPT_MAX_CHARS,
   RESET_STATUS,
+  REVIEW,
+  REVIEW_NAME,
   SLUG,
   START_MS,
   UNTRUSTED_OUTPUT,
   answeredMap,
+  assertReviewPrompt,
   groomPrompt,
+  fsChanges,
   implementPrompt,
   investigateParagraphs,
   launchRecord,
@@ -36,6 +40,8 @@ import {
   listed,
   question,
   renderTemplate,
+  reviewEntry,
+  reviewRecord,
   resolvesWithin,
   routingEnvironment,
   seedPlanned,
@@ -55,6 +61,343 @@ const SECOND_ID = 'bbbb2222';
 
 const launchBody = (phase = INVESTIGATE) => ({ key: KEY, phase });
 const answerBody = (answers) => ({ key: KEY, answers });
+
+// ---- independent PR review, using the same fake CLI and per-ticket transaction ----
+
+function assertNoReviewStatusMutation(env) {
+  const mutations = env.recorder.calls.filter(
+    ({ method, args }) =>
+      ['writeFileSync', 'renameSync', 'unlinkSync', 'rmSync', 'truncateSync'].includes(method) &&
+      args.some((argument) => String(argument) === env.statusPath()),
+  );
+  assert.deepEqual(mutations, [], 'review never writes, resets or restores status.json');
+}
+
+for (const [label, status] of [
+  ['absent status', undefined],
+  ['malformed status', '{ "questions": ['],
+  ['existing status with extra fields', ' { "done": true, "questions": [], "note": "keep" }\n'],
+]) {
+  test(`review launch: server-owned delegation prompt, no plan or status transaction (${label})`, async (t) => {
+    const env = await launcherEnvironment(t);
+    if (status !== undefined) env.seed(KEY, { status });
+    for (const name of ['investigate', 'implement', 'answers', 'groom', REVIEW, 'review'])
+      env.writePrompt(name, `CUSTOM ${name} {KEY} {STATUS_FILE}\n`);
+    const originalLaunch = env.sessions.launch.bind(env.sessions);
+    t.mock.method(env.sessions, 'launch', async (request) => {
+      assert.equal('addDir' in request, false, 'no state-directory access grant');
+      assertReviewPrompt(request.prompt);
+      const prerequisiteReads = env.recorder.calls.filter(
+        ({ method, args }) =>
+          ['readFileSync', 'statSync', 'existsSync', 'accessSync'].includes(method) &&
+          args.some(
+            (argument) =>
+              String(argument) === env.statusPath() || String(argument).endsWith('02-plan.md'),
+          ),
+      );
+      assert.deepEqual(prerequisiteReads, [], 'no workflow/status read before starting review');
+      return originalLaunch(request);
+    });
+    env.recorder.clearCalls();
+
+    const result = await env.launcher.launch({
+      ...launchBody(REVIEW),
+      prompt: HOSTILE_SUMMARY,
+      title: HOSTILE_SUMMARY,
+      summary: HOSTILE_SUMMARY,
+      url: 'https://untrusted.example/pr',
+    });
+
+    const [launch] = env.cli.launches();
+    assert.equal(env.cli.launches().length, 1);
+    const prompt = launch.args.at(-1);
+    assertReviewPrompt(prompt);
+    assert.deepEqual(launch.args, ['--bg', '-n', REVIEW_NAME, '--', prompt]);
+    assert.ok(!prompt.includes(HOSTILE_SUMMARY), 'client text never enters the prompt');
+    assert.ok(!prompt.includes('untrusted.example'), 'client URL never enters the prompt');
+    assert.ok(!prompt.includes('CUSTOM '), 'editable prompt files never enter the prompt');
+    assert.ok(!prompt.includes(env.statusPath()), 'no workflow status-writing contract');
+    assert.equal(launch.options.cwd, env.pathwise);
+    assert.ok(!launch.options.shell);
+    assert.equal(launch.options.timeout, LAUNCH_TIMEOUT_MS);
+    assert.equal(
+      env.files().status,
+      status ?? null,
+      'status bytes are preserved, including absence',
+    );
+    assertNoReviewStatusMutation(env);
+    assertAtomicWrites(env, [env.launchPath()]);
+    assert.deepEqual(JSON.parse(env.files().launch)[REVIEW], {
+      name: REVIEW_NAME,
+      launchedAt: START_MS,
+      id: FIRST_ID,
+    });
+    assert.deepEqual(
+      [result.ok, result.phase, result.name, result.id],
+      [true, REVIEW, REVIEW_NAME, FIRST_ID],
+    );
+    assert.deepEqual(result.ticket.review, { state: 'working', reason: 'running' });
+    assert.equal(result.ticket.blocks.review, 'session_running');
+  });
+}
+
+test('review launch: unusable editable prompt files cannot refuse or alter review', async (t) => {
+  const env = await launcherEnvironment(t);
+  fs.mkdirSync(env.promptsDir, { recursive: true });
+  for (const name of ['investigate', 'implement', 'answers', 'groom', REVIEW, 'review'])
+    fs.mkdirSync(env.promptPath(name));
+  await env.launcher.launch(launchBody(REVIEW));
+  assertReviewPrompt(env.cli.launches()[0].args.at(-1));
+});
+
+test('review launch: first review and re-review use the same fixed delegation template and session action', async (t) => {
+  const env = await launcherEnvironment(t);
+  await env.launcher.launch({
+    ...launchBody(REVIEW),
+    prompt: HOSTILE_SUMMARY,
+    summary: HOSTILE_SUMMARY,
+  });
+  const first = env.cli.launches()[0].args.at(-1);
+  const firstRecord = env.parsed().launch[REVIEW];
+  env.cli.setListing([listed({ id: FIRST_ID, name: REVIEW_NAME, startedAt: START_MS })]);
+  env.clock.advance(1_000);
+  await env.launcher.launch(launchBody(REVIEW));
+  const second = env.cli.launches()[1].args.at(-1);
+  assertReviewPrompt(first);
+  assert.equal(second, first, 'only validated key affects server-owned delegation text');
+  const latest = env.parsed().launch[REVIEW];
+  assert.equal(latest.name, firstRecord.name, 'same review action/session naming for re-review');
+  assert.notEqual(latest.id, firstRecord.id, 'latest review session is tracked');
+  assert.equal(latest.launchedAt, START_MS + 1_000);
+  assert.deepEqual(
+    Object.keys(env.parsed().launch),
+    [REVIEW],
+    'one current record, no invented history store',
+  );
+  assert.equal(env.cli.listing.length, 2, 'existing sessions are not deleted');
+  assert.equal(env.files().status, null);
+});
+
+test('review launch: preserves workflow answers, sent hashes, groom and unrelated metadata', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  const launch = {
+    ...env.parsed().launch,
+    [IMPLEMENT]: launchRecord({ name: IMPLEMENT_NAME, id: SECOND_ID }),
+    [GROOM]: { ...earlierGroom(), note: { kept: true } },
+    extension: { nested: ['leave', 'alone'] },
+  };
+  env.seed(KEY, { launch });
+  env.cli.setListing([listed({ id: EARLIER_ID }), listed({ id: SECOND_ID }), groomSession()]);
+  const status = env.files().status;
+  await env.launcher.launch(launchBody(REVIEW));
+  const after = env.parsed().launch;
+  delete after[REVIEW];
+  assert.deepEqual(after, launch);
+  assert.equal(env.files().status, status);
+});
+
+for (const phase of [INVESTIGATE, IMPLEMENT, GROOM]) {
+  test(`review launch: a working ${phase} session does not block review`, async (t) => {
+    const env = await launcherEnvironment(t);
+    const name = `${KEY}-${phase}`;
+    env.seed(KEY, { status: RESET_STATUS, launch: { [phase]: launchRecord({ name }) } });
+    env.cli.setListing([workingEntry({ id: EARLIER_ID, name })]);
+    const before = env.files().status;
+    const result = await env.launcher.launch(launchBody(REVIEW));
+    assert.equal(result.ok, true);
+    assert.equal(env.files().status, before);
+    assert.equal(env.parsed().launch[phase].id, EARLIER_ID);
+  });
+}
+
+test('review launch: investigate reset retains both side records while dropping old workflow answers', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  const groom = { ...earlierGroom(), extension: { kept: 'groom' } };
+  const review = { ...reviewRecord(), extension: { kept: 'review' } };
+  env.seed(KEY, {
+    launch: {
+      ...env.parsed().launch,
+      [IMPLEMENT]: launchRecord({ name: IMPLEMENT_NAME, id: SECOND_ID }),
+      [GROOM]: groom,
+      [REVIEW]: review,
+    },
+  });
+  env.cli.setListing([
+    listed({ id: EARLIER_ID }),
+    listed({ id: SECOND_ID }),
+    groomSession({ state: 'working' }),
+    reviewEntry({ state: 'working' }),
+  ]);
+  const result = await env.launcher.launch(launchBody());
+  const { launch, status } = env.parsed();
+  assert.deepEqual(status, RESET_STATUS);
+  assert.deepEqual(launch[GROOM], groom);
+  assert.deepEqual(launch[REVIEW], review);
+  assert.equal(IMPLEMENT in launch, false);
+  assert.equal('answered' in launch[INVESTIGATE], false);
+  assert.deepEqual(result.ticket.review, { state: 'working', reason: 'running' });
+});
+
+for (const phase of [IMPLEMENT, GROOM]) {
+  test(`review launch: active review neither refuses nor disappears during ${phase}`, async (t) => {
+    const env = await launcherEnvironment(t);
+    seedPlanned(env);
+    const review = reviewRecord();
+    env.seed(KEY, { launch: { ...env.parsed().launch, [REVIEW]: review } });
+    env.cli.setListing([listed({ id: EARLIER_ID }), reviewEntry({ state: 'working' })]);
+    const result = await env.launcher.launch(launchBody(phase));
+    assert.equal(result.ok, true);
+    assert.deepEqual(env.parsed().launch[REVIEW], review);
+    assert.deepEqual(result.ticket.review, { state: 'working', reason: 'running' });
+  });
+}
+
+for (const [label, record, entries, reason] of [
+  ['working', reviewRecord(), [reviewEntry({ state: 'working' })], 'session_running'],
+  ['starting', reviewRecord({ launchedAt: START_MS - 5_000, id: null }), [], 'session_running'],
+  ['unrecognised state', reviewRecord(), [reviewEntry({ state: 'stopped' })], 'unrecognised_state'],
+]) {
+  test(`review launch: fresh ${label} refuses without any file mutation`, async (t) => {
+    const env = await launcherEnvironment(t);
+    env.seed(KEY, { status: '{ unreadable', launch: { [REVIEW]: record } });
+    await env.launcher.list(); // Prime the listing cache with no sessions.
+    env.cli.setListing(entries);
+    env.recorder.clearCalls();
+    const before = env.files();
+    await assertRejects(() => env.launcher.launch(launchBody(REVIEW)), refused(reason), label);
+    assert.equal(env.cli.launches().length, 0);
+    assert.deepEqual(env.files(), before);
+    assert.deepEqual(fsChanges(env.recorder), [], 'refusal performs no filesystem mutation');
+    assertNoReviewStatusMutation(env);
+  });
+}
+
+test('review launch: unavailable fresh listing fails closed before touching files', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.cli.failListing();
+  env.recorder.clearCalls();
+  await assertRejects(
+    () => env.launcher.launch(launchBody(REVIEW)),
+    failed('listing_unavailable'),
+    'listing',
+  );
+  assert.equal(env.cli.launches().length, 0);
+  assert.deepEqual(env.recorder.calls, []);
+  assert.equal(fs.existsSync(env.ticketDir()), false);
+});
+
+for (const state of ['done', 'blocked', 'missing']) {
+  test(`review launch: ${state} review can be relaunched without workflow flags or a plan`, async (t) => {
+    const env = await launcherEnvironment(t);
+    env.seed(KEY, { launch: { [REVIEW]: reviewRecord() } });
+    env.cli.setListing(state === 'missing' ? [] : [reviewEntry({ state })]);
+    const result = await env.launcher.launch(launchBody(REVIEW));
+    assert.equal(result.ok, true);
+    assert.equal(env.parsed().launch[REVIEW].id, FIRST_ID);
+    assert.equal(env.files().status, null);
+  });
+}
+
+test('review launch: concurrent duplicates spawn once and the second is refused', async (t) => {
+  const env = await launcherEnvironment(t);
+  const [first, second] = await Promise.allSettled([
+    env.launcher.launch(launchBody(REVIEW)),
+    env.launcher.launch(launchBody(REVIEW)),
+  ]);
+  assert.equal(first.status, 'fulfilled');
+  assertSessionRunning(second, 'second review');
+  assert.equal(env.cli.launches().length, 1);
+});
+
+test('review launch: ticket lock survives a hung CLI call beyond the starting window', async (t) => {
+  const env = await launcherEnvironment(t);
+  const hold = env.cli.holdLaunch();
+  t.after(() => hold.release());
+  const first = env.launcher.launch(launchBody(REVIEW));
+  // An immediate validation failure must fail this case, not become an unhandled rejection.
+  await Promise.race([first, until(() => env.cli.launches().length === 1)]);
+  env.clock.advance(31_000);
+  const both = Promise.allSettled([first, env.launcher.launch(launchBody(REVIEW))]);
+  await sleep(50);
+  assert.equal(env.cli.launches().length, 1, 'second call waits even outside the start window');
+  hold.release();
+  const [started, second] = await both;
+  assert.equal(started.status, 'fulfilled');
+  assertSessionRunning(second, 'second review');
+});
+
+for (const [label, outcome, reason] of [
+  ['spawn error', { spawnError: 'ENOENT' }, 'spawn_failed'],
+  ['untrusted workspace', { exitCode: 1, stdout: UNTRUSTED_OUTPUT }, 'untrusted_workspace'],
+]) {
+  test(`review launch: ${label} restores exact launch bytes and never restores status`, async (t) => {
+    const env = await launcherEnvironment(t);
+    const launch = ` { "${REVIEW}": ${JSON.stringify(reviewRecord())}, "metadata": [1,2] }\n`;
+    env.seed(KEY, { status: '{ unreadable', launch });
+    env.cli.setListing([reviewEntry()]);
+    env.cli.failLaunch(outcome);
+    env.recorder.clearCalls();
+    const before = env.files();
+    await assertRejects(() => env.launcher.launch(launchBody(REVIEW)), failed(reason), label);
+    assert.equal(env.cli.launches().length, 1);
+    assert.deepEqual(env.files(), before);
+    assertNoReviewStatusMutation(env);
+  });
+}
+
+test('review launch: failed first review leaves no ticket folder or status file', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.cli.failLaunch({ spawnError: 'ENOENT' });
+  await assertRejects(
+    () => env.launcher.launch(launchBody(REVIEW)),
+    failed('spawn_failed'),
+    'spawn',
+  );
+  assert.equal(env.cli.launches().length, 1);
+  assert.equal(fs.existsSync(env.ticketDir()), false);
+});
+
+test('review launch: timeout retains its own record and blocks a second launch without touching status', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  const before = env.files();
+  const launch = env.parsed().launch;
+  env.cli.failLaunch({ timeout: true });
+  env.recorder.clearCalls();
+  await assertRejects(
+    () => env.launcher.launch(launchBody(REVIEW)),
+    failed('timed_out'),
+    'timeout',
+  );
+  assert.deepEqual(env.parsed().launch, {
+    ...launch,
+    [REVIEW]: { name: REVIEW_NAME, launchedAt: START_MS, id: null },
+  });
+  assert.equal(env.files().status, before.status);
+  assertNoReviewStatusMutation(env);
+  const entry = (await env.launcher.list()).tickets[KEY];
+  assert.deepEqual(entry.review, { state: 'working', reason: 'starting' });
+  await assertRejects(
+    () => env.launcher.launch(launchBody(REVIEW)),
+    refused('session_running'),
+    'retry after timeout',
+  );
+  assert.equal(env.cli.launches().length, 1);
+});
+
+test('review launch: post-start listing failure retains the record and reports unknown review', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.cli.failListingAfterLaunch();
+  const result = await env.launcher.launch(launchBody(REVIEW));
+  assert.equal(result.ok, true);
+  assert.equal(result.id, null);
+  assert.deepEqual(result.ticket.review, { state: 'unknown', reason: 'listing_unavailable' });
+  assert.equal(result.ticket.blocks.review, 'listing_unavailable');
+  assert.equal(env.parsed().launch[REVIEW].id, null);
+  assert.equal(env.files().status, null);
+});
 
 // The argument array a launch must hand to `claude`: only the name and the prompt vary.
 const expectedArgv = (env, name, prompt) => [
@@ -1166,6 +1509,7 @@ test('scenario 73: a session the launcher just started for investigate blocks im
     implement: 'investigate_running',
     answer: 'session_running',
     groom: null,
+    review: null,
   });
 });
 
@@ -1196,6 +1540,7 @@ test('scenario 74: a session the launcher just started for implement blocks inve
     implement: 'session_running',
     answer: 'session_running',
     groom: null,
+    review: null,
   });
 });
 

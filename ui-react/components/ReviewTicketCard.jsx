@@ -52,7 +52,8 @@ export function ReviewTicketCard({ ticket, jiraBase, prCoverage, onOpenClaude })
         <ClaudeIcon
           ticketKey={ticket.key}
           testId={`prs-claude-icon-${ticket.key}`}
-          label={`Claude placeholder for ${ticket.key}`}
+          label={`Claude code review for ${ticket.key}`}
+          tooltip={false}
           onOpen={onOpenClaude}
         />
       </div>

@@ -14,15 +14,20 @@ import {
   INVESTIGATE,
   INVESTIGATE_NAME,
   KEY,
+  REVIEW,
+  REVIEW_NAME,
   START_MS,
   UNTRUSTED_OUTPUT,
   answeredMap,
+  assertReviewPrompt,
   claudeHttpFixture,
   groomPrompt,
   launchRecord,
   listed,
   question,
   requestsSeen,
+  reviewEntry,
+  reviewRecord,
   seedPlanned,
   sessionUuid,
   sleep,
@@ -54,6 +59,101 @@ const ENTRY_KEYS = [
 const BAD_KEYS = ['../etc', 'tap-1', 'TAP-1/../x', 'TAP-', ' TAP-1', 'TAP-12345678'];
 
 const launchBody = { key: KEY, phase: INVESTIGATE };
+
+test('review route: existing launch endpoint accepts review and lists its independent lifecycle', async (t) => {
+  const f = await claudeHttpFixture(t, { ready: false });
+  const res = await f.http.json('POST', LAUNCH, {
+    key: KEY,
+    phase: REVIEW,
+    prompt: HOSTILE_SUMMARY,
+    title: HOSTILE_SUMMARY,
+  });
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(
+    [body.ok, body.key, body.phase, body.name, body.id],
+    [true, KEY, REVIEW, REVIEW_NAME, FIRST_ID],
+  );
+  assert.deepEqual(body.ticket.review, { state: 'working', reason: 'running' });
+  assert.equal(body.ticket.blocks.review, 'session_running');
+  assert.equal(body.ticket.state, 'none');
+  assert.equal(body.ticket.phase, null);
+  assert.equal(f.files().status, null);
+  assert.equal(f.cli.launches().length, 1);
+  const prompt = f.cli.launches()[0].args.at(-1);
+  assertReviewPrompt(prompt);
+  assert.ok(!prompt.includes(HOSTILE_SUMMARY));
+  assert.deepEqual(f.cli.launches()[0].args, ['--bg', '-n', REVIEW_NAME, '--', prompt]);
+  const listed = (await f.http.bare('GET', TICKETS)).json().tickets[KEY];
+  assert.deepEqual(listed.review, body.ticket.review);
+  assert.equal(listed.blocks.review, 'session_running');
+  const again = await f.http.json('POST', LAUNCH, { key: KEY, phase: REVIEW });
+  assert.equal(again.status, 409);
+  assert.equal(again.json().code, 'CLAUDE_REFUSED');
+  assert.deepEqual(again.json().errors, ['session_running']);
+  assert.equal(f.cli.launches().length, 1);
+});
+
+test('review route: unknown listed review state returns a 409 refusal without mutation', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.seed(KEY, { launch: { [REVIEW]: reviewRecord() } });
+  f.cli.setListing([reviewEntry({ state: 'stopped' })]);
+  const before = f.files();
+  const res = await f.http.json('POST', LAUNCH, { key: KEY, phase: REVIEW });
+  assert.equal(res.status, 409);
+  assert.equal(res.json().code, 'CLAUDE_REFUSED');
+  assert.deepEqual(res.json().errors, ['unrecognised_state']);
+  assert.deepEqual(f.files(), before);
+  assert.equal(f.cli.launches().length, 0);
+});
+
+test('review route: unavailable listing reports 502 rather than accepting an uncertain launch', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.cli.failListing();
+  const res = await f.http.json('POST', LAUNCH, { key: KEY, phase: REVIEW });
+  assert.equal(res.status, 502);
+  assert.equal(res.json().code, 'CLAUDE_FAILED');
+  assert.deepEqual(res.json().errors, ['listing_unavailable']);
+  assert.equal(f.cli.launches().length, 0);
+  assert.equal(fs.existsSync(f.ticketDir()), false);
+});
+
+test('review route: invalid keys and near-match actions are rejected before CLI or filesystem access', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.recorder.clearCalls();
+  const bodies = [
+    ...BAD_KEYS.map((key) => ({ key, phase: REVIEW })),
+    ...['review', 'PR-REVIEW-TRANSACT', `${REVIEW} `, `${REVIEW}\n`, [REVIEW], null].map(
+      (phase) => ({ key: KEY, phase }),
+    ),
+  ];
+  for (const body of bodies) {
+    const res = await f.http.json('POST', LAUNCH, body);
+    assert.equal(res.status, 400, JSON.stringify(body));
+    assert.equal(res.json().code, 'INVALID_TICKET');
+  }
+  assert.deepEqual(f.recorder.calls, []);
+  assert.deepEqual(f.cli.calls, []);
+});
+
+test('review route: existing Host, origin, fetch-site and JSON guards remain authoritative', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.recorder.clearCalls();
+  for (const [headers, expected] of [
+    [{ host: `evil.example:${f.http.port}` }, 403],
+    [{ origin: 'https://evil.example' }, 403],
+    [{ 'sec-fetch-site': 'cross-site' }, 403],
+    [{ 'content-type': 'text/plain' }, 415],
+  ]) {
+    const res = await f.http.raw('POST', LAUNCH, {
+      body: JSON.stringify({ key: KEY, phase: REVIEW }),
+      headers,
+    });
+    assert.equal(res.status, expected);
+  }
+  assert.deepEqual(f.recorder.calls, []);
+  assert.deepEqual(f.cli.calls, []);
+});
 
 test('scenario 8: bad keys and phases are refused with INVALID_TICKET before any filesystem access', async (t) => {
   const f = await claudeHttpFixture(t);
@@ -292,6 +392,7 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     implement: 'investigate_running',
     answer: 'session_running',
     groom: null,
+    review: null,
   });
 
   f.seed(KEY, {
@@ -316,6 +417,7 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     implement: 'session_running',
     answer: 'session_running',
     groom: null,
+    review: null,
   });
   assert.equal(f.cli.launches().length, 0, 'nothing is spawned');
 });

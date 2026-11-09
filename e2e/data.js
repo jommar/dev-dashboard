@@ -1257,6 +1257,13 @@ function claudeDerived(entry) {
       : groomState === 'unknown' || entry.state === 'unknown'
         ? 'listing_unavailable'
         : null;
+  const review = entry.review ?? { state: 'none', reason: null };
+  const reviewBlock =
+    review.state === 'working'
+      ? 'session_running'
+      : review.state === 'unknown'
+        ? review.reason
+        : null;
   // The server's order: open questions, then answers never sent (a stale `done` cannot be trusted),
   // then a plan not marked done.
   const implement = unanswered
@@ -1271,6 +1278,7 @@ function claudeDerived(entry) {
     unanswered,
     unsent: Boolean(entry.unsent),
     groom: entry.groom ?? CLAUDE_NO_GROOM,
+    review,
     blocks: {
       ...(held ?? {
         investigate: null,
@@ -1278,6 +1286,7 @@ function claudeDerived(entry) {
         answer: entry.questions.length ? null : 'no_questions',
       }),
       groom,
+      review: reviewBlock,
     },
   };
 }
@@ -1419,6 +1428,25 @@ function claudeResponse(url, method, { claude }, body) {
     };
   if (method !== 'POST') return null;
   claude.calls.push({ method, path: pathname, body: structuredClone(body) });
+  if (pathname === '/api/claude/launch' && body?.phase === 'pr-review-transact') {
+    const current = claude.tickets[body.key] ?? claudeEntry('none', null, { phase: null });
+    if (current.blocks.review) return claudeFailure(409, 'CLAUDE_REFUSED', [current.blocks.review]);
+    const ticket = claudeDerived({
+      ...current,
+      review: { state: 'working', reason: 'starting' },
+    });
+    claude.tickets[body.key] = ticket;
+    return {
+      json: {
+        ok: true,
+        key: body.key,
+        phase: 'pr-review-transact',
+        name: `${body.key}-pr-review-transact`,
+        id: 'ab12cd34',
+        ticket: structuredClone(ticket),
+      },
+    };
+  }
   if (pathname === '/api/claude/launch' && body?.phase === 'groom') {
     // Grooming has a session and a record of its own and leaves the workflow's entry as it was.
     const current = claude.tickets[body.key] ?? claudeEntry('none', null);
@@ -1450,6 +1478,7 @@ function claudeResponse(url, method, { claude }, body) {
     const ticket = claudeEntry('working', 'starting', {
       phase: body.phase,
       groom: current?.groom ?? CLAUDE_NO_GROOM,
+      review: current?.review ?? { state: 'none', reason: null },
       // The launched phase has a live session; an implement launch keeps the investigate side.
       goTo: {
         investigate:

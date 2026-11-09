@@ -1,10 +1,21 @@
 import { test, expect } from './fixtures.js';
-import { ticketBoardData } from './data.js';
+import { claudeEntry, ticketBoardData } from './data.js';
 
 const queueReads = (dashboard) =>
   dashboard.requests.filter(({ path }) => path === '/api/review-tickets');
 const ticket = (page, key = 'DEMO-1') => page.getByTestId(`prs-ticket-${key}`);
 const lane = (page, id) => page.getByTestId(`prs-column-${id}`);
+const claudeReads = (dashboard) =>
+  dashboard.requests.filter(({ path }) => path === '/api/claude/tickets');
+const reviewLaunches = (dashboard) =>
+  dashboard.data.claude.calls.filter(({ path }) => path === '/api/claude/launch');
+const reviewStart = (page) => page.getByTestId('prs-claude-action-review');
+const reviewBody = (page) => page.getByTestId('prs-claude-dialog-body');
+
+async function openReview(page) {
+  await page.getByTestId('prs-claude-icon-DEMO-1').click();
+  await expect(page.getByTestId('prs-claude-dialog')).toBeVisible();
+}
 const search = (page) =>
   page.getByTestId('panel-prs').getByRole('searchbox', { name: 'Search', exact: true });
 const review = (state = 'approved') => ({
@@ -162,28 +173,26 @@ test('polling moves automatically both directions and preserves column scroll, f
   expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
 });
 
-test('placeholder is empty, native, scoped, safe and closes by Close, Escape and true backdrop without Claude calls', async ({
+test('review dialog is native, scoped, literal and closes by Close, Escape and true backdrop without launching', async ({
   page,
   dashboard,
 }) => {
   const first = dashboard.data.reviewTickets.tickets[0];
-  first.summary = 'Literal <img src=x onerror=alert(1)> & placeholder';
+  first.summary = 'Literal <img src=x onerror=alert(1)> & review';
   dashboard.data.tickets.tickets[0].key = first.key;
   await page.goto('/#/my-tickets');
   await expect(page.getByTestId('claude-icon-DEMO-1')).toBeVisible();
   await page.getByTestId('tab-prs').click();
   await expect(ticket(page)).toBeVisible();
-  const requestsBefore = dashboard.requests.filter(({ path }) =>
-    path.startsWith('/api/claude/'),
-  ).length;
   const opener = page.getByTestId('prs-claude-icon-DEMO-1');
   const dialog = page.getByTestId('prs-claude-dialog');
   for (const close of ['Close', 'Escape', 'backdrop']) {
     await opener.click();
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveAccessibleName(`DEMO-1 ${first.summary}`);
-    await expect(page.getByTestId('prs-claude-dialog-body')).toBeEmpty();
-    await expect(dialog.getByRole('button')).toHaveCount(1);
+    await expect(reviewStart(page)).toHaveText('Start code review');
+    await expect(reviewStart(page)).toBeEnabled();
+    await expect(dialog.getByRole('button')).toHaveCount(2);
     await expect(dialog.locator('input, textarea, form, img, script')).toHaveCount(0);
     expect(await dialog.evaluate((element) => element.open && element.matches(':modal'))).toBe(
       true,
@@ -205,13 +214,10 @@ test('placeholder is empty, native, scoped, safe and closes by Close, Escape and
     await expect(dialog).toHaveCount(0);
     await expect(opener).toBeFocused();
   }
-  expect(dashboard.requests.filter(({ path }) => path.startsWith('/api/claude/'))).toHaveLength(
-    requestsBefore,
-  );
   expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
 });
 
-test('placeholder survives filtered-out cards but closes on eligibility removal and tab departure', async ({
+test('review dialog survives filtered-out cards but closes on eligibility removal and tab departure', async ({
   page,
   dashboard,
 }) => {
@@ -238,6 +244,199 @@ test('placeholder survives filtered-out cards but closes on eligibility removal 
   });
   await expect(page.getByTestId('panel-services')).toBeVisible();
   await expect(page.getByTestId('prs-claude-dialog')).toHaveCount(0);
+});
+
+test('PR Claude icons have no hover/focus tooltip but retain review names and My Tickets tooltips', async ({
+  page,
+  dashboard,
+}) => {
+  dashboard.data.tickets.tickets[0].key = 'DEMO-1';
+  await page.goto('/#/my-tickets');
+  const mine = page.getByTestId('claude-icon-DEMO-1');
+  await expect(mine).toHaveAttribute('data-tooltip', 'Claude: not started');
+  await expect(mine).toHaveAccessibleName('Claude: not started');
+  await mine.hover();
+  const visibleTooltips = page.getByTestId('tooltip').filter({ visible: true });
+  await expect(visibleTooltips).toHaveCount(1);
+  await page.getByTestId('tab-prs').click();
+  const icon = page.getByTestId('prs-claude-icon-DEMO-1');
+  await expect.soft(icon).toHaveAccessibleName('Claude code review for DEMO-1');
+  await expect(icon).toHaveAttribute('aria-haspopup', 'dialog');
+  await expect.soft(icon).not.toHaveAttribute('data-tooltip');
+  await expect.soft(icon).not.toHaveAttribute('title');
+  for (const interaction of ['hover', 'focus']) {
+    await icon[interaction]();
+    await expect.soft(visibleTooltips).toHaveCount(0);
+    await expect.soft(icon).not.toHaveAttribute('aria-describedby');
+  }
+});
+
+test('first review launch leaves the workflow phase null', async ({ page, dashboard }) => {
+  expect(dashboard.data.claude.tickets['DEMO-1']).toBeUndefined();
+  await page.goto('/#/prs');
+  await openReview(page);
+  const response = page.waitForResponse('**/api/claude/launch');
+  await reviewStart(page).click();
+  const { ticket } = await (await response).json();
+  expect(ticket).toMatchObject({
+    phase: null,
+    state: 'none',
+    review: { state: 'working', reason: 'starting' },
+  });
+  expect(dashboard.data.claude.tickets['DEMO-1'].phase).toBeNull();
+  await expect(reviewStart(page)).toBeDisabled();
+});
+
+test('review launch sends only key/action, disables repeat submission and keeps the dialog with independent feedback', async ({
+  page,
+  dashboard,
+}) => {
+  const workflow = claudeEntry('working', 'running');
+  dashboard.data.claude.tickets['DEMO-1'] = workflow;
+  let release;
+  const pending = new Promise((resolve) => {
+    release = resolve;
+  });
+  const bodies = [];
+  await page.route('**/api/claude/launch', async (route) => {
+    bodies.push(route.request().postDataJSON());
+    await pending;
+    await route.fallback().catch(() => {});
+  });
+  try {
+    await page.goto('/#/prs');
+    await openReview(page);
+    await expect(reviewStart(page)).toBeEnabled();
+    await reviewStart(page).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => bodies.length).toBe(1);
+    await expect(reviewStart(page)).toBeDisabled();
+    await expect(page.getByTestId('prs-claude-dialog-close')).toBeFocused();
+    await reviewStart(page).dispatchEvent('click');
+    expect(bodies).toEqual([{ key: 'DEMO-1', phase: 'pr-review-transact' }]);
+    release();
+    await expect.poll(() => reviewLaunches(dashboard).length).toBe(1);
+    await expect(reviewBody(page)).toContainText(/starting|working|started/i);
+    await expect(reviewStart(page)).toBeDisabled();
+    await expect(page.getByTestId('prs-claude-dialog')).toBeVisible();
+    expect(dashboard.data.claude.tickets['DEMO-1']).toMatchObject({
+      phase: workflow.phase,
+      state: workflow.state,
+      flags: workflow.flags,
+      questions: workflow.questions,
+      review: { state: 'working', reason: 'starting' },
+    });
+    await expect(ticket(page).getByTestId('prs-claude-icon-DEMO-1')).toHaveAttribute(
+      'data-state',
+      'none',
+    );
+  } finally {
+    release();
+  }
+});
+
+for (const failure of ['server refusal', 'network failure']) {
+  test(`review launch shows readable ${failure} without success or closing`, async ({ page }) => {
+    await page.route('**/api/claude/launch', (route) =>
+      failure === 'server refusal'
+        ? route.fulfill({
+            status: 409,
+            json: { code: 'CLAUDE_REFUSED', error: 'CLAUDE REFUSED', errors: ['session_running'] },
+          })
+        : route.abort('failed'),
+    );
+    await page.goto('/#/prs');
+    await openReview(page);
+    await reviewStart(page).click();
+    const error = page.getByTestId('prs-claude-error');
+    await expect(error).toBeVisible();
+    await expect(error).toHaveAttribute('role', 'alert');
+    await expect(error).toContainText(
+      failure === 'server refusal'
+        ? /session.*(?:running|working)|already.*(?:running|working)/i
+        : /network|connect|request|reach/i,
+    );
+    await expect(error).not.toContainText(/CLAUDE_REFUSED|session_running/);
+    await expect(reviewBody(page)).not.toContainText(
+      /review started|review launched|successfully/i,
+    );
+    await expect(reviewStart(page)).toBeEnabled();
+    await expect(page.getByTestId('prs-claude-dialog')).toBeVisible();
+  });
+}
+
+for (const [state, reason, phrase] of [
+  ['working', 'running', 'working'],
+  ['working', 'starting', 'starting'],
+  ['unknown', 'unrecognised_state', 'status unavailable'],
+  ['unknown', 'listing_unavailable', 'status unavailable'],
+]) {
+  test(`review dialog blocks ${state}/${reason} independently of workflow status`, async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+      review: { state, reason },
+    });
+    await page.goto('/#/prs');
+    await openReview(page);
+    await expect(reviewStart(page)).toBeVisible();
+    await expect(reviewStart(page)).toBeDisabled();
+    await expect(reviewBody(page)).toContainText(phrase);
+    await expect(page.getByTestId('prs-claude-dialog-close')).toBeEnabled();
+    expect(reviewLaunches(dashboard)).toEqual([]);
+  });
+}
+
+test('review polling runs only for an open active dialog and reopening refreshes lifecycle without claiming approval', async ({
+  page,
+  dashboard,
+}) => {
+  await page.clock.install();
+  await page.goto('/#/prs');
+  await expect(ticket(page)).toBeVisible();
+  await page.clock.fastForward(31_000);
+  expect(claudeReads(dashboard)).toHaveLength(0);
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+    review: { state: 'working', reason: 'running' },
+  });
+  await openReview(page);
+  await expect.poll(() => claudeReads(dashboard).length).toBeGreaterThan(0);
+  await expect(reviewStart(page)).toBeDisabled();
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+    review: { state: 'done', reason: 'finished' },
+  });
+  const beforePoll = claudeReads(dashboard).length;
+  await page.clock.fastForward(16_000);
+  await expect.poll(() => claudeReads(dashboard).length).toBeGreaterThan(beforePoll);
+  await expect(reviewStart(page)).toBeEnabled();
+  await expect(reviewBody(page)).toContainText('finished');
+  await expect(reviewBody(page)).not.toContainText(
+    /review passed|all PRs approved|review approved/i,
+  );
+  await reviewStart(page).click();
+  await expect.poll(() => reviewLaunches(dashboard).length).toBe(1);
+  expect(reviewLaunches(dashboard)[0].body).toEqual({ key: 'DEMO-1', phase: 'pr-review-transact' });
+  await expect(reviewStart(page)).toBeDisabled();
+  await expect(reviewBody(page)).toContainText(/starting|working|started/i);
+  await page.getByTestId('prs-claude-dialog-close').click();
+  const afterClose = claudeReads(dashboard).length;
+  await page.clock.fastForward(31_000);
+  expect(claudeReads(dashboard)).toHaveLength(afterClose);
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+    review: { state: 'unknown', reason: 'listing_unavailable' },
+  });
+  await openReview(page);
+  await expect.poll(() => claudeReads(dashboard).length).toBeGreaterThan(afterClose);
+  await expect(reviewStart(page)).toBeDisabled();
+  await expect(reviewBody(page)).toContainText('status unavailable');
+  await page.evaluate(() => {
+    location.hash = '#/services';
+  });
+  await expect(page.getByTestId('prs-claude-dialog')).toHaveCount(0);
+  const afterDeparture = claudeReads(dashboard).length;
+  await page.clock.fastForward(31_000);
+  expect(claudeReads(dashboard)).toHaveLength(afterDeparture);
 });
 
 test('states distinguish first loading/error, recovery, empty queue and no filter matches', async ({
@@ -432,11 +631,12 @@ test('ticket prefix derives sorted unique fetched-key options and combines filte
   expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
 });
 
-test('ticket prefix stays transient through reload, preserves other saved fields and reuses mobile and missing-option behavior', async ({
+test('all four PR filters persist through reload, polling and tabs, preserve other views and Clear persists All', async ({
   page,
   dashboard,
 }) => {
   prefixQueue(dashboard.data);
+  await page.clock.install();
   await page.setViewportSize({ width: 390, height: 900 });
   await page.addInitScript(() => {
     if (sessionStorage.getItem('prefix-fixture-seeded')) return;
@@ -462,13 +662,13 @@ test('ticket prefix stays transient through reload, preserves other saved fields
   const prefix = panel.getByLabel('Ticket prefix', { exact: true });
   const toggle = panel.getByTestId('prs-filter-toggle');
   const count = panel.getByTestId('prs-filter-count');
-  await expect(count).toHaveText('1 of 4');
+  await expect(count).toHaveText('0 of 4');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await expect(prefix).toHaveCount(1);
   await expect(prefix).toBeHidden();
   await toggle.click();
   await expect(prefix).toBeVisible();
-  await expect(prefix).toHaveValue('');
+  await expect(prefix).toHaveValue('BETA');
   await expect(search(page)).toHaveValue('Backend counterpart');
   await expect(panel.getByLabel('Repository', { exact: true })).toHaveValue('example/frontend');
   await expect(panel.getByLabel('Review state', { exact: true })).toHaveValue('approved');
@@ -479,6 +679,7 @@ test('ticket prefix stays transient through reload, preserves other saved fields
   );
   expect(saved.views.prs).toEqual({
     search: 'Backend counterpart',
+    prefix: 'ALPHA',
     repo: 'example/frontend',
     review: 'approved',
   });
@@ -486,7 +687,19 @@ test('ticket prefix stays transient through reload, preserves other saved fields
   await page.reload();
   await expect(count).toHaveText('1 of 4');
   await toggle.click();
-  await expect(prefix).toHaveValue('');
+  await expect(prefix).toHaveValue('ALPHA');
+  await expect(search(page)).toHaveValue('Backend counterpart');
+  await expect(panel.getByLabel('Repository', { exact: true })).toHaveValue('example/frontend');
+  await expect(panel.getByLabel('Review state', { exact: true })).toHaveValue('approved');
+  await page.getByTestId('prs-refresh').click();
+  await expect(page.getByTestId('prs-refresh')).toBeEnabled();
+  await page.clock.fastForward(91_000);
+  await page.getByTestId('nav-tools-toggle').click();
+  await page.getByTestId('tab-services').click();
+  await page.getByTestId('nav-tools-toggle').click();
+  await page.getByTestId('tab-prs').click();
+  await expect(page.getByTestId('prs-refresh')).toBeEnabled();
+  await expect(prefix).toHaveValue('ALPHA');
   await expect(search(page)).toHaveValue('Backend counterpart');
   await expect(panel.getByLabel('Repository', { exact: true })).toHaveValue('example/frontend');
   await expect(panel.getByLabel('Review state', { exact: true })).toHaveValue('approved');
@@ -512,7 +725,95 @@ test('ticket prefix stays transient through reload, preserves other saved fields
   await toggle.click();
   await expect(prefix).toBeHidden();
   await expect(search(page)).toBeVisible();
+  await page.reload();
+  await expect(count).toHaveText('4 of 4');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  for (const field of [
+    prefix,
+    search(page),
+    panel.getByLabel('Repository', { exact: true }),
+    panel.getByLabel('Review state', { exact: true }),
+  ])
+    await expect(field).toHaveValue('');
+  const cleared = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('dev-dashboard.work-filters')),
+  );
+  expect(cleared).toMatchObject({
+    version: 1,
+    views: {
+      prs: { search: '', prefix: '', repo: '', review: '' },
+      tickets: { search: 'preserve other screen' },
+    },
+  });
   expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+});
+
+test('fresh PR storage defaults to empty Search and All in each dropdown', async ({ page }) => {
+  await page.goto('/#/prs');
+  const panel = page.getByTestId('panel-prs');
+  await expect(ticket(page)).toBeVisible();
+  await expect(search(page)).toHaveValue('');
+  for (const name of ['Ticket prefix', 'Repository', 'Review state']) {
+    const select = panel.getByLabel(name, { exact: true });
+    await expect(select).toHaveValue('');
+    await expect(select.locator('option:checked')).toHaveText('All');
+  }
+});
+
+test('valid v1 missing prefix and repository selections restore their fallback options', async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      'dev-dashboard.work-filters',
+      JSON.stringify({
+        version: 1,
+        views: {
+          prs: { search: '', prefix: 'MISSING', repo: 'example/missing', review: 'approved' },
+        },
+      }),
+    ),
+  );
+  await page.goto('/#/prs');
+  const panel = page.getByTestId('panel-prs');
+  await expect(panel.getByTestId('prs-filter-count')).toHaveText('0 of 3');
+  for (const [name, value] of [
+    ['Ticket prefix', 'MISSING'],
+    ['Repository', 'example/missing'],
+  ]) {
+    const select = panel.getByLabel(name, { exact: true });
+    await expect(select).toHaveValue(value);
+    await expect(select.locator('option:checked')).toHaveText(`${value} (not in fetched data)`);
+  }
+  await expect(panel.getByLabel('Review state', { exact: true })).toHaveValue('approved');
+});
+
+test('an invalid saved prefix resets the PR view rather than applying its other known fields', async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      'dev-dashboard.work-filters',
+      JSON.stringify({
+        version: 1,
+        views: {
+          prs: {
+            search: 'must not apply',
+            prefix: [],
+            repo: 'example/missing',
+            review: 'approved',
+          },
+        },
+      }),
+    ),
+  );
+  await page.goto('/#/prs');
+  const panel = page.getByTestId('panel-prs');
+  await expect(search(page)).toHaveValue('');
+  for (const name of ['Ticket prefix', 'Repository', 'Review state'])
+    await expect(panel.getByLabel(name, { exact: true })).toHaveValue('');
+  await expect(panel.getByTestId('prs-filter-count')).toHaveText('3 of 3');
 });
 
 test('lane header help describes classifier rules on hover and actual Tab focus, dismisses, and leaves no-hint boards unchanged', async ({

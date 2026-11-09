@@ -5,6 +5,7 @@
 // No real `claude` ever runs here. Every backend module is imported inside the helper that needs
 // it, so a scenario fails by itself when its module or method is missing.
 import { spawnSync } from 'node:child_process';
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -28,6 +29,110 @@ export const SLUG = 'tap-1234';
 export const INVESTIGATE = 'investigate-and-plan';
 export const IMPLEMENT = 'implement-plan';
 export const GROOM = 'groom';
+// Literal wire contract, deliberately independent of a not-yet-implemented backend export.
+export const REVIEW = 'pr-review-transact';
+export const REVIEW_NAME = `${KEY}-${REVIEW}`;
+export const REVIEW_ID = 'dddd0004';
+// Review wording is server-owned but not a byte-exact contract. Assert its task and boundaries.
+export function assertReviewPrompt(prompt, key = KEY) {
+  assert.equal(typeof prompt, 'string');
+  assert.ok(prompt.includes(key), 'identifies the validated ticket');
+  assert.match(prompt, /pr-review-transact/, 'delegates to the review skill');
+  assert.match(
+    prompt,
+    /(?:linked|associated)[\s\S]*?(?:pull requests|PRs)|(?:pull requests|PRs)[\s\S]*?(?:linked|associated)/i,
+    'scopes review to linked pull requests',
+  );
+  assert.match(
+    prompt,
+    /(?:follow|use|run)[\s\S]*?(?:procedure|skill|steps)/i,
+    'follows the skill procedure',
+  );
+  assert.match(prompt, /report|summari[sz]e/i, 'asks for review outcomes');
+  assert.match(
+    prompt,
+    /(?:do not|don't|never|no)[\s\S]*?(?:implement|fixes|code changes)/i,
+    'does not implement fixes',
+  );
+  assert.match(prompt, /approv/i, 'keeps approval decisions under the skill rules');
+  assert.match(prompt, /comment/i, 'keeps review comments under the skill rules');
+  assert.match(prompt, /Jira|transition/i, 'keeps Jira transitions under the skill rules');
+  assert.match(
+    prompt,
+    /(?:follow|respect|preserve|do not override|governed)[\s\S]*?(?:rules|policy|procedure)/i,
+    'respects rather than replaces the skill rules',
+  );
+  assert.match(prompt, /existing[\s\S]*?review/i, 'handles a first review and a re-review');
+  assert.match(
+    prompt,
+    /unresolved[\s\S]*?(?:threads|comments|findings)/i,
+    'inspects unresolved review feedback',
+  );
+  assert.match(
+    prompt,
+    /latest[\s\S]*?(?:head|commit)|current[\s\S]*?head/i,
+    'reviews the current PR head',
+  );
+  assert.match(
+    prompt,
+    /(?:prior|previous|earlier)[\s\S]*?(?:addressed|resolved|fixed)|(?:addressed|resolved|fixed)[\s\S]*?(?:prior|previous|earlier)/i,
+    'verifies whether prior findings were addressed',
+  );
+  assert.match(
+    prompt,
+    /(?:remaining|outstanding)[\s\S]*?new|new[\s\S]*?(?:remaining|outstanding)/i,
+    'reports remaining and newly introduced issues',
+  );
+  assert.match(
+    prompt,
+    /(?:do not|don't|avoid|without)[\s\S]*?duplicat[\s\S]*?resolved/i,
+    'does not duplicate findings already resolved',
+  );
+  assert.match(
+    prompt,
+    /(?:publish|post|submit)[\s\S]*?(?:findings|review)[\s\S]*?(?:PRs?|pull requests?)/i,
+    'publishes actionable review findings to relevant pull requests',
+  );
+  assert.match(prompt, /actionable/i, 'asks for actionable findings, not just a local summary');
+  assert.match(
+    prompt,
+    /(?:discover|find|locate)[\s\S]*?skills?|skills?[\s\S]*?(?:discover|find|locate)/i,
+    'discovers and follows applicable existing skills',
+  );
+  assert.match(prompt, /Slack/i, 'includes a Slack follow-up');
+  assert.match(
+    prompt,
+    /existing[\s\S]*?thread/i,
+    'uses the ticket existing thread, not a new conversation',
+  );
+  assert.match(
+    prompt,
+    /(?:concise|brief|short)[\s\S]*?(?:reply|update|summary)|(?:reply|update|summary)[\s\S]*?(?:concise|brief|short)/i,
+    'requests a concise reply to the existing thread',
+  );
+  assert.match(prompt, /permission/i, 'respects applicable skill permissions');
+  assert.match(prompt, /confirmation/i, 'respects applicable skill confirmation gates');
+  assert.match(
+    prompt,
+    /(?:do not|don't|never)[\s\S]*?bypass|(?:respect|honou?r|follow|preserve)[\s\S]*?(?:permission|confirmation)/i,
+    'does not bypass permissions or confirmation requirements',
+  );
+  assert.match(
+    prompt,
+    /(?:report|explain)[\s\S]*?(?:blocker|blocked|confirmation|thread)/i,
+    'reports missing-thread or confirmation blockers',
+  );
+  assert.match(
+    prompt,
+    /(?:do not|don't|never)[\s\S]*?(?:invent|create|start)[\s\S]*?thread/i,
+    'never invents or creates a replacement Slack thread',
+  );
+  assert.match(
+    prompt,
+    /(?:do not|don't|never)[\s\S]*?(?:claim|report)[\s\S]*?(?:success|posted|published)|(?:only|unless)[\s\S]*?(?:confirm|verif)[\s\S]*?(?:post|publish)/i,
+    'never claims publishing success without actual confirmation',
+  );
+}
 // The session name of each phase: the key and the phase, nothing else.
 export const INVESTIGATE_NAME = 'TAP-1234-investigate-and-plan';
 export const IMPLEMENT_NAME = 'TAP-1234-implement-plan';
@@ -127,6 +232,10 @@ export const launchRecord = ({
   ...(answered && Object.keys(answered).length ? { answered } : {}),
   ...(sent ? { sent } : {}),
 });
+
+export const reviewRecord = (extra = {}) =>
+  launchRecord({ name: REVIEW_NAME, id: REVIEW_ID, ...extra });
+export const reviewEntry = (extra = {}) => listed({ id: REVIEW_ID, name: REVIEW_NAME, ...extra });
 
 // ---- the two prompts, verbatim from the spec; only the three placeholders are filled ----
 

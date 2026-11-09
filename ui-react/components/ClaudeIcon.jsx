@@ -41,7 +41,14 @@ const BADGES = {
 const isGrooming = (entry) =>
   entry?.state === 'none' && Boolean(entry.groom) && entry.groom.state !== 'none';
 
-export function ClaudeIcon({ ticketKey, entry: listed, onOpen, label: overrideLabel, testId }) {
+export function ClaudeIcon({
+  ticketKey,
+  entry: listed,
+  onOpen,
+  label: overrideLabel,
+  testId,
+  tooltip = true,
+}) {
   const grooming = isGrooming(listed);
   const entry = grooming ? listed.groom : listed;
   const state = entry?.state ?? 'none';
@@ -53,7 +60,7 @@ export function ClaudeIcon({ ticketKey, entry: listed, onOpen, label: overrideLa
       data-testid={testId ?? `claude-icon-${ticketKey}`}
       data-state={state}
       data-reason={entry?.reason ?? undefined}
-      data-tooltip={label}
+      data-tooltip={tooltip ? label : undefined}
       aria-label={label}
       aria-haspopup="dialog"
       onClick={() => onOpen?.(ticketKey)}

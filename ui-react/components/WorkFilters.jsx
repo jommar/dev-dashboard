@@ -46,7 +46,6 @@ function readViews() {
     for (const [view, schema] of Object.entries(SCHEMAS)) {
       const fields = saved.views[view];
       if (!fields || typeof fields !== 'object' || Array.isArray(fields)) continue;
-      if (view === 'prs') delete fields.prefix;
       const valid = Object.entries(schema).every(
         ([key, values]) =>
           fields[key] === undefined ||
@@ -63,7 +62,6 @@ function readViews() {
 function saveView(view, filters) {
   const views = readViews();
   views[view] = { ...filters };
-  if (view === 'prs') delete views[view].prefix;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, views }));
   } catch {

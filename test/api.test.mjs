@@ -53,6 +53,50 @@ test('getTicketPrs resolves to unavailable instead of throwing, so PRs never blo
 
 const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), { status });
 
+test('review API: existing launchClaude posts only key/action and preserves independent review entry', async (t) => {
+  const calls = [];
+  const ticket = {
+    state: 'none',
+    phase: null,
+    review: { state: 'working', reason: 'running' },
+    blocks: { review: 'session_running' },
+  };
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse({ ok: true, key: 'DEMO-1', phase: 'pr-review-transact', ticket });
+  });
+  const result = await api.launchClaude('DEMO-1', 'pr-review-transact', 'client prompt override');
+  assert.equal(calls.length, 1);
+  const [url, options] = calls[0];
+  assert.equal(url, '/api/claude/launch');
+  assert.equal(options.method, 'POST');
+  assert.equal(options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(options.body), { key: 'DEMO-1', phase: 'pr-review-transact' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.ticket, ticket);
+});
+
+test('review API: refusal and network failure remain readable nonthrowing results', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () =>
+    jsonResponse(
+      { code: 'CLAUDE_REFUSED', error: 'Review state is unknown', errors: ['unrecognised_state'] },
+      409,
+    ),
+  );
+  const refusal = await api.launchClaude('DEMO-1', 'pr-review-transact');
+  assert.equal(refusal.ok, false);
+  assert.equal(refusal.status, 409);
+  assert.equal(refusal.code, 'CLAUDE_REFUSED');
+  assert.deepEqual(refusal.errors, ['unrecognised_state']);
+  t.mock.restoreAll();
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw new TypeError('network down');
+  });
+  const unreachable = await api.launchClaude('DEMO-1', 'pr-review-transact');
+  assert.equal(unreachable.ok, false);
+  assert.equal(unreachable.status, 0);
+});
+
 test('scenario 27: getClaudeTickets reads the status route and resolves its payload', async (t) => {
   const payload = { listing: 'ok', updatedAt: 1731100000000, tickets: {} };
   const calls = [];

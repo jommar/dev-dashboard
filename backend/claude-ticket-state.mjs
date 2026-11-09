@@ -11,9 +11,9 @@ import { isSessionId } from './slack-watch-store.mjs';
 export const INVESTIGATE = 'investigate-and-plan';
 export const IMPLEMENT = 'implement-plan';
 export const PHASES = [INVESTIGATE, IMPLEMENT];
-// Grooming is no phase of the workflow: it has a record and a session of its own, and none of the
-// workflow rules (flags, answers, gates, the icon state) look at it.
+// Side actions have their own records and sessions; workflow flags, answers and gates ignore them.
 export const GROOM = 'groom';
+export const REVIEW = 'pr-review-transact';
 
 const TICKET_KEY = /^[A-Z]{1,10}-\d{1,7}$/;
 const QUESTION_ID = /^[A-Za-z0-9_-]{1,32}$/;
@@ -151,6 +151,7 @@ export function readLaunch(launch) {
 
 // The groom record of launch.json, shaped like a phase record, or null.
 export const readGroom = (launch) => readRecord(launch?.[GROOM]);
+export const readReview = (launch) => readRecord(launch?.[REVIEW]);
 
 // The record of the phase launched last: the one the card shows and an answer is saved on.
 export const currentRecord = (launch) =>
@@ -255,8 +256,8 @@ function goToAll(launch, entries) {
   };
 }
 
-// The state of the groom session: its own small table, apart from the workflow's.
-function groomState(record, entries, now) {
+// Independent sessions finish without writing a workflow flag.
+export function sideActionState(record, entries, now) {
   if (!record) return { state: 'none', reason: null };
   if (!entries) return { state: 'unknown', reason: 'listing_unavailable' };
   const session = resolveSession(entries, record);
@@ -268,6 +269,12 @@ function groomState(record, entries, now) {
   return session.state === 'blocked'
     ? { state: 'waiting', reason: 'blocked' }
     : { state: 'done', reason: 'finished' };
+}
+
+export function reviewBlock(review, entries) {
+  if (!entries) return 'listing_unavailable';
+  if (review.state === 'unknown') return review.reason;
+  return review.state === 'working' ? 'session_running' : null;
 }
 
 // The entry for one ticket. `status` and `launch` are the parsed files (null when a file is not a
@@ -302,7 +309,8 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
   const busy = (asked) =>
     state === 'unknown' ? 'listing_unavailable' : running && runningBlock(running, asked);
   const groomRecord = readGroom(launch);
-  const groom = groomState(groomRecord, entries, now);
+  const groom = sideActionState(groomRecord, entries, now);
+  const review = sideActionState(readReview(launch), entries, now);
   const blocks = {
     investigate: busy(INVESTIGATE) || null,
     implement: busy(IMPLEMENT) || implementBlock(status, launch, planPresent),
@@ -312,6 +320,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
       (status === null ? 'status_unreadable' : questions.length === 0 ? 'no_questions' : null),
     // Only a groom session of its own blocks grooming; the workflow never does.
     groom: !entries ? 'listing_unavailable' : groom.state === 'working' ? 'session_running' : null,
+    review: reviewBlock(review, entries),
   };
   return {
     phase: record?.phase ?? null,
@@ -322,6 +331,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     unanswered,
     unsent: sendable && state !== 'working' && state !== 'unknown',
     groom,
+    review,
     blocks,
     goTo: goToAll(launch, entries),
   };

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Added **Start code review** to the Pull Requests Claude dialog, replacing its blank body with
+  review-session status and launch/error feedback. The PR-only icon tooltip is removed; its
+  accessible name and My Tickets tooltips remain. The same button handles initial review and
+  re-review through `POST /api/claude/launch` with `phase: "pr-review-transact"`, starting
+  `<KEY>-pr-review-transact` in trusted `~/pathwise`. Review is independent of workflow/groom,
+  needs no plan, does not mutate `status.json` or receive `--add-dir`, and preserves their records.
+  Active/starting reviews and unavailable/unrecognised review state refuse duplicate launches;
+  finished/blocked sessions or sessions missing after the start window can be relaunched.
+  Ticket entries gain `review: { state, reason }` and `blocks.review`; Investigate resets keep
+  review and groom records. The fixed server-generated prompt uses `pr-review-transact`, checks
+  prior findings/unresolved threads against the latest head without duplicating resolved
+  findings, and forbids code fixes. It delegates actionable PR findings/review and a concise
+  reply to the ticket's existing Slack thread through applicable workspace skills, preserving
+  their approval/Jira rules and permission/confirmation gates. Missing threads or required
+  confirmation are reported as blockers, not replaced with new threads or unconfirmed success.
+  No dashboard Slack posting/thread-finding integration or review prompt editor is added.
+  Session completion is not a passing review; tests verify prompt intent and lifecycle with
+  fake CLI/intercepted APIs, not real reviews, PR posts or Slack replies. All four PR filters
+  now persist, including Ticket prefix, in the existing version-1 localStorage; valid saved
+  choices win over empty Search/All dropdown defaults, and Clear persists those defaults.
+  Deploy backend and built UI together; no dependency, environment or storage migration.
 - Replaced the Pull Requests screen's four PR sections with the shared review
   board: one card per other-assigned Jira ticket in **Ready For Code Review**,
   including tickets with no PRs, with all title-linked open PRs across current
@@ -11,7 +32,7 @@
   requests, and complete evidence. Missing discovery/review evidence stays
   conservatively To Review. Added dynamic **Ticket prefix** alongside Search,
   Repository and Review state, **Clear filters**, and hover/keyboard lane-header
-  help. The Claude button opens only a blank modal, not a workflow. New read-only
+  help. New read-only
   `GET /api/review-tickets`; Home, My Tickets, Slack, legacy PR APIs/CLI and the
   diff viewer retain their behavior. Deploy the backend route before/with the UI.
 - On a My Tickets card the Slack chips and the Claude icon moved out of the top line into a row

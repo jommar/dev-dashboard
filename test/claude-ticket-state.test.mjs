@@ -12,11 +12,15 @@ import {
   INVESTIGATE,
   INVESTIGATE_NAME,
   KEY,
+  REVIEW,
+  REVIEW_NAME,
   START_MS,
   answeredMap,
   launchRecord,
   listed,
   question,
+  reviewEntry,
+  reviewRecord,
   sessionUuid,
   statusFile,
   workingEntry,
@@ -35,6 +39,203 @@ const attachFor = (id) => ({ kind: 'attach', command: `claude attach ${id}` });
 const resumeFor = (id) => ({
   kind: 'resume',
   command: `cd ~/pathwise && claude --resume ${sessionUuid(id)}`,
+});
+
+// ---- independent review lifecycle; completion is not a passing-review verdict ----
+
+test('review state: exported action is outside PHASES and never becomes the current workflow', async () => {
+  const state = await import('../backend/claude-ticket-state.mjs');
+  assert.equal(state.REVIEW, REVIEW);
+  assert.deepEqual(state.PHASES, [INVESTIGATE, IMPLEMENT]);
+  assert.equal(state.sessionName(KEY, REVIEW), REVIEW_NAME);
+  assert.deepEqual(state.readLaunch({ [REVIEW]: reviewRecord() }), []);
+  assert.equal(state.currentRecord({ [REVIEW]: reviewRecord() }), null);
+});
+
+const REVIEW_STATES = [
+  ['no record', { launch: {} }, 'none', null, null],
+  [
+    'malformed record',
+    { launch: { [REVIEW]: { name: 7, launchedAt: START_MS } } },
+    'none',
+    null,
+    null,
+  ],
+  [
+    'working',
+    { entries: [reviewEntry({ state: 'working' })] },
+    'working',
+    'running',
+    'session_running',
+  ],
+  [
+    'starting',
+    {
+      launch: { [REVIEW]: reviewRecord({ launchedAt: START_MS - 10_000, id: null }) },
+      entries: [],
+    },
+    'working',
+    'starting',
+    'session_running',
+  ],
+  ['blocked', { entries: [reviewEntry({ state: 'blocked' })] }, 'waiting', 'blocked', null],
+  ['finished', { entries: [reviewEntry()] }, 'done', 'finished', null],
+  [
+    'idle but finished',
+    { entries: [reviewEntry({ state: 'done', status: 'idle', pid: 4242 })] },
+    'done',
+    'finished',
+    null,
+  ],
+  ['missing after start window', { entries: [] }, 'failed', 'session_missing', null],
+  [
+    'exactly at start-window boundary',
+    {
+      launch: { [REVIEW]: reviewRecord({ launchedAt: START_MS - 30_000, id: null }) },
+      entries: [],
+    },
+    'failed',
+    'session_missing',
+    null,
+  ],
+  [
+    'unfamiliar listed state',
+    { entries: [reviewEntry({ state: 'stopped' })] },
+    'unknown',
+    'unrecognised_state',
+    'unrecognised_state',
+  ],
+  [
+    'unavailable listing',
+    { entries: null },
+    'unknown',
+    'listing_unavailable',
+    'listing_unavailable',
+  ],
+  [
+    'unavailable listing without a record',
+    { launch: {}, entries: null },
+    'none',
+    null,
+    'listing_unavailable',
+  ],
+];
+
+for (const [label, overrides, state, reason, block] of REVIEW_STATES) {
+  test(`review state: ${label} has its independent classification and launch block`, async () => {
+    const entry = await derive({
+      status: null,
+      planPresent: false,
+      launch: { [REVIEW]: reviewRecord() },
+      entries: [reviewEntry()],
+      ...overrides,
+    });
+    assert.deepEqual(entry.review, { state, reason });
+    assert.equal(entry.blocks.review, block);
+    assert.equal(entry.phase, null);
+    assert.equal(entry.state, 'none');
+    assert.deepEqual(entry.flags, { [INVESTIGATE]: false, [IMPLEMENT]: false, done: false });
+    assert.deepEqual(entry.questions, []);
+    assert.equal(entry.unanswered, 0);
+    assert.equal(entry.unsent, false);
+    assert.deepEqual(entry.goTo, GO_TO_NONE, 'no additional review go-to control');
+  });
+}
+
+test('review state: review changes no workflow or groom fields, flags, questions, answers or go-to', async () => {
+  const arrangements = [
+    {},
+    { status: statusFile({ investigate: true, questions: [question('q1')] }) },
+    { entries: [workingEntry({ id: FIRST_ID })] },
+    implementRun(),
+    { status: null, planPresent: false },
+    { entries: null },
+  ];
+  for (const arrangement of arrangements) {
+    const launch = {
+      [INVESTIGATE]: launchRecord({ id: FIRST_ID }),
+      ...arrangement.launch,
+      [GROOM]: groomRecord(),
+    };
+    const entries =
+      arrangement.entries === null
+        ? null
+        : [
+            ...(arrangement.entries ?? [listed({ id: FIRST_ID })]),
+            groomEntry({ state: 'working' }),
+          ];
+    const base = await derive({ ...arrangement, launch, entries });
+    const reviewed = await derive({
+      ...arrangement,
+      launch: { ...launch, [REVIEW]: reviewRecord({ launchedAt: START_MS - 1_000 }) },
+      entries: entries === null ? null : [...entries, reviewEntry({ state: 'working' })],
+    });
+    const withoutReview = ({ review, blocks, ...rest }) => {
+      const { review: ignored, ...otherBlocks } = blocks;
+      void review;
+      void ignored;
+      return { ...rest, blocks: otherBlocks };
+    };
+    assert.deepEqual(withoutReview(reviewed), withoutReview(base));
+    assert.deepEqual(
+      reviewed.review,
+      entries === null
+        ? { state: 'unknown', reason: 'listing_unavailable' }
+        : { state: 'working', reason: 'running' },
+    );
+  }
+});
+
+test('review state: working workflow and groom sessions never block a new review', async () => {
+  for (const phase of [INVESTIGATE, IMPLEMENT, GROOM]) {
+    const name = `${KEY}-${phase}`;
+    const entry = await derive({
+      status: statusFile(),
+      planPresent: false,
+      launch: { [phase]: launchRecord({ name, id: FIRST_ID }) },
+      entries: [workingEntry({ id: FIRST_ID, name })],
+    });
+    assert.deepEqual(entry.review, { state: 'none', reason: null });
+    assert.equal(entry.blocks.review, null, phase);
+  }
+});
+
+test('review state: resolves its own record by id and then name/time, not another action', async () => {
+  const byId = await derive({
+    launch: { [REVIEW]: reviewRecord() },
+    entries: [
+      reviewEntry(),
+      reviewEntry({ id: 'eeee0005', state: 'working', startedAt: START_MS - 1_000 }),
+      workingEntry({ id: FIRST_ID }),
+    ],
+  });
+  assert.deepEqual(byId.review, { state: 'done', reason: 'finished' }, 'saved id wins');
+  const launch = { [REVIEW]: reviewRecord({ id: null }) };
+  const byName = await derive({
+    launch,
+    entries: [
+      reviewEntry({ startedAt: START_MS - HOUR_MS - 1, state: 'working' }),
+      reviewEntry({ id: 'eeee0005', startedAt: START_MS - HOUR_MS + 1 }),
+      workingEntry({ id: FIRST_ID }),
+    ],
+  });
+  assert.deepEqual(byName.review, { state: 'done', reason: 'finished' });
+  const tooOld = await derive({
+    launch,
+    entries: [reviewEntry({ state: 'working', startedAt: START_MS - HOUR_MS - 1 })],
+  });
+  assert.deepEqual(tooOld.review, { state: 'failed', reason: 'session_missing' });
+});
+
+test('review state: unknown review fails closed without changing existing unfamiliar-groom policy', async () => {
+  const entry = await derive({
+    launch: { [GROOM]: groomRecord(), [REVIEW]: reviewRecord() },
+    entries: [groomEntry({ state: 'stopped' }), reviewEntry({ state: 'stopped' })],
+  });
+  assert.deepEqual(entry.review, { state: 'unknown', reason: 'unrecognised_state' });
+  assert.equal(entry.blocks.review, 'unrecognised_state');
+  assert.deepEqual(entry.groom, { state: 'unknown', reason: 'unrecognised_state' });
+  assert.equal(entry.blocks.groom, null, 'groom keeps its pre-existing unfamiliar-state policy');
 });
 // `goTo` is always one command per phase and one for the groom session; one that has none to give
 // is null.
@@ -207,6 +408,7 @@ test('scenario 15: an unavailable listing is unknown, blocks every action and ha
     implement: 'listing_unavailable',
     answer: 'listing_unavailable',
     groom: 'listing_unavailable',
+    review: 'listing_unavailable',
   });
 });
 
@@ -405,12 +607,14 @@ const BLOCKS_WHILE_INVESTIGATING = {
   implement: 'investigate_running',
   answer: 'session_running',
   groom: null,
+  review: null,
 };
 const BLOCKS_WHILE_IMPLEMENTING = {
   investigate: 'implement_running',
   implement: 'session_running',
   answer: 'session_running',
   groom: null,
+  review: null,
 };
 
 test('scenario 65: while the investigate session runs, implement says investigate is running', async () => {
@@ -657,6 +861,7 @@ test('scenario 82: while the investigate session works the entry is working, sen
         implement: 'investigate_running',
         answer: 'session_running',
         groom: null,
+        review: null,
       },
       label,
     );
@@ -1132,6 +1337,7 @@ test('scenario 215: a running groom session blocks only groom, and only while it
       implement: 'questions_unanswered',
       answer: null,
       groom: 'session_running',
+      review: null,
     },
     'investigate, implement and answers are as without a groom session',
   );

@@ -539,11 +539,21 @@ restarts the countdown. New PR/review evidence moves cards automatically in eith
 direction while preserving scroll and focus. A failed refresh labels the retained
 snapshot as the last successful update, not current progress.
 
-The card's **Claude** button opens a genuinely blank placeholder: ticket heading,
-empty body and **Close** only. It has no workflow state, launch, prompt or answer
-controls and makes no Claude requests. Close, Escape or the backdrop dismisses it;
-it survives filtering/lane movement but closes on leaving the tab or ticket removal.
-The real [My Tickets Claude launcher](#claude-launcher) is unchanged.
+The card's **Claude** button opens a review dialog with **Start code review**,
+review-session status, launch/error feedback and **Close**. The PR icon has no
+hover/focus tooltip but retains the accessible name `Claude code review for <KEY>`;
+My Tickets tooltips are unchanged. The same Start control handles first review and
+re-review through the existing [Claude launcher](#code-review), independently of
+the My Tickets workflow. Start disables during submission or when the server's
+review state refuses another launch. Status refreshes while the dialog is open
+on the active tab and the page is visible; reopening refreshes it too. Completion
+means the session finished, not that the review passed.
+
+Close, Escape or a genuine backdrop click dismisses the native modal; dragging
+from its content to the backdrop does not. It survives filtering/lane movement
+but closes on leaving the tab or ticket removal. Focus returns to the PR opener
+or the board if the opener is filtered out. There is no review prompt editor,
+answers form, Go to session control or review-status badge on the PR card.
 
 ### Local work filters
 
@@ -572,11 +582,14 @@ versus fetched items (tickets on the PR board); an empty filtered list says
 **No matches**. Fetch-cap and stale-data warnings still apply. **Include Done**
 remains the separate remote-scope control.
 
-**Clear filters** resets only its own view or Home block. Each set of filters
-survives tab switches and refreshes. Except for **Ticket prefix**, filters also
-survive reloads in versioned browser localStorage (`dev-dashboard.work-filters`).
-Prefix is not saved/restored and starts at All on a fresh mount; obsolete saved
-Section values are ignored. Malformed or unsupported saved state falls back
+**Clear filters** resets only its own view or Home block and saves that reset.
+Each set of filters survives tab switches, refreshes and reloads in version-1
+browser localStorage (`dev-dashboard.work-filters`), including all four PR values:
+Search, Ticket prefix, Repository and Review state. With no valid saved choices,
+Search is empty and every dropdown is **All**; valid saved choices take precedence.
+Clear followed by reload keeps those defaults. Previously saved version-1 prefix
+strings are restored without a migration; obsolete saved Section values are ignored.
+Malformed, unsupported or invalid saved state falls back
 to defaults; blocked/full storage leaves filtering usable in memory. A selected
 option missing from refreshed data stays selected until cleared, so it cannot
 silently broaden the list. Filters are browser-local and are not shared in URLs.
@@ -971,6 +984,9 @@ backlog.
 
 ## Claude launcher
 
+My Tickets and Pull Requests share the host-only launch transport. Pull Requests offers the
+independent [Start code review](#code-review) action; the workflow dialog below is My Tickets only.
+
 Each card on the **My Tickets** board ends its top line with a **Claude icon**. It shows where
 the ticket stands with Claude and opens a dialog with one row per action, each holding two buttons:
 
@@ -984,7 +1000,7 @@ the ticket stands with Claude and opens a dialog with one row per action, each h
   row's own session in a terminal. Its accessible name is the full one, `Go to investigate and
 plan session`, `Go to implement plan session` or `Go to groom ticket session`.
 
-Each launch is fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
+Each of these My Tickets launches is fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
 session after the ticket and the phase, `<KEY>-investigate-and-plan`, `<KEY>-implement-plan` or
 `<KEY>-groom`, and returns. It never opens a terminal and never removes a session. It stops and resumes a session in
 one case only: sending your saved answers back to the planning session (see
@@ -992,7 +1008,7 @@ one case only: sending your saved answers back to the planning session (see
 one. The Jira summary never reaches the launch: the request carries only the key and the phase. By
 default the prompts are the built-in text with the key and the key in lower case filled in, and
 for the two workflow phases the path of the ticket's `status.json` too (you can replace them, see
-[Custom prompts](#custom-prompts)), so the summary is never part of what a session is told to do. The built-in prompts tell the session
+[Custom prompts](#custom-prompts)), so the summary is never part of what a session is told to do. The built-in workflow prompts tell the session
 to use your `orchestrator` skill
 (step 1 for Investigate and plan, step 3 for Implement plan) and to treat ticket text as data. The
 planning session writes `02-plan.md`, `02-checklist.md` and `02-spec.md` in
@@ -1010,15 +1026,17 @@ leaves its changes in a worktree with a short report beside the plan.
 - **Host only.** It needs the `claude` command on `PATH` and a `~/pathwise` directory that
   `claude` trusts: run `claude` there once and accept the trust prompt, or a launch fails with
   `untrusted_workspace`. The Docker image has no `claude`, so there every launch is refused with
-  `listing_unavailable`. The sessions also need your user-level `orchestrator` skill.
+  `listing_unavailable`. Workflow sessions also need your user-level `orchestrator` skill;
+  review needs `pr-review-transact` and the applicable publishing skills in `~/pathwise`.
 - **Your permission mode.** The dashboard passes no permission flag, so a session runs under your
   own Claude settings and permission mode and can do what your user can.
 - **No dashboard tokens.** A launched session does not inherit `GH_TOKEN`, `GITHUB_TOKEN`,
   `JIRA_API_TOKEN` or `JIRA_TOKEN` from the dashboard's environment (the same four names the
   dashboard keeps out of the services it starts). It uses its own credentials and MCP servers;
   the rest of the environment is inherited.
-- **One session per ticket at a time.** A launch or a saved answer is refused while a session of
-  the ticket works, or was launched less than 30 seconds ago and is not listed yet. The reason
+- **One workflow session per ticket at a time.** A workflow launch or a saved answer is refused
+  while a workflow session of the ticket works, or was launched less than 30 seconds ago and is
+  not listed yet. The reason
   names the phase: `session_running` when the phase you asked for is the one running,
   `investigate_running` when you ask for Implement plan while Investigate and plan runs (the
   dialog says `Investigate and plan is still running.`) and `implement_running` when you ask for
@@ -1027,11 +1045,13 @@ leaves its changes in a worktree with a short report beside the plan.
   `plan_missing` and `questions_unanswered`. A launch is also refused when
   `claude agents --json --all` cannot be read, because the decision rests on it. A groom session
   neither blocks nor is blocked by these: only a running groom session refuses another Groom
-  ticket launch.
+  ticket launch. Code review is independent of both workflow and grooming, with its own
+  duplicate/unknown-state guards (see [Code review](#code-review)).
 - **Local state.** Everything the dashboard knows about a ticket's Claude work is in
   `claude/<KEY>/` in the dashboard directory. `/claude/` is gitignored and `claude` is in
-  `.dockerignore`. Sessions get that folder (and only it, not the dashboard's source) through
-  `--add-dir`. A groom session gets no `--add-dir`: it writes nothing there.
+  `.dockerignore`. Workflow sessions get that folder (and only it, not the dashboard's source)
+  through `--add-dir`. Groom and review sessions get no `--add-dir` and are not instructed to
+  write workflow state there.
 
 ### Icon and dialog
 
@@ -1151,7 +1171,12 @@ which session belongs to which phase and a re-run reuses its session name.
     "sent": { "at": "<ISO time>", "answers": { "q1": "<the same hash, at the time of the send>" } }
   },
   "implement-plan": { "name": "ABC-123-implement-plan", "launchedAt": 1731100500000, "id": null },
-  "groom": { "name": "ABC-123-groom", "launchedAt": 1731100900000, "id": "ef56ab78" }
+  "groom": { "name": "ABC-123-groom", "launchedAt": 1731100900000, "id": "ef56ab78" },
+  "pr-review-transact": {
+    "name": "ABC-123-pr-review-transact",
+    "launchedAt": 1731101000000,
+    "id": "ab34cd56"
+  }
 }
 ```
 
@@ -1163,19 +1188,21 @@ one phase's session is never taken for the other's, and a session of the same na
 earlier is never taken for either. Sessions launched before names were per phase keep their old
 name and are still tracked by their saved `id` (or, with none saved, by that recorded name). An
 Investigate launch drops the `implement-plan` entry, and with the rest of the investigate record
-whatever `sent` it held; it keeps the `groom` entry, and a Groom launch replaces only that one.
-The `groom` entry has no flags or answers, and a groom launch writes no `status.json` and leaves
-an existing one alone. `answered` appears once you save an answer (see below). `sent` is on the
+whatever `sent` it held; it keeps both `groom` and `pr-review-transact` entries. Groom and review
+launches each replace only their own record, have no flags or answers, and leave `status.json`
+alone. Relaunch uses the existing record/session tracking, not a separate review-history store.
+`answered` appears once you save an answer (see below). `sent` is on the
 investigate record only. It is written when answers were really delivered to the session, and again
 at each re-send, and holds the time and the hash of every question (the same hash as `answered`)
 at that moment. It is written only after the resume succeeded, so a failed send leaves it as it
 was.
 
 Folders are mode `0700` and files `0600`, and every dashboard write is a temp file, fsync and
-rename, under one lock per ticket. The dashboard writes only while no session works, and a session
-writes only while it works, so the one residual race is a session you resume by hand while an
-answer is being saved. A failed launch other than `timed_out` puts the earlier files back (a first
-launch leaves no folder). After `timed_out` they stay, because the session may exist.
+rename, under one lock per ticket. Workflow state writes require no workflow session to be
+working; independent groom/review launches update their own launch records even while the
+workflow runs. A residual race is a workflow session you resume by hand while an answer is
+being saved. A failed launch other than `timed_out` puts the earlier files it changed back (a
+first launch leaves no folder). After `timed_out` they stay, because the session may exist.
 
 The plan counts as present when `02-plan.md` is a regular file in
 `~/pathwise/.orchestrator/<key in lower case>/`, the workspace the planning prompt pins. It is
@@ -1321,10 +1348,56 @@ another Groom launch (`session_running`, and `listing_unavailable` when the CLI 
   `prompt_unreadable`), records the session in `launch.json` and starts it with no `--add-dir`.
   A failed start rolls the record back, except after `timed_out`.
 
+### Code review
+
+**Start code review** in the Pull Requests dialog launches a background session named
+`<KEY>-pr-review-transact` in the same trusted `~/pathwise` workspace. It sends
+`{ key, phase: 'pr-review-transact' }` through `POST /api/claude/launch`. Review has no planning
+prerequisite, workflow flags or answers, and its launch transaction never reads, writes or
+restores `status.json`. The refreshed combined ticket entry may still read workflow state.
+Workflow and groom sessions neither block nor are blocked by review.
+
+- **Initial review and re-review.** The server generates a fixed delegation prompt from the
+  validated key, asking Claude to use `pr-review-transact` for the ticket and its linked PRs.
+  It directs inspection of existing reviews/unresolved threads against the latest PR head,
+  verification of prior findings, and reporting remaining/new issues without duplicating
+  already resolved findings. It forbids implementing fixes or code changes and follows, rather
+  than overrides, the skill's approval/comment/Jira-transition rules. Ticket text, PR content,
+  comments and linked pages are explicitly untrusted data. Client prompt/title/summary/URL
+  fields and editable prompt files do not enter this prompt; it is not in the Prompts editor.
+- **Publishing is skill-governed, not read-only.** The prompt directs discovery and use of
+  applicable skills in `~/pathwise` to publish actionable findings/review on the relevant PRs
+  and reply concisely in the ticket's **existing Slack thread**, summarizing outcomes and
+  blockers. All skill permission/confirmation requirements still apply under your own Claude
+  permission mode. A missing thread or required posting confirmation must be reported as a
+  blocker, never replaced with an invented/new thread or a claim of success without a confirmed
+  post/review. The dashboard adds no Slack posting or thread-finding integration; the invoked
+  skills govern external writes, including review decisions and Jira transitions.
+- **Independent lifecycle.** `launch.json['pr-review-transact']` tracks the session; ticket
+  entries expose `review: { state, reason }` and `blocks.review`. Review is `none` before launch,
+  `working` (`running` or `starting`), `waiting` (`blocked`), `done` (`finished`), `failed`
+  (`session_missing`) or `unknown` (`listing_unavailable` or `unrecognised_state`). Start refuses
+  a working/starting review (`session_running`), an unavailable listing or an unrecognised
+  review-session state. A blocked or finished session, or one missing after the 30-second start
+  window, can be relaunched using the same button. The backend checks a fresh listing under the
+  existing per-ticket lock, even if the browser's cached state is stale. Ordinary launch
+  failure restores the previous launch bytes; timeout retains the record because a session may
+  exist. Investigate resets preserve both review and groom records.
+- **Completion is not approval.** The dialog reports launch/session lifecycle and errors, not
+  review quality or verified publishing outcomes. Review never changes workflow flags,
+  questions, My Tickets icon state or Go to session fields. Tests cover prompt intent with a
+  fake CLI and intercepted browser APIs; actual Claude reviews, PR publication and Slack
+  replies have not been exercised by those tests.
+
+Deploy backend and built UI together through the normal build/restart. There are no new
+dependencies, environment settings or storage migrations. Preserve launch/status files and
+browser localStorage on rollback; older code ignores review records and treats prefix as transient.
+
 ### Custom prompts
 
 The three launch prompts (investigate, implement, groom) and the message sent with your answers
-are templates. By default they are
+are editable templates; code review uses its own fixed server-generated delegation prompt instead.
+By default the editable prompts are
 the built-in text. You can change each one in the app (see **Edit in the app** below) or by hand.
 Both edit the same file, a file of that name in the `prompts/` folder of the dashboard (the repo
 root, next to `claude/`), so a hand edit and an app edit always agree:
@@ -1440,10 +1513,11 @@ to default** or delete the file.
 `tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
 board shows it as not started). With no ticket folder the route answers without running the CLI;
 otherwise concurrent callers share one `claude agents --json --all`. An entry is
-`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, blocks, goTo }`
-(`groom` and `blocks.groom` are described under [Groom ticket](#groom-ticket)):
+`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, review, blocks, goTo }`
+(`groom` and `blocks.groom` are described under [Groom ticket](#groom-ticket);
+`review` and `blocks.review` under [Code review](#code-review)):
 
-- `phase` is `investigate-and-plan`, `implement-plan` or `null` (nothing launched). `flags` holds
+- `phase` is `investigate-and-plan`, `implement-plan` or `null` (no workflow launched). `flags` holds
   the two phase flags and `done`, as read (`done` is `false` when missing).
 - `state` is `none`, `working`, `waiting`, `done`, `failed` or `unknown`, and `reason` refines it:
   `running`, `starting`, `blocked`, `questions`, `answers_not_sent` (`waiting`), `plan_ready`,
@@ -1452,7 +1526,7 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
   icon's state word comes from `reason`.
 - Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
   `unanswered` counts the open ones.
-- `blocks` is `{ investigate, implement, answer, groom }`, each a reason string or `null` (why that
+- `blocks` is `{ investigate, implement, answer, groom, review }`, each a reason string or `null` (why that
   action is refused now). It is what the dialog words beside a disabled item. While Investigate
   and plan runs it is `session_running`, `investigate_running` and `session_running`; while
   Implement plan runs it is `implement_running`, `session_running` and `session_running`. The
@@ -1469,8 +1543,9 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
   be one `{ kind, command }` or `null` for the current phase only, so anything reading `goTo`
   must now read a side.
 
-`launch` takes `phase` `investigate-and-plan`, `implement-plan` or `groom`; a leftover `summary` property in
-the body is ignored. Its answer has `name` (the phase's session name), `id` (the session's
+`launch` takes `phase` `investigate-and-plan`, `implement-plan`, `groom` or `pr-review-transact`;
+extra properties such as `summary` or `prompt` in the body are ignored. Its answer has `name`
+(the action's session name), `id` (the session's
 8-character id, or `null` while the listing does not show the session yet) and `ticket` (the
 refreshed entry). `answers` takes
 `{ "<question id>": "<text>" }` with at most 20 entries, each text at most 2000 characters and an
@@ -1496,13 +1571,13 @@ Slack routes, because they need neither GitHub nor Jira. They run behind the sam
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 `Cache-Control: no-store`. Failures answer `{ code, error, errors[] }`, with `errors[0]` the reason:
 
-| Status | Code             | When                                                                                                                                                                                                                                        |
-| ------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the three                                                                                                                                                                  |
-| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record               |
-| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                |
-| `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable` or `status_unreadable`            |
-| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused) |
+| Status | Code             | When                                                                                                                                                                                                                                                             |
+| ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the four supported launch actions                                                                                                                                                               |
+| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record                                    |
+| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                                     |
+| `409`  | `CLAUDE_REFUSED` | `session_running` (the action asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable`, `status_unreadable` or `unrecognised_state` (review) |
+| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused)                      |
 
 `INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt a
 launch sends and the name are never logged or returned beyond the validated `id` and the computed
