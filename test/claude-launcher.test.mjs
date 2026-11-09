@@ -7,13 +7,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
+  ANSWERS_TEMPLATE,
+  BAD_PROMPT_FILES,
   EARLIER_ID,
   FIRST_ID,
   IMPLEMENT,
   IMPLEMENT_NAME,
+  IMPLEMENT_TEMPLATE,
   INVESTIGATE,
+  INVESTIGATE_TEMPLATE,
   INVESTIGATE_NAME,
   KEY,
+  PROMPT_MAX_CHARS,
   RESET_STATUS,
   SLUG,
   START_MS,
@@ -25,6 +30,7 @@ import {
   launcherEnvironment,
   listed,
   question,
+  renderTemplate,
   resolvesWithin,
   routingEnvironment,
   seedPlanned,
@@ -1937,4 +1943,446 @@ test('scenario 108: after a new launch the same answers are sent again, not unch
   assert.deepEqual(result.send, { status: 'sent' });
   assert.equal(env.cli.resumes().length, 1);
   assert.deepEqual(sentOf(env).answers, answeredMap(ANSWERED_PAIR));
+});
+
+// ---- prompt files: the launch prompts and the answers message can be replaced by a file ----
+
+const DOLLARS = "Dollars $& $1 $$ $` $' kept. Naïve ✓";
+
+// A custom message: padded with whitespace, every placeholder, some that are not, and the text a
+// replacement string would misread. `marker` says which message the file is for.
+const customText = (marker) =>
+  `\n  \n${marker} {KEY} and {KEY} again, {SLUG}, {STATUS_FILE}.\n\n` +
+  `Unknown {WORD}, {key}, {QUESTION_IDS}, {CHANGE}.\n\n${DOLLARS}\n\n  \t\n`;
+const MARKERS = {
+  investigate: 'MARK-INVESTIGATE',
+  implement: 'MARK-IMPLEMENT',
+  answers: 'MARK-ANSWERS',
+};
+
+// Every message gets its own file, so a test can tell that a file only changes its own message.
+function writeAllPrompts(env) {
+  for (const [name, marker] of Object.entries(MARKERS)) env.writePrompt(name, customText(marker));
+}
+
+const launchedPrompt = (env, index = 0) => env.cli.launches()[index].args.at(-1);
+
+// A session that has finished: no process and no activity, so the next launch is not refused.
+function finishSessions(env) {
+  env.cli.setListing(
+    env.cli.listing.map((entry) => {
+      const copy = { ...entry };
+      delete copy.pid;
+      return { ...copy, state: 'done', status: null };
+    }),
+  );
+}
+
+// Whatever a launch or a send did under `dir` other than read it. A refused launch must leave this
+// empty: nothing is written, so nothing needs undoing.
+const READS = new Set([
+  'statSync',
+  'lstatSync',
+  'readFileSync',
+  'readdirSync',
+  'existsSync',
+  'accessSync',
+  'realpathSync',
+]);
+const writesUnder = (env, dir) =>
+  env.recorder.calls.filter(
+    ({ method, args }) =>
+      !READS.has(method) && args.some((arg) => typeof arg === 'string' && arg.startsWith(dir)),
+  );
+
+test("scenario 120: the default prompts folder is the dashboard's own, outside the state folder", async () => {
+  const launcherModule = await import('../backend/claude-launcher.mjs');
+  const { DASHBOARD_DIR } = await import('../backend/config.mjs');
+  const { CLAUDE_STATE_DIR, CLAUDE_PROMPTS_DIR } = launcherModule;
+  assert.equal(typeof CLAUDE_PROMPTS_DIR, 'string', 'the launcher exports CLAUDE_PROMPTS_DIR');
+  assert.equal(CLAUDE_PROMPTS_DIR, path.join(DASHBOARD_DIR, 'prompts'));
+  // A launched session can write under the state folder, so the prompts must not live there.
+  assert.ok(path.relative(CLAUDE_STATE_DIR, CLAUDE_PROMPTS_DIR).startsWith('..'), 'not inside it');
+  assert.ok(path.relative(CLAUDE_PROMPTS_DIR, CLAUDE_STATE_DIR).startsWith('..'), 'nor around it');
+});
+
+test('scenario 120: the prompts folder is ignored by git (anchored, with a comment) and by docker', async () => {
+  const { DASHBOARD_DIR } = await import('../backend/config.mjs');
+  const lines = (file) => fs.readFileSync(path.join(DASHBOARD_DIR, file), 'utf8').split('\n');
+  const git = lines('.gitignore');
+  const at = git.findIndex((line) => line.trim() === '/prompts/');
+  assert.ok(at > 0, '.gitignore has the anchored entry /prompts/');
+  assert.ok(git[at - 1].trim().startsWith('#'), 'and a comment above it');
+  assert.ok(
+    lines('.dockerignore').some((line) => line.trim() === 'prompts'),
+    '.dockerignore has prompts',
+  );
+});
+
+test('scenario 121: with no prompt files the investigate prompt is the built-in text, byte for byte', async (t) => {
+  const env = await launcherEnvironment(t);
+  assert.equal(fs.existsSync(env.promptsDir), false, 'there is no prompts folder');
+
+  await env.launcher.launch(launchBody());
+
+  assert.equal(
+    launchedPrompt(env),
+    renderTemplate(INVESTIGATE_TEMPLATE, { statusPath: env.statusPath() }),
+  );
+});
+
+test('scenario 121: with an empty prompts folder the implement prompt is the built-in text, byte for byte', async (t) => {
+  const env = await launcherEnvironment(t);
+  fs.mkdirSync(env.promptsDir, { recursive: true });
+  seedPlanned(env);
+
+  await env.launcher.launch(launchBody(IMPLEMENT));
+
+  assert.equal(launchedPrompt(env), implementPrompt(KEY, env.statusPath()));
+  assert.equal(
+    launchedPrompt(env),
+    renderTemplate(IMPLEMENT_TEMPLATE, { statusPath: env.statusPath() }),
+  );
+});
+
+test('scenario 121: with no answers file the message sent is the built-in text, byte for byte', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED });
+  await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+  assert.equal(
+    env.fake.resumes()[0].notice,
+    renderTemplate(ANSWERS_TEMPLATE, {
+      statusPath: env.statusPath(),
+      questionIds: ['q1', 'q2'],
+      change: 'answers',
+    }),
+    'a first send',
+  );
+
+  env.fake.setListing(finishedListing());
+  await env.launcher.answer(answerBody({ q2: CHANGED_TEXT }));
+  assert.equal(
+    env.fake.resumes()[1].notice,
+    renderTemplate(ANSWERS_TEMPLATE, {
+      statusPath: env.statusPath(),
+      questionIds: ['q2'],
+      change: 'changed answers',
+    }),
+    'a re-send',
+  );
+});
+
+test('scenario 121: the built-in templates are exported as the three texts, placeholders in them', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
+  assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
+  assert.deepEqual(PROMPT_TEMPLATES, {
+    investigate: INVESTIGATE_TEMPLATE,
+    implement: IMPLEMENT_TEMPLATE,
+    answers: ANSWERS_TEMPLATE,
+  });
+});
+
+test('scenario 122: investigate.md replaces the investigate prompt, filled in and trimmed', async (t) => {
+  const env = await launcherEnvironment(t);
+  writeAllPrompts(env);
+
+  await env.launcher.launch(launchBody());
+
+  const expected = renderTemplate(customText(MARKERS.investigate).trim(), {
+    statusPath: env.statusPath(),
+  });
+  assert.deepStrictEqual(env.cli.launches()[0].args, expectedArgv(env, INVESTIGATE_NAME, expected));
+  const prompt = launchedPrompt(env);
+  assert.ok(prompt.startsWith(MARKERS.investigate), 'trimmed');
+  for (const kept of ['{WORD}', '{key}', '{QUESTION_IDS}', '{CHANGE}', DOLLARS])
+    assert.ok(prompt.includes(kept), `${kept} stays as written here`);
+  assert.ok(!/\{(KEY|SLUG|STATUS_FILE)\}/.test(prompt), 'the three placeholders are filled');
+});
+
+test('scenario 122: implement.md replaces the implement prompt, filled in and trimmed', async (t) => {
+  const env = await launcherEnvironment(t);
+  writeAllPrompts(env);
+  seedPlanned(env);
+
+  await env.launcher.launch(launchBody(IMPLEMENT));
+
+  const expected = renderTemplate(customText(MARKERS.implement).trim(), {
+    statusPath: env.statusPath(),
+  });
+  assert.deepStrictEqual(env.cli.launches()[0].args, expectedArgv(env, IMPLEMENT_NAME, expected));
+});
+
+test('scenario 122: answers.md replaces the answers message, with the ids and what changed filled in', async (t) => {
+  const env = await routingEnvironment(t);
+  writeAllPrompts(env);
+  seedAsked(env, { questions: HALF_ANSWERED });
+  const trimmed = customText(MARKERS.answers).trim();
+
+  await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+  assert.equal(
+    env.fake.resumes()[0].notice,
+    renderTemplate(trimmed, {
+      statusPath: env.statusPath(),
+      questionIds: ['q1', 'q2'],
+      change: 'answers',
+    }),
+    'a first send',
+  );
+
+  env.fake.setListing(finishedListing());
+  await env.launcher.answer(answerBody({ q2: CHANGED_TEXT }));
+  const resent = env.fake.resumes()[1].notice;
+  assert.equal(
+    resent,
+    renderTemplate(trimmed, {
+      statusPath: env.statusPath(),
+      questionIds: ['q2'],
+      change: 'changed answers',
+    }),
+    'a re-send',
+  );
+  assert.ok(resent.includes('Unknown {WORD}, {key},'), 'other words in braces stay');
+  assert.ok(resent.includes(DOLLARS), 'dollar signs are not replacement patterns');
+});
+
+const DOLLAR_FOLDER = "cl$&-$1-$$-$'";
+
+test('scenario 122: a status path with dollar signs is put into a launch prompt as it is', async (t) => {
+  const built = await launcherEnvironment(t, { stateFolder: DOLLAR_FOLDER });
+  await built.launcher.launch(launchBody());
+  assert.equal(
+    launchedPrompt(built),
+    renderTemplate(INVESTIGATE_TEMPLATE, { statusPath: built.statusPath() }),
+    'the built-in text',
+  );
+
+  const custom = await launcherEnvironment(t, { stateFolder: DOLLAR_FOLDER });
+  custom.writePrompt('investigate', 'Read {STATUS_FILE} then {STATUS_FILE}');
+  await custom.launcher.launch(launchBody());
+  assert.equal(
+    launchedPrompt(custom),
+    `Read ${custom.statusPath()} then ${custom.statusPath()}`,
+    'a file',
+  );
+  assert.ok(custom.statusPath().includes('$&-$1-$$'), 'the path does hold the dollar signs');
+});
+
+test('scenario 122: a status path with dollar signs is put into the answers message as it is', async (t) => {
+  const env = await routingEnvironment(t, { stateFolder: DOLLAR_FOLDER });
+  seedAsked(env, { questions: HALF_ANSWERED });
+  env.writePrompt('answers', 'Read {STATUS_FILE} for {QUESTION_IDS}');
+
+  await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.equal(env.fake.resumes()[0].notice, `Read ${env.statusPath()} for q1, q2`);
+});
+
+test('scenario 123: a prompt file is read on every launch, so an edit, a new file and a removal apply at once', async (t) => {
+  const env = await launcherEnvironment(t);
+  const prompts = [];
+  const relaunch = async () => {
+    finishSessions(env);
+    await env.launcher.launch(launchBody());
+    prompts.push(launchedPrompt(env, prompts.length));
+  };
+  const filled = (text) => renderTemplate(text, { statusPath: env.statusPath() });
+
+  await env.launcher.launch(launchBody());
+  prompts.push(launchedPrompt(env));
+  env.writePrompt('investigate', 'first text for {KEY}');
+  await relaunch();
+  env.writePrompt('investigate', 'second text for {KEY}');
+  await relaunch();
+  fs.rmSync(env.promptPath('investigate'));
+  await relaunch();
+
+  assert.deepEqual(prompts, [
+    filled(INVESTIGATE_TEMPLATE),
+    `first text for ${KEY}`,
+    `second text for ${KEY}`,
+    filled(INVESTIGATE_TEMPLATE),
+  ]);
+});
+
+test('scenario 123: the answers file is read on every send', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED });
+  env.writePrompt('answers', 'first message {CHANGE} {QUESTION_IDS}');
+  await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  env.fake.setListing(finishedListing());
+  env.writePrompt('answers', 'second message {CHANGE} {QUESTION_IDS}');
+  await env.launcher.answer(answerBody({ q2: CHANGED_TEXT }));
+
+  assert.deepEqual(
+    env.fake.resumes().map(({ notice }) => notice),
+    ['first message answers q1, q2', 'second message changed answers q2'],
+  );
+});
+
+test('scenario 124: a prompt file of exactly 20 000 characters is used', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.writePrompt('investigate', 'x'.repeat(PROMPT_MAX_CHARS));
+
+  await env.launcher.launch(launchBody());
+
+  assert.equal(launchedPrompt(env), 'x'.repeat(PROMPT_MAX_CHARS));
+});
+
+for (const { label, arrange } of BAD_PROMPT_FILES) {
+  test(`scenario 124: ${label} as investigate.md refuses the launch before anything is written`, async (t) => {
+    const env = await launcherEnvironment(t);
+    fs.mkdirSync(env.promptsDir, { recursive: true });
+    arrange(env.promptPath('investigate'));
+
+    await assertRejects(
+      () => env.launcher.launch(launchBody()),
+      refused('prompt_unreadable'),
+      label,
+    );
+
+    assert.equal(fs.existsSync(env.ticketDir()), false, 'the ticket folder is never made');
+    assert.deepEqual(
+      writesUnder(env, env.stateDir),
+      [],
+      'nothing is written under the state folder',
+    );
+    assert.equal(env.cli.launches().length, 0, 'no session is started');
+  });
+}
+
+for (const { label, arrange } of BAD_PROMPT_FILES.filter(({ label }) =>
+  ['a folder', 'an empty file'].includes(label),
+)) {
+  test(`scenario 124: ${label} as implement.md refuses the launch and leaves both state files alone`, async (t) => {
+    const env = await launcherEnvironment(t);
+    seedPlanned(env);
+    fs.mkdirSync(env.promptsDir, { recursive: true });
+    arrange(env.promptPath('implement'));
+
+    await assertImplementRefusedFor(env, 'prompt_unreadable', label);
+    assert.deepEqual(
+      writesUnder(env, env.stateDir),
+      [],
+      'nothing is written under the state folder',
+    );
+  });
+}
+
+test('scenario 124: a bad file refuses a relaunch of investigate too, and the earlier state is untouched', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  const before = env.files();
+  env.writePrompt('investigate', '  \n');
+
+  await assertRejects(
+    () => env.launcher.launch(launchBody()),
+    refused('prompt_unreadable'),
+    'relaunch',
+  );
+
+  assert.deepEqual(env.files(), before, 'status.json and launch.json are as they were');
+  assert.deepEqual(fs.readdirSync(env.ticketDir()).sort(), ['launch.json', 'status.json']);
+  assert.deepEqual(writesUnder(env, env.stateDir), [], 'nothing is written under the state folder');
+  assert.equal(env.cli.launches().length, 0);
+});
+
+test('scenario 124: a bad file of another message is not in the way', async (t) => {
+  const launch = await launcherEnvironment(t);
+  for (const name of ['implement', 'answers']) {
+    fs.mkdirSync(launch.promptsDir, { recursive: true });
+    fs.mkdirSync(launch.promptPath(name));
+  }
+  await launch.launcher.launch(launchBody());
+  assert.equal(
+    launchedPrompt(launch),
+    renderTemplate(INVESTIGATE_TEMPLATE, { statusPath: launch.statusPath() }),
+    'investigate',
+  );
+
+  const implement = await launcherEnvironment(t);
+  seedPlanned(implement);
+  for (const name of ['investigate', 'answers']) {
+    fs.mkdirSync(implement.promptsDir, { recursive: true });
+    fs.mkdirSync(implement.promptPath(name));
+  }
+  await implement.launcher.launch(launchBody(IMPLEMENT));
+  assert.equal(
+    launchedPrompt(implement),
+    implementPrompt(KEY, implement.statusPath()),
+    'implement',
+  );
+
+  const send = await routingEnvironment(t);
+  seedAsked(send, { questions: HALF_ANSWERED });
+  for (const name of ['investigate', 'implement']) {
+    fs.mkdirSync(send.promptsDir, { recursive: true });
+    fs.mkdirSync(send.promptPath(name));
+  }
+  const result = await send.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+  assert.deepEqual(result.send, { status: 'sent' }, 'a send');
+});
+
+for (const { label, arrange } of BAD_PROMPT_FILES) {
+  test(`scenario 125: ${label} as answers.md fails the send before anything is stopped or written`, async (t) => {
+    const env = await routingEnvironment(t);
+    seedAsked(env, { questions: HALF_ANSWERED, done: true, listing: idleListing() });
+    fs.mkdirSync(env.promptsDir, { recursive: true });
+    arrange(env.promptPath('answers'));
+
+    const result = await throughGap(env, env.launcher.answer(answerBody({ q2: SECOND_TEXT })));
+
+    assert.equal(result.ok, true, 'a failed send is not an error');
+    assert.deepEqual(result.send, { status: 'failed', reason: 'prompt_unreadable' });
+    assert.equal(answerTexts(env).q2, SECOND_TEXT, 'the answer stays saved');
+    assert.deepEqual(
+      env.parsed().launch[INVESTIGATE].answered,
+      answeredMap(ANSWERED_PAIR),
+      'and counts as answered',
+    );
+    assert.equal(env.fake.freshListings().length, 1, 'the file is read before the send lists');
+    assert.equal(env.fake.stops().length, 0, 'nothing is stopped');
+    assert.equal(env.fake.resumes().length, 0, 'nothing is resumed');
+    assert.deepEqual(env.timers.scheduled, [], 'no gap is waited');
+    assert.equal(env.parsed().status.done, true, 'done is untouched');
+    assert.equal(sentOf(env), undefined, 'nothing is recorded as sent');
+  });
+}
+
+test("scenario 125: once the answers file is fixed the next save sends, with the file's text", async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED, done: true, listing: idleListing() });
+  fs.mkdirSync(env.promptPath('answers'), { recursive: true });
+  const failedSave = await throughGap(env, env.launcher.answer(answerBody({ q2: SECOND_TEXT })));
+  assert.deepEqual(failedSave.send, { status: 'failed', reason: 'prompt_unreadable' });
+
+  fs.rmSync(env.promptPath('answers'), { recursive: true });
+  env.writePrompt('answers', 'fixed {CHANGE} {QUESTION_IDS} for {KEY}');
+  const retry = await throughGap(env, env.launcher.answer(answerBody([])));
+
+  assert.deepEqual(retry.send, { status: 'sent' });
+  assert.deepEqual(
+    env.fake.resumes().map(({ notice }) => notice),
+    [`fixed answers q1, q2 for ${KEY}`],
+  );
+  assert.equal(env.fake.stops().length, 1, 'the idle session is stopped once, now');
+  assert.deepEqual(sentOf(env).answers, answeredMap(ANSWERED_PAIR));
+});
+
+test('scenario 125: a save that does not send never reads the answers file', async (t) => {
+  const partial = await routingEnvironment(t);
+  seedAsked(partial, { questions: HALF_ANSWERED });
+  partial.writePrompt('answers', '   ');
+  const incomplete = await partial.launcher.answer(answerBody({ q1: CHANGED_TEXT }));
+  assert.deepEqual(incomplete.send, { status: 'skipped', reason: 'incomplete' });
+
+  const unchanged = await routingEnvironment(t);
+  seedAsked(unchanged, {
+    questions: ANSWERED_PAIR,
+    done: true,
+    sent: sentRecord(ANSWERED_PAIR),
+  });
+  unchanged.writePrompt('answers', '   ');
+  const same = await unchanged.launcher.answer(answerBody(BOTH_ANSWERS));
+  assert.deepEqual(same.send, { status: 'skipped', reason: 'unchanged' });
 });

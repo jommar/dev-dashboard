@@ -20,6 +20,7 @@
     "restart": "node backend/cli.mjs restart",
     "stop": "node backend/cli.mjs stop",
     "start:svc": "node backend/cli.mjs start",
+    "claude:prompts": "node backend/claude-prompts-init.mjs",
     "test": "node --test",
     "test:ui": "playwright test",
     "test:ui:proxy": "playwright test --config=e2e/vite-proxy.config.js",

@@ -494,3 +494,42 @@ test('scenario 116: the ticket list gives a go-to command per phase, each from i
   assert.equal(unavailable.listing, 'unavailable');
   assert.deepEqual(unavailable.tickets[KEY].goTo, { investigate: null, implement: null });
 });
+
+// ---- prompt files over HTTP ----
+
+test('scenario 126: a launch with an unusable prompt file is a 409 refusal that starts and writes nothing', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.writePrompt('investigate', ' \n\t ');
+
+  const res = await f.http.json('POST', LAUNCH, launchBody);
+
+  assert.equal(res.status, 409);
+  assert.equal(res.json().code, 'CLAUDE_REFUSED');
+  assert.deepEqual(res.json().errors, ['prompt_unreadable']);
+  assert.equal(f.cli.launches().length, 0, 'no session is started');
+  assert.equal(fs.existsSync(f.ticketDir()), false, 'no state is written');
+});
+
+test('scenario 127: a save with an unusable answers file is 200 with a failed send, and the next save sends once it is fixed', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedHalfAnswered(f);
+  fs.mkdirSync(f.promptPath('answers'), { recursive: true });
+
+  const res = await save(f, { q2: SECOND_TEXT });
+
+  assert.equal(res.status, 200, 'a failed send is not an HTTP error');
+  assert.deepEqual(res.json().send, { status: 'failed', reason: 'prompt_unreadable' });
+  assert.equal(f.parsed().status.questions[1].answer, SECOND_TEXT, 'the answer is saved');
+  assert.equal(f.parsed().launch[INVESTIGATE].sent, undefined, 'and not recorded as sent');
+  assert.equal(f.cli.resumes().length, 0, 'the CLI is not asked to resume');
+  assert.equal(f.cli.stops().length, 0, 'or to stop');
+
+  fs.rmSync(f.promptPath('answers'), { recursive: true });
+  f.writePrompt('answers', 'Read {STATUS_FILE} for {KEY}: {CHANGE} {QUESTION_IDS}');
+  const retry = await save(f, []);
+
+  assert.equal(retry.status, 200);
+  assert.deepEqual(retry.json().send, { status: 'sent' });
+  const [{ args }] = f.cli.resumes();
+  assert.equal(args.at(-1), `Read ${f.statusPath()} for ${KEY}: answers q1, q2`);
+});

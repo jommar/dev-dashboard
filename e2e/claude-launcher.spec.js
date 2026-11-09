@@ -35,6 +35,8 @@ const PLANNED = { 'investigate-and-plan': true, 'implement-plan': false, done: f
 const PLAN_DONE = { ...PLANNED, done: true };
 const TRUST_SENTENCE =
   'Claude does not trust ~/pathwise yet. Run claude there once and accept the trust prompt.';
+const PROMPT_UNREADABLE =
+  "A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.";
 const Q1 = 'Which repo owns the fix?';
 const Q2 = 'Should the retry cap be configurable?';
 const Q3 = 'Should the old export keep working?';
@@ -192,12 +194,11 @@ test('scenario 24: a failed launch says why and leaves the icon as it was', asyn
   page,
   dashboard,
 }) => {
-  await page.route(isPath('/api/claude/launch'), (route) =>
-    route.fulfill({
-      status: 502,
-      json: { code: 'CLAUDE_FAILED', error: 'CLAUDE FAILED', errors: ['untrusted_workspace'] },
-    }),
-  );
+  let refusal = {
+    status: 502,
+    json: { code: 'CLAUDE_FAILED', error: 'CLAUDE FAILED', errors: ['untrusted_workspace'] },
+  };
+  await page.route(isPath('/api/claude/launch'), (route) => route.fulfill(refusal));
   await openBoard(page, dashboard);
   await expect(iconOf(page)).toHaveAttribute('data-state', 'none');
   const dialog = await openDialog(page);
@@ -205,6 +206,16 @@ test('scenario 24: a failed launch says why and leaves the icon as it was', asyn
   const error = page.getByTestId('claude-error');
   await expect(error).toHaveText(TRUST_SENTENCE);
   await expect(error).toHaveAttribute('role', 'alert');
+  await expect(dialog.getByTestId('claude-action-investigate')).toBeEnabled();
+  await expect(iconOf(page)).toHaveAttribute('data-state', 'none');
+
+  // A custom prompt file that cannot be used refuses the launch with a sentence of its own.
+  refusal = {
+    status: 409,
+    json: { code: 'CLAUDE_REFUSED', error: 'CLAUDE REFUSED', errors: ['prompt_unreadable'] },
+  };
+  await dialog.getByTestId('claude-action-investigate').click();
+  await expect(error).toHaveText(PROMPT_UNREADABLE);
   await expect(dialog.getByTestId('claude-action-investigate')).toBeEnabled();
   await expect(iconOf(page)).toHaveAttribute('data-state', 'none');
 });
@@ -783,6 +794,11 @@ test('scenario 49: unsent answers can be saved again with nothing changed, and e
     [
       { status: 'failed', reason: 'resume_failed' },
       failed('The Claude session could not be resumed'),
+    ],
+    // The sentence keeps the full stop inside it; only its last one is dropped.
+    [
+      { status: 'failed', reason: 'prompt_unreadable' },
+      failed(PROMPT_UNREADABLE.replace(/\.$/, '')),
     ],
     [
       { status: 'skipped', reason: 'unchanged' },

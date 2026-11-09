@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The Claude launch prompts and the message sent with saved answers can now be replaced by
+  files: `prompts/investigate.md`, `prompts/implement.md` and `prompts/answers.md` in the
+  dashboard folder. A missing file means the built-in text, and `npm run claude:prompts`
+  writes the built-in templates there to edit, never overwriting a file. The files are read on
+  every launch or send, so an edit applies at once, and they take `{KEY}`, `{SLUG}`,
+  `{STATUS_FILE}` (`answers.md` also `{QUESTION_IDS}` and `{CHANGE}`); an unknown `{WORD}` stays
+  as written. A file that cannot be used (unreadable, a folder, empty, over 20,000 characters)
+  is `prompt_unreadable`: a launch is refused with nothing written (`CLAUDE_REFUSED`) and a send
+  fails with the answers saved, so the next save retries. The folder is outside `claude/`,
+  which launched sessions are given, and is gitignored and dockerignored. The dashboard does
+  not check that a custom prompt keeps the `status.json` protocol, so one that drops it leaves
+  sessions red and Implement plan locked; delete the file to go back.
 - Reworked the Claude dialog layout. It is now two phase rows, each with its run button and
   its own **Go to session** button side by side (they stack at 480px wide and below), and the
   hints sit in a line under the row. Questions are numbered and show a tick (accessible name

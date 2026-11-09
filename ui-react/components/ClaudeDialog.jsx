@@ -35,6 +35,8 @@ const REASON_TEXT = {
   plan_missing: 'The plan file was not found.',
   questions_unanswered: 'Answer the open questions first.',
   status_unreadable: "The ticket's status file cannot be read.",
+  prompt_unreadable:
+    "A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.",
 };
 
 // What a save says about routing the answers to the session, by the server's `send` outcome.

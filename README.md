@@ -941,10 +941,11 @@ session after the ticket and the phase, `<KEY>-investigate-and-plan` or `<KEY>-i
 returns. It never opens a terminal and never removes a session. It stops and resumes a session in
 one case only: sending your saved answers back to the planning session (see
 [Saving and sending answers](#saving-and-sending-answers)), and it never sends text into a running
-one. The Jira summary never reaches the launch: the request carries only the key and the phase. Both
-prompts are fixed text with the key, the key in lower case and the path of the ticket's
-`status.json` filled in, so the summary is never part of what a session is told to do. They tell
-the session to use your `orchestrator` skill
+one. The Jira summary never reaches the launch: the request carries only the key and the phase. By
+default both prompts are the built-in text with the key, the key in lower case and the path of the
+ticket's `status.json` filled in (you can replace them, see [Custom prompts](#custom-prompts)), so
+the summary is never part of what a session is told to do. The built-in prompts tell the session
+to use your `orchestrator` skill
 (step 1 for Investigate and plan, step 3 for Implement plan) and to treat ticket text as data. The
 planning session writes `02-plan.md`, `02-checklist.md` and `02-spec.md` in
 `~/pathwise/.orchestrator/<key in lower case>/`, creates no branch, commit, push or pull request,
@@ -1151,11 +1152,13 @@ after the CLI delivered the resume does the dashboard record `sent`; a resume th
 session counts as `session_not_found`, a session still live at that moment as `live_at_resume`,
 and anything else (including the CLI reporting that it started a copy) as `resume_failed`.
 
-The notice names the ticket, says you answered the open questions, lists the ids (it reads
-"answers to questions q1, q2" the first time and "changed answers to questions q2" after a send,
-naming the answers that are new or differ from the last send) and points at `status.json`, where
-the answers are in `questions[].answer`. It never contains answer text. It tells the session to
-update the plan, checklist and spec under `.orchestrator/<key in lower case>/` wherever the
+By default the notice (the message in `prompts/answers.md` if you wrote one, see
+[Custom prompts](#custom-prompts)) names the ticket, says you answered the open questions, lists
+the ids (it reads "answers to questions q1, q2" the first time and "changed answers to questions
+q2" after a send, naming the answers that are new or differ from the last send) and points at
+`status.json`, where the answers are in `questions[].answer`. The dashboard never puts answer text
+in it. It tells the session to update the plan, checklist and spec under
+`.orchestrator/<key in lower case>/` wherever the
 answers change anything, to implement nothing and stop at the approval gate, and to set `done` to
 `true` as its very last action, changing only that key. If an answer raises a new question, it
 appends it with `answer: null`, leaves `done` `false` and stops.
@@ -1178,9 +1181,11 @@ next **Save answers** retries it, with or without edits: with nothing changed th
 The reason in that last line is the dialog's sentence for the code, without its closing full stop:
 `Claude status is unavailable` (`listing_unavailable`), `The Claude session could not be found`
 (`session_not_found`), `A Claude session is already running for this ticket` (`session_running`),
-`The Claude session is still running` (`live_at_resume`) or `The Claude session could not be
-resumed` (`resume_failed`). A save is still refused (`CLAUDE_REFUSED`, `session_running`) while a
-session works.
+`The Claude session is still running` (`live_at_resume`), `The Claude session could not be
+resumed` (`resume_failed`) or `A custom prompt file could not be used. Fix or remove it in the
+dashboard's prompts folder` (`prompt_unreadable`, from a bad `answers.md`; see
+[Custom prompts](#custom-prompts)). A save is still refused (`CLAUDE_REFUSED`, `session_running`)
+while a session works.
 
 Limits:
 
@@ -1215,6 +1220,50 @@ disabled. This is accident-proofing, not a security boundary: a launched session
 whole `claude/` folder, `launch.json` included, so a hostile session could forge the hashes. Your
 real protection is that Implement plan is a manual click, made after you read the plan (the
 dialog shows its path) and the answers you saved yourself.
+
+### Custom prompts
+
+The two launch prompts and the message sent with your answers are templates. By default they are
+the built-in text. To change one, put a file of that name in the `prompts/` folder of the
+dashboard (the repo root, next to `claude/`):
+
+| File                     | Replaces                                 | Placeholders                                                     |
+| ------------------------ | ---------------------------------------- | ---------------------------------------------------------------- |
+| `prompts/investigate.md` | the Investigate and plan prompt          | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/implement.md`   | the Implement plan prompt                | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/answers.md`     | the message sent with your saved answers | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+
+`{KEY}` is the ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
+`{STATUS_FILE}` the absolute path of the ticket's `status.json`, `{QUESTION_IDS}` the ids of the new
+or changed answers joined with `, `, and `{CHANGE}` is `answers` on a first send and
+`changed answers` on a re-send. Any other `{WORD}` stays in the text as written. The file is read
+as UTF-8, trimmed, and otherwise used as written.
+
+- **Absent means built-in.** A missing file is never an error. `npm run claude:prompts` creates
+  `prompts/` and writes the three built-in templates into it, placeholders intact, for you to edit.
+  It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that exists. It
+  needs no Settings setup.
+- **Applied at once.** The files are read on every launch and every send, never cached, so an edit
+  applies to the next one with no restart. nodemon does not watch `.md` files, so `npm run dev`
+  does not restart either.
+- **A bad file is an error, not a fallback.** A file that exists but cannot be used (it cannot be
+  read, it is not a regular file such as a folder, it is empty, or it is over 20,000 characters
+  once trimmed) is `prompt_unreadable`, and the built-in text is not used in its place. A launch
+  is then refused with `CLAUDE_REFUSED` and `prompt_unreadable`, after the other launch refusals
+  and before anything is written or started, so no state file changes. A send fails with `send`
+  `failed` and `prompt_unreadable` before the session is listed, stopped or touched: the answers
+  stay saved, `done` is untouched and the next **Save answers** retries. The dialog says
+  `A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.`
+- **Why not under `claude/`.** Sessions are given `claude/` (`--add-dir`), and a session that has
+  read untrusted ticket text must not be handed a way to rewrite the prompt of the next launch.
+  The folder is outside it, gitignored (`/prompts/`) and in `.dockerignore`. That is a grant, not a
+  sandbox: a session runs as your user and under your permission mode.
+
+Each built-in prompt carries the protocol the dashboard relies on: the questions go into
+`status.json`, the phase flag (and `done`) is set as the very last action, and the session never
+asks in chat. The dashboard does not check that a custom file keeps it. A prompt that drops it
+leaves sessions red (`ended without finishing`, `plan not done`) and **Implement plan** locked.
+To go back to the built-in text, delete the file.
 
 ### Routes and errors
 
@@ -1271,12 +1320,12 @@ neither GitHub nor Jira. They run behind the same Host, Origin, `Sec-Fetch-Site`
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 `Cache-Control: no-store`. Failures answer `{ code, error, errors[] }`, with `errors[0]` the reason:
 
-| Status | Code             | When                                                                                                                                                                                                                          |
-| ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase                                                                                                                                                        |
-| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record |
-| `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done` or `status_unreadable`                   |
-| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist) or `spawn_failed`                                                    |
+| Status | Code             | When                                                                                                                                                                                                                             |
+| ------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is neither phase                                                                                                                                                           |
+| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record    |
+| `409`  | `CLAUDE_REFUSED` | `session_running` (the phase asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable` or `status_unreadable` |
+| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist) or `spawn_failed`                                                       |
 
 `INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt and the
 name are never logged or returned beyond the validated `id` and the computed `name`.
@@ -1316,6 +1365,10 @@ nothing was sent.` and that the session received nothing (attach to it).
    back and save. Confirm the dialog says the answers had not changed and the session receives
    nothing. A hand-made `POST /api/claude/answers` with `answers: []` answers `send` with
    `skipped` and `unchanged` in the same way.
+9. Run `npm run claude:prompts`, add a line you will recognise at the top of
+   `prompts/investigate.md` (keep the rest), and launch **Investigate and plan** on a throwaway
+   ticket. Confirm the session's first message contains your line. Delete the file, launch again
+   once the first session has finished, and confirm the built-in text is back.
 
 Also taken as assumptions until then: `--bg` prints a standalone 8-character id, a session name of
 39 characters or fewer is listed unabbreviated, a tool call denied in a background session ends it
