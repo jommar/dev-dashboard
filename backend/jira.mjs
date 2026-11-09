@@ -138,7 +138,7 @@ export async function fetchReviewReadyTickets({ snapshot } = {}) {
     url.searchParams.set('jql', buildReviewTicketsJql());
     url.searchParams.set(
       'fields',
-      ['summary', 'status', 'priority', 'updated', 'created', cfg.sprintField]
+      ['summary', 'status', 'priority', 'assignee', 'updated', 'created', cfg.sprintField]
         .filter(Boolean)
         .join(','),
     );
@@ -160,6 +160,8 @@ export async function fetchReviewReadyTickets({ snapshot } = {}) {
     for (const issue of data.issues) {
       const ticket = mapTicketIssue(issue, cfg);
       if (!ticket || !ticket.key.trim()) throw new Error('Invalid Jira review ticket.');
+      const assignee = issue.fields?.assignee?.displayName;
+      ticket.assignee = typeof assignee === 'string' ? assignee.trim() || null : null;
       if (!tickets.has(ticket.key)) tickets.set(ticket.key, ticket);
     }
     if (data.isLast) {

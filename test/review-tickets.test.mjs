@@ -28,6 +28,32 @@ const reviewLoader = () => {
 };
 const pr = (number, repo = 'ExampleOrg/app') => ({ repo, number });
 
+test('queue forwards only the assignee display name and normalizes missing names', async (t) => {
+  const fetchReviewTickets = await queueLoader();
+  stubQueue(t, {
+    jira: ({ url }) => {
+      assert.ok(url.searchParams.get('fields').split(',').includes('assignee'));
+      return Response.json({
+        issues: [
+          issue('DEMO-1', {
+            assignee: { displayName: '  Alex Example  ', accountId: 'private-id' },
+          }),
+          issue('DEMO-2', { assignee: null }),
+          issue('DEMO-3', { assignee: { displayName: '   ' } }),
+          issue('DEMO-4'),
+        ],
+        isLast: true,
+      });
+    },
+  });
+  const data = await fetchReviewTickets({ snapshot: snapshot() });
+  assert.deepEqual(
+    data.tickets.map(({ assignee }) => assignee),
+    ['Alex Example', null, null, null],
+  );
+  assert.ok(!JSON.stringify(data).includes('private-id'));
+});
+
 test('all-author discovery has its own export without changing legacy author-mode search', () => {
   assert.equal(typeof github.fetchAllOpenPRs, 'function');
   assert.equal(typeof github.fetchOpenPRs, 'function');

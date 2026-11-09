@@ -342,6 +342,7 @@
   font-weight: 600;
   text-decoration: none;
 }
+.review-ticket-assignee,
 .review-ticket-sprint,
 .review-ticket-empty,
 .review-ticket-warning {

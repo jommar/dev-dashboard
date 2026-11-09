@@ -13,6 +13,7 @@ function queueTicket(ticket) {
   return {
     key: canonicalTicketKey(ticket.key),
     summary: ticket.summary,
+    assignee: ticket.assignee,
     status: ticket.status,
     statusCategory: typeof ticket.statusCategory === 'string' ? ticket.statusCategory : 'Unknown',
     priority: typeof ticket.priority === 'string' ? ticket.priority : null,

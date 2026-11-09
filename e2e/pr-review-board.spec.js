@@ -26,6 +26,24 @@ const review = (state = 'approved') => ({
   reviewDecision: null,
 });
 
+test('ticket cards show assignee names and a readable fallback without changing their actions', async ({
+  page,
+  dashboard,
+}) => {
+  dashboard.data.reviewTickets.tickets[0].assignee = 'Alex Example';
+  dashboard.data.reviewTickets.tickets[1].assignee = null;
+  delete dashboard.data.reviewTickets.tickets[2].assignee;
+  await page.goto('/#/prs');
+  await expect(page.getByTestId('prs-ticket-assignee-DEMO-1')).toHaveText('Assignee: Alex Example');
+  for (const key of ['DEMO-2', 'DEMO-3']) {
+    await expect(page.getByTestId(`prs-ticket-assignee-${key}`)).toHaveText('Assignee: Unassigned');
+  }
+  await expect(ticket(page).getByTestId('prs-ticket-link-DEMO-1')).toBeVisible();
+  await expect(ticket(page).getByTestId('prs-claude-icon-DEMO-1')).toBeEnabled();
+  await expect(ticket(page, 'DEMO-3')).toContainText('No linked open PRs');
+  expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+});
+
 function mixedQueue(data) {
   const [first, second, empty] = data.reviewTickets.tickets;
   const frontend = { ...first.prs[0], repo: 'example/frontend', review: review() };
