@@ -54,7 +54,10 @@ function comparisonPeople(people, sprintId) {
         byStatus,
       };
     })
-    .filter((person) => !sprintId || person.series.some((entry) => entry.count > 0));
+    .filter((person) => !sprintId || person.series.some((entry) => entry.count > 0))
+    .sort(
+      (a, b) => b.points - a.points || a.label.localeCompare(b.label) || a.id.localeCompare(b.id),
+    );
 }
 
 function reconcileSelection(boards, current) {
@@ -125,7 +128,7 @@ function PersonBreakdown({ people, personId, sprintCount, sprintName, onSelect }
       </ul>
       <p>
         Bars share the same point scale across people. Carried issues count in each sprint
-        membership, not as unique delivered work. Alphabetical, not a performance ranking.
+        membership, not as unique delivered work. Sorted by total points, highest first.
       </p>
     </section>
   );

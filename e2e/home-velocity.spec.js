@@ -489,7 +489,7 @@ test('manual snapshot lifecycle never fetches on old invalid or absent cache @re
   expect(await scroll.evaluate((el) => el.scrollLeft)).toBe(before);
 });
 
-test('person velocity stays local with alphabetical same-window comparison and resets @regression', async ({
+test('person velocity stays local with point-sorted same-window comparison and resets @regression', async ({
   page,
   dashboard,
 }) => {
@@ -592,6 +592,53 @@ test('person velocity stays local with alphabetical same-window comparison and r
       .snapshot.boards.find(({ name }) => name === 'Nexus')
       .people.map(({ id }) => id),
   ).not.toContain(alexA);
+});
+
+test('people sort by selected-window points with alphabetical ties without changing saved data @regression', async ({
+  page,
+  dashboard,
+}) => {
+  const nexus = dashboard.data.teamVelocity.boards.find(({ name }) => name === 'Nexus');
+  nexus.people[0].displayName = 'Zoe Example';
+  nexus.people[1].displayName = 'Alex Example';
+  const original = structuredClone(dashboard.data.teamVelocity);
+  await seedVelocitySnapshot(page, original);
+  await page.goto('/#/home');
+  const rows = page.getByTestId('home-velocity-person-row');
+  const labels = rows.locator('.home-velocity-person-name');
+  await expect(labels).toHaveText([
+    'Zoe Example',
+    'Alex Example',
+    'Unassigned (1)',
+    'Unknown assignee (1)',
+  ]);
+  await expect(rows.locator('strong')).toHaveText(['5.5', '4.25', '3', '0']);
+  await expect(person(page).locator('option')).toHaveText([
+    'Everyone',
+    'Zoe Example',
+    'Alex Example',
+    'Unassigned (1)',
+    'Unknown assignee (1)',
+  ]);
+  await sprint(page).selectOption('Sprint 4');
+  await expect(labels).toHaveText([
+    'Alex Example',
+    'Zoe Example',
+    'Unassigned (1)',
+    'Unknown assignee (1)',
+  ]);
+  await expect(rows.locator('strong')).toHaveText(['3', '3', '2', '0']);
+  await sprint(page).selectOption('Sprint 2');
+  await expect(labels).toHaveText([
+    'Zoe Example',
+    'Alex Example',
+    'Unassigned (1)',
+    'Unknown assignee (1)',
+  ]);
+  await expect(rows.locator('strong')).toHaveText(['2.5', '1.25', '1', '0']);
+  expect(reads(dashboard)).toBe(0);
+  expect(JSON.parse(await stored(page)).snapshot).toEqual(original);
+  expect(dashboard.data.teamVelocity).toEqual(original);
 });
 
 test('one sprint compares every person on the same local window and shared scales @regression', async ({
@@ -892,6 +939,7 @@ test('unambiguous person labels reserve aggregate literal suffixes and special b
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.id.localeCompare(b.id));
   const labelsById = new Map(people.map((p) => [p.id, expectedLabels[p.series[0].points - 1]]));
+  const rankedPeople = [...people].sort((a, b) => b.series[0].points - a.series[0].points);
   const series = [
     {
       ...structuredClone(source.series[1]),
@@ -909,7 +957,7 @@ test('unambiguous person labels reserve aggregate literal suffixes and special b
   const options = person(page).locator('option');
   const expected = [
     { value: '', label: 'Everyone' },
-    ...people.map((p) => ({ value: p.id, label: labelsById.get(p.id) })),
+    ...rankedPeople.map((p) => ({ value: p.id, label: labelsById.get(p.id) })),
   ];
   await expect(options).toHaveCount(expected.length);
   const choices = await options.evaluateAll((elements) =>
@@ -919,7 +967,7 @@ test('unambiguous person labels reserve aggregate literal suffixes and special b
   expect(new Set(choices.map(({ label }) => label)).size).toBe(choices.length);
   const rows = page.getByTestId('home-velocity-person-row');
   await expect(rows).toHaveCount(people.length);
-  for (const [index, p] of people.entries()) {
+  for (const [index, p] of rankedPeople.entries()) {
     const label = labelsById.get(p.id);
     await expect(rows.nth(index).locator('.home-velocity-person-name')).toHaveText(label);
     await person(page).focus();
