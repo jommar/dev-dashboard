@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The Claude dialog now has two Go to items, **Go to investigate and plan session** and
+  **Go to implement plan session**, each copying the command for its own phase's session
+  (`claude attach <id>` for a live or blocked one, a `claude --resume` from `~/pathwise` for a
+  finished one) and disabled with `No session to join` when that phase was never launched or
+  cannot be joined. The planning session stays reachable after Implement plan has launched,
+  which it was not. Breaking for anything reading
+  `GET /api/claude/tickets`: `goTo` is now always `{ investigate, implement }`, each
+  `{ kind, command }` or `null`, instead of one `{ kind, command }` or `null` for the
+  current phase.
 - Saved Claude answers now go back to the planning session. **Save answers** still saves
   what you changed, and partial answers send nothing. Once every question has an answer, the
   dashboard stops the session if it is idle, waits the Slack wake's 15 s settle gap and
@@ -26,10 +35,10 @@
 - Added a Claude icon to every My Tickets card. It shows where the ticket stands with
   Claude (not started, working, needs you, done, ended without finishing,
   unavailable) as a badge and a word, and opens a dialog with **Investigate and
-  plan**, **Implement plan** and **Go to session**. Both launches start a background
-  `claude --bg` session from `~/pathwise`, named `<KEY>-investigate-and-plan` or
-  `<KEY>-implement-plan`; **Go to session** copies the command that attaches to or
-  resumes it.
+  plan**, **Implement plan** and a **Go to ... session** item per phase. Both launches
+  start a background `claude --bg` session from `~/pathwise`, named
+  `<KEY>-investigate-and-plan` or `<KEY>-implement-plan`; **Go to ... session** copies
+  the command that attaches to or resumes that phase's session.
   Questions the planning session asks appear in the dialog as text inputs, and
   **Implement plan** stays disabled until you have saved an answer to each. State
   lives in the gitignored `claude/<KEY>/` folder: `status.json`, shared with the

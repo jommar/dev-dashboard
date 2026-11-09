@@ -9,11 +9,24 @@ import { BOARD_THREAD_TS, claudeEntry, claudeQuestion, ticketBoardData } from '.
 //
 // Test ids come from the feature's spec: `claude-icon-<KEY>` on the card, and `claude-dialog`
 // with its `claude-action-*`, `claude-action-hint-*`, `claude-question-<id>`, `claude-error`,
-// `claude-goto-copied`, `claude-goto-fallback`, `claude-dialog-close` and `claude-plan-hint` inside.
+// `claude-dialog-close` and `claude-plan-hint` inside. Go to session is two items, one per phase,
+// and every id it has takes the phase as a suffix: `claude-action-goto-investigate` /
+// `claude-action-goto-implement`, `claude-action-hint-goto-<phase>`, `claude-goto-copied-<phase>`
+// and `claude-goto-fallback-<phase>`.
 
 const KEY = 'TAP-9001';
 const SUMMARY = 'Invented fix for the failing export job';
 const ATTACH = { kind: 'attach', command: 'claude attach ab12cd34' };
+const RESUME = {
+  kind: 'resume',
+  command: 'cd ~/pathwise && claude --resume 3f2b8c1e-5d4a-4e7b-9c60-1a2b3c4d5e6f',
+};
+// An entry's `goTo`: the command to join each phase's own session, or null for one with none.
+const sessions = (investigate = null, implement = null) => ({ investigate, implement });
+const LABEL = {
+  investigate: 'Go to investigate and plan session',
+  implement: 'Go to implement plan session',
+};
 // The first pass wrote the plan; `done` stays false until every question is answered and the
 // session has updated the plan.
 const PLANNED = { 'investigate-and-plan': true, 'implement-plan': false, done: false };
@@ -80,7 +93,7 @@ test('scenario 21: every ticket card shows a Claude icon in its state', async ({
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    'TAP-9002': claudeEntry('working', 'running', { goTo: ATTACH }),
+    'TAP-9002': claudeEntry('working', 'running', { goTo: sessions(ATTACH) }),
     'TAP-9003': claudeEntry('waiting', 'questions', {
       flags: PLANNED,
       questions: [claudeQuestion('q1', Q1)],
@@ -115,7 +128,7 @@ test('scenario 21: every ticket card shows a Claude icon in its state', async ({
   await expect(page.getByTestId(`slack-thread-link-${BOARD_THREAD_TS.needsReply}`)).toBeVisible();
 });
 
-test('scenario 22: the icon opens a dialog with three items and Escape closes it', async ({
+test('scenario 22: the icon opens a dialog with its four items and Escape closes it', async ({
   page,
   dashboard,
 }) => {
@@ -131,8 +144,12 @@ test('scenario 22: the icon opens a dialog with three items and Escape closes it
   await expect(dialog.getByTestId('claude-action-hint-implement')).toContainText(
     'Run Investigate and plan first',
   );
-  await expect(dialog.getByTestId('claude-action-goto')).toBeDisabled();
-  await expect(dialog.getByTestId('claude-action-hint-goto')).toContainText('No session to join');
+  for (const phase of ['investigate', 'implement']) {
+    await expect(dialog.getByTestId(`claude-action-goto-${phase}`)).toBeDisabled();
+    await expect(dialog.getByTestId(`claude-action-hint-goto-${phase}`)).toContainText(
+      'No session to join',
+    );
+  }
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(icon).toBeFocused();
@@ -227,7 +244,7 @@ test('scenario 25: answers cannot be edited while a session works', async ({ pag
   await openBoard(page, dashboard, {
     [KEY]: claudeEntry('working', 'running', {
       flags: PLANNED,
-      goTo: ATTACH,
+      goTo: sessions(ATTACH),
       questions: [claudeQuestion('q1', Q1), claudeQuestion('q2', Q2)],
     }),
   });
@@ -241,17 +258,18 @@ test('scenario 26: Go to session copies the exact command and says Copied', asyn
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('waiting', 'blocked', { goTo: ATTACH }),
+    [KEY]: claudeEntry('waiting', 'blocked', { goTo: sessions(ATTACH) }),
   });
   const dialog = await openDialog(page);
-  const goTo = dialog.getByTestId('claude-action-goto');
+  const goTo = dialog.getByTestId('claude-action-goto-investigate');
   await expect(goTo).toBeEnabled();
   await goTo.click();
-  await expect(dialog.getByTestId('claude-goto-copied')).toContainText('Copied');
+  await expect(dialog.getByTestId('claude-goto-copied-investigate')).toContainText('Copied');
   expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes)).toEqual([
     ATTACH.command,
   ]);
-  await expect(dialog.getByTestId('claude-goto-fallback')).toHaveCount(0);
+  await expect(dialog.getByTestId('claude-goto-fallback-investigate')).toHaveCount(0);
+  await expect(dialog.getByTestId('claude-goto-copied-implement')).toHaveCount(0);
 });
 
 test('scenario 26: Go to session falls back to a read-only field when the clipboard fails', async ({
@@ -259,18 +277,18 @@ test('scenario 26: Go to session falls back to a read-only field when the clipbo
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('waiting', 'blocked', { goTo: ATTACH }),
+    [KEY]: claudeEntry('waiting', 'blocked', { goTo: sessions(ATTACH) }),
   });
   const dialog = await openDialog(page);
   await page.evaluate(() => {
     window.__dashboardMock.clipboard.error = 'Permission denied';
   });
-  await dialog.getByTestId('claude-action-goto').click();
-  const fallback = dialog.getByTestId('claude-goto-fallback');
+  await dialog.getByTestId('claude-action-goto-investigate').click();
+  const fallback = dialog.getByTestId('claude-goto-fallback-investigate');
   await expect(fallback).toBeVisible();
   await expect(fallback).toHaveValue(ATTACH.command);
   await expect(fallback).toHaveAttribute('readonly', '');
-  await expect(dialog.getByTestId('claude-goto-copied')).toHaveCount(0);
+  await expect(dialog.getByTestId('claude-goto-copied-investigate')).toHaveCount(0);
   expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes)).toEqual([]);
 });
 
@@ -279,11 +297,15 @@ test('scenario 26: Go to session is disabled when the ticket has no session to j
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: null }),
+    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: sessions() }),
   });
   const dialog = await openDialog(page);
-  await expect(dialog.getByTestId('claude-action-goto')).toBeDisabled();
-  await expect(dialog.getByTestId('claude-action-hint-goto')).toContainText('No session to join');
+  for (const phase of ['investigate', 'implement']) {
+    await expect(dialog.getByTestId(`claude-action-goto-${phase}`)).toBeDisabled();
+    await expect(dialog.getByTestId(`claude-action-hint-goto-${phase}`)).toContainText(
+      'No session to join',
+    );
+  }
 });
 
 test('scenario 27: the icon follows the session by polling, with no reload and the scroll kept', async ({
@@ -294,7 +316,7 @@ test('scenario 27: the icon follows the session by polling, with no reload and t
   await page.clock.install({ time: now - 60_000 });
   await page.clock.pauseAt(now);
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('working', 'running', { goTo: ATTACH }),
+    [KEY]: claudeEntry('working', 'running', { goTo: sessions(ATTACH) }),
   });
   const icon = iconOf(page);
   await expect(icon).toHaveAttribute('data-state', 'working');
@@ -316,7 +338,7 @@ test('scenario 27: the icon follows the session by polling, with no reload and t
 
   dashboard.data.claude.tickets[KEY] = claudeEntry('done', 'plan_ready', {
     flags: PLAN_DONE,
-    goTo: ATTACH,
+    goTo: sessions(ATTACH),
   });
   await page.clock.runFor(15_000);
   await expect(icon).toHaveAttribute('data-state', 'done');
@@ -457,7 +479,7 @@ test('scenario 41: Implement plan sends an implement launch and the icon starts 
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: ATTACH }),
+    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: sessions(ATTACH) }),
   });
   await expect(iconOf(page)).toHaveAttribute('data-state', 'done');
   const dialog = await openDialog(page);
@@ -522,8 +544,8 @@ test('scenario 44: a plan-ready ticket shows where its plan file is beside Imple
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: ATTACH }),
-    'TAP-9002': claudeEntry('working', 'running', { flags: PLANNED, goTo: ATTACH }),
+    [KEY]: claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: sessions(ATTACH) }),
+    'TAP-9002': claudeEntry('working', 'running', { flags: PLANNED, goTo: sessions(ATTACH) }),
     'TAP-9003': claudeEntry('waiting', 'questions', {
       flags: PLANNED,
       questions: [claudeQuestion('q1', Q1)],
@@ -531,7 +553,7 @@ test('scenario 44: a plan-ready ticket shows where its plan file is beside Imple
     'TAP-9005': claudeEntry('done', 'implemented', {
       phase: 'implement-plan',
       flags: { ...PLAN_DONE, 'implement-plan': true },
-      goTo: ATTACH,
+      goTo: sessions(RESUME, RESUME),
     }),
   });
   let dialog = await openDialog(page);
@@ -559,7 +581,7 @@ test('scenario 46: while Investigate and plan runs, Implement plan says so and G
   dashboard,
 }) => {
   await openBoard(page, dashboard, {
-    [KEY]: claudeEntry('working', 'running', { goTo: ATTACH }),
+    [KEY]: claudeEntry('working', 'running', { goTo: sessions(ATTACH) }),
   });
   const dialog = await openDialog(page);
   await expect(dialog.getByTestId('claude-action-investigate')).toBeDisabled();
@@ -570,7 +592,8 @@ test('scenario 46: while Investigate and plan runs, Implement plan says so and G
   await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(
     'Investigate and plan is still running.',
   );
-  await expect(dialog.getByTestId('claude-action-goto')).toBeEnabled();
+  await expect(dialog.getByTestId('claude-action-goto-investigate')).toBeEnabled();
+  await expect(dialog.getByTestId('claude-action-goto-implement')).toBeDisabled();
 });
 
 test('scenario 47: while Implement plan runs, Investigate and plan says so and Implement plan keeps the running hint', async ({
@@ -581,7 +604,7 @@ test('scenario 47: while Implement plan runs, Investigate and plan says so and I
     [KEY]: claudeEntry('working', 'running', {
       phase: 'implement-plan',
       flags: PLANNED,
-      goTo: ATTACH,
+      goTo: sessions(RESUME, ATTACH),
     }),
   });
   const dialog = await openDialog(page);
@@ -593,7 +616,8 @@ test('scenario 47: while Implement plan runs, Investigate and plan says so and I
   await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(
     'A Claude session is already running for this ticket.',
   );
-  await expect(dialog.getByTestId('claude-action-goto')).toBeEnabled();
+  await expect(dialog.getByTestId('claude-action-goto-implement')).toBeEnabled();
+  await expect(dialog.getByTestId('claude-action-goto-investigate')).toBeEnabled();
 });
 
 // Saving answers routes them back to the session once every question has one.
@@ -699,7 +723,7 @@ test('scenario 50: Save answers stays disabled while a session works, even for u
     [KEY]: claudeEntry('working', 'running', {
       flags: PLANNED,
       unsent: true,
-      goTo: ATTACH,
+      goTo: sessions(ATTACH),
       questions: [claudeQuestion('q1', Q1, 'Portage-backend')],
     }),
   });
@@ -721,12 +745,12 @@ test('scenario 51: the icon and dialog tell answers not sent, plan not done and 
     }),
     'TAP-9003': claudeEntry('failed', 'plan_not_done', {
       flags: PLANNED,
-      goTo: ATTACH,
+      goTo: sessions(ATTACH),
       questions: answered,
     }),
     'TAP-9005': claudeEntry('done', 'plan_ready', {
       flags: PLAN_DONE,
-      goTo: ATTACH,
+      goTo: sessions(ATTACH),
       questions: answered,
     }),
     'TAP-9006': claudeEntry('waiting', 'answers_not_sent', {
@@ -782,4 +806,40 @@ test('scenario 51: the icon and dialog tell answers not sent, plan not done and 
   dialog = await openDialog(page, 'TAP-9005');
   await expect(dialog.getByTestId('claude-action-implement')).toBeEnabled();
   await expect(dialog.getByTestId('claude-answers-hint')).toHaveCount(0);
+});
+
+// Once Implement plan has launched, the investigate session is still reachable: one item per phase,
+// each with its own command and its own Copied.
+test('scenario 52: both Go to session items work at once and each copies its own command', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('working', 'running', {
+      phase: 'implement-plan',
+      flags: PLANNED,
+      goTo: sessions(RESUME, ATTACH),
+    }),
+  });
+  const dialog = await openDialog(page);
+  await expect(dialog.getByTestId('claude-action-goto')).toHaveCount(0);
+  const investigate = dialog.getByTestId('claude-action-goto-investigate');
+  const implement = dialog.getByTestId('claude-action-goto-implement');
+  await expect(investigate).toHaveText(LABEL.investigate);
+  await expect(implement).toHaveText(LABEL.implement);
+  await expect(investigate).toBeEnabled();
+  await expect(implement).toBeEnabled();
+  await expect(dialog.getByTestId('claude-action-hint-goto-investigate')).toHaveCount(0);
+  await expect(dialog.getByTestId('claude-action-hint-goto-implement')).toHaveCount(0);
+
+  await investigate.click();
+  await expect(dialog.getByTestId('claude-goto-copied-investigate')).toContainText('Copied');
+  await expect(dialog.getByTestId('claude-goto-copied-implement')).toHaveCount(0);
+
+  await implement.click();
+  await expect(dialog.getByTestId('claude-goto-copied-implement')).toContainText('Copied');
+  expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes)).toEqual([
+    RESUME.command,
+    ATTACH.command,
+  ]);
 });

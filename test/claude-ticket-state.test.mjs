@@ -28,6 +28,15 @@ const RESUME = {
   kind: 'resume',
   command: `cd ~/pathwise && claude --resume ${sessionUuid(FIRST_ID)}`,
 };
+// The go-to command of a live (or blocked) session and of a finished one, by short id.
+const attachFor = (id) => ({ kind: 'attach', command: `claude attach ${id}` });
+const resumeFor = (id) => ({
+  kind: 'resume',
+  command: `cd ~/pathwise && claude --resume ${sessionUuid(id)}`,
+});
+// `goTo` is always one command per phase; a phase that has none to give is null.
+const GO_TO_NONE = { investigate: null, implement: null };
+const investigateOnly = (command) => ({ investigate: command, implement: null });
 
 // The entry for one ticket. Defaults: an investigate run launched an hour ago, its session listed
 // and done, flag true, `done` true, no question, the plan on disk.
@@ -45,6 +54,23 @@ async function derive(overrides = {}) {
 
 const launchedAgo = (milliseconds, extra = {}) => ({
   [INVESTIGATE]: launchRecord({ launchedAt: START_MS - milliseconds, id: FIRST_ID, ...extra }),
+});
+
+// Both phases launched: investigate two hours ago (id aaaa0001), implement an hour ago (id bbbb0002).
+const INVESTIGATE_ID = 'aaaa0001';
+const IMPLEMENT_ID = 'bbbb0002';
+const bothLaunched = (extra = {}) => ({
+  [INVESTIGATE]: launchRecord({
+    launchedAt: START_MS - 2 * HOUR_MS,
+    id: INVESTIGATE_ID,
+    ...extra.investigate,
+  }),
+  [IMPLEMENT]: launchRecord({
+    name: IMPLEMENT_NAME,
+    launchedAt: START_MS - HOUR_MS,
+    id: IMPLEMENT_ID,
+    ...extra.implement,
+  }),
 });
 
 function assertEntry(entry, expected, label = '') {
@@ -77,7 +103,7 @@ test('scenario 13: a blocked session without a pid is waiting and blocked with a
     status: statusFile(),
   });
   assertEntry(entry, { state: 'waiting', reason: 'blocked' });
-  assert.deepEqual(entry.goTo, ATTACH);
+  assert.deepEqual(entry.goTo, investigateOnly(ATTACH));
 });
 
 test('scenario 13: a done session with one unanswered question is waiting for answers and blocks implement only', async () => {
@@ -98,21 +124,21 @@ test('scenario 14: a finished idle session with a pid is done with the plan read
     entries: [listed({ id: FIRST_ID, state: 'done', pid: 4242, status: 'idle' })],
   });
   assertEntry(entry, { state: 'done', reason: 'plan_ready', phase: INVESTIGATE });
-  assert.deepEqual(entry.goTo, ATTACH);
+  assert.deepEqual(entry.goTo, investigateOnly(ATTACH));
   assert.equal(entry.blocks.implement, null);
 });
 
 test('scenario 14: a finished session without a pid is done with the plan ready and a resume command', async () => {
   const entry = await derive({ entries: [listed({ id: FIRST_ID, state: 'done' })] });
   assertEntry(entry, { state: 'done', reason: 'plan_ready' });
-  assert.deepEqual(entry.goTo, RESUME);
+  assert.deepEqual(entry.goTo, investigateOnly(RESUME));
   assert.equal(entry.blocks.implement, null);
 });
 
 test('scenario 14: a session absent for ten minutes with the flag set is done without a go-to command', async () => {
   const entry = await derive({ launch: launchedAgo(TEN_MINUTES_MS), entries: [] });
   assertEntry(entry, { state: 'done', reason: 'plan_ready' });
-  assert.equal(entry.goTo, null);
+  assert.deepEqual(entry.goTo, GO_TO_NONE);
   assert.equal(entry.blocks.implement, null);
 });
 
@@ -165,12 +191,14 @@ test('scenario 15: a ticket with no launch record is none and has no phase', asy
     assert.equal(entry.state, 'none', `launch ${JSON.stringify(launch)}`);
     assert.equal(entry.phase, null, `launch ${JSON.stringify(launch)}: phase`);
     assert.equal(entry.reason ?? null, null, `launch ${JSON.stringify(launch)}: reason`);
+    assert.deepEqual(entry.goTo, GO_TO_NONE, `launch ${JSON.stringify(launch)}: goTo`);
   }
 });
 
-test('scenario 15: an unavailable listing is unknown and blocks every action', async () => {
-  const entry = await derive({ entries: null });
+test('scenario 15: an unavailable listing is unknown, blocks every action and has no go-to command', async () => {
+  const entry = await derive({ entries: null, launch: bothLaunched() });
   assertEntry(entry, { state: 'unknown', reason: 'listing_unavailable' });
+  assert.deepEqual(entry.goTo, GO_TO_NONE);
   assert.deepEqual(entry.blocks, {
     investigate: 'listing_unavailable',
     implement: 'listing_unavailable',
@@ -178,9 +206,10 @@ test('scenario 15: an unavailable listing is unknown and blocks every action', a
   });
 });
 
-test('scenario 15: a session in an unrecognised state is unknown', async () => {
+test('scenario 15: a session in an unrecognised state is unknown and has no go-to command', async () => {
   const entry = await derive({ entries: [listed({ id: FIRST_ID, state: 'stopped' })] });
   assertEntry(entry, { state: 'unknown', reason: 'unrecognised_state' });
+  assert.deepEqual(entry.goTo, GO_TO_NONE);
 });
 
 const RECORD_ID = 'ab12cd34';
@@ -252,23 +281,27 @@ test('scenario 17: a listed id that is not eight hex characters gives no go-to c
       pid: 4242,
     }),
   );
-  assert.equal(entry.goTo, null);
+  assert.deepEqual(entry.goTo, GO_TO_NONE);
 });
 
 test('scenario 17: a session id that is not a UUID gives no go-to command', async () => {
   const entry = await derive(
     byName({ id: FIRST_ID, sessionId: 'not-a-uuid; rm -rf ~', state: 'done' }),
   );
-  assert.equal(entry.goTo, null);
+  assert.deepEqual(entry.goTo, GO_TO_NONE);
 });
 
 test('scenario 17: valid ids give exactly the attach and resume commands and no listing text', async () => {
   const live = await derive(byName({ id: FIRST_ID, state: 'working', status: 'busy', pid: 4242 }));
-  assert.deepEqual(live.goTo, ATTACH);
+  assert.deepEqual(live.goTo, investigateOnly(ATTACH));
   const finished = await derive(byName({ id: FIRST_ID, state: 'done' }));
-  assert.deepEqual(finished.goTo, RESUME);
+  assert.deepEqual(finished.goTo, investigateOnly(RESUME));
   for (const { goTo } of [live, finished]) {
-    assert.equal(goTo.command.includes('sentinel'), false, 'no name or cwd text in a command');
+    assert.equal(
+      goTo.investigate.command.includes('sentinel'),
+      false,
+      'no name or cwd text in a command',
+    );
   }
 });
 
@@ -699,5 +732,154 @@ test('scenario 101: answers_not_sent never hides a running session, a missing pl
   ];
   for (const [label, arrangement, expected] of cases) {
     assert.equal((await derive(arrangement)).blocks.implement, expected, label);
+  }
+});
+
+// ---- one go-to command per phase ----
+
+const bothStatus = statusFile({ investigate: true, implement: false, done: true });
+
+test('scenario 111: both phases launched give both commands at once, each from its own session', async () => {
+  const rows = [
+    [
+      'investigate finished, implement live',
+      [listed({ id: INVESTIGATE_ID }), workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME })],
+      { investigate: resumeFor(INVESTIGATE_ID), implement: attachFor(IMPLEMENT_ID) },
+    ],
+    [
+      'investigate live and idle, implement finished',
+      [
+        listed({ id: INVESTIGATE_ID, state: 'done', status: 'idle', pid: 4242 }),
+        listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+      ],
+      { investigate: attachFor(INVESTIGATE_ID), implement: resumeFor(IMPLEMENT_ID) },
+    ],
+    [
+      'both finished',
+      [listed({ id: INVESTIGATE_ID }), listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME })],
+      { investigate: resumeFor(INVESTIGATE_ID), implement: resumeFor(IMPLEMENT_ID) },
+    ],
+    [
+      'investigate blocked, implement live',
+      [
+        listed({ id: INVESTIGATE_ID, state: 'blocked' }),
+        workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+      ],
+      { investigate: attachFor(INVESTIGATE_ID), implement: attachFor(IMPLEMENT_ID) },
+    ],
+  ];
+  for (const [label, entries, expected] of rows) {
+    const entry = await derive({ status: bothStatus, launch: bothLaunched(), entries });
+    assert.deepEqual(entry.goTo, expected, label);
+    assert.equal(
+      entry.phase,
+      IMPLEMENT,
+      `${label}: the rest of the entry follows the current phase`,
+    );
+  }
+});
+
+test('scenario 112: each phase finds its own session by the saved id, whatever else carries its name', async () => {
+  const entry = await derive({
+    status: bothStatus,
+    launch: bothLaunched(),
+    entries: [
+      listed({ id: INVESTIGATE_ID }),
+      listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+      // Newer sessions with the same names that no record points at.
+      listed({ id: 'cccc0003', startedAt: START_MS - 1_000 }),
+      listed({ id: 'dddd0004', name: IMPLEMENT_NAME, startedAt: START_MS - 1_000 }),
+    ],
+  });
+  assert.deepEqual(entry.goTo, {
+    investigate: resumeFor(INVESTIGATE_ID),
+    implement: resumeFor(IMPLEMENT_ID),
+  });
+});
+
+test('scenario 113: older records without an id resolve by name and start time, each for its own phase', async () => {
+  const launch = bothLaunched({ investigate: { id: null }, implement: { id: null } });
+  const investigateStart = START_MS - 2 * HOUR_MS;
+  const implementStart = START_MS - HOUR_MS;
+  const entry = await derive({
+    status: bothStatus,
+    launch,
+    entries: [
+      listed({ id: INVESTIGATE_ID, startedAt: investigateStart + 5_000 }),
+      workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME, startedAt: implementStart + 5_000 }),
+    ],
+  });
+  assert.deepEqual(entry.goTo, {
+    investigate: resumeFor(INVESTIGATE_ID),
+    implement: attachFor(IMPLEMENT_ID),
+  });
+
+  const earlierRun = await derive({
+    status: bothStatus,
+    launch,
+    entries: [
+      listed({ id: INVESTIGATE_ID, startedAt: investigateStart + 5_000 }),
+      listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME, startedAt: implementStart - 1 }),
+    ],
+  });
+  assert.deepEqual(
+    earlierRun.goTo,
+    { investigate: resumeFor(INVESTIGATE_ID), implement: null },
+    'an implement session that started before its launch is another run',
+  );
+});
+
+test('scenario 114: a phase with no record has no command, even when a session carries its name', async () => {
+  const investigateRecord = { [INVESTIGATE]: bothLaunched()[INVESTIGATE] };
+  const implementRecord = { [IMPLEMENT]: bothLaunched()[IMPLEMENT] };
+  const both = [listed({ id: INVESTIGATE_ID }), listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME })];
+  const onlyInvestigate = await derive({
+    status: bothStatus,
+    launch: investigateRecord,
+    entries: both,
+  });
+  assert.deepEqual(onlyInvestigate.goTo, investigateOnly(resumeFor(INVESTIGATE_ID)));
+  const onlyImplement = await derive({
+    status: bothStatus,
+    launch: implementRecord,
+    entries: both,
+  });
+  assert.deepEqual(onlyImplement.goTo, {
+    investigate: null,
+    implement: resumeFor(IMPLEMENT_ID),
+  });
+});
+
+test('scenario 115: a session in an unknown state gives no command for its phase, and the other phase keeps its own', async () => {
+  // Unrecognised, with and without a process: neither is something the dashboard can join.
+  for (const extra of [{}, { pid: 4242, status: 'idle' }]) {
+    const label = JSON.stringify(extra);
+    const unrecognisedInvestigate = await derive({
+      status: bothStatus,
+      launch: bothLaunched(),
+      entries: [
+        listed({ id: INVESTIGATE_ID, state: 'stopped', ...extra }),
+        workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+      ],
+    });
+    assert.deepEqual(
+      unrecognisedInvestigate.goTo,
+      { investigate: null, implement: attachFor(IMPLEMENT_ID) },
+      `investigate ${label}`,
+    );
+
+    const unrecognisedImplement = await derive({
+      status: bothStatus,
+      launch: bothLaunched(),
+      entries: [
+        listed({ id: INVESTIGATE_ID }),
+        listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME, state: 'stopped', ...extra }),
+      ],
+    });
+    assert.deepEqual(
+      unrecognisedImplement.goTo,
+      { investigate: resumeFor(INVESTIGATE_ID), implement: null },
+      `implement ${label}`,
+    );
   }
 });

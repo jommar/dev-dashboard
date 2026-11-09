@@ -1177,6 +1177,9 @@ function watchLinkFromParsed({ key, link }) {
 // and changes `tickets` the way the server's answer would, so a spec can assert what the dialog
 // sent and what the icon shows afterwards. Invented data only.
 const CLAUDE_ATTACH = { kind: 'attach', command: 'claude attach ab12cd34' };
+// `goTo` on an entry is `{ investigate, implement }`: each side is `{ kind, command }` for that
+// phase's own session, or null when nothing of that phase can be joined.
+const CLAUDE_NO_SESSIONS = { investigate: null, implement: null };
 
 export function claudeQuestion(id, question, answer = null) {
   return { id, question, answer };
@@ -1233,7 +1236,7 @@ export function claudeEntry(state, reason, overrides = {}) {
     reason,
     flags: { 'investigate-and-plan': false, 'implement-plan': false, done: false },
     questions: [],
-    goTo: null,
+    goTo: CLAUDE_NO_SESSIONS,
     ...overrides,
   });
 }
@@ -1281,7 +1284,11 @@ function claudeResponse(url, method, { claude }, body) {
     const earlier = body.phase === 'implement-plan' ? claude.tickets[body.key] : null;
     const ticket = claudeEntry('working', 'starting', {
       phase: body.phase,
-      goTo: CLAUDE_ATTACH,
+      // The launched phase has a live session; an implement launch keeps the investigate side.
+      goTo:
+        body.phase === 'implement-plan'
+          ? { investigate: earlier?.goTo?.investigate ?? null, implement: CLAUDE_ATTACH }
+          : { investigate: CLAUDE_ATTACH, implement: null },
       ...(earlier && {
         flags: { ...earlier.flags, 'implement-plan': false },
         questions: earlier.questions,

@@ -1,6 +1,6 @@
 // claude-ticket-state.mjs — the pure rules behind the Claude launcher: which ticket keys and session
 // names are valid, how a ticket's two state files are read, which listed session belongs to a
-// ticket, and the one entry (state, blocked actions, go-to command) its card shows.
+// ticket, and the one entry (state, blocked actions, a go-to command per phase) its card shows.
 //
 // Nothing here touches the filesystem or the CLI. Text from the listing or from a state file never
 // reaches a command: a go-to command is built only from ids that pass a pattern.
@@ -226,6 +226,17 @@ function goToFor(session) {
     : null;
 }
 
+// How to join each phase's own session: `{ investigate, implement }`, each a goToFor result for the
+// session its record resolves to. A phase with no record, or no listing, has nothing to join.
+function goToBoth(launch, entries) {
+  const records = readLaunch(launch);
+  const side = (phase) => {
+    const record = records.find((found) => found.phase === phase);
+    return record && entries ? goToFor(resolveSession(entries, record)) : null;
+  };
+  return { investigate: side(INVESTIGATE), implement: side(IMPLEMENT) };
+}
+
 // The entry for one ticket. `status` and `launch` are the parsed files (null when a file is not a
 // JSON object), `entries` is the CLI listing (null when unavailable) and `planPresent` says whether
 // the plan file exists.
@@ -274,6 +285,6 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     unanswered,
     unsent: sendable && state !== 'working' && state !== 'unknown',
     blocks,
-    goTo: goToFor(session),
+    goTo: goToBoth(launch, entries),
   };
 }

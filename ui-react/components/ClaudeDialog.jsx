@@ -1,9 +1,9 @@
 // ClaudeDialog.jsx — the one Claude menu for My Tickets, opened by a card's icon. A native modal
 // <dialog> rather than a popup in the card: cards and columns clip overflow, and a card that
 // remounts would lose its state. The panel mounts it only while a ticket is open (keyed by the
-// ticket), so its drafts, errors and copy status begin empty each time. It holds the three items
-// (Investigate and plan, Implement plan, Go to session) and, when the planning session asked any,
-// the questions as text inputs. A disabled item says why in words beside it.
+// ticket), so its drafts, errors and copy status begin empty each time. It holds the four items
+// (Investigate and plan, Implement plan, and a Go to session for each of those two sessions) and,
+// when the planning session asked any, the questions as text inputs. A disabled item says why in words beside it.
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
@@ -55,10 +55,16 @@ function sendText({ send, ticket }) {
   return SKIPPED_TEXT[send?.reason];
 }
 
+// The ticket's two sessions, each with its own Go to session item (`goTo` is keyed by the side).
+const GO_TO = [
+  ['investigate', 'Go to investigate and plan session'],
+  ['implement', 'Go to implement plan session'],
+];
+
 // A ticket the server lists nothing for has not been started.
 const NOT_STARTED = {
   questions: [],
-  goTo: null,
+  goTo: { investigate: null, implement: null },
   blocks: { investigate: null, implement: 'not_planned', answer: 'no_questions' },
 };
 
@@ -156,12 +162,13 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
     );
   };
 
-  const copyCommand = async () => {
-    const command = goTo.command;
-    setCopy({ command, copied: await copyText(command) });
+  const copyCommand = async (side) => {
+    const command = goTo[side].command;
+    setCopy({ side, command, copied: await copyText(command) });
   };
+  // One status at a time, for the item last used: copying the other session's command replaces it.
   // A status for a command the poll has since replaced is not shown.
-  const copied = copy?.command === goTo?.command ? copy : null;
+  const copied = copy?.command === goTo[copy?.side]?.command ? copy : null;
 
   return (
     <dialog
@@ -209,13 +216,16 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
               </span>
             )}
           </ClaudeAction>
-          <ClaudeAction
-            name="goto"
-            label="Go to session"
-            disabled={!goTo}
-            hint={goTo ? undefined : 'No session to join'}
-            onClick={copyCommand}
-          />
+          {GO_TO.map(([side, label]) => (
+            <ClaudeAction
+              key={side}
+              name={`goto-${side}`}
+              label={label}
+              disabled={!goTo[side]}
+              hint={goTo[side] ? undefined : 'No session to join'}
+              onClick={() => copyCommand(side)}
+            />
+          ))}
         </ul>
 
         {error && (
@@ -226,13 +236,13 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
 
         {/* Always rendered, so a screen reader hears its text change rather than appear. */}
         <div className="claude-goto" role="status">
-          {copied?.copied && <span data-testid="claude-goto-copied">Copied</span>}
+          {copied?.copied && <span data-testid={`claude-goto-copied-${copied.side}`}>Copied</span>}
           {copied?.copied === false && "Couldn't copy — copy the command manually"}
         </div>
         {copied?.copied === false && (
           <input
             className="claude-goto-fallback"
-            data-testid="claude-goto-fallback"
+            data-testid={`claude-goto-fallback-${copied.side}`}
             readOnly
             value={copied.command}
             aria-label="Session command"

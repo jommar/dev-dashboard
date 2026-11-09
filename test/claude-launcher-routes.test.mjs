@@ -452,3 +452,45 @@ test('scenario 110: over HTTP the reply waits the settle gap after the stop, the
     .map(({ args }) => args[0]);
   assert.deepEqual(order, ['stop', '--bg']);
 });
+
+test('scenario 116: the ticket list gives a go-to command per phase, each from its own session', async (t) => {
+  const f = await claudeHttpFixture(t);
+  const IMPLEMENT_ID = 'bbbb2222';
+  f.seed(KEY, {
+    status: statusFile({ investigate: true, done: true }),
+    launch: {
+      [INVESTIGATE]: launchRecord({ launchedAt: START_MS - 3_600_000 }),
+      [IMPLEMENT]: launchRecord({
+        name: IMPLEMENT_NAME,
+        launchedAt: START_MS - 1_800_000,
+        id: IMPLEMENT_ID,
+      }),
+    },
+  });
+  f.writePlan();
+  fs.mkdirSync(`${f.stateDir}/${SECOND_KEY}`, { mode: 0o700 });
+  f.cli.setListing([
+    listed({ id: EARLIER_ID }),
+    workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+  ]);
+
+  const body = (await f.http.bare('GET', TICKETS)).json();
+
+  assert.deepEqual(body.tickets[KEY].goTo, {
+    investigate: {
+      kind: 'resume',
+      command: `cd ~/pathwise && claude --resume ${sessionUuid(EARLIER_ID)}`,
+    },
+    implement: { kind: 'attach', command: `claude attach ${IMPLEMENT_ID}` },
+  });
+  assert.deepEqual(
+    body.tickets[SECOND_KEY].goTo,
+    { investigate: null, implement: null },
+    'a ticket folder with no launch',
+  );
+
+  f.cli.failListing();
+  const unavailable = (await f.http.bare('GET', TICKETS)).json();
+  assert.equal(unavailable.listing, 'unavailable');
+  assert.deepEqual(unavailable.tickets[KEY].goTo, { investigate: null, implement: null });
+});

@@ -927,13 +927,13 @@ backlog.
 ## Claude launcher
 
 Each card on the **My Tickets** board ends its top line with a **Claude icon**. It shows where
-the ticket stands with Claude and opens a dialog with three items:
+the ticket stands with Claude and opens a dialog with four items:
 
 - **Investigate and plan** starts a background Claude session that investigates the ticket,
   writes a plan and stops at the approval gate.
 - **Implement plan** starts a second session that builds the plan you approved.
-- **Go to session** copies the command that joins or resumes the ticket's current session in a
-  terminal.
+- **Go to investigate and plan session** and **Go to implement plan session** each copy the
+  command that joins or resumes that phase's own session in a terminal.
 
 Both launches are fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
 session after the ticket and the phase, `<KEY>-investigate-and-plan` or `<KEY>-implement-plan`, and
@@ -995,7 +995,7 @@ label and tooltip read `Claude: <state word>`.
 | Muted, no badge              | `not started`, `status unavailable`                                        | Nothing was launched for the ticket; or the CLI listing failed or showed a state the dashboard does not know.                                                                                                   |
 
 The icon shows the ticket's current phase, the one launched last. The dialog opens from it as a
-native modal: the ticket key and summary, the state word, then the three items. A disabled item
+native modal: the ticket key and summary, the state word, then the four items. A disabled item
 says why beside it, for example `A Claude session is already running for this ticket.` When the
 state is `plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows
 beside **Implement plan**, because starting it is your approval. When the planning session asked
@@ -1011,18 +1011,21 @@ backdrop close the dialog.
 The board reads every ticket's state from one `GET /api/claude/tickets` every 15 seconds while the
 My Tickets tab is open and the page is visible, and straight after a launch or a save.
 
-**Go to session** copies one of these strings, built only from ids that pass a pattern check and
-never from listing text:
+Each **Go to ... session** item copies the command for its own phase's session, one of these
+strings, built only from ids that pass a pattern check and never from listing text:
 
-| The ticket's session                              | Copied                                          |
+| That phase's session                              | Copied                                          |
 | ------------------------------------------------- | ----------------------------------------------- |
 | Has a process (live, busy or idle), or is blocked | `claude attach <id>` (the 8-character short id) |
 | Finished, with no process                         | `cd ~/pathwise && claude --resume <sessionId>`  |
-| Not listed, or its id fails the check             | Disabled, with `No session to join`             |
+| Never launched, not listed, or its id fails check | Disabled, with `No session to join`             |
 
 The resume string starts with `cd ~/pathwise &&` because a resumed conversation is found from the
-directory it started in; `claude attach` needs no `cd`. When the browser refuses the clipboard write, the dialog shows the command in a read-only field.
-It only joins the current phase's session.
+directory it started in; `claude attach` needs no `cd`. When the browser refuses the clipboard
+write, the dialog shows the command in a read-only field. The dialog shows one `Copied` (or one
+such field) at a time, for the item you used last. Both items work at once after Implement plan
+has launched, each pointing at its own session even when the two are in different states, so the
+planning session stays reachable then.
 
 ### State files
 
@@ -1236,7 +1239,11 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
 - `unsent` is `true` when the answers are complete, the plan flag is `true`, Implement plan was
   never launched, they differ from the last send and no session works: the conditions under which
   a **Save answers** would send. The same conditions make `answers_not_sent` the Implement block.
-- `goTo` is `{ kind, command }`, with `kind` `attach` or `resume`, or `null`.
+- `goTo` is always `{ investigate, implement }`, each side `{ kind, command }` (`kind` is `attach`
+  or `resume`) or `null`: `null` for a phase with no launch record, a session that cannot be
+  joined, or an unavailable listing, so a ticket never launched has both sides `null`. It used to
+  be one `{ kind, command }` or `null` for the current phase only, so anything reading `goTo`
+  must now read a side.
 
 `launch` takes `phase` `investigate-and-plan` or `implement-plan`; a leftover `summary` property in
 the body is ignored. Its answer has `name` (the phase's session name), `id` (the session's
@@ -1274,8 +1281,10 @@ launcher (use a throwaway ticket):
    shows `"investigate-and-plan": true` when the session finishes. With no questions `done` is
    `true` too and the icon is green; with questions the icon is amber (`has questions for you`)
    and `done` is `false`.
-2. Copy **Go to session** for a live, a blocked and a finished session and run each in a terminal.
-   Confirm `claude attach <id>` works for a blocked session and that
+2. Copy **Go to investigate and plan session** for a live, a blocked and a finished session and
+   run each in a terminal. After Implement plan has launched, do the same with **Go to implement
+   plan session**, and confirm the investigate item still joins its own session. Confirm
+   `claude attach <id>` works for a blocked session and that
    `cd ~/pathwise && claude --resume <sessionId>` continues a finished one.
 3. While the first session works, open the dialog again. Confirm **Investigate and plan** is
    disabled with `A Claude session is already running for this ticket.` The server refuses a second
@@ -1287,7 +1296,7 @@ launcher (use a throwaway ticket):
 nothing was sent.` and that the session received nothing (attach to it).
 6. Answer the rest and press **Save answers**. If the session was live and idle the request takes
    about 15 seconds (the settle gap after the stop). Confirm the same session (the same id under
-   **Go to session**) receives a message naming the question ids, the icon shows the turning
+   **Go to investigate and plan session**) receives a message naming the question ids, the icon shows the turning
    ring while it works, `status.json` shows `"done": true` when it finishes, and `claude agents`
    lists no second session (a copy). Until then **Implement plan** stays disabled.
 7. Change one answer and press **Save answers**. Confirm the session receives a message naming
