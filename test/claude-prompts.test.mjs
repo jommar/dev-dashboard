@@ -644,18 +644,48 @@ test('scenario 200: the groom entry has its label and only {KEY} and {SLUG} as p
   );
 });
 
-test('scenario 202: the investigate text asks for lettered options inside each question, and nothing else changed', async (t) => {
+test('scenario 202: the investigate text asks for lettered options inside each question', async (t) => {
   const p = await promptStore(t);
 
   const { text } = await p.store.read('investigate');
 
   assert.equal(text, INVESTIGATE_TEMPLATE);
   const paragraphs = text.split('\n\n');
-  assert.equal(paragraphs.length, 5, 'the same five paragraphs');
   const questions = paragraphs.find((paragraph) => paragraph.startsWith('Questions:'));
   assert.ok(questions.includes('its options inline as (a) ..., (b) ..., (c) ...'));
   assert.ok(questions.includes('Always put lettered options (a, b, c) inside the question text'));
   assert.ok(questions.includes('under 450 characters'));
   assert.ok(questions.includes('Do not change the shape of the array or add keys.'));
   assert.ok(!questions.includes('best-guess default'), 'the old wording is gone');
+});
+
+test('planning prompts preserve question history and require decision documentation', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  for (const name of ['investigate', 'answers']) {
+    const text = PROMPT_TEMPLATES[name];
+    assert.match(text, /Never change an answered question's id, text or answer/, name);
+    assert.match(text, /fresh unique qN id greater than every existing numeric id/, name);
+    assert.match(text, /\{\s*"id": "q[1N]", "question": [^\n]+"answer": null\}/, name);
+    assert.match(text, /## Decision documentation/, name);
+    assert.match(
+      text,
+      /question ID and user decision to its effect and affected doc sections/,
+      name,
+    );
+    assert.match(text, /confirmed decisions separate from provisional defaults/, name);
+  }
+});
+
+test('answer continuation repeats reassessment and gates completion on current questions and docs', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  const text = PROMPT_TEMPLATES.answers;
+  assert.match(
+    text,
+    /Read the latest[^\n]+Apply ALL current user decisions/,
+    'not just changed IDs',
+  );
+  assert.match(text, /Repeat this clarification loop on every answer delivery; no one-round limit/);
+  assert.match(text, /reset it to false if it was true/, 'a new question reopens completion');
+  assert.match(text, /no unanswered questions remain AND[^\n]+reflect the latest decisions/);
+  assert.match(text, /Re-read the file immediately before each targeted edit/);
 });
