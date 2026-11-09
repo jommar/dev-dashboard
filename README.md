@@ -383,7 +383,7 @@ An agent can read the same logs three ways:
    - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
-   - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers` and `POST /api/claude/approve` (see [Claude launcher](#claude-launcher))
+   - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers`, `POST /api/claude/approve` and `POST /api/claude/rereview` (see [Claude launcher](#claude-launcher))
    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
 
 ## Home
@@ -566,6 +566,11 @@ from its content to the backdrop does not. It survives filtering/lane movement
 but closes on leaving the tab or ticket removal. Focus returns to the PR opener
 or the board if the opener is filtered out. There is no review prompt editor,
 answers form, Go to session control or review-status badge on the PR card.
+
+Next to **Start code review**, **Re-review** sends a message to the ticket's existing review
+session, asking it to review the linked PRs again (see [Code review](#code-review)). It is off
+until a review session exists and is idle, and says why (`Start a code review first.`, or that the
+session is running). After it is sent the dialog shows when it was last requested.
 
 ### Local work filters
 
@@ -1009,9 +1014,12 @@ plan session`, `Go to implement plan session` or `Go to groom ticket session`.
 
 Each of these My Tickets launches is fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
 session after the ticket and the phase, `<KEY>-investigate-and-plan`, `<KEY>-implement-plan` or
-`<KEY>-groom`, and returns. It never opens a terminal and never removes a session. It stops and resumes a session in
-one case only: sending your saved answers back to the planning session (see
-[Saving and sending answers](#saving-and-sending-answers)), and it never sends text into a running
+`<KEY>-groom`, and returns. It never opens a terminal and never removes a session. It stops and resumes a session
+only to send a message to it: your saved answers (and a resend) or your approval to the planning
+session (see [Saving and sending answers](#saving-and-sending-answers) and
+[Approving the plan](#approving-the-plan)), or a re-review to the review session (see
+[Code review](#code-review)). All of those go through one send path, described under
+[Saving and sending answers](#saving-and-sending-answers), and it never sends text into a running
 one. The Jira summary never reaches the launch: the request carries only the key and the phase. By
 default the prompts are the built-in text with the key and the key in lower case filled in, and
 for the two workflow phases the path of the ticket's `status.json` too (you can replace them, see
@@ -1251,15 +1259,33 @@ To send, the dashboard reads a fresh listing and finds the planning session by i
 with none saved by its recorded name (`listing_unavailable`, `session_not_found`). A session with
 a process is stopped first, which the existing stop does only for an idle one: a busy session
 fails the send as `session_running`, one that is no longer listed as `session_not_found`, and any
-other stop failure as `resume_failed`. After a stop the dashboard waits the settle gap, 15 seconds
-(`SETTLE_MS`, the constant the Slack wake uses), before it goes on; a session with no process
-(already finished) is resumed with no wait. It then sets `done` to `false` in `status.json` (before
-the resume, so a session that finishes at once and sets it `true` is never overwritten) and
-resumes the same session with a notice. The Save request waits for all of this, so it can take
-about 15 seconds when a live session had to be stopped, and the ticket stays locked meanwhile. Only
+other stop failure as `resume_failed`. After a stop the dashboard polls a fresh listing once a
+second (`FINISH_POLL_MS`) until the session has no process at all, for at most 30 polls
+(`FINISH_POLL_LIMIT`); a session whose listing still shows a process, or whose state it cannot
+tell, is never resumed, because resuming a session that has not gone yet makes the CLI start a
+copy of it. If the cap passes the send fails as `live_at_resume` and nothing was written. A
+session with no process (already finished) is resumed with no wait. Once it is gone the dashboard
+sets `done` to `false` in `status.json` (before the resume, so a session that finishes at once and
+sets it `true` is never overwritten) and resumes the same session with a notice. The Save request
+waits for all of this, so it can take several seconds when a live session had to be stopped (up to
+about 30 when it is slow to go), and the ticket stays locked meanwhile. Only
 after the CLI delivered the resume does the dashboard record `sent`; a resume that found no such
 session counts as `session_not_found`, a session still live at that moment as `live_at_resume`,
 and anything else (including the CLI reporting that it started a copy) as `resume_failed`.
+
+**Every dashboard send uses this one path** (`deliverToSession` in `backend/claude-launcher.mjs`):
+saving answers, **Resend answers**, **Approve plan** and **Re-review**. Each passes only what is
+specific to it (the notice, what to write just before the resume and what to put back if the resume
+does not deliver), so the stop, the poll and the resume are never repeated per action. The Slack
+watcher's wake is the one other caller of the sessions module's `stop` and `resume`: it is a
+multi-tick state machine with its own settle gap and is deliberately left separate.
+
+**Failures are logged.** A send that fails to stop, to see the session finish or to resume writes one
+line to the server's stderr: `[claude] <stop|wait|resume> failed {...}` with the reason, the CLI's
+exit code, the CLI's output cut to 2 KB, the session's short id and the ticket key. The notice is
+never logged (it is replaced by `[notice]` if the CLI echoed it), and nothing is logged for a send
+that succeeded. The sessions module stays silent for callers that pass no ticket, which is how the
+Slack wake keeps its no-CLI-output guarantee.
 
 By default the notice (the message in `prompts/answers.md` if you wrote one, see
 [Custom prompts](#custom-prompts)) names the ticket, says you answered the open questions, lists
@@ -1355,8 +1381,8 @@ reason in `errors[0]`) with the first reason that applies: `status_unreadable`, 
 `session_running` and `investigate_running` come first while a session works. Nothing is written
 on a refusal.
 
-An approval is sent as the answers are: the idle session is stopped, the dashboard waits the settle
-gap, sets `done` to `false` and `approved` to `true` in `status.json` (adding the key to an older
+An approval is sent as the answers are: the idle session is stopped, the dashboard waits for it to
+go (the poll above), sets `done` to `false` and `approved` to `true` in `status.json` (adding the key to an older
 file; nothing else in the file changes) and resumes the session with the approval message
 (`prompts/approve.md`, see [Custom prompts](#custom-prompts)). The session re-reads the plan,
 checklist and spec against your answers, fixes only a genuine inconsistency inside
@@ -1413,6 +1439,17 @@ prerequisite, workflow flags or answers, and its launch transaction never reads,
 restores `status.json`. The refreshed combined ticket entry may still read workflow state.
 Workflow and groom sessions neither block nor are blocked by review.
 
+- **Re-review.** **Re-review** posts `{ key }` to `POST /api/claude/rereview`. It needs a review
+  record whose session the listing still shows, neither working nor waiting on you; otherwise it is
+  refused (`CLAUDE_REFUSED`) with `no_review_session`, `session_not_found`, `session_running` or the
+  listing's own reason. It is independent of the workflow: no status file is read or written. The
+  idle session is stopped, polled until gone and resumed through the shared send path above with
+  the message in `prompts/rereview.md` (default: review the linked PRs again since the last review,
+  same guardrails as the first review, no code changes, publish only through the skills with their
+  confirmations). `rereview: { at }` is added to the review record in `launch.json` only once the
+  message was delivered, and the ticket entry reports it as `reviewResentAt` and the block as
+  `blocks.rereview`. A failed send is `200` with `send.status` `failed` and a reason
+  (`live_at_resume`, `resume_failed`, `session_not_found`, `prompt_unreadable`).
 - **Initial review and re-review.** The server generates a fixed delegation prompt from the
   validated key, asking Claude to use `pr-review-transact` for the ticket and its linked PRs.
   It directs inspection of existing reviews/unresolved threads against the latest PR head,
@@ -1420,7 +1457,8 @@ Workflow and groom sessions neither block nor are blocked by review.
   already resolved findings. It forbids implementing fixes or code changes and follows, rather
   than overrides, the skill's approval/comment/Jira-transition rules. Ticket text, PR content,
   comments and linked pages are explicitly untrusted data. Client prompt/title/summary/URL
-  fields and editable prompt files do not enter this prompt; it is not in the Prompts editor.
+  fields and editable prompt files do not enter this prompt; it is not in the Prompts editor (the
+  Re-review message is, as `prompts/rereview.md`).
 - **Publishing is skill-governed, not read-only.** The prompt directs discovery and use of
   applicable skills in `~/pathwise` to publish actionable findings/review on the relevant PRs
   and reply concisely in the ticket's **existing Slack thread**, summarizing outcomes and
@@ -1451,8 +1489,9 @@ browser localStorage on rollback; older code ignores review records and treats p
 
 ### Custom prompts
 
-The three launch prompts (investigate, implement, groom) and the messages sent with your answers
-and your approval are editable templates; code review uses its own fixed server-generated delegation prompt instead.
+The three launch prompts (investigate, implement, groom) and the messages sent with your answers,
+your approval and a re-review are editable templates; the first code review uses its own fixed
+server-generated delegation prompt instead.
 By default the editable prompts are
 the built-in text. You can change each one in the app (see **Edit in the app** below) or by hand.
 Both edit the same file, a file of that name in the `prompts/` folder of the dashboard (the repo
@@ -1464,6 +1503,7 @@ root, next to `claude/`), so a hand edit and an app edit always agree:
 | `prompts/implement.md`   | the Implement plan prompt                | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
 | `prompts/answers.md`     | the message sent with your saved answers | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
 | `prompts/approve.md`     | the message sent when you approve a plan | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/rereview.md`    | the message sent for a re-review         | `{KEY}`, `{SLUG}`                                                |
 | `prompts/groom.md`       | the Groom ticket prompt                  | `{KEY}`, `{SLUG}`                                                |
 
 `{KEY}` is the ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
@@ -1475,7 +1515,7 @@ as UTF-8, trimmed, and otherwise used as written.
 
 - **Edit in the app.** **Prompts**, at the left of the Claude dialog's footer, swaps the dialog's
   body for an editor in the same dialog. The footer then holds **Back**, at the left where
-  **Prompts** was, and **Close**. The editor loads the five prompts once when it opens, not on
+  **Prompts** was, and **Close**. The editor loads the six prompts once when it opens, not on
   the dialog's 15 second refresh; if the load fails it shows the error and a **Retry** button.
   Each prompt has:
   - a badge: `default` (no file, so the built-in text), `custom` (a usable file) or
@@ -1496,7 +1536,7 @@ as UTF-8, trimmed, and otherwise used as written.
   were typing in the dialog survive **Back**.
 
 - **A missing `{STATUS_FILE}` is a warning, never a block.** While the text in the box of a prompt
-  that takes `{STATUS_FILE}` (never the groom prompt) lacks the literal `{STATUS_FILE}`, the
+  that takes `{STATUS_FILE}` (never the groom or re-review prompt) lacks the literal `{STATUS_FILE}`, the
   editor says so under the box as you type: "This prompt does not
   contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done
   will not work." **Save** stays enabled and the server never refuses a prompt for it.

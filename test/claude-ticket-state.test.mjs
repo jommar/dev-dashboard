@@ -176,9 +176,10 @@ test('review state: review changes no workflow or groom fields, flags, questions
       entries: entries === null ? null : [...entries, reviewEntry({ state: 'working' })],
     });
     const withoutReview = ({ review, blocks, ...rest }) => {
-      const { review: ignored, ...otherBlocks } = blocks;
+      const { review: ignored, rereview: alsoIgnored, ...otherBlocks } = blocks;
       void review;
       void ignored;
+      void alsoIgnored;
       return { ...rest, blocks: otherBlocks };
     };
     assert.deepEqual(withoutReview(reviewed), withoutReview(base));
@@ -417,6 +418,7 @@ test('scenario 15: an unavailable listing is unknown, blocks every action and ha
     approve: 'listing_unavailable',
     groom: 'listing_unavailable',
     review: 'listing_unavailable',
+    rereview: 'no_review_session',
   });
 });
 
@@ -618,6 +620,7 @@ const BLOCKS_WHILE_INVESTIGATING = {
   approve: 'session_running',
   groom: null,
   review: null,
+  rereview: 'no_review_session',
 };
 const BLOCKS_WHILE_IMPLEMENTING = {
   investigate: 'implement_running',
@@ -627,6 +630,7 @@ const BLOCKS_WHILE_IMPLEMENTING = {
   approve: 'session_running',
   groom: null,
   review: null,
+  rereview: 'no_review_session',
 };
 
 test('scenario 65: while the investigate session runs, implement says investigate is running', async () => {
@@ -885,6 +889,7 @@ test('scenario 82: while the investigate session works the entry is working, sen
         approve: 'session_running',
         groom: null,
         review: null,
+        rereview: 'no_review_session',
       },
       label,
     );
@@ -1384,6 +1389,7 @@ test('scenario 215: a running groom session blocks only groom, and only while it
       approve: 'questions_unanswered',
       groom: 'session_running',
       review: null,
+      rereview: 'no_review_session',
     },
     'investigate, implement and answers are as without a groom session',
   );

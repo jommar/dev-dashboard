@@ -199,6 +199,7 @@ export function PrsPanel({ config, active }) {
           summary={openClaudeTicket.summary}
           entry={claude.byTicket[openClaudeTicket.key]}
           launch={claude.launch}
+          rereview={claude.rereview}
           onClose={() => setOpenClaudeKey(null)}
           resolveOpener={resolveOpener}
         />

@@ -219,7 +219,7 @@ test('the PR Claude entry opts out of shared tooltips but retains code-review na
   assert.doesNotMatch(control, /\bentry=/, 'no invented workflow state is passed to the icon');
 });
 
-test('ClaudePlaceholderDialog keeps the native shell and adds only review launch and feedback beside Close', () => {
+test('ClaudePlaceholderDialog keeps the native shell and adds only review launch, re-review and feedback beside Close', () => {
   const dialog = read('components/ClaudePlaceholderDialog.jsx');
   assert.match(dialog, /export function ClaudePlaceholderDialog\b/);
   assert.match(dialog, /<dialog\b/);
@@ -234,9 +234,10 @@ test('ClaudePlaceholderDialog keeps the native shell and adds only review launch
   assert.match(dialog, /disabled=/);
   assert.equal(
     (dialog.match(/<(?:Button|button)\b/g) ?? []).length,
-    2,
-    'Start code review and Close are the only controls',
+    3,
+    'Start code review, Re-review and Close are the only controls',
   );
+  assert.match(dialog, /Re-review/);
   assert.match(dialog, />\s*Close\s*<\/(?:Button|button)>/);
   assert.doesNotMatch(
     dialog,

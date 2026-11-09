@@ -275,3 +275,20 @@ test('approveClaude posts only the ticket key and passes the send outcome throug
   assert.equal(result.ok, true);
   assert.deepEqual(result.send, send);
 });
+
+test('rereviewClaude posts only the ticket key and passes the send outcome through', async (t) => {
+  const calls = [];
+  const send = { status: 'failed', reason: 'resume_failed' };
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse({ ok: true, key: 'TAP-1234', ticket: { review: {} }, send });
+  });
+
+  const result = await api.rereviewClaude('TAP-1234');
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], '/api/claude/rereview');
+  assert.equal(calls[0][1].method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { key: 'TAP-1234' });
+  assert.deepEqual(result.send, send);
+});

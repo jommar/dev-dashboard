@@ -61,7 +61,7 @@ test('scenario 140: with no files and no folder every prompt is the built-in tex
   assert.deepEqual(
     list,
     NAMES.map((name) => entry(name, 'default')),
-    'five entries, in this order, each with its label, placeholders and the built-in text',
+    'six entries, in this order, each with its label, placeholders and the built-in text',
   );
   assert.equal(fs.existsSync(p.promptsDir), false, 'listing creates no folder');
   assert.deepEqual(fsChanges(p.recorder), [], 'and changes nothing');
@@ -86,6 +86,7 @@ test('scenario 140: a file that is usable is custom with its trimmed text, place
     entry('implement', 'default'),
     entry('answers', 'custom', 'only {CHANGE}'),
     entry('approve', 'default'),
+    entry('rereview', 'default'),
     entry('groom', 'default'),
   ]);
 });
@@ -110,7 +111,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
     assert.deepEqual(
       list,
       NAMES.map((name) => entry(name, 'unusable')),
-      'every one of the five',
+      'every one of the six',
     );
     for (const name of NAMES)
       assert.deepEqual(await p.store.read(name), entry(name, 'unusable'), `read ${name}`);
@@ -126,6 +127,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
         ['implement', 'default'],
         ['answers', 'custom'],
         ['approve', 'unusable'],
+        ['rereview', 'unusable'],
         ['groom', 'unusable'],
       ],
     );
@@ -229,7 +231,7 @@ const BAD_NAMES = [
   7,
 ];
 
-test('scenario 143: only the five names are known, anything else is refused before any file is looked at', async (t) => {
+test('scenario 143: only the six names are known, anything else is refused before any file is looked at', async (t) => {
   const p = await promptStore(t);
   // Where `../investigate` would land if a name were put into a path.
   const sentinel = path.join(p.root, 'investigate.md');
@@ -270,6 +272,7 @@ test('scenario 144: write keeps the trimmed text and one newline, and answers wi
     'groom.md',
     'implement.md',
     'investigate.md',
+    'rereview.md',
   ]);
 });
 
@@ -535,6 +538,7 @@ test('scenario 150: a file that contains a NUL byte is unusable, shown with the 
     entry('implement', 'unusable'),
     entry('answers', 'custom', 'a fine text'),
     entry('approve', 'default'),
+    entry('rereview', 'default'),
     entry('groom', 'default'),
   ]);
   assert.deepEqual(await p.store.read('investigate'), entry('investigate', 'unusable'));
@@ -619,10 +623,10 @@ test('scenario 153: the store exports the file format, trimmed text and one newl
 
 // ---- the groom prompt, the last name ----
 
-test('scenario 200: the names are investigate, implement, answers, approve and groom, in that order', async () => {
+test('scenario 200: the names are investigate, implement, answers, approve, rereview and groom, in that order', async () => {
   const { PROMPT_NAMES: names, PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
 
-  assert.deepEqual(names, ['investigate', 'implement', 'answers', 'approve', 'groom']);
+  assert.deepEqual(names, ['investigate', 'implement', 'answers', 'approve', 'rereview', 'groom']);
   assert.deepEqual(Object.keys(PROMPT_TEMPLATES), names);
   assert.equal(PROMPT_TEMPLATES.groom, GROOM_TEMPLATE, 'the built-in text, word for word');
 });
@@ -639,7 +643,7 @@ test('scenario 200: the groom entry has its label and only {KEY} and {SLUG} as p
     text: GROOM_TEMPLATE,
     placeholders: ['{KEY}', '{SLUG}'],
   });
-  assert.deepEqual((await p.store.list())[4], groom, 'the last entry of the list');
+  assert.deepEqual((await p.store.list())[5], groom, 'the last entry of the list');
   assert.ok(!groom.text.includes('{STATUS_FILE}'), 'the built-in text has no status file');
   assert.ok(groom.text.includes('`groom-ticket` skill'), 'it runs the groom-ticket skill');
   assert.ok(groom.text.includes('.orchestrator/{SLUG}/groom.md'), 'and names its deliverable');

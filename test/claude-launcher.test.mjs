@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import {
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
+  REREVIEW_TEMPLATE,
   BAD_PROMPT_FILES,
   EARLIER_ID,
   FIRST_ID,
@@ -26,6 +27,7 @@ import {
   PROMPT_MAX_CHARS,
   RESET_STATUS,
   REVIEW,
+  REVIEW_ID,
   REVIEW_NAME,
   SLUG,
   START_MS,
@@ -52,12 +54,13 @@ import {
   statusFile,
   throughGap,
   until,
-  wakeConstants,
   workingEntry,
 } from './claude-launcher-fixture.mjs';
+import { captureConsole } from './slack-watch-fixture.mjs';
 
 const LAUNCH_TIMEOUT_MS = 30_000;
-const { SETTLE_MS } = await wakeConstants();
+const { FINISH_POLL_MS: POLL_MS, FINISH_POLL_LIMIT: POLL_LIMIT } =
+  await import('../backend/claude-launcher.mjs');
 const SECOND_ID = 'bbbb2222';
 
 const launchBody = (phase = INVESTIGATE) => ({ key: KEY, phase });
@@ -1535,6 +1538,7 @@ test('scenario 73: a session the launcher just started for investigate blocks im
     approve: 'session_running',
     groom: null,
     review: null,
+    rereview: 'no_review_session',
   });
 });
 
@@ -1568,6 +1572,7 @@ test('scenario 74: a session the launcher just started for implement blocks inve
     approve: 'session_running',
     groom: null,
     review: null,
+    rereview: 'no_review_session',
   });
 });
 
@@ -2137,7 +2142,7 @@ test('scenario 97: two saves at once send the answers once', async (t) => {
 
 // ---- the settle gap after a stop, and what the implement gate does with unsent answers ----
 
-test('scenario 103: after stopping a live session the send waits the settle gap, then writes done and resumes', async (t) => {
+test('scenario 103: after stopping a live session the send polls until it has no pid, then writes done and resumes once', async (t) => {
   const env = await routingEnvironment(t);
   const earlier = [question('q1', FIRST_TEXT), question('q2', 'the first answer')];
   seedAsked(env, {
@@ -2146,6 +2151,7 @@ test('scenario 103: after stopping a live session the send waits the settle gap,
     sent: sentRecord(earlier),
     listing: idleListing(),
   });
+  env.fake.liveAfterStop(3);
   const timersAtStop = [];
   env.fake.onStop(() => timersAtStop.push(env.timers.pending()));
 
@@ -2154,29 +2160,58 @@ test('scenario 103: after stopping a live session the send waits the settle gap,
   await sleep(30);
 
   assert.deepEqual(timersAtStop, [0], 'nothing waits before the stop');
-  assert.deepEqual(env.timers.scheduled, [SETTLE_MS], 'one wait, as long as the settle gap');
+  assert.deepEqual(env.timers.scheduled, [POLL_MS], 'the first wait is one poll interval');
   assert.equal(env.timers.pending(), 1, 'and it is still pending');
   assert.equal(env.timers.referenced(), 0, 'the wait is unref’d, so it never holds the process');
-  assert.equal(env.fake.resumes().length, 0, 'no resume during the gap');
-  assert.equal(env.parsed().status.done, true, 'done is not written during the gap');
+  assert.equal(env.fake.resumes().length, 0, 'no resume while the session is live');
+  assert.equal(env.parsed().status.done, true, 'done is not written while it is live');
   assert.deepEqual(sentOf(env), sentRecord(earlier), 'nothing is recorded as sent');
 
-  await env.timers.advance(SETTLE_MS - 1);
-  await sleep(30);
-  assert.equal(env.fake.resumes().length, 0, 'one millisecond short of the gap');
-  assert.equal(env.parsed().status.done, true, 'and done is still untouched');
-
-  await env.timers.advance(1);
-  const result = await pending;
+  const result = await throughGap(env, pending);
 
   assert.deepEqual(result.send, { status: 'sent' });
-  assert.equal(env.fake.resumes().length, 1);
-  assert.equal(env.parsed().status.done, false, 'done was reset once the gap had passed');
-  assert.deepEqual(env.timers.scheduled, [SETTLE_MS], 'no other wait');
+  assert.equal(env.fake.resumes().length, 1, 'resumed once');
+  assert.equal(env.parsed().status.done, false, 'done was reset once the session had no pid');
+  assert.deepEqual(
+    env.timers.scheduled,
+    [POLL_MS, POLL_MS, POLL_MS],
+    'three live polls, three waits',
+  );
   const order = env.fake.calls
     .filter(({ method }) => method === 'stop' || method === 'resume')
     .map(({ method }) => method);
   assert.deepEqual(order, ['stop', 'resume']);
+});
+
+test('a session that stays live through every poll fails as live_at_resume with status.json untouched', async (t) => {
+  const env = await routingEnvironment(t);
+  const earlier = [question('q1', FIRST_TEXT), question('q2', 'the first answer')];
+  seedAsked(env, {
+    questions: earlier,
+    done: true,
+    sent: sentRecord(earlier),
+    listing: idleListing(),
+  });
+  env.fake.liveAfterStop(Infinity);
+  const lines = captureConsole(t);
+  const before = env.files();
+
+  const result = await throughGap(env, env.launcher.answer(answerBody({ q2: SECOND_TEXT })));
+
+  assert.deepEqual(result.send, { status: 'failed', reason: 'live_at_resume' });
+  assert.equal(env.fake.resumes().length, 0, 'no resume was made');
+  assert.equal(env.timers.scheduled.length, POLL_LIMIT - 1, 'it polled up to the cap');
+  assert.equal(env.parsed().status.done, true, 'done was never written');
+  assert.deepEqual(
+    { ...env.parsed().status, questions: [] },
+    { ...JSON.parse(before.status), questions: [] },
+    'status.json is as it was, apart from the saved answer',
+  );
+  assert.deepEqual(sentOf(env), sentRecord(earlier), 'nothing is recorded as sent');
+  const logged = lines.filter((line) => line.startsWith('[claude] wait failed'));
+  assert.equal(logged.length, 1, 'the failure is logged once');
+  assert.match(logged[0], /"reason":"live_at_resume"/);
+  assert.match(logged[0], new RegExp(`"ticket":"${KEY}"`));
 });
 
 test('scenario 104: a session that has finished is resumed with no wait at all', async (t) => {
@@ -2234,7 +2269,7 @@ for (const { label, outcome, reason } of STOP_FAILURES) {
   });
 }
 
-test('scenario 106: the ticket stays locked through the settle gap, so a second save waits behind it', async (t) => {
+test('scenario 106: the ticket stays locked through the poll, so a second save waits behind it', async (t) => {
   const env = await routingEnvironment(t);
   const earlier = [question('q1', FIRST_TEXT), question('q2', 'the first answer')];
   seedAsked(env, {
@@ -2243,10 +2278,11 @@ test('scenario 106: the ticket stays locked through the settle gap, so a second 
     sent: sentRecord(earlier),
     listing: idleListing(),
   });
+  env.fake.liveAfterStop(2);
   const first = env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
   await until(() => env.fake.stops().length === 1);
   await sleep(30);
-  assert.equal(env.timers.pending(), 1, 'the send is waiting out the settle gap');
+  assert.equal(env.timers.pending(), 1, 'the send is waiting for the session to go');
   const listingsBefore = env.fake.freshListings().length;
 
   // Whatever the second save ends in (a refusal, since the session works again, or a skip), it is
@@ -2257,8 +2293,8 @@ test('scenario 106: the ticket stays locked through the settle gap, so a second 
   assert.equal(env.fake.freshListings().length, listingsBefore, 'the second save has not started');
   assert.equal(env.fake.resumes().length, 0, 'and nothing was resumed');
 
-  await env.timers.advance(SETTLE_MS);
-  const [one, two] = await Promise.all([first, second]);
+  const one = await throughGap(env, first);
+  const two = await second;
   assert.deepEqual(one.send, { status: 'sent' });
   assert.equal(env.fake.resumes().length, 1, 'the answers went once');
   assert.notDeepEqual(two.send, { status: 'sent' }, 'the second save did not send again');
@@ -2457,7 +2493,7 @@ test('scenario 121: with no answers file the message sent is the built-in text, 
   );
 });
 
-test('scenario 121: the built-in templates are exported as the five texts, placeholders in them', async () => {
+test('scenario 121: the built-in templates are exported as the six texts, placeholders in them', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
   assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
   assert.deepEqual(PROMPT_TEMPLATES, {
@@ -2465,6 +2501,7 @@ test('scenario 121: the built-in templates are exported as the five texts, place
     implement: IMPLEMENT_TEMPLATE,
     answers: ANSWERS_TEMPLATE,
     approve: APPROVE_TEMPLATE,
+    rereview: REREVIEW_TEMPLATE,
     groom: GROOM_TEMPLATE,
   });
 });
@@ -3550,4 +3587,212 @@ test('implement: launches only once the plan is approved', async (t) => {
   const result = await env.launcher.launch(launchBody(IMPLEMENT));
   assert.equal(result.ok, true);
   assert.equal(env.parsed().status.approved, true, 'the flag is kept in the rewritten file');
+});
+
+// ---- every dashboard send goes through the one helper: stop, poll until gone, resume once ----
+
+const REVIEW_PID = 4243;
+const idleReviewListing = () => [reviewEntry({ state: 'done', status: 'idle', pid: REVIEW_PID })];
+
+// A ticket with a review session that is alive and waiting, and no workflow files.
+function seedReview(env, listing = idleReviewListing()) {
+  env.seed(KEY, { launch: { [REVIEW]: reviewRecord() } });
+  env.fake.setListing(listing);
+}
+
+const rereviewNotice = () => renderTemplate(REREVIEW_TEMPLATE);
+const rereviewBody = { key: KEY };
+
+test('rereview: is refused without a review session, and nothing is sent or written', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, SENT_PAIR());
+  const before = env.files();
+  assert.equal((await env.launcher.list()).tickets[KEY].blocks.rereview, 'no_review_session');
+
+  await assertRejects(
+    () => env.launcher.rereview(rereviewBody),
+    refused('no_review_session'),
+    'rereview',
+  );
+
+  assert.equal(env.fake.resumes().length, 0);
+  assert.equal(env.fake.stops().length, 0);
+  assert.deepEqual(env.files(), before);
+});
+
+test('rereview: is refused while the review works, or when the session is gone from the listing', async (t) => {
+  const cases = [
+    [
+      'working',
+      [reviewEntry({ state: 'working', status: 'busy', pid: REVIEW_PID })],
+      'session_running',
+    ],
+    ['gone from the listing', finishedListing(), 'session_not_found'],
+  ];
+  for (const [label, listing, reason] of cases) {
+    const env = await routingEnvironment(t);
+    seedReview(env, listing);
+    const before = env.files();
+
+    await assertRejects(() => env.launcher.rereview(rereviewBody), refused(reason), label);
+
+    assert.equal(env.fake.resumes().length, 0, `${label}: nothing is sent`);
+    assert.deepEqual(env.files(), before, `${label}: nothing is written`);
+  }
+  await assertRejects(
+    () => routingEnvironment(t).then((env) => env.launcher.rereview({ key: 'nope' })),
+    { code: 'INVALID_TICKET', status: 400 },
+    'a bad key',
+  );
+});
+
+test('rereview: sends the re-review message through the shared helper and records the time after delivery', async (t) => {
+  const env = await routingEnvironment(t);
+  seedReview(env);
+  env.fake.liveAfterStop(2);
+  let recordedAtResume = 'unset';
+  env.fake.onResume(() => {
+    recordedAtResume = env.parsed().launch[REVIEW].rereview ?? null;
+  });
+  const before = env.files();
+
+  const result = await throughGap(env, env.launcher.rereview(rereviewBody));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.deepEqual(Object.keys(result).sort(), ['key', 'ok', 'send', 'ticket']);
+  assert.equal(env.fake.resumes().length, 1);
+  assert.equal(env.fake.resumes()[0].sessionId, sessionUuid(REVIEW_ID));
+  assert.equal(env.fake.resumes()[0].notice, rereviewNotice());
+  assert.equal(recordedAtResume, null, 'nothing is recorded before the message is delivered');
+  assert.equal(env.fake.stops().length, 1);
+  assert.deepEqual(
+    env.timers.scheduled,
+    [POLL_MS, POLL_MS],
+    'it polled until the session was gone',
+  );
+  const record = env.parsed().launch[REVIEW];
+  assert.match(record.rereview.at, /^\d{4}-\d\d-\d\dT[\d:.]+Z$/);
+  assert.deepEqual({ ...record, rereview: undefined }, { ...reviewRecord(), rereview: undefined });
+  assert.equal(result.ticket.reviewResentAt, record.rereview.at);
+  assert.equal(env.files().status, before.status, 'there is no status file to touch');
+});
+
+test('rereview: a session that never goes fails as live_at_resume and records nothing', async (t) => {
+  const env = await routingEnvironment(t);
+  seedReview(env);
+  env.fake.liveAfterStop(Infinity);
+  const lines = captureConsole(t);
+  const before = env.files();
+
+  const result = await throughGap(env, env.launcher.rereview(rereviewBody));
+
+  assert.deepEqual(result.send, { status: 'failed', reason: 'live_at_resume' });
+  assert.equal(env.fake.resumes().length, 0);
+  assert.deepEqual(env.files(), before, 'launch.json has no re-review time');
+  assert.equal(result.ticket.reviewResentAt, null);
+  assert.equal(lines.filter((line) => line.startsWith('[claude] wait failed')).length, 1);
+});
+
+test('rereview: a resume that does not deliver records nothing', async (t) => {
+  const env = await routingEnvironment(t);
+  seedReview(env);
+  env.fake.forceResume({ status: 'failed-permanent', reason: 'resume_forked' });
+  const before = env.files();
+
+  const result = await env.launcher.rereview(rereviewBody);
+
+  assert.deepEqual(result.send, { status: 'failed', reason: 'resume_failed' });
+  assert.deepEqual(env.files(), before);
+});
+
+const ENTRY_POINTS = {
+  'answers save': {
+    seed: (env) => {
+      const earlier = [question('q1', FIRST_TEXT), question('q2', 'the first answer')];
+      seedAsked(env, {
+        questions: earlier,
+        done: true,
+        sent: sentRecord(earlier),
+        listing: idleListing(),
+      });
+    },
+    call: (env) => env.launcher.answer(answerBody({ q2: SECOND_TEXT })),
+    session: EARLIER_ID,
+  },
+  resend: {
+    seed: (env) => seedAsked(env, { ...SENT_PAIR(), listing: idleListing() }),
+    call: (env) => env.launcher.answer({ ...answerBody([]), resend: true }),
+    session: EARLIER_ID,
+  },
+  approve: {
+    seed: (env) => {
+      seedAsked(env, { ...SENT_PAIR(), listing: idleListing() });
+      withoutApproved(env);
+    },
+    call: (env) => env.launcher.approve(approveBody),
+    session: EARLIER_ID,
+  },
+  rereview: {
+    seed: (env) => seedReview(env),
+    call: (env) => env.launcher.rereview(rereviewBody),
+    session: REVIEW_ID,
+  },
+};
+
+test('every send waits through the same live session, then resumes it exactly once', async (t) => {
+  for (const [label, { seed, call, session }] of Object.entries(ENTRY_POINTS)) {
+    const env = await routingEnvironment(t);
+    seed(env);
+    env.fake.liveAfterStop(3);
+    const waitsAtResume = [];
+    env.fake.onResume(() => waitsAtResume.push(env.timers.scheduled.length));
+
+    const result = await throughGap(env, call(env));
+
+    assert.deepEqual(result.send, { status: 'sent' }, label);
+    assert.deepEqual(
+      env.fake.stops().map(({ sessionId }) => sessionId),
+      [sessionUuid(session)],
+      `${label}: one stop`,
+    );
+    assert.deepEqual(waitsAtResume, [3], `${label}: resumed only after three live polls`);
+    assert.equal(env.fake.resumes().length, 1, `${label}: one resume`);
+    assert.equal(
+      env.fake.resumes()[0].sessionId,
+      sessionUuid(session),
+      `${label}: of the same session`,
+    );
+    assert.deepEqual(env.timers.scheduled, [POLL_MS, POLL_MS, POLL_MS], `${label}: poll waits`);
+    const order = env.fake.calls
+      .filter(({ method }) => method === 'stop' || method === 'resume')
+      .map(({ method }) => method);
+    assert.deepEqual(order, ['stop', 'resume'], label);
+  }
+});
+
+test('every send against a session that never goes fails as live_at_resume without writing the flags', async (t) => {
+  for (const [label, { seed, call }] of Object.entries(ENTRY_POINTS)) {
+    const env = await routingEnvironment(t);
+    seed(env);
+    env.fake.liveAfterStop(Infinity);
+    const lines = captureConsole(t);
+    const flagsBefore = {
+      done: env.parsed().status?.done,
+      approved: env.parsed().status?.approved,
+    };
+
+    const result = await throughGap(env, call(env));
+
+    assert.deepEqual(result.send, { status: 'failed', reason: 'live_at_resume' }, label);
+    assert.equal(env.fake.resumes().length, 0, `${label}: no resume`);
+    assert.equal(env.timers.scheduled.length, POLL_LIMIT - 1, `${label}: polled to the cap`);
+    assert.deepEqual(
+      { done: env.parsed().status?.done, approved: env.parsed().status?.approved },
+      flagsBefore,
+      `${label}: done and approved untouched`,
+    );
+    const logged = lines.filter((line) => line.startsWith('[claude] wait failed'));
+    assert.equal(logged.length, 1, `${label}: logged once`);
+    assert.match(logged[0], new RegExp(`"ticket":"${KEY}"`), label);
+  }
 });

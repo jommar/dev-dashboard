@@ -12,13 +12,26 @@ const REASON_TEXT = {
   unrecognised_state:
     'Claude review status is unavailable. Check the session before launching again.',
   session_running: 'A Claude review session is already running for this ticket.',
+  no_review_session: 'Start a code review first.',
+  session_not_found: 'The Claude review session could not be found.',
+  live_at_resume: 'The Claude review session is still running.',
+  resume_failed: 'The Claude review session could not be resumed.',
+  prompt_unreadable:
+    "A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.",
 };
+
+function rereviewText({ send }) {
+  if (send?.status === 'sent') return 'Re-review requested. Claude is checking the linked PRs.';
+  const why = REASON_TEXT[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
+  return `Re-review not sent: ${why}. Press Re-review to retry.`;
+}
 
 export function ClaudePlaceholderDialog({
   ticketKey,
   summary,
   entry,
   launch,
+  rereview,
   onClose,
   resolveOpener,
 }) {
@@ -31,7 +44,10 @@ export function ClaudePlaceholderDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [resultText, setResultText] = useState('');
+  const [busyText, setBusyText] = useState('');
   const block = entry?.blocks.review;
+  const rereviewBlock = entry?.blocks.rereview;
+  const resentAt = entry?.reviewResentAt;
   close.current = onClose;
   openerResolver.current = resolveOpener;
 
@@ -58,6 +74,7 @@ export function ClaudePlaceholderDialog({
   const startReview = async () => {
     if (busy || block) return;
     setBusy(true);
+    setBusyText('Starting code review…');
     setError('');
     setResultText('');
     const result = await launch(ticketKey, REVIEW);
@@ -69,6 +86,24 @@ export function ClaudePlaceholderDialog({
       return;
     }
     setResultText('Code review session started. Completion does not mean the review passed.');
+  };
+
+  // Sends the re-review message to the ticket's existing review session.
+  const requestRereview = async () => {
+    if (busy || rereviewBlock) return;
+    setBusy(true);
+    setBusyText('Sending re-review…');
+    setError('');
+    setResultText('');
+    const result = await rereview(ticketKey);
+    setBusy(false);
+    if (!result.ok) {
+      setError(
+        REASON_TEXT[result.errors?.[0]] ?? result.error ?? 'The Claude re-review request failed.',
+      );
+      return;
+    }
+    setResultText(rereviewText(result));
   };
 
   return (
@@ -108,9 +143,28 @@ export function ClaudePlaceholderDialog({
               </span>
             )}
           </li>
+          <li className="claude-action">
+            <Button
+              data-testid="prs-claude-action-rereview"
+              disabled={busy || Boolean(rereviewBlock)}
+              onClick={requestRereview}
+            >
+              Re-review
+            </Button>
+            {rereviewBlock && (
+              <span className="claude-action-hint" data-testid="prs-claude-rereview-hint">
+                {REASON_TEXT[rereviewBlock] ?? 'Re-review cannot be sent right now.'}
+              </span>
+            )}
+            {resentAt && (
+              <span className="claude-action-hint" data-testid="prs-claude-rereview-at">
+                Last re-review requested {new Date(resentAt).toLocaleString()}.
+              </span>
+            )}
+          </li>
         </ul>
         <p className="claude-note" role="status">
-          {busy ? 'Starting code review…' : resultText}
+          {busy ? busyText : resultText}
         </p>
         {error && (
           <p className="claude-error" role="alert" data-testid="prs-claude-error">

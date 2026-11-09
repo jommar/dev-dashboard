@@ -183,7 +183,16 @@ export function readLaunch(launch) {
 
 // The groom record of launch.json, shaped like a phase record, or null.
 export const readGroom = (launch) => readRecord(launch?.[GROOM]);
-export const readReview = (launch) => readRecord(launch?.[REVIEW]);
+// The review record, with `rereview` ({ at } once a Re-review was delivered to its session, else null).
+export function readReview(launch) {
+  const base = readRecord(launch?.[REVIEW]);
+  if (!base) return null;
+  const { rereview } = launch[REVIEW];
+  return {
+    ...base,
+    rereview: rereview && typeof rereview === 'object' ? { at: rereview.at } : null,
+  };
+}
 
 // The record of the phase launched last: the one the card shows and an answer is saved on.
 export const currentRecord = (launch) =>
@@ -310,6 +319,16 @@ export function reviewBlock(review, entries) {
   return review.state === 'working' ? 'session_running' : null;
 }
 
+// Why a Re-review cannot be sent to the ticket's review session, or null when it can: the session
+// must exist (a record, and one the listing still shows) and be neither working nor waiting on you.
+export function rereviewBlock(review, entries) {
+  if (review.state === 'none') return 'no_review_session';
+  if (!entries) return 'listing_unavailable';
+  if (review.state === 'unknown') return review.reason;
+  if (review.state === 'failed') return 'session_not_found';
+  return review.state === 'done' ? null : 'session_running';
+}
+
 // The entry for one ticket. `status` and `launch` are the parsed files (null when a file is not a
 // JSON object), `entries` is the CLI listing (null when unavailable) and `planPresent` says whether
 // the plan file exists.
@@ -358,12 +377,14 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     // Only a groom session of its own blocks grooming; the workflow never does.
     groom: !entries ? 'listing_unavailable' : groom.state === 'working' ? 'session_running' : null,
     review: reviewBlock(review, entries),
+    rereview: rereviewBlock(review, entries),
   };
   return {
     phase: record?.phase ?? null,
     state,
     reason,
     flags,
+    reviewResentAt: readReview(launch)?.rereview?.at ?? null,
     approvedAt: readLaunch(launch).find(({ phase }) => phase === INVESTIGATE)?.approved?.at ?? null,
     questions,
     unanswered,

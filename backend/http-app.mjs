@@ -260,6 +260,10 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       const { key } = await readJson(req);
       return claudeLauncher.approve({ key });
     },
+    'POST /api/claude/rereview': async (req) => {
+      const { key } = await readJson(req);
+      return claudeLauncher.rereview({ key });
+    },
     'GET /api/claude/prompts': () => ({ ok: true, prompts: claudePrompts.list() }),
   };
   // A prompt store call: its refusal of a bad text passes as it is, anything the disk does is a

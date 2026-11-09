@@ -10,6 +10,9 @@ const claudeReads = (dashboard) =>
 const reviewLaunches = (dashboard) =>
   dashboard.data.claude.calls.filter(({ path }) => path === '/api/claude/launch');
 const reviewStart = (page) => page.getByTestId('prs-claude-action-review');
+const rereviewButton = (page) => page.getByTestId('prs-claude-action-rereview');
+const rereviewCalls = (dashboard) =>
+  dashboard.data.claude.calls.filter(({ path }) => path === '/api/claude/rereview');
 const reviewBody = (page) => page.getByTestId('prs-claude-dialog-body');
 
 async function openReview(page) {
@@ -221,7 +224,7 @@ test('review dialog is native, scoped, literal and closes by Close, Escape and t
     await expect(dialog).toHaveAccessibleName(`DEMO-1 ${first.summary}`);
     await expect(reviewStart(page)).toHaveText('Start code review');
     await expect(reviewStart(page)).toBeEnabled();
-    await expect(dialog.getByRole('button')).toHaveCount(2);
+    await expect(dialog.getByRole('button')).toHaveCount(3);
     await expect(dialog.locator('input, textarea, form, img, script')).toHaveCount(0);
     expect(await dialog.evaluate((element) => element.open && element.matches(':modal'))).toBe(
       true,
@@ -947,4 +950,85 @@ test('lane header help describes classifier rules on hover and actual Tab focus,
   }
   expect(queueReads(dashboard)).toHaveLength(before);
   expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+});
+
+test('re-review is off with its reason until a review session exists, and sends nothing', async ({
+  page,
+  dashboard,
+}) => {
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, { phase: null });
+  await page.goto('/#/prs');
+  await openReview(page);
+
+  await expect(rereviewButton(page)).toHaveText('Re-review');
+  await expect(rereviewButton(page)).toBeDisabled();
+  await expect(page.getByTestId('prs-claude-rereview-hint')).toHaveText(
+    'Start a code review first.',
+  );
+  expect(rereviewCalls(dashboard)).toEqual([]);
+});
+
+test('re-review sends to the existing review session and shows when it was requested', async ({
+  page,
+  dashboard,
+}) => {
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+    phase: null,
+    review: { state: 'done', reason: 'finished' },
+  });
+  await page.goto('/#/prs');
+  await openReview(page);
+  await expect(rereviewButton(page)).toBeEnabled();
+  await expect(page.getByTestId('prs-claude-rereview-hint')).toHaveCount(0);
+  await expect(page.getByTestId('prs-claude-rereview-at')).toHaveCount(0);
+
+  await rereviewButton(page).click();
+
+  await expect(reviewBody(page)).toContainText(
+    'Re-review requested. Claude is checking the linked PRs.',
+  );
+  await expect(page.getByTestId('prs-claude-rereview-at')).toContainText(
+    'Last re-review requested',
+  );
+  expect(rereviewCalls(dashboard).map(({ body }) => body)).toEqual([{ key: 'DEMO-1' }]);
+  expect(reviewLaunches(dashboard)).toEqual([]);
+});
+
+test('a re-review that was not delivered says why and can be tried again', async ({
+  page,
+  dashboard,
+}) => {
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+    phase: null,
+    review: { state: 'done', reason: 'finished' },
+  });
+  dashboard.data.claude.sends.push({ status: 'failed', reason: 'live_at_resume' });
+  await page.goto('/#/prs');
+  await openReview(page);
+
+  await rereviewButton(page).click();
+
+  await expect(reviewBody(page)).toContainText(
+    'Re-review not sent: The Claude review session is still running. Press Re-review to retry.',
+  );
+  await expect(rereviewButton(page)).toBeEnabled();
+  await expect(page.getByTestId('prs-claude-rereview-at')).toHaveCount(0);
+
+  await rereviewButton(page).click();
+
+  await expect(reviewBody(page)).toContainText('Re-review requested.');
+  expect(rereviewCalls(dashboard)).toHaveLength(2);
+});
+
+test('re-review is off while the review session works', async ({ page, dashboard }) => {
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+    review: { state: 'working', reason: 'running' },
+  });
+  await page.goto('/#/prs');
+  await openReview(page);
+
+  await expect(rereviewButton(page)).toBeDisabled();
+  await expect(page.getByTestId('prs-claude-rereview-hint')).toHaveText(
+    'A Claude review session is already running for this ticket.',
+  );
 });

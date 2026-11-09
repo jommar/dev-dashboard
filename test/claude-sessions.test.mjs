@@ -1594,3 +1594,98 @@ test('resume fallback through the watcher records an unusable listing as failed-
   assert.deepEqual(f.inboxLines(SESSION_A), [notice], 'only the resume step was ever repeated');
   assert.equal(f.exec.spawns().length, 0, 'nothing is spawned without a usable listing');
 });
+
+// ---- a failed stop or resume of a dashboard send is logged with the CLI's output ----
+
+const LOG_PREFIX = (step) => `[claude] ${step} failed `;
+const loggedFailure = (lines, step) => {
+  const found = lines.filter((line) => line.startsWith(LOG_PREFIX(step)));
+  assert.equal(found.length, 1, `one ${step} failure is logged`);
+  return JSON.parse(found[0].slice(LOG_PREFIX(step).length));
+};
+
+test('a stop that fails for a ticket is logged with its reason, exit code, cut output, short id and ticket', async (t) => {
+  const lines = captureConsole(t);
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([idleBackgroundEntry(SESSION_A)]);
+  env.exec.onStop(() => ({ exitCode: 3, stdout: 'o'.repeat(5000), stderr: 'tail-never-logged' }));
+
+  const result = await env.sessions.stop({ sessionId: SESSION_A, ticket: 'TAP-1747' });
+
+  assert.equal(codeOf(result), 'stop_failed');
+  const record = loggedFailure(lines, 'stop');
+  assert.equal(record.reason, 'stop_failed');
+  assert.equal(record.exitCode, 3);
+  assert.equal(record.session, SESSION_A.slice(0, 8));
+  assert.equal(record.ticket, 'TAP-1747');
+  assert.ok(record.output.startsWith('ooo'), 'the start of the output');
+  assert.ok(record.output.length <= 2048 + 8, 'cut to about 2 KB');
+  assert.ok(!record.output.includes('tail-never-logged'), 'the rest is cut off');
+  assert.equal(JSON.stringify(result).includes('ooo'), false, 'and still not returned');
+});
+
+test('a stop refused as not idle is logged with its reason and no output', async (t) => {
+  const lines = captureConsole(t);
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([idleBackgroundEntry(SESSION_A, { status: 'busy' })]);
+
+  await env.sessions.stop({ sessionId: SESSION_A, ticket: 'TAP-1747' });
+
+  const record = loggedFailure(lines, 'stop');
+  assert.equal(record.reason, 'not_idle');
+  assert.equal(record.ticket, 'TAP-1747');
+  assert.equal('output' in record, false);
+});
+
+test('a resume that forks a copy is logged with the output, exit code, short id and ticket, never the notice', async (t) => {
+  const lines = captureConsole(t);
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A)]);
+  const notice = 'PRIVATE-NOTICE-TEXT-c41';
+  env.exec.onResume(() => ({ stdout: `${FORK_OUTPUT}echoed ${notice} back\n` }));
+
+  const result = await env.sessions.resume({ sessionId: SESSION_A, notice, ticket: 'TAP-1747' });
+
+  assert.deepStrictEqual(result, { status: 'failed-permanent', reason: 'resume_forked' });
+  const record = loggedFailure(lines, 'resume');
+  assert.equal(record.reason, 'resume_forked');
+  assert.equal(record.exitCode, 0);
+  assert.equal(record.session, SESSION_A.slice(0, 8));
+  assert.equal(record.ticket, 'TAP-1747');
+  assert.ok(record.output.includes(FORK_SENTENCE), 'the CLI output is in the line');
+  assert.ok(record.output.includes('[notice]'), 'where the notice was echoed');
+  assert.equal(
+    lines.some((line) => line.includes(notice)),
+    false,
+    'the notice is never logged',
+  );
+});
+
+test('a resume that finds the session live is logged as live_at_resume with its ticket', async (t) => {
+  const lines = captureConsole(t);
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A, { pid: 4242 })]);
+
+  const result = await env.sessions.resume({ sessionId: SESSION_A, notice: 'n', ticket: 'TAP-1' });
+
+  assert.deepStrictEqual(result, { status: 'waiting', reason: 'live_at_resume' });
+  const record = loggedFailure(lines, 'resume');
+  assert.deepEqual([record.reason, record.pid, record.ticket], ['live_at_resume', 4242, 'TAP-1']);
+});
+
+test('a stop or a resume made without a ticket (the Slack wake) logs nothing', async (t) => {
+  const lines = captureConsole(t);
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([idleBackgroundEntry(SESSION_A)]);
+  env.exec.onStop(() => ({ exitCode: 3, stdout: 'out', stderr: 'err' }));
+
+  await env.sessions.stop({ sessionId: SESSION_A });
+  env.exec.setListing([finishedEntry(SESSION_A)]);
+  env.exec.onResume(() => ({ stdout: FORK_OUTPUT }));
+  await env.sessions.resume({ sessionId: SESSION_A, notice: 'n' });
+
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith('[claude]')),
+    [],
+  );
+});

@@ -1389,6 +1389,15 @@ function claudeDerived(entry) {
         : null;
   // The server's order: open questions, then answers never sent (a stale `done` cannot be trusted),
   // then a plan not marked done.
+  // Re-review is the review session's own: a record the listing shows, neither working nor unknown.
+  const rereview =
+    review.state === 'none'
+      ? 'no_review_session'
+      : review.state === 'working'
+        ? 'session_running'
+        : review.state === 'unknown'
+          ? review.reason
+          : null;
   const approved = entry.flags.approved === true;
   const planReady = unanswered
     ? 'questions_unanswered'
@@ -1413,6 +1422,7 @@ function claudeDerived(entry) {
     unsent: Boolean(entry.unsent),
     groom: entry.groom ?? CLAUDE_NO_GROOM,
     review,
+    reviewResentAt: entry.reviewResentAt ?? null,
     blocks: {
       ...(held ?? {
         investigate: null,
@@ -1423,6 +1433,7 @@ function claudeDerived(entry) {
       }),
       groom,
       review: reviewBlock,
+      rereview,
     },
   };
 }
@@ -1451,6 +1462,7 @@ const CLAUDE_PROMPT_LABELS = {
   implement: 'Implement plan prompt',
   answers: 'Answers message',
   approve: 'Approval message',
+  rereview: 'Re-review message',
   groom: 'Groom ticket prompt',
 };
 const CLAUDE_PROMPT_PLACEHOLDERS = ['{KEY}', '{SLUG}', '{STATUS_FILE}'];
@@ -1461,6 +1473,7 @@ export const CLAUDE_PROMPT_DEFAULTS = {
     'The answers for {KEY} changed. Changes: {CHANGE}. Questions: {QUESTION_IDS}. Update the plan and write {STATUS_FILE}.',
   approve:
     'The user approved the plan for {KEY}. Check it once more and set done in {STATUS_FILE}.',
+  rereview: 'The user asks for a re-review of {KEY}. Review its linked pull requests again.',
   // Grooming has no status file: its built-in text and placeholders never mention one.
   groom: 'Groom ticket {KEY} and write the result under the folder {SLUG} as groom.md.',
 };
@@ -1474,7 +1487,7 @@ export function claudePromptEntry(name, source = 'default', text = CLAUDE_PROMPT
     placeholders:
       name === 'answers'
         ? [...CLAUDE_PROMPT_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}']
-        : name === 'groom'
+        : name === 'groom' || name === 'rereview'
           ? ['{KEY}', '{SLUG}']
           : CLAUDE_PROMPT_PLACEHOLDERS,
   };
@@ -1525,8 +1538,8 @@ function claudeSend(entry) {
 // characters, as the server checks); DELETE removes the file so the built-in text applies again.
 // A PUT or a DELETE is recorded in `claude.calls`.
 function claudePromptsResponse(pathname, method, { prompts, calls }, body) {
-  const [, name] =
-    pathname.match(/^\/api\/claude\/prompts(?:\/(investigate|implement|answers))?$/) ?? [];
+  const names = Object.keys(CLAUDE_PROMPT_LABELS).join('|');
+  const [, name] = pathname.match(new RegExp(`^/api/claude/prompts(?:/(${names}))?$`)) ?? [];
   if (!pathname.startsWith('/api/claude/prompts') || (pathname !== '/api/claude/prompts' && !name))
     return null;
   if (method !== 'GET') calls.push({ method, path: pathname, body: structuredClone(body) });
@@ -1670,6 +1683,18 @@ function claudeResponse(url, method, { claude }, body) {
             unsent: false,
           })
         : answered;
+    claude.tickets[body.key] = ticket;
+    return { json: { ok: true, key: body.key, ticket: structuredClone(ticket), send } };
+  }
+  if (pathname === '/api/claude/rereview') {
+    const entry = claude.tickets[body?.key];
+    if (!entry) return claudeFailure(400, 'INVALID_TICKET');
+    if (entry.blocks.rereview) return claudeFailure(409, 'CLAUDE_REFUSED', [entry.blocks.rereview]);
+    const send = claude.sends.shift() ?? { status: 'sent' };
+    const ticket =
+      send.status === 'sent'
+        ? claudeDerived({ ...entry, reviewResentAt: '2026-10-08T09:00:00.000Z' })
+        : entry;
     claude.tickets[body.key] = ticket;
     return { json: { ok: true, key: body.key, ticket: structuredClone(ticket), send } };
   }

@@ -34,16 +34,16 @@ import {
   statusFile,
   throughGap,
   until,
-  wakeConstants,
   workingEntry,
 } from './claude-launcher-fixture.mjs';
 
-const { SETTLE_MS } = await wakeConstants();
+const { FINISH_POLL_MS: POLL_MS } = await import('../backend/claude-launcher.mjs');
 
 const TICKETS = '/api/claude/tickets';
 const LAUNCH = '/api/claude/launch';
 const ANSWERS = '/api/claude/answers';
 const APPROVE = '/api/claude/approve';
+const REREVIEW = '/api/claude/rereview';
 const SECOND_KEY = 'TAP-5678';
 const ENTRY_KEYS = [
   'phase',
@@ -272,15 +272,22 @@ function guardedRequests() {
     [LAUNCH, launchBody],
     [ANSWERS, { key: SECOND_KEY, answers: { q1: 'Portage-backend' } }],
     [APPROVE, { key: SECOND_KEY }],
+    [REREVIEW, { key: SECOND_KEY }],
   ].map(([route, body]) => ({ route, body: JSON.stringify(body) }));
 }
 
 function seedGuardTicket(f) {
-  seedTicket(f, SECOND_KEY, {
+  f.seed(SECOND_KEY, {
     status: statusFile({ investigate: true, questions: [question('q1')] }),
-    id: EARLIER_ID,
+    launch: {
+      [INVESTIGATE]: launchRecord({ name: `${SECOND_KEY}-x`, id: EARLIER_ID }),
+      [REVIEW]: reviewRecord(),
+    },
   });
-  f.cli.setListing([listed({ id: EARLIER_ID, name: `${SECOND_KEY}-x` })]);
+  f.cli.setListing([
+    listed({ id: EARLIER_ID, name: `${SECOND_KEY}-x` }),
+    reviewEntry({ state: 'done', status: 'idle', pid: 4243 }),
+  ]);
 }
 
 const stateTree = (f) => {
@@ -402,6 +409,7 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     approve: 'session_running',
     groom: null,
     review: null,
+    rereview: 'no_review_session',
   });
 
   f.seed(KEY, {
@@ -429,6 +437,7 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     approve: 'session_running',
     groom: null,
     review: null,
+    rereview: 'no_review_session',
   });
   assert.equal(f.cli.launches().length, 0, 'nothing is spawned');
 });
@@ -548,25 +557,30 @@ for (const [label, outcome] of Object.entries(SEND_FAILURES)) {
   });
 }
 
-test('scenario 110: over HTTP the reply waits the settle gap after the stop, then the session is resumed', async (t) => {
+test('scenario 110: over HTTP the reply polls the listing after the stop, then the session is resumed', async (t) => {
   const f = await claudeHttpFixture(t);
   seedHalfAnswered(f, IDLE_LIVE());
   f.seed(KEY, { status: { ...f.parsed().status, done: true } });
+  f.cli.stopLeavesLiveFor(2);
 
   const reply = save(f, { q2: SECOND_TEXT });
   await until(() => f.cli.stops().length === 1);
   await sleep(30);
 
-  assert.deepEqual(f.timers.scheduled, [SETTLE_MS], 'one wait, as long as the settle gap');
-  assert.equal(f.cli.resumes().length, 0, 'the CLI is not asked to resume during the gap');
-  assert.equal(f.parsed().status.done, true, 'done is not written during the gap');
+  assert.deepEqual(f.timers.scheduled, [POLL_MS], 'the first wait is one poll interval');
+  assert.equal(
+    f.cli.resumes().length,
+    0,
+    'the CLI is not asked to resume while the session is live',
+  );
+  assert.equal(f.parsed().status.done, true, 'done is not written while it is live');
 
-  await f.timers.advance(SETTLE_MS);
-  const res = await reply;
+  const res = await throughGap(f, reply);
 
   assert.equal(res.status, 200);
   assert.deepEqual(res.json().send, { status: 'sent' });
-  assert.equal(f.parsed().status.done, false, 'done was reset once the gap had passed');
+  assert.deepEqual(f.timers.scheduled, [POLL_MS, POLL_MS], 'two live polls, two waits');
+  assert.equal(f.parsed().status.done, false, 'done was reset once the session had no pid');
   const order = f.cli.calls
     .filter(({ args }) => args[0] === 'stop' || args.includes('--resume'))
     .map(({ args }) => args[0]);
@@ -800,6 +814,41 @@ test('approve: a plan that is not done is refused with the usual refusal reply',
   assert.equal(f.parsed().status.approved, false);
 
   const invalid = await f.http.json('POST', APPROVE, { key: 'not a key' });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.json().code, 'INVALID_TICKET');
+});
+
+// ---- re-review ----
+
+test('rereview: the route sends the re-review message to the idle review session and records it', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.seed(KEY, { launch: { [REVIEW]: reviewRecord() } });
+  f.cli.setListing([reviewEntry({ state: 'done', status: 'idle', pid: 4243 })]);
+
+  const res = await f.http.json('POST', REREVIEW, { key: KEY });
+
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(Object.keys(body).sort(), ['key', 'ok', 'send', 'ticket']);
+  assert.deepEqual(body.send, { status: 'sent' });
+  assert.equal(f.cli.resumes().length, 1, 'one resume of the review session');
+  assert.equal(f.cli.resumes()[0].args[1], '--resume');
+  assert.ok(f.parsed().launch[REVIEW].rereview.at, 'the re-review time is recorded');
+  assert.equal(body.ticket.reviewResentAt, f.parsed().launch[REVIEW].rereview.at);
+});
+
+test('rereview: no review session is refused with the usual refusal reply, and a bad key is invalid', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.seed(KEY, { status: statusFile({ investigate: true }) });
+
+  const res = await f.http.json('POST', REREVIEW, { key: KEY });
+
+  assert.equal(res.status, 409);
+  assert.equal(res.json().code, 'CLAUDE_REFUSED');
+  assert.deepEqual(res.json().errors, ['no_review_session']);
+  assert.equal(f.cli.resumes().length, 0);
+
+  const invalid = await f.http.json('POST', REREVIEW, { key: 'not a key' });
   assert.equal(invalid.status, 400);
   assert.equal(invalid.json().code, 'INVALID_TICKET');
 });

@@ -3,8 +3,11 @@
 // new background session.
 //
 // Everything runs as a fixed argument array with no shell. The listing carries session names and
-// working directories; neither is logged, stored or sent beyond the picker's name, and the CLI's
-// output and error text never leave this module.
+// working directories; neither is logged, stored or sent beyond the picker's name. The CLI's output
+// and error text never leave this module either, with one exception: a stop or a resume that does
+// not go through logs one line (see claude-log.mjs) with the exit code and a truncated copy of the
+// output, so a lost send can be diagnosed. Only a dashboard send (a call that names its ticket) logs;
+// the Slack wake's calls log nothing. The notice is cut out of that copy and never logged.
 
 import { execFile } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -12,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { SECRET_ENV_NAMES } from './config.mjs';
 import { isSessionId } from './slack-watch-store.mjs';
+import { cliOutputForLog, defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
 
 const CLAUDE_BIN = 'claude';
 const LISTING_ARGS = ['agents', '--json', '--all'];
@@ -33,7 +37,7 @@ const delivered = (reason) => ({ status: 'delivered', ...(reason && { reason }) 
 const failure = (status, reason) => ({ status, reason });
 
 // A live process has a numeric pid, a finished session has none; any other pid is not trusted.
-function stateOf(entry) {
+export function stateOf(entry) {
   if (typeof entry.pid === 'number') return 'live';
   return 'pid' in entry ? 'unknown' : 'finished';
 }
@@ -136,6 +140,7 @@ export function createClaudeSessions({
   sessionsDir = path.join(path.dirname(projectsDir), 'sessions'),
   readActivities = readTranscriptActivities,
   metadataIO = { readdir, readFile },
+  log = defaultClaudeLog,
 }) {
   let sharedListing = null;
   let activityCache = new Map();
@@ -379,36 +384,66 @@ export function createClaudeSessions({
 
   // The CLI stops a session by the first eight characters of its id, so a listed session that
   // shares them makes the short id ambiguous. The fresh listing must show this exact session idle.
-  async function stop({ sessionId }) {
+  // `ticket` is the ticket key of a dashboard send: a caller that gives one gets a failure logged
+  // with it, and a caller that does not (the Slack wake) logs nothing.
+  async function stop({ sessionId, ticket }) {
     if (!isSessionId(sessionId)) return { status: 'not_listed' };
-    const entries = await readEntries();
-    if (!entries) return failure('failed-transient', 'listing_unavailable');
     const shortId = sessionId.slice(0, 8);
+    const failed = (result, extra = {}) => {
+      if (ticket !== undefined)
+        logClaudeFailure(log, {
+          step: 'stop',
+          reason: result.reason ?? result.status,
+          session: shortId,
+          ticket,
+          ...extra,
+        });
+      return result;
+    };
+    const entries = await readEntries();
+    if (!entries) return failed(failure('failed-transient', 'listing_unavailable'));
     const sharedShortId = entries.some(
       (entry) => entry.sessionId !== sessionId && entry.sessionId.slice(0, 8) === shortId,
     );
-    if (sharedShortId) return failure('failed-permanent', 'ambiguous_id');
+    if (sharedShortId) return failed(failure('failed-permanent', 'ambiguous_id'));
     const entry = entries.find((candidate) => candidate.sessionId === sessionId);
     if (!entry || entry.id !== shortId) return { status: 'not_listed' };
     const activity = activityOf(entry);
-    if (activity !== 'idle') return { status: 'not_idle', activity };
+    if (activity !== 'idle') return failed({ status: 'not_idle', activity });
 
-    const { error } = await run(['stop', shortId], {
+    const { error, stdout, stderr } = await run(['stop', shortId], {
       timeout: STOP_TIMEOUT_MS,
       maxBuffer: STOP_MAX_BYTES,
     });
     if (!error) return { status: 'stopped' };
-    return failure('failed-transient', error.killed ? 'timed_out' : 'stop_failed');
+    return failed(failure('failed-transient', error.killed ? 'timed_out' : 'stop_failed'), {
+      exitCode: error.code ?? null,
+      output: cliOutputForLog(`${stdout}${stderr}`),
+    });
   }
 
-  async function resume({ sessionId, notice }) {
+  // `ticket` has the same meaning as for `stop`. The notice is never logged.
+  async function resume({ sessionId, notice, ticket }) {
+    const shortId = typeof sessionId === 'string' ? sessionId.slice(0, 8) : undefined;
+    const failed = (result, extra = {}) => {
+      if (ticket !== undefined)
+        logClaudeFailure(log, {
+          step: 'resume',
+          reason: result.reason ?? result.status,
+          session: shortId,
+          ticket,
+          ...extra,
+        });
+      return result;
+    };
     const entries = await readEntries();
-    if (!entries) return failure('failed-transient', 'listing_unavailable');
+    if (!entries) return failed(failure('failed-transient', 'listing_unavailable'));
     const entry = entries.find((candidate) => candidate.sessionId === sessionId);
     if (!entry) return delivered('not_listed');
-    if (stateOf(entry) !== 'finished') return { status: 'waiting', reason: 'live_at_resume' };
+    if (stateOf(entry) !== 'finished')
+      return failed({ status: 'waiting', reason: 'live_at_resume' }, { pid: entry.pid ?? null });
     if (typeof entry.cwd !== 'string' || !entry.cwd)
-      return failure('failed-transient', 'spawn_failed');
+      return failed(failure('failed-transient', 'spawn_failed'));
 
     const { error, stdout, stderr } = await run(['--bg', '--resume', sessionId, '--', notice], {
       cwd: entry.cwd,
@@ -416,12 +451,20 @@ export function createClaudeSessions({
       maxBuffer: RESUME_MAX_BYTES,
     });
     const output = `${stdout}${stderr}`;
+    const detail = () => ({
+      exitCode: error?.code ?? 0,
+      output: cliOutputForLog(output, notice),
+    });
     // A copy may exist even when the CLI exits with an error, and a retry would start another.
-    if (output.includes(FORK_MARKER)) return failure('failed-permanent', 'resume_forked');
+    if (output.includes(FORK_MARKER))
+      return failed(failure('failed-permanent', 'resume_forked'), detail());
     if (!error) return delivered('resumed');
     if (error.code === 1 && output.includes(UNTRUSTED_WORKSPACE_MARKER))
-      return failure('failed-permanent', 'untrusted_workspace');
-    return failure('failed-transient', error.killed ? 'timed_out' : 'spawn_failed');
+      return failed(failure('failed-permanent', 'untrusted_workspace'), detail());
+    return failed(
+      failure('failed-transient', error.killed ? 'timed_out' : 'spawn_failed'),
+      detail(),
+    );
   }
 
   // The CLI's entries from the listing that concurrent callers share, or from a read of their own

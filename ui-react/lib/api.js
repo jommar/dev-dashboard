@@ -267,6 +267,10 @@ export const answerClaude = (key, answers, { resend = false } = {}) =>
 export const approveClaude = (key) =>
   watchRequest('/api/claude/approve', { method: 'POST', body: { key } });
 
+// Asks the ticket's review session to review its linked PRs again.
+export const rereviewClaude = (key) =>
+  watchRequest('/api/claude/rereview', { method: 'POST', body: { key } });
+
 // The prompt files behind the launcher: all three listed, and one saved or reset by name. A save
 // or a reset answers with the prompt's new entry.
 export const getClaudePrompts = () => watchRequest('/api/claude/prompts');

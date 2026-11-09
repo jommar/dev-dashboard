@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Fixed a lost send: after stopping a live session the dashboard waited a fixed 15 seconds and then
+  resumed it, which makes the CLI start a copy if the process had not gone yet, so answers could
+  vanish. It now polls a fresh listing once a second (`FINISH_POLL_MS`, at most `FINISH_POLL_LIMIT`
+  = 30) and resumes only when the session has no process; otherwise the send fails as
+  `live_at_resume` with `status.json` untouched (`done` and `approved` are written only after the
+  session is gone, and put back if the resume does not deliver).
+- Every dashboard send (save answers, Resend answers, Approve plan, Re-review) now goes through one
+  helper, `deliverToSession`; the Slack wake stays separate. A failed stop, wait or resume logs one
+  `[claude] <step> failed {...}` line with the reason, exit code, output cut to 2 KB, short session
+  id and ticket key, never the notice.
+- Added **Re-review** to the Pull Requests Claude dialog: `POST /api/claude/rereview` sends a new
+  `prompts/rereview.md` message to the ticket's idle review session through the shared send path,
+  records `rereview: { at }` on the review record once delivered, and entries gain
+  `blocks.rereview` and `reviewResentAt`. The prompt editor lists six prompts.
+
 - Added **Approve plan** and **Resend answers** to the Claude dialog. Approve is open only once
   the planning session marked the plan `done` (and the plan file exists, every question is answered
   and the answers were sent): `POST /api/claude/approve` stops the idle session, sets `done` to
@@ -13,8 +28,7 @@
   resend does not. **Resend answers** posts `resend: true` to `POST /api/claude/answers` to send
   the saved answers again even when unchanged, keeping every other gate. Entries gain
   `flags.approved`, `approvedAt` and `blocks.resend` / `blocks.approve`; the prompt editor lists a
-  fifth prompt, `approve`. The send path shared by answers and approval was extracted; no
-  stop/resume timing or logging change.
+  fifth prompt, `approve`. The send path shared by answers and approval was extracted.
 - Replaced Home's Sprint/KPI/Needs You/Services widgets with team/person velocity:
   explicit Generate/Refresh saves an all-team browser snapshot, restored without
   automatic fetching or expiry. Team defaults to Nexus and persists; Everyone/person

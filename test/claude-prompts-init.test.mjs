@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
+  REREVIEW_TEMPLATE,
   EARLIER_ID,
   IMPLEMENT,
   IMPLEMENT_TEMPLATE,
@@ -39,6 +40,7 @@ const STARTERS = [
   ['implement.md', IMPLEMENT_TEMPLATE],
   ['answers.md', ANSWERS_TEMPLATE],
   ['approve.md', APPROVE_TEMPLATE],
+  ['rereview.md', REREVIEW_TEMPLATE],
   ['groom.md', GROOM_TEMPLATE],
 ];
 
@@ -69,7 +71,7 @@ const snapshot = (dir) =>
       ]),
   );
 
-test('scenario 130: it creates the prompts folder and writes the five built-in texts, placeholders intact', async (t) => {
+test('scenario 130: it creates the prompts folder and writes the six built-in texts, placeholders intact', async (t) => {
   const dir = path.join(tempRoot(t), 'nested', 'prompts');
 
   const result = await initPrompts({ dir, fs });
@@ -85,6 +87,7 @@ test('scenario 130: it creates the prompts folder and writes the five built-in t
     'groom.md',
     'implement.md',
     'investigate.md',
+    'rereview.md',
   ]);
   for (const [name, template] of STARTERS) {
     const text = fs.readFileSync(path.join(dir, name), 'utf8');
@@ -117,6 +120,7 @@ test('scenario 131: a file that is already there is kept as it is, and only the 
       ['implement.md', 'wrote'],
       ['answers.md', 'kept'],
       ['approve.md', 'wrote'],
+      ['rereview.md', 'wrote'],
       ['groom.md', 'wrote'],
     ],
   );

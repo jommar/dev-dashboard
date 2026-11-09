@@ -8,8 +8,8 @@ import {
   ticketBoardData,
 } from './data.js';
 
-// The prompt editor inside the Claude dialog. The fake API (e2e/data.js) lists five prompt files,
-// `dashboard.data.claude.prompts.entries` by name (investigate, implement, answers, approve, groom), each `default`,
+// The prompt editor inside the Claude dialog. The fake API (e2e/data.js) lists six prompt files,
+// `dashboard.data.claude.prompts.entries` by name (investigate, implement, answers, approve, rereview, groom), each `default`,
 // `custom` or `unusable`; a spec changes an entry before the editor opens, and queues a response for
 // the next prompt request in `prompts.failures`. PUT and DELETE are recorded in `claude.calls`.
 //
@@ -22,12 +22,13 @@ import {
 // `.claude-dialog-body` (classes: neither has a test id).
 
 const KEY = 'TAP-9001';
-const NAMES = ['investigate', 'implement', 'answers', 'approve', 'groom'];
+const NAMES = ['investigate', 'implement', 'answers', 'approve', 'rereview', 'groom'];
 const LABELS = {
   investigate: 'Investigate and plan prompt',
   implement: 'Implement plan prompt',
   answers: 'Answers message',
   approve: 'Approval message',
+  rereview: 'Re-review message',
   groom: 'Groom ticket prompt',
 };
 const WARNING =
@@ -178,12 +179,13 @@ test('scenario 55: Prompts opens the editor in place of the answers, and Back re
   await expect(dialog.getByTestId('claude-questions-save')).toHaveCount(0);
   await expect(dialog.getByTestId('claude-questions-progress')).toHaveCount(0);
 
-  // Three prompts, each with its label, source badge, saved text and placeholders.
+  // Six prompts, each with its label, source badge, saved text and placeholders.
   const sources = {
     investigate: 'default',
     implement: 'custom',
     answers: 'default',
     approve: 'default',
+    rereview: 'default',
     groom: 'default',
   };
   const texts = {
@@ -206,11 +208,11 @@ test('scenario 55: Prompts opens the editor in place of the answers, and Back re
     await expect(prompt.dirty).toHaveCount(0);
     await expect(prompt.warning).toHaveCount(0);
   }
-  // A line of placeholders per prompt: three prompts name {KEY}, {SLUG} and {STATUS_FILE}, and only
-  // the answers message adds {QUESTION_IDS} and {CHANGE}; grooming has no status file and lists
-  // {KEY} and {SLUG} alone. The warning for a missing {STATUS_FILE} is checked above for all four:
-  // grooming never has one to miss.
-  await expect(view.getByText(/\{KEY\}\W+\{SLUG\}\W*$/)).toHaveCount(1);
+  // A line of placeholders per prompt: four prompts name {KEY}, {SLUG} and {STATUS_FILE}, and only
+  // the answers message adds {QUESTION_IDS} and {CHANGE}; grooming and the re-review message have
+  // no status file and list {KEY} and {SLUG} alone. The warning for a missing {STATUS_FILE} is
+  // checked above for all four: those two never have one to miss.
+  await expect(view.getByText(/\{KEY\}\W+\{SLUG\}\W*$/)).toHaveCount(2);
   await expect(view.getByText(/\{KEY\}\W+\{SLUG\}\W+\{STATUS_FILE\}/)).toHaveCount(4);
   await expect(view.getByText(/\{QUESTION_IDS\}\W+\{CHANGE\}/)).toHaveCount(1);
 

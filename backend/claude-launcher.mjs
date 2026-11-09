@@ -8,7 +8,7 @@
 // only while it works and this module only while no session works; every write is a temp file,
 // fsync and rename, under one lock per ticket.
 //
-// Workflow/groom prompts, answers and the approval message use editable templates; review uses server-owned delegation.
+// Workflow/groom prompts, answers, the approval and re-review messages use editable templates; review uses server-owned delegation.
 // Only validated keys, slugs, built paths and question ids are interpolated, never ticket text.
 
 import fsDefault from 'node:fs';
@@ -16,7 +16,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { DASHBOARD_DIR } from './config.mjs';
 import { writeFileAtomic } from './credentials.mjs';
-import { SETTLE_MS } from './slack-watcher.mjs';
+import { stateOf } from './claude-sessions.mjs';
+import { defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
 import { createPromptStore } from './claude-prompts.mjs';
 import {
   ANSWER_MAX_LENGTH,
@@ -40,6 +41,7 @@ import {
   readQuestions,
   readReview,
   resolveSession,
+  rereviewBlock,
   reviewBlock,
   runningBlock,
   sessionName,
@@ -53,6 +55,10 @@ export { CLAUDE_PROMPTS_DIR, PROMPT_TEMPLATES } from './claude-prompts.mjs';
 export const CLAUDE_STATE_DIR = path.join(DASHBOARD_DIR, 'claude');
 
 const ANSWER_LIMIT = 20;
+// After a stop the session is polled until its entry has no pid: the CLI's stop returns before the
+// process is gone, and a resume in that gap starts a copy of the session instead of continuing it.
+export const FINISH_POLL_MS = 1_000;
+export const FINISH_POLL_LIMIT = 30;
 // What the dashboard reads of session-writable state: a bigger file is unreadable, and only this
 // many ticket folders are listed.
 const MAX_STATE_BYTES = 1024 * 1024;
@@ -126,6 +132,7 @@ export function createClaudeLauncher({
   now = Date.now,
   timers = { setTimeout, clearTimeout },
   promptsDir,
+  log = defaultClaudeLog,
 }) {
   const launchDirectory = path.join(home, 'pathwise');
   const locks = new Map();
@@ -178,6 +185,9 @@ export function createClaudeLauncher({
     const { source, text } = promptStore.read(name);
     return source === 'unusable' ? null : text;
   }
+
+  // A review message has no status file either: only the key and its lower-case form.
+  const rereviewValues = (key) => ({ KEY: key, SLUG: key.toLowerCase() });
 
   // A groom prompt has no status file, so `{STATUS_FILE}` stays as written in it.
   const promptValues = (key, phase) => ({
@@ -333,6 +343,37 @@ export function createClaudeLauncher({
     return withTicketLock(key, () => launchLocked(key, phase));
   }
 
+  // Asks the ticket's existing review session to review the linked PRs again. It needs a review
+  // session that exists and is idle (`rereviewBlock`), is independent of the workflow, and has no
+  // status file, so nothing is written before the resume. The time is recorded on the review record
+  // only once the message was delivered.
+  async function rereviewLocked(key) {
+    const entries = await freshListing();
+    const launched = readObject(launchPath(key));
+    const record = readReview(launched.value);
+    const reason = rereviewBlock(sideActionState(record, entries, now()), entries);
+    if (reason) throw refused(reason);
+
+    const template = promptTemplate('rereview');
+    const result = template
+      ? await deliverToSession(key, record, fillTemplate(template, rereviewValues(key)))
+      : sendFailed('prompt_unreadable');
+    if (result.status === 'sent') {
+      writeJson(launchPath(key), {
+        ...launched.value,
+        [REVIEW]: { ...launched.value[REVIEW], rereview: { at: new Date(now()).toISOString() } },
+      });
+    }
+    const listing =
+      result.status === 'sent' ? await claudeSessions.entries({ fresh: true }) : entries;
+    return { ok: true, key, send: result, ticket: ticketEntry(key, listing) };
+  }
+
+  async function rereview({ key }) {
+    if (!isTicketKey(key)) throw invalid('INVALID_TICKET', 'Invalid ticket.');
+    return withTicketLock(key, () => rereviewLocked(key));
+  }
+
   // The body's [id, text] pairs: a plain object of at most 20 entries, each a question id and a
   // text of at most 2000 characters. An empty list is no pairs: it saves nothing and retries a send.
   function readAnswers(answers) {
@@ -348,33 +389,67 @@ export function createClaudeLauncher({
     return pairs;
   }
 
-  // Delivers `notice` to the planning session that asked, writing `nextStatus` (its `done` already
-  // reset) just before the resume. A live session is resumed only once it is stopped, and `stop`
-  // refuses one that is not idle. A resume right after a stop forks a copy of the session, so the
-  // stop gets time to settle first. Returns { status: 'sent' } or { status: 'failed', reason }; the
-  // caller records what it sent only on `sent`. With `undo` (a `readObject` result of status.json),
-  // a resume that did not deliver puts that file back as it was.
-  async function resumePlanningSession(key, record, nextStatus, notice, undo = null) {
-    const listing = await claudeSessions.entries({ fresh: true });
-    if (!listing) return sendFailed('listing_unavailable');
-    const session = resolveSession(listing, record);
-    if (!session) return sendFailed('session_not_found');
+  // The one way a message reaches a session the dashboard started: answers, a resend, an approval
+  // and a re-review all go through here, so none of them has a stop/wait/resume sequence of its own.
+  //
+  // A live session is stopped first (`stop` refuses one that is not idle), then its entry is polled
+  // until it has no pid, every FINISH_POLL_MS for at most FINISH_POLL_LIMIT tries: a resume while the
+  // process is still going down forks a copy of the session. A session that is still live at the cap
+  // fails as `live_at_resume`, before `beforeResume` has written anything. The listing is read again
+  // right before each decision, and `claudeSessions.resume` reads it once more before it spawns.
+  //
+  // `record` is the session's launch record (the planning one, or the review one). `beforeResume()`
+  // is what the caller writes (status.json) once the session is known to be finished, and `onFailure()` puts it back when the resume did not deliver. Returns
+  // { status: 'sent' } or { status: 'failed', reason }; the caller records what it sent only on
+  // `sent`. Every failure is logged with the ticket and the session's short id; the failures of
+  // `stop` and `resume` carry the CLI's output in their own line (see claude-log.mjs).
+  async function deliverToSession(
+    key,
+    record,
+    notice,
+    { beforeResume = () => {}, onFailure = () => {} } = {},
+  ) {
+    const fail = (reason, session, step) => {
+      logClaudeFailure(log, { step, reason, session: session?.id, ticket: key });
+      return sendFailed(reason);
+    };
+    const observe = async () => {
+      const listing = await claudeSessions.entries({ fresh: true });
+      return { listing, session: listing ? resolveSession(listing, record) : null };
+    };
+
+    let { listing, session } = await observe();
+    if (!listing) return fail('listing_unavailable', null, 'listing');
+    if (!session) return fail('session_not_found', null, 'listing');
+    const asked = session;
     if (typeof session.pid === 'number') {
-      const stopped = await claudeSessions.stop({ sessionId: session.sessionId });
+      // The sessions module logs a stop that fails, with the CLI's output.
+      const stopped = await claudeSessions.stop({ sessionId: session.sessionId, ticket: key });
       if (stopped.status !== 'stopped')
         return sendFailed(STOP_FAILURES[stopped.status] ?? 'resume_failed');
+    }
+    for (let attempt = 1; ; attempt += 1) {
+      ({ listing, session } = await observe());
+      if (!listing) return fail('listing_unavailable', asked, 'wait');
+      if (!session) return fail('session_not_found', asked, 'wait');
+      if (stateOf(session) === 'finished') break;
+      if (attempt >= FINISH_POLL_LIMIT) return fail('live_at_resume', session, 'wait');
       await new Promise((resolve) => {
-        timers.setTimeout(resolve, SETTLE_MS).unref?.();
+        timers.setTimeout(resolve, FINISH_POLL_MS).unref?.();
       });
     }
 
     // `done` is reset before the resume, so a session that finishes at once and sets it again is
     // never overwritten afterwards.
-    writeJson(statusPath(key), nextStatus);
-    const result = await claudeSessions.resume({ sessionId: session.sessionId, notice });
+    beforeResume();
+    const result = await claudeSessions.resume({
+      sessionId: session.sessionId,
+      notice,
+      ticket: key,
+    });
     const reason = resumeFailure(result);
     if (!reason) return { status: 'sent' };
-    if (undo) restore(statusPath(key), undo);
+    onFailure();
     return sendFailed(reason);
   }
 
@@ -404,7 +479,9 @@ export function createClaudeLauncher({
     );
 
     const nextStatus = { ...status, done: false, ...(revised && { approved: false }) };
-    const result = await resumePlanningSession(key, record, nextStatus, notice);
+    const result = await deliverToSession(key, record, notice, {
+      beforeResume: () => writeJson(statusPath(key), nextStatus),
+    });
     if (result.status !== 'sent') return result;
 
     const sent = { at: new Date(now()).toISOString(), answers: plan.hashes };
@@ -429,13 +506,12 @@ export function createClaudeLauncher({
     const record = readLaunch(launched.value).find(({ phase }) => phase === INVESTIGATE);
     const template = promptTemplate('approve');
     const result = template
-      ? await resumePlanningSession(
-          key,
-          record,
-          { ...status.value, done: false, approved: true },
-          fillTemplate(template, promptValues(key)),
-          status,
-        )
+      ? await deliverToSession(key, record, fillTemplate(template, promptValues(key)), {
+          beforeResume: () =>
+            writeJson(statusPath(key), { ...status.value, done: false, approved: true }),
+          // Nothing was delivered: the file goes back as it was, never left saying approved.
+          onFailure: () => restore(statusPath(key), status),
+        })
       : sendFailed('prompt_unreadable');
     if (result.status === 'sent') {
       const approved = { at: new Date(now()).toISOString() };
@@ -510,5 +586,5 @@ export function createClaudeLauncher({
     };
   }
 
-  return { list, launch, answer, approve };
+  return { list, launch, answer, approve, rereview };
 }
