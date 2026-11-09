@@ -505,9 +505,43 @@ test('person velocity stays local with alphabetical same-window comparison and r
   expect(labels[1]).toContain('Alex Example');
   expect(labels[2]).toContain('Unassigned');
   expect(labels[3]).toContain('Unknown assignee');
-  await expect(comparison).toContainText('Completed points · 4 displayed sprints');
-  await expect(rows.nth(0)).toContainText('5.5');
-  for (const index of [1, 2, 3]) await expect(rows.nth(index)).toContainText('0');
+  await expect(comparison).toContainText('Total points · 4 displayed sprints');
+  await expect(rows.locator('strong')).toHaveText(['5.5', '4.25', '3', '0']);
+  const personTotal = (await rows.locator('strong').allTextContents()).reduce(
+    (total, value) => total + Number(value),
+    0,
+  );
+  const chartTotal = (await page.getByTestId('home-velocity-total').allTextContents()).reduce(
+    (total, value) => total + Number(value),
+    0,
+  );
+  expect(personTotal).toBe(chartTotal);
+  const expectedPeople = dashboard.data.teamVelocity.boards.find(
+    ({ name }) => name === 'Nexus',
+  ).people;
+  const maximum = Math.max(
+    ...expectedPeople.map(({ series }) => series.reduce((total, entry) => total + entry.points, 0)),
+  );
+  for (const [index, expectedPerson] of expectedPeople.entries()) {
+    const meter = rows.nth(index).getByTestId('home-velocity-person-meter');
+    await expect(meter).toBeVisible();
+    for (const status of ['done', 'inProgress', 'notStarted']) {
+      const points = expectedPerson.series.reduce(
+        (total, entry) => total + entry.byStatus[status],
+        0,
+      );
+      const segment = meter.locator(`[data-status="${status}"]`);
+      const proportion = await segment.evaluate(
+        (el) => el.getBoundingClientRect().width / el.parentElement.getBoundingClientRect().width,
+      );
+      expect(proportion).toBeCloseTo(points / maximum, 2);
+      const color = await chart(page)
+        .locator(`.home-velocity-swatch[data-status="${status}"]`)
+        .evaluate((el) => getComputedStyle(el).backgroundColor);
+      await expect(segment).toHaveCSS('background-color', color);
+    }
+  }
+  await expect(rows.nth(1)).toHaveAccessibleName(/0 completed, 4\.25 in progress, 0 not started/);
   await rows.nth(0).click();
   await expect(rows.nth(0)).toBeFocused();
   await expect(person(page)).toHaveValue(alexA);
@@ -675,7 +709,7 @@ test('unambiguous person labels reserve aggregate literal suffixes and special b
   await expect(rows).toHaveCount(people.length);
   for (const [index, p] of people.entries()) {
     const label = labelsById.get(p.id);
-    await expect(rows.nth(index).locator('span')).toHaveText(label);
+    await expect(rows.nth(index).locator('.home-velocity-person-name')).toHaveText(label);
     await person(page).focus();
     await person(page).selectOption(p.id);
     await expect(person(page)).toBeFocused();

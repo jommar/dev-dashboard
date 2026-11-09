@@ -406,9 +406,10 @@ PRs; the application's shared service feed still operates independently.
 An unavailable saved team stays selected with a named no-history state, rather
 than silently switching teams. **Person** defaults to **Everyone** (the whole
 team); selecting a person or a row in the alphabetical **People** breakdown
-scopes the chart locally, with no request. Completed-point totals use the same
-displayed sprint window for everyone, including zero totals, Unassigned and
-Unknown assignee where present. This is not a productivity ranking. Display
+scopes the chart locally, with no request. Total points include all statuses over
+the same displayed sprint window, including zero totals, Unassigned and Unknown
+assignee where present. Thin bars use the chart's status colors and a shared
+point scale across people. This is not a productivity ranking. Display
 labels are disambiguated consistently across the selector, rows and chart.
 Person selection is not persisted: Team changes and reloads reset Everyone;
 Refresh retains the selected person only if that identity still exists for the

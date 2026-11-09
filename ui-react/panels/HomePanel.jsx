@@ -35,15 +35,20 @@ function comparisonPeople(people) {
       } while (reserved.has(label) || used.has(label));
     }
     used.add(label);
+    const byStatus = { done: 0, inProgress: 0, notStarted: 0 };
+    for (const entry of person.series)
+      for (const status of Object.keys(byStatus)) byStatus[status] += entry.byStatus[status];
     return {
       ...person,
       label,
-      completed: person.series.reduce((total, entry) => total + entry.byStatus.done, 0),
+      points: person.series.reduce((total, entry) => total + entry.points, 0),
+      byStatus,
     };
   });
 }
 
 function PersonBreakdown({ people, personId, sprintCount, onSelect }) {
+  const maximum = Math.max(0, ...people.map((person) => person.points)) || 1;
   return (
     <section
       className="home-velocity-people"
@@ -52,7 +57,9 @@ function PersonBreakdown({ people, personId, sprintCount, onSelect }) {
     >
       <div className="home-velocity-people-head">
         <h3 id="home-velocity-people-title">People</h3>
-        <span>Completed points · {sprintCount} displayed sprints</span>
+        <span>
+          Total points · {sprintCount} displayed {sprintCount === 1 ? 'sprint' : 'sprints'}
+        </span>
       </div>
       <ul className="home-velocity-people-list">
         {people.map((person) => (
@@ -61,17 +68,33 @@ function PersonBreakdown({ people, personId, sprintCount, onSelect }) {
               type="button"
               data-testid="home-velocity-person-row"
               aria-pressed={personId === person.id}
+              aria-label={`${person.label}: ${person.points} total points; ${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started`}
+              title={`${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started points`}
               onClick={() => onSelect(person.id)}
             >
-              <span>{person.label}</span>
-              <strong>{person.completed}</strong>
+              <span className="home-velocity-person-name">{person.label}</span>
+              <strong>{person.points}</strong>
+              <span
+                className="home-velocity-person-meter"
+                data-testid="home-velocity-person-meter"
+                aria-hidden="true"
+              >
+                {Object.entries(person.byStatus).map(([status, points]) => (
+                  <span
+                    key={status}
+                    className="home-velocity-segment"
+                    data-status={status}
+                    style={{ width: `${(points / maximum) * 100}%` }}
+                  />
+                ))}
+              </span>
             </button>
           </li>
         ))}
       </ul>
       <p>
-        Carried issues count in each sprint membership, not as unique delivered work. Alphabetical,
-        not a performance ranking.
+        Bars share the same point scale across people. Carried issues count in each sprint
+        membership, not as unique delivered work. Alphabetical, not a performance ranking.
       </p>
     </section>
   );
