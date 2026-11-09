@@ -253,8 +253,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       return claudeLauncher.launch({ key, phase });
     },
     'POST /api/claude/answers': async (req) => {
-      const { key, answers } = await readJson(req);
-      return claudeLauncher.answer({ key, answers });
+      const { key, answers, resend } = await readJson(req);
+      return claudeLauncher.answer({ key, answers, resend });
+    },
+    'POST /api/claude/approve': async (req) => {
+      const { key } = await readJson(req);
+      return claudeLauncher.approve({ key });
     },
     'GET /api/claude/prompts': () => ({ ok: true, prompts: claudePrompts.list() }),
   };

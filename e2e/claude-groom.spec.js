@@ -25,7 +25,12 @@ const NOTE =
   'Works on any ticket, on its own. Needs no plan and changes nothing in Jira until you say so.';
 const RUNNING = 'A Claude session is already running for this ticket.';
 const UNAVAILABLE = 'Claude status is unavailable.';
-const PLAN_DONE = { 'investigate-and-plan': true, 'implement-plan': false, done: true };
+const PLAN_DONE = {
+  'investigate-and-plan': true,
+  'implement-plan': false,
+  done: true,
+  approved: true,
+};
 const PLANNED = { ...PLAN_DONE, done: false };
 // A groom session's own state, as the server lists it.
 const GROOM = {

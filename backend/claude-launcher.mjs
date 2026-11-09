@@ -8,7 +8,7 @@
 // only while it works and this module only while no session works; every write is a temp file,
 // fsync and rename, under one lock per ticket.
 //
-// Workflow/groom prompts and answers use editable templates; review uses server-owned delegation.
+// Workflow/groom prompts, answers and the approval message use editable templates; review uses server-owned delegation.
 // Only validated keys, slugs, built paths and question ids are interpolated, never ticket text.
 
 import fsDefault from 'node:fs';
@@ -29,6 +29,7 @@ import {
   answersToSend,
   currentRecord,
   deriveEntry,
+  approveBlock,
   implementBlock,
   implementStatus,
   isQuestionId,
@@ -57,7 +58,13 @@ const ANSWER_LIMIT = 20;
 const MAX_STATE_BYTES = 1024 * 1024;
 const MAX_TICKETS = 500;
 const PLAN_FILE = '02-plan.md';
-const RESET_STATUS = { [INVESTIGATE]: false, [IMPLEMENT]: false, done: false, questions: [] };
+const RESET_STATUS = {
+  [INVESTIGATE]: false,
+  [IMPLEMENT]: false,
+  done: false,
+  approved: false,
+  questions: [],
+};
 
 const PROMPT_NAME = { [INVESTIGATE]: 'investigate', [IMPLEMENT]: 'implement', [GROOM]: 'groom' };
 
@@ -341,33 +348,17 @@ export function createClaudeLauncher({
     return pairs;
   }
 
-  // Routes the saved answers back to the planning session that asked, when every question has one
-  // and they differ from the last send. The answers are saved already, so a send that cannot be made
-  // only reports why and the next save retries it; nothing is rolled back and `sent` is recorded
-  // only once the resume delivered.
-  async function sendAnswers(key) {
-    const status = readObject(statusPath(key)).value;
-    const launched = readObject(launchPath(key)).value;
-    const plan = answersToSend(status, launched);
-    if (plan.skip) return { status: 'skipped', reason: plan.skip };
-
-    // The message is settled first: a message file that cannot be used stops the send before the
-    // session is listed, stopped or touched.
-    const record = readLaunch(launched).find(({ phase }) => phase === INVESTIGATE);
-    const template = promptTemplate('answers');
-    if (!template) return sendFailed('prompt_unreadable');
-    const notice = fillTemplate(template, {
-      ...promptValues(key),
-      QUESTION_IDS: plan.changed.join(', '),
-      CHANGE: record.sent ? 'changed answers' : 'answers',
-    });
-
+  // Delivers `notice` to the planning session that asked, writing `nextStatus` (its `done` already
+  // reset) just before the resume. A live session is resumed only once it is stopped, and `stop`
+  // refuses one that is not idle. A resume right after a stop forks a copy of the session, so the
+  // stop gets time to settle first. Returns { status: 'sent' } or { status: 'failed', reason }; the
+  // caller records what it sent only on `sent`. With `undo` (a `readObject` result of status.json),
+  // a resume that did not deliver puts that file back as it was.
+  async function resumePlanningSession(key, record, nextStatus, notice, undo = null) {
     const listing = await claudeSessions.entries({ fresh: true });
     if (!listing) return sendFailed('listing_unavailable');
     const session = resolveSession(listing, record);
     if (!session) return sendFailed('session_not_found');
-    // A live session is resumed only once it is stopped, and `stop` refuses one that is not idle. A
-    // resume right after a stop forks a copy of the session, so the stop gets time to settle first.
     if (typeof session.pid === 'number') {
       const stopped = await claudeSessions.stop({ sessionId: session.sessionId });
       if (stopped.status !== 'stopped')
@@ -379,20 +370,86 @@ export function createClaudeLauncher({
 
     // `done` is reset before the resume, so a session that finishes at once and sets it again is
     // never overwritten afterwards.
-    writeJson(statusPath(key), { ...status, done: false });
+    writeJson(statusPath(key), nextStatus);
     const result = await claudeSessions.resume({ sessionId: session.sessionId, notice });
     const reason = resumeFailure(result);
-    if (reason) return sendFailed(reason);
-
-    const sent = { at: new Date(now()).toISOString(), answers: plan.hashes };
-    writeJson(launchPath(key), {
-      ...launched,
-      [INVESTIGATE]: { ...launched[INVESTIGATE], sent },
-    });
-    return { status: 'sent' };
+    if (!reason) return { status: 'sent' };
+    if (undo) restore(statusPath(key), undo);
+    return sendFailed(reason);
   }
 
-  async function answerLocked(key, pairs) {
+  // Routes the saved answers back to the planning session that asked, when every question has one
+  // and they differ from the last send (or `resend` asks for the whole set again). The answers are
+  // saved already, so a send that cannot be made only reports why and the next save retries it;
+  // nothing is rolled back and `sent` is recorded only once the resume delivered. Answers that
+  // differ from the last send revise the plan, so the approval is withdrawn with the send.
+  async function sendAnswers(key, { resend = false } = {}) {
+    const status = readObject(statusPath(key)).value;
+    const launched = readObject(launchPath(key)).value;
+    const plan = answersToSend(status, launched, { resend });
+    if (plan.skip) return { status: 'skipped', reason: plan.skip };
+
+    // The message is settled first: a message file that cannot be used stops the send before the
+    // session is listed, stopped or touched.
+    const record = readLaunch(launched).find(({ phase }) => phase === INVESTIGATE);
+    const template = promptTemplate('answers');
+    if (!template) return sendFailed('prompt_unreadable');
+    const notice = fillTemplate(template, {
+      ...promptValues(key),
+      QUESTION_IDS: plan.changed.join(', '),
+      CHANGE: resend ? 'answers (sent again)' : record.sent ? 'changed answers' : 'answers',
+    });
+    const revised = Object.keys(plan.hashes).some(
+      (id) => plan.hashes[id] !== record.sent?.answers[id],
+    );
+
+    const nextStatus = { ...status, done: false, ...(revised && { approved: false }) };
+    const result = await resumePlanningSession(key, record, nextStatus, notice);
+    if (result.status !== 'sent') return result;
+
+    const sent = { at: new Date(now()).toISOString(), answers: plan.hashes };
+    const next = { ...launched[INVESTIGATE], sent };
+    if (revised) delete next.approved;
+    writeJson(launchPath(key), { ...launched, [INVESTIGATE]: next });
+    return result;
+  }
+
+  // Tells the planning session the user approved its finished plan. Approving asks for a plan that
+  // is ready and marked done, so the gate is `approveBlock`. The approved flag goes into status.json
+  // with the reset `done`, just before the resume (the session is not working then, which keeps the
+  // file single-writer), and the file is put back as it was if the resume did not deliver.
+  async function approveLocked(key) {
+    const entries = await freshListing();
+    const launched = readObject(launchPath(key));
+    requireNoRunningSession(entries, launched);
+    const status = readObject(statusPath(key));
+    const reason = approveBlock(statusOf(status), launched.value, planExists(key));
+    if (reason) throw refused(reason);
+
+    const record = readLaunch(launched.value).find(({ phase }) => phase === INVESTIGATE);
+    const template = promptTemplate('approve');
+    const result = template
+      ? await resumePlanningSession(
+          key,
+          record,
+          { ...status.value, done: false, approved: true },
+          fillTemplate(template, promptValues(key)),
+          status,
+        )
+      : sendFailed('prompt_unreadable');
+    if (result.status === 'sent') {
+      const approved = { at: new Date(now()).toISOString() };
+      writeJson(launchPath(key), {
+        ...launched.value,
+        [INVESTIGATE]: { ...launched.value[INVESTIGATE], approved },
+      });
+    }
+    const listing =
+      result.status === 'sent' ? await claudeSessions.entries({ fresh: true }) : entries;
+    return { ok: true, key, send: result, ticket: ticketEntry(key, listing) };
+  }
+
+  async function answerLocked(key, pairs, resend) {
     const entries = await freshListing();
     const launched = readObject(launchPath(key));
     requireNoRunningSession(entries, launched);
@@ -423,17 +480,23 @@ export function createClaudeLauncher({
         [current.phase]: { ...launched.value[current.phase], answered },
       });
     }
-    const send = await sendAnswers(key);
+    const send = await sendAnswers(key, { resend });
     // A delivered send has the session working again, which the first listing cannot show.
     const listing =
       send.status === 'sent' ? await claudeSessions.entries({ fresh: true }) : entries;
     return { ok: true, key, send, ticket: ticketEntry(key, listing) };
   }
 
-  async function answer({ key, answers }) {
+  // `resend` asks for the saved answers to go again even when they match the last send.
+  async function answer({ key, answers, resend = false }) {
     if (!isTicketKey(key)) throw invalid('INVALID_TICKET', 'Invalid ticket.');
     const pairs = readAnswers(answers);
-    return withTicketLock(key, () => answerLocked(key, pairs));
+    return withTicketLock(key, () => answerLocked(key, pairs, resend === true));
+  }
+
+  async function approve({ key }) {
+    if (!isTicketKey(key)) throw invalid('INVALID_TICKET', 'Invalid ticket.');
+    return withTicketLock(key, () => approveLocked(key));
   }
 
   // Every ticket folder's entry from one shared listing; no folder, no CLI call.
@@ -447,5 +510,5 @@ export function createClaudeLauncher({
     };
   }
 
-  return { list, launch, answer };
+  return { list, launch, answer, approve };
 }

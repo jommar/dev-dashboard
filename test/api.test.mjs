@@ -242,3 +242,36 @@ test('scenario 49: answerClaude posts an empty answers array to retry a send', a
   assert.deepEqual(JSON.parse(calls[0][1].body), { key: 'TAP-1234', answers: [] });
   assert.deepEqual(result.send, { status: 'sent' });
 });
+
+test('answerClaude posts resend: true only when asked to, so the saved answers go again', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse({ ok: true, key: 'TAP-1234', ticket: {}, send: { status: 'sent' } });
+  });
+
+  await api.answerClaude('TAP-1234', [], { resend: true });
+  await api.answerClaude('TAP-1234', [], { resend: false });
+
+  assert.equal(calls[0][0], '/api/claude/answers');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { key: 'TAP-1234', answers: [], resend: true });
+  assert.deepEqual(JSON.parse(calls[1][1].body), { key: 'TAP-1234', answers: [] });
+});
+
+test('approveClaude posts only the ticket key and passes the send outcome through', async (t) => {
+  const calls = [];
+  const send = { status: 'failed', reason: 'live_at_resume' };
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse({ ok: true, key: 'TAP-1234', ticket: { flags: {} }, send });
+  });
+
+  const result = await api.approveClaude('TAP-1234');
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], '/api/claude/approve');
+  assert.equal(calls[0][1].method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { key: 'TAP-1234' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.send, send);
+});

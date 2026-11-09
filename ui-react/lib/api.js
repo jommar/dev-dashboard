@@ -257,8 +257,15 @@ export const getClaudeTickets = () => watchRequest('/api/claude/tickets');
 export const launchClaude = (key, phase) =>
   watchRequest('/api/claude/launch', { method: 'POST', body: { key, phase } });
 
-export const answerClaude = (key, answers) =>
-  watchRequest('/api/claude/answers', { method: 'POST', body: { key, answers } });
+// `resend` asks for the saved answers to go to the session again even when nothing changed.
+export const answerClaude = (key, answers, { resend = false } = {}) =>
+  watchRequest('/api/claude/answers', {
+    method: 'POST',
+    body: { key, answers, ...(resend && { resend: true }) },
+  });
+
+export const approveClaude = (key) =>
+  watchRequest('/api/claude/approve', { method: 'POST', body: { key } });
 
 // The prompt files behind the launcher: all three listed, and one saved or reset by name. A save
 // or a reset answers with the prompt's new entry.

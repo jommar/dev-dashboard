@@ -35,8 +35,15 @@ const LABEL = {
 };
 // The first pass wrote the plan; `done` stays false until every question is answered and the
 // session has updated the plan.
-const PLANNED = { 'investigate-and-plan': true, 'implement-plan': false, done: false };
-const PLAN_DONE = { ...PLANNED, done: true };
+const PLANNED = {
+  'investigate-and-plan': true,
+  'implement-plan': false,
+  done: false,
+  approved: false,
+};
+// A plan the session marked done but the user has not approved yet, and one the user approved.
+const PLAN_FINISHED = { ...PLANNED, done: true };
+const PLAN_DONE = { ...PLAN_FINISHED, approved: true };
 const TRUST_SENTENCE =
   'Claude does not trust ~/pathwise yet. Run claude there once and accept the trust prompt.';
 const PROMPT_UNREADABLE =
@@ -48,6 +55,7 @@ const STANDING_HINT =
   'Save as you go. Nothing is sent to the session until every question has an answer.';
 const SENT_LINE = 'Answers sent. Claude is updating the plan.';
 const PLAN_NOT_DONE = 'Claude has not marked the plan done. Check the session before implementing.';
+const NOT_APPROVED = 'Approve the plan first.';
 const ANSWERS_NOT_SENT =
   'All questions are answered, but they have not been sent to the session. Press Save answers to send them.';
 
@@ -314,6 +322,11 @@ test('scenario 25: questions are answered in the dialog and unlock Implement pla
 
   await second.fill('Yes, behind a setting');
   await save.click();
+  // A finished plan still waits for the user's approval before Implement plan opens.
+  await expect(dialog.getByTestId('claude-approve')).toBeEnabled();
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(NOT_APPROVED);
+  await dialog.getByTestId('claude-approve').click();
   await expect(dialog.getByTestId('claude-action-implement')).toBeEnabled();
   expect(bodiesTo(dashboard, '/api/claude/answers')).toEqual([
     { key: KEY, answers: { q1: 'Portage-backend' } },
@@ -1152,3 +1165,128 @@ for (const width of [1440, 390]) {
     await onScreen();
   });
 }
+
+test('scenario 55: Approve is open only for a plan the session marked done, and approval unlocks Implement plan', async ({
+  page,
+  dashboard,
+}) => {
+  const answered = [claudeQuestion('q1', Q1, 'Portage-backend')];
+  await openBoard(page, dashboard, {
+    'TAP-9002': claudeEntry('failed', 'plan_not_done', {
+      flags: PLANNED,
+      goTo: sessions(ATTACH),
+      questions: answered,
+    }),
+    [KEY]: claudeEntry('done', 'plan_ready', {
+      flags: PLAN_FINISHED,
+      goTo: sessions(ATTACH),
+      questions: answered,
+    }),
+  });
+
+  // Not done: Approve is off and says why; nothing is sent.
+  let dialog = await openDialog(page, 'TAP-9002');
+  await expect(dialog.getByTestId('claude-approve')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-approve')).toHaveText('Approve plan');
+  await expect(dialog.getByTestId('claude-approve-hint')).toHaveText(PLAN_NOT_DONE);
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
+
+  // Done but not approved: Approve is open and Implement plan waits for it.
+  dialog = await openDialog(page);
+  const approve = dialog.getByTestId('claude-approve');
+  await expect(approve).toBeEnabled();
+  await expect(dialog.getByTestId('claude-approved-note')).toHaveCount(0);
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(NOT_APPROVED);
+
+  await approve.click();
+
+  await expect(dialog.getByTestId('claude-approve-result')).toHaveText(
+    'Approval sent. Claude is checking the plan.',
+  );
+  await expect(approve).toHaveText('Approved');
+  await expect(approve).toBeDisabled();
+  await expect(dialog.getByTestId('claude-approved-note')).toContainText('Approved');
+  await expect(dialog.getByTestId('claude-action-implement')).toBeEnabled();
+  expect(bodiesTo(dashboard, '/api/claude/approve')).toEqual([{ key: KEY }]);
+  expect(bodiesTo(dashboard, '/api/claude/launch')).toEqual([]);
+});
+
+test('scenario 55: a failed approval says why and can be tried again', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('done', 'plan_ready', {
+      flags: PLAN_FINISHED,
+      goTo: sessions(ATTACH),
+      questions: [claudeQuestion('q1', Q1, 'Portage-backend')],
+    }),
+  });
+  const dialog = await openDialog(page);
+  const approve = dialog.getByTestId('claude-approve');
+  dashboard.data.claude.sends.push({ status: 'failed', reason: 'live_at_resume' });
+
+  await approve.click();
+
+  await expect(dialog.getByTestId('claude-approve-result')).toHaveText(
+    'Approval not sent: The Claude session is still running. Press Approve plan to retry.',
+  );
+  await expect(approve).toBeEnabled();
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+
+  await approve.click();
+
+  await expect(dialog.getByTestId('claude-approve-result')).toHaveText(
+    'Approval sent. Claude is checking the plan.',
+  );
+  expect(bodiesTo(dashboard, '/api/claude/approve')).toEqual([{ key: KEY }, { key: KEY }]);
+});
+
+test('scenario 56: Resend answers sends the saved answers again, with nothing changed, and is off while drafts are unsaved', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('done', 'plan_ready', {
+      flags: PLAN_DONE,
+      goTo: sessions(ATTACH),
+      questions: [claudeQuestion('q1', Q1, 'Portage-backend'), claudeQuestion('q2', Q2, 'Yes')],
+    }),
+  });
+  const dialog = await openDialog(page);
+  const resend = dialog.getByTestId('claude-questions-resend');
+  await expect(resend).toBeEnabled();
+  // Save has nothing to send for unchanged answers; Resend does.
+  await expect(dialog.getByTestId('claude-questions-save')).toBeDisabled();
+
+  await resend.click();
+
+  await expect(dialog.getByTestId('claude-send-result')).toHaveText(SENT_LINE);
+  expect(bodiesTo(dashboard, '/api/claude/answers')).toEqual([
+    { key: KEY, answers: [], resend: true },
+  ]);
+
+  // A draft that is not saved yet is not what a resend sends, so it waits for Save.
+  await dialog.getByTestId('claude-question-q1').fill('Portage-frontend');
+  await expect(resend).toBeDisabled();
+  await expect(dialog.getByTestId('claude-resend-hint')).toHaveText('Save your changes first.');
+});
+
+test('scenario 56: Resend answers is off while a session works', async ({ page, dashboard }) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('working', 'running', {
+      flags: PLANNED,
+      goTo: sessions(ATTACH),
+      questions: [claudeQuestion('q1', Q1, 'Portage-backend')],
+    }),
+  });
+  const dialog = await openDialog(page);
+
+  await expect(dialog.getByTestId('claude-questions-resend')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-resend-hint')).toHaveText(
+    'A Claude session is already running for this ticket.',
+  );
+  await expect(dialog.getByTestId('claude-approve')).toBeDisabled();
+});

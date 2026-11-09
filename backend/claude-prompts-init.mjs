@@ -1,4 +1,4 @@
-// claude-prompts-init.mjs — `npm run claude:prompts` writes the three built-in prompt templates
+// claude-prompts-init.mjs — `npm run claude:prompts` writes the built-in prompt templates
 // (placeholders intact) into the prompts folder as starter files to edit. A file that is already
 // there is never overwritten.
 

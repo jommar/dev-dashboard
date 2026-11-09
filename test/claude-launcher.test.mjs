@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   ANSWERS_TEMPLATE,
+  APPROVE_TEMPLATE,
   BAD_PROMPT_FILES,
   EARLIER_ID,
   FIRST_ID,
@@ -425,6 +426,11 @@ function finishPlanning(env) {
   env.seed(KEY, { status: { ...env.parsed().status, done: true } });
 }
 
+// The user approved the finished plan: the dashboard's flag in status.json, which opens implement.
+function approvePlan(env) {
+  env.seed(KEY, { status: { ...env.parsed().status, approved: true } });
+}
+
 async function assertRejects(operation, { code, status, errors }, label) {
   await assert.rejects(
     async () => operation(),
@@ -477,6 +483,7 @@ test('scenario 2: launch creates status.json in the locked shape and launch.json
     'investigate-and-plan': false,
     'implement-plan': false,
     done: false,
+    approved: false,
     questions: [],
   });
   assert.deepEqual(env.parsed().launch, {
@@ -640,7 +647,13 @@ test('scenario 6: launching implement again resets only the implement flag and e
     id: SECOND_ID,
   });
   env.seed(KEY, {
-    status: statusFile({ investigate: true, implement: true, done: true, questions }),
+    status: statusFile({
+      investigate: true,
+      implement: true,
+      done: true,
+      approved: true,
+      questions,
+    }),
     launch: { [INVESTIGATE]: investigated, [IMPLEMENT]: earlierImplement },
   });
   env.writePlan();
@@ -651,7 +664,7 @@ test('scenario 6: launching implement again resets only the implement flag and e
   const { status, launch } = env.parsed();
   assert.deepEqual(
     status,
-    statusFile({ investigate: true, implement: false, done: true, questions }),
+    statusFile({ investigate: true, implement: false, done: true, approved: true, questions }),
   );
   assert.deepEqual(launch[INVESTIGATE], investigated, 'the investigate entry is untouched');
   assert.deepEqual(launch[IMPLEMENT], {
@@ -1198,6 +1211,12 @@ test('scenario 44: answering through the route records the answer and unlocks im
 
   // The session finishes updating the plan and marks it done.
   finishPlanning(env);
+  assert.equal(
+    (await env.launcher.list()).tickets[KEY].blocks.implement,
+    'not_approved',
+    'a finished plan still waits for the approval',
+  );
+  approvePlan(env);
   assert.equal((await env.launcher.list()).tickets[KEY].blocks.implement, null);
 
   const result = await env.launcher.launch(launchBody(IMPLEMENT));
@@ -1252,6 +1271,7 @@ test('scenario 47: relaunching implement keeps the answers saved on its record, 
     status: statusFile({
       investigate: true,
       done: true,
+      approved: true,
       questions: [question('q1', 'Portage-backend'), question('q2')],
     }),
     launch: {
@@ -1331,6 +1351,7 @@ test('scenario 49: an implement launch rewrites status.json as the locked shape 
   seedUnvetted(env, [question('q1'), unreadable]);
   await env.launcher.answer(answerBody({ q1: 'Portage-backend' }));
   finishPlanning(env);
+  approvePlan(env);
   const before = env.files().status;
   assert.ok(before.includes(INJECTED_ANSWER), 'the file the session wrote still holds the answer');
   assert.ok(before.includes(INJECTED_FIELD), 'and the extra field');
@@ -1343,9 +1364,10 @@ test('scenario 49: an implement launch rewrites status.json as the locked shape 
       investigate: true,
       implement: false,
       done: true,
+      approved: true,
       questions: [question('q1', 'Portage-backend')],
     }),
-    'only the four keys, and only the question the dashboard reads',
+    'only the five keys, and only the question the dashboard reads',
   );
   const after = env.files().status;
   assert.ok(!after.includes(INJECTED_ANSWER), 'the unread answer is gone');
@@ -1368,6 +1390,7 @@ test('scenario 50: the rewritten status.json keeps the first 20 readable questio
   const answers = Object.fromEntries(readable.slice(0, 20).map(({ id }) => [id, `answer ${id}`]));
   await env.launcher.answer(answerBody(answers));
   finishPlanning(env);
+  approvePlan(env);
 
   await env.launcher.launch(launchBody(IMPLEMENT));
 
@@ -1508,6 +1531,8 @@ test('scenario 73: a session the launcher just started for investigate blocks im
     investigate: 'session_running',
     implement: 'investigate_running',
     answer: 'session_running',
+    resend: 'session_running',
+    approve: 'session_running',
     groom: null,
     review: null,
   });
@@ -1539,6 +1564,8 @@ test('scenario 74: a session the launcher just started for implement blocks inve
     investigate: 'implement_running',
     implement: 'session_running',
     answer: 'session_running',
+    resend: 'session_running',
+    approve: 'session_running',
     groom: null,
     review: null,
   });
@@ -2088,7 +2115,7 @@ test('scenario 96: an implement launch keeps done as it was', async (t) => {
 
   assert.deepEqual(
     env.parsed().status,
-    statusFile({ investigate: true, implement: false, done: true, questions }),
+    statusFile({ investigate: true, implement: false, done: true, approved: true, questions }),
   );
 });
 
@@ -2264,7 +2291,13 @@ test('scenario 107: a changed answer whose send failed cannot be implemented aga
   finishPlanning(env);
   const after = (await env.launcher.list()).tickets[KEY];
   assert.equal(after.unsent, false, 'sent');
-  assert.equal(after.blocks.implement, null, 'and done again, so implement is open');
+  assert.equal(after.blocks.implement, 'not_approved', 'done again, but the plan was revised');
+  approvePlan(env);
+  assert.equal(
+    (await env.launcher.list()).tickets[KEY].blocks.implement,
+    null,
+    'and approved again, so implement is open',
+  );
 });
 
 test('scenario 108: a new investigate launch drops what was sent with the rest of the record', async (t) => {
@@ -2424,13 +2457,14 @@ test('scenario 121: with no answers file the message sent is the built-in text, 
   );
 });
 
-test('scenario 121: the built-in templates are exported as the four texts, placeholders in them', async () => {
+test('scenario 121: the built-in templates are exported as the five texts, placeholders in them', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
   assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
   assert.deepEqual(PROMPT_TEMPLATES, {
     investigate: INVESTIGATE_TEMPLATE,
     implement: IMPLEMENT_TEMPLATE,
     answers: ANSWERS_TEMPLATE,
+    approve: APPROVE_TEMPLATE,
     groom: GROOM_TEMPLATE,
   });
 });
@@ -3318,4 +3352,202 @@ test('scenario 245: a groom-only folder is listed with the groom entry', async (
     kind: 'attach',
     command: `claude attach ${FIRST_ID}`,
   });
+});
+
+// ---- resend: the saved answers go to the session again, changed or not ----
+
+const SENT_PAIR = () => ({
+  questions: ANSWERED_PAIR,
+  done: true,
+  sent: sentRecord(ANSWERED_PAIR),
+});
+
+test('resend: unchanged answers go to the session again, naming every question, and keep the approval', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { ...SENT_PAIR(), extra: { approved: true } });
+
+  const plain = await env.launcher.answer(answerBody([]));
+  assert.deepEqual(plain.send, { status: 'skipped', reason: 'unchanged' });
+  assert.equal(env.fake.resumes().length, 0, 'a plain save of unchanged answers sends nothing');
+
+  const result = await env.launcher.answer({ ...answerBody([]), resend: true });
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 1);
+  assert.equal(
+    env.fake.resumes()[0].notice,
+    renderTemplate(ANSWERS_TEMPLATE, {
+      statusPath: env.statusPath(),
+      questionIds: ['q1', 'q2'],
+      change: 'answers (sent again)',
+    }),
+  );
+  assert.deepEqual(sentOf(env).answers, answeredMap(ANSWERED_PAIR));
+  const { status } = env.parsed();
+  assert.equal(status.done, false, 'done is reset before the resume, as for any send');
+  assert.equal(status.approved, true, 'nothing changed, so the approval stands');
+});
+
+test('resend: keeps every gate of a send, so it skips what a plain send skips except unchanged', async (t) => {
+  const cases = [
+    ['an open question', { questions: HALF_ANSWERED, done: true }, 'incomplete'],
+    ['a plan not made yet', { ...SENT_PAIR(), investigate: false }, 'not_planned'],
+    ['an implement run', { ...SENT_PAIR(), implement: true }, 'implement_started'],
+  ];
+  for (const [label, seed, reason] of cases) {
+    const env = await routingEnvironment(t);
+    seedAsked(env, seed);
+
+    const result = await env.launcher.answer({ ...answerBody([]), resend: true });
+
+    assert.deepEqual(result.send, { status: 'skipped', reason }, label);
+    assert.equal(env.fake.resumes().length, 0, `${label}: nothing is sent`);
+  }
+});
+
+test('resend: is offered whenever the gates pass, done or not, and is blocked otherwise', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { ...SENT_PAIR(), done: false });
+  assert.equal((await env.launcher.list()).tickets[KEY].blocks.resend, null, 'done is not needed');
+
+  seedAsked(env, { questions: HALF_ANSWERED, done: true });
+  assert.equal(
+    (await env.launcher.list()).tickets[KEY].blocks.resend,
+    'questions_unanswered',
+    'an open question',
+  );
+});
+
+test('changed answers withdraw the approval from status.json and launch.json with the send', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { questions: HALF_ANSWERED, done: true, extra: { approved: true } });
+  const record = env.parsed().launch[INVESTIGATE];
+  env.seed(KEY, {
+    launch: { [INVESTIGATE]: { ...record, approved: { at: '2026-01-01T00:00:00.000Z' } } },
+  });
+
+  const result = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.parsed().status.approved, false, 'the plan is being revised');
+  assert.equal(Object.hasOwn(env.parsed().launch[INVESTIGATE], 'approved'), false);
+  assert.equal(result.ticket.flags.approved, false);
+  assert.equal(result.ticket.approvedAt, null);
+});
+
+// ---- approve: the user approves a finished plan, and implement opens ----
+
+const approveBody = { key: KEY };
+const withoutApproved = (env) => {
+  const { approved, ...status } = env.parsed().status;
+  void approved;
+  env.seed(KEY, { status });
+};
+
+test('approve: is refused until the plan is done, and nothing is sent or written', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { ...SENT_PAIR(), done: false });
+  assert.equal((await env.launcher.list()).tickets[KEY].blocks.approve, 'plan_not_done');
+  const before = env.files();
+
+  await assertRejects(() => env.launcher.approve(approveBody), refused('plan_not_done'), 'approve');
+
+  assert.equal(env.fake.resumes().length, 0);
+  assert.deepEqual(env.files(), before, 'both files are unchanged');
+});
+
+test('approve: other gates refuse it with their own reasons', async (t) => {
+  const cases = [
+    ['answers not sent', { questions: ANSWERED_PAIR, done: true }, 'answers_not_sent'],
+    ['an open question', { questions: HALF_ANSWERED, done: true }, 'questions_unanswered'],
+    ['not planned', { ...SENT_PAIR(), investigate: false }, 'not_planned'],
+    ['an implement run', { ...SENT_PAIR(), implement: true }, 'implement_started'],
+    ['already approved', { ...SENT_PAIR(), extra: { approved: true } }, 'already_approved'],
+  ];
+  for (const [label, seed, reason] of cases) {
+    const env = await routingEnvironment(t);
+    seedAsked(env, seed);
+
+    await assertRejects(() => env.launcher.approve(approveBody), refused(reason), label);
+
+    assert.equal(env.fake.resumes().length, 0, `${label}: nothing is sent`);
+  }
+});
+
+test('approve: sends the approval message and adds approved to a status.json without the key', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, SENT_PAIR());
+  withoutApproved(env);
+  assert.equal(Object.hasOwn(env.parsed().status, 'approved'), false, 'an older file has no key');
+  let atResume = null;
+  env.fake.onResume(() => {
+    atResume = env.parsed().status;
+  });
+  const before = (await env.launcher.list()).tickets[KEY];
+  assert.equal(before.blocks.implement, 'not_approved', 'absent reads as not approved');
+  assert.equal(before.blocks.approve, null);
+
+  const result = await env.launcher.approve(approveBody);
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.deepEqual(Object.keys(result).sort(), ['key', 'ok', 'send', 'ticket']);
+  assert.equal(env.fake.resumes().length, 1);
+  assert.equal(
+    env.fake.resumes()[0].notice,
+    renderTemplate(APPROVE_TEMPLATE, { statusPath: env.statusPath() }),
+  );
+  assert.equal(atResume.approved, true, 'the flag is in the file when the session is resumed');
+  assert.equal(atResume.done, false, 'and done is reset, as for answers');
+  const { status, launch } = env.parsed();
+  assert.deepEqual(
+    status,
+    { ...statusFile({ investigate: true, approved: true, questions: ANSWERED_PAIR }), done: false },
+    'every other key is as it was',
+  );
+  assert.match(launch[INVESTIGATE].approved.at, /^\d{4}-\d\d-\d\dT[\d:.]+Z$/);
+  assert.deepEqual(sentOf(env).answers, answeredMap(ANSWERED_PAIR), 'the answers record is kept');
+  assert.equal(result.ticket.flags.approved, true);
+  assert.equal(result.ticket.approvedAt, launch[INVESTIGATE].approved.at);
+
+  // The session re-checks the plan and marks it done again; only then does implement open.
+  assert.equal((await env.launcher.list()).tickets[KEY].blocks.implement, 'investigate_running');
+  env.fake.setListing(finishedListing());
+  assert.equal((await env.launcher.list()).tickets[KEY].blocks.implement, 'plan_not_done');
+  finishPlanning(env);
+  const after = (await env.launcher.list()).tickets[KEY];
+  assert.equal(after.blocks.implement, null, 'approved and done: implement is open');
+  assert.equal(after.blocks.approve, 'already_approved');
+});
+
+test('approve: a resume that did not deliver leaves status.json as it was and records nothing', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, SENT_PAIR());
+  withoutApproved(env);
+  const before = env.files();
+  env.fake.forceResume({ status: 'waiting', reason: 'live_at_resume' });
+
+  const result = await env.launcher.approve(approveBody);
+
+  assert.deepEqual(result.send, { status: 'failed', reason: 'live_at_resume' });
+  assert.deepEqual(env.files(), before, 'neither file says approved');
+  assert.equal((await env.launcher.list()).tickets[KEY].blocks.implement, 'not_approved');
+});
+
+test('implement: launches only once the plan is approved', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env, { approved: false });
+  const before = env.files();
+
+  await assertRejects(
+    () => env.launcher.launch(launchBody(IMPLEMENT)),
+    refused('not_approved'),
+    'implement',
+  );
+  assert.equal(env.cli.launches().length, 0, 'nothing is spawned');
+  assert.deepEqual(env.files(), before, 'a refusal changes nothing');
+
+  approvePlan(env);
+  const result = await env.launcher.launch(launchBody(IMPLEMENT));
+  assert.equal(result.ok, true);
+  assert.equal(env.parsed().status.approved, true, 'the flag is kept in the rewritten file');
 });

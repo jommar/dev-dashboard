@@ -383,7 +383,7 @@ An agent can read the same logs three ways:
    - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
-   - `GET /api/claude/tickets`, `POST /api/claude/launch` and `POST /api/claude/answers` (see [Claude launcher](#claude-launcher))
+   - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers` and `POST /api/claude/approve` (see [Claude launcher](#claude-launcher))
    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
 
 ## Home
@@ -1024,9 +1024,10 @@ and writes the questions it would have asked you into `status.json` instead, eac
 options (a, b, c) inline in the question text and a recommended default, in under 450
 characters because the dashboard cuts a question off at 500. Once every question
 has an answer you saved, the dashboard sends the answers back to that same planning session, which
-is told to update the plan, checklist and spec and then set `done`. The implement
-session treats starting it as your approval, does not commit, push or open a pull request, and
-leaves its changes in a worktree with a short report beside the plan.
+is told to update the plan, checklist and spec and then set `done`. Once it has, you approve the
+plan with **Approve plan** (see [Approving the plan](#approving-the-plan)) and only then can Implement
+plan start. The implement session does not commit, push or open a pull request, and leaves its
+changes in a worktree with a short report beside the plan.
 
 ### Requirements and limits
 
@@ -1097,6 +1098,12 @@ is on screen without scrolling. At its left is **Prompts**, which opens the prom
 [Custom prompts](#custom-prompts)); it is there whether or not the ticket has questions, so with
 none the footer holds **Prompts** and **Close**. With questions it also holds the count
 (`N of M answered`), the line saying what the last save did and **Save answers**.
+Under the questions, **Resend answers** sends the saved answers to the session again even when
+nothing changed (for a send that never arrived; see
+[Saving and sending answers](#saving-and-sending-answers)); it is off while you have unsaved edits
+and while a session works. Between the phase rows and the questions, **Approve plan** is open only
+once the planning session has marked the plan `done` (see [Approving the plan](#approving-the-plan));
+it says why when it is off, and reads `Approved` with the time afterwards.
 **Save answers** saves only the answers you changed
 and, when every question has one, sends them to the session (see
 [Saving and sending answers](#saving-and-sending-answers)). It is enabled when you changed an
@@ -1137,6 +1144,7 @@ flight. nodemon reads the file only at start-up, so restart `npm run dev` once a
   "investigate-and-plan": false,
   "implement-plan": false,
   "done": false,
+  "approved": false,
   "questions": [{ "id": "q1", "question": "Which repo owns the fix?", "answer": null }]
 }
 ```
@@ -1149,17 +1157,21 @@ flight. nodemon reads the file only at start-up, so restart `npm run dev` once a
   the same edit as its flag; one that asked questions leaves it `false` and sets it `true`, as its
   very last action, after the answers have been sent to it (see
   [Saving and sending answers](#saving-and-sending-answers)). The dashboard never sets `done` to
-  `true`.
+  `true`. `approved` is not the session's: it never sets or changes it.
 - **The dashboard** creates the file at an Investigate launch with both flags `false`, `done`
-  `false` and no questions, replacing any earlier file (a re-run resets it). At an Implement
+  `false`, `approved` `false` and no questions, replacing any earlier file (a re-run resets it). At an Implement
   launch it rewrites the file from what it can read: the planning flag `true`, the implement flag
-  `false`, `done` as the session left it and the first 20 readable questions, each whole, with
+  `false`, `done` and `approved` as they were and the first 20 readable questions, each whole, with
   `answer` kept only where you saved that answer; anything else a session left in the file is
-  dropped. When it sends answers it sets `done` to `false` first. Otherwise it writes only the
-  `answer` of an existing question, when you save.
-- **Reads are defensive.** A flag counts only when it is exactly `true`, and so does `done`: a file
-  with no `done`, or one that is not a boolean, reads as `done: false` (it is not unreadable), so a
-  `status.json` written before the field existed reads `false`. A question is read only
+  dropped. When it sends answers it sets `done` to `false` first, and `approved` to `false` too
+  when the answers differ from the last send (the plan is being revised and needs approving again);
+  a resend of unchanged answers leaves `approved` as it was. Approve writes `approved: true` with
+  `done: false` just before it resumes the session. Otherwise it writes only the `answer` of an
+  existing question, when you save. Both keys are added when the file has none.
+- **Reads are defensive.** A flag counts only when it is exactly `true`, and so do `done` and
+  `approved`: a file with no `done` or `approved`, or one that is not a boolean, reads as `false`
+  (it is not unreadable), so a `status.json` written before the field existed reads `false` and
+  needs one Approve before Implement plan opens. A question is read only
   when its `id` matches `^[A-Za-z0-9_-]{1,32}$` and its `question` is a string; the board shows at
   most 20 questions, each cut to 500 characters, as plain text. A file over 1 MiB, or one that is
   not a JSON object, is unreadable: the card shows no flags and no questions, every action that
@@ -1175,7 +1187,8 @@ which session belongs to which phase and a re-run reuses its session name.
     "launchedAt": 1731100000000,
     "id": "ab12cd34",
     "answered": { "q1": "<sha-256 hex of the id, question and answer you saved>" },
-    "sent": { "at": "<ISO time>", "answers": { "q1": "<the same hash, at the time of the send>" } }
+    "sent": { "at": "<ISO time>", "answers": { "q1": "<the same hash, at the time of the send>" } },
+    "approved": { "at": "<ISO time>" }
   },
   "implement-plan": { "name": "ABC-123-implement-plan", "launchedAt": 1731100500000, "id": null },
   "groom": { "name": "ABC-123-groom", "launchedAt": 1731100900000, "id": "ef56ab78" },
@@ -1202,7 +1215,8 @@ alone. Relaunch uses the existing record/session tracking, not a separate review
 investigate record only. It is written when answers were really delivered to the session, and again
 at each re-send, and holds the time and the hash of every question (the same hash as `answered`)
 at that moment. It is written only after the resume succeeded, so a failed send leaves it as it
-was.
+was. `approved` is on the investigate record only too: the time Approve was delivered, dropped with
+the next send of changed answers.
 
 Folders are mode `0700` and files `0600`, and every dashboard write is a temp file, fsync and
 rename, under one lock per ticket. Workflow state writes require no workflow session to be
@@ -1270,7 +1284,12 @@ The reply is `{ ok, key, send, ticket }` with `send` `{ status, reason? }`, `sta
 `skipped` or `failed`. A failed send is not an HTTP error: the answers stay saved (they are never
 rolled back), `sent` is not recorded, and the call answers `200` with `send.status` `failed`. The
 next **Save answers** retries it, with or without edits: with nothing changed the dialog posts
-`answers: []`, which saves nothing and runs the same decision. After a save the dialog shows one of:
+`answers: []`, which saves nothing and runs the same decision. **Resend answers** posts
+`{ answers: [], resend: true }`: the same decision with the one gate that skips an unchanged set
+(`unchanged`) lifted, so every saved answer goes again (the notice reads "answers (sent again) to
+questions q1, q2"), whether or not the plan is `done`. Every other gate still applies. It records
+`sent` and resets `done` like any send, and leaves `approved` alone because nothing changed. After a
+save the dialog shows one of:
 
 | `send`                         | The dialog says                                                                                           |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
@@ -1311,9 +1330,9 @@ Limits:
 **Implement plan** launches only when the status file is readable (`status_unreadable`), the
 planning flag is `true` (`not_planned`), the plan file exists (`plan_missing`), no question is
 unanswered (`questions_unanswered`), no answer is waiting to be sent (`answers_not_sent`) and
-`done` is `true` (`plan_not_done`), in that order, and neither phase's session works
-(`session_running` or `investigate_running`, which come first). A refused launch starts nothing
-and changes no file.
+`done` is `true` (`plan_not_done`) and you approved the plan (`not_approved`), in that order, and
+neither phase's session works (`session_running` or `investigate_running`, which come first). A
+refused launch starts nothing and changes no file.
 
 For each answer you save, the dashboard records a hash of it (SHA-256 of the question id, the
 question text and the answer, untrimmed) in `launch.json` and counts an answer only when its text
@@ -1321,8 +1340,38 @@ still matches. A best-guess default that a session copied into `status.json` its
 or a question edited after you saved it, therefore reads as unanswered and keeps Implement plan
 disabled. This is accident-proofing, not a security boundary: a launched session can write the
 whole `claude/` folder, `launch.json` included, so a hostile session could forge the hashes. Your
-real protection is that Implement plan is a manual click, made after you read the plan (the
-dialog shows its path) and the answers you saved yourself.
+real protection is that Approve plan and Implement plan are manual clicks, made after you read the
+plan (the dialog shows its path) and the answers you saved yourself.
+
+### Approving the plan
+
+**Approve plan** tells the planning session that you approved its finished plan, and unlocks
+Implement plan. It is open only when the plan is ready and done: the status file is readable, the
+planning flag is `true`, the plan file exists, no question is unanswered, the answers were all sent
+and `done` is `true`. Otherwise `POST /api/claude/approve` is refused (`409` `CLAUDE_REFUSED`, the
+reason in `errors[0]`) with the first reason that applies: `status_unreadable`, `not_planned`,
+`plan_missing`, `questions_unanswered`, `answers_not_sent` or `plan_not_done`, then
+`implement_started` once Implement plan has been launched and `already_approved` after an approval;
+`session_running` and `investigate_running` come first while a session works. Nothing is written
+on a refusal.
+
+An approval is sent as the answers are: the idle session is stopped, the dashboard waits the settle
+gap, sets `done` to `false` and `approved` to `true` in `status.json` (adding the key to an older
+file; nothing else in the file changes) and resumes the session with the approval message
+(`prompts/approve.md`, see [Custom prompts](#custom-prompts)). The session re-reads the plan,
+checklist and spec against your answers, fixes only a genuine inconsistency inside
+`.orchestrator/<slug>/`, implements nothing, and sets `done` back to `true` as its last action. The
+flag goes in just before the resume rather than after it so that `status.json` has one writer
+while the session works. If the resume does not deliver, `status.json` is put back exactly as it
+was and nothing is recorded; the reply is `200` with `send.status` `failed` and a reason, as for
+answers, and **Approve plan** can be pressed again. After a delivery `launch.json` holds
+`approved: { at }` on the investigate record and the entry carries `flags.approved` and
+`approvedAt`. The dialog shows `Approval sent. Claude is checking the plan.` or `Approval not
+sent: <reason>. Press Approve plan to retry.`
+
+Implement plan stays its own step and its launch is the only thing that starts an implement
+session. Changed answers withdraw the approval (see [Saving and sending answers](#saving-and-sending-answers)):
+the plan is being revised, so it needs approving again after the session marks it `done`.
 
 ### Groom ticket
 
@@ -1402,8 +1451,8 @@ browser localStorage on rollback; older code ignores review records and treats p
 
 ### Custom prompts
 
-The three launch prompts (investigate, implement, groom) and the message sent with your answers
-are editable templates; code review uses its own fixed server-generated delegation prompt instead.
+The three launch prompts (investigate, implement, groom) and the messages sent with your answers
+and your approval are editable templates; code review uses its own fixed server-generated delegation prompt instead.
 By default the editable prompts are
 the built-in text. You can change each one in the app (see **Edit in the app** below) or by hand.
 Both edit the same file, a file of that name in the `prompts/` folder of the dashboard (the repo
@@ -1414,6 +1463,7 @@ root, next to `claude/`), so a hand edit and an app edit always agree:
 | `prompts/investigate.md` | the Investigate and plan prompt          | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
 | `prompts/implement.md`   | the Implement plan prompt                | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
 | `prompts/answers.md`     | the message sent with your saved answers | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+| `prompts/approve.md`     | the message sent when you approve a plan | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
 | `prompts/groom.md`       | the Groom ticket prompt                  | `{KEY}`, `{SLUG}`                                                |
 
 `{KEY}` is the ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
@@ -1425,7 +1475,7 @@ as UTF-8, trimmed, and otherwise used as written.
 
 - **Edit in the app.** **Prompts**, at the left of the Claude dialog's footer, swaps the dialog's
   body for an editor in the same dialog. The footer then holds **Back**, at the left where
-  **Prompts** was, and **Close**. The editor loads the four prompts once when it opens, not on
+  **Prompts** was, and **Close**. The editor loads the five prompts once when it opens, not on
   the dialog's 15 second refresh; if the load fails it shows the error and a **Retry** button.
   Each prompt has:
   - a badge: `default` (no file, so the built-in text), `custom` (a usable file) or
@@ -1451,7 +1501,7 @@ as UTF-8, trimmed, and otherwise used as written.
   contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done
   will not work." **Save** stays enabled and the server never refuses a prompt for it.
 - **Absent means built-in.** A missing file is never an error. `npm run claude:prompts` creates
-  `prompts/` and writes the four built-in templates into it, placeholders intact, for you to edit
+  `prompts/` and writes the five built-in templates into it, placeholders intact, for you to edit
   by hand. It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that
   exists. It needs no Settings setup.
 - **Applied at once.** The files are read on every launch and every send, never cached, so an edit
@@ -1572,7 +1622,7 @@ NUL bytes; anything else, a missing `text` included, is `400` `INVALID_PROMPT` a
 written. A text without
 `{STATUS_FILE}` is never refused. See [Custom prompts](#custom-prompts) for what a saved file does.
 
-The three launcher routes and the three prompt routes bypass the `SETUP_REQUIRED` gate like the
+The four launcher routes and the five prompt routes bypass the `SETUP_REQUIRED` gate like the
 Slack routes, because they need neither GitHub nor Jira. They run behind the same Host, Origin, `Sec-Fetch-Site` and JSON
 `Content-Type` checks (`403` and `415`), a local POST that sends none of those headers is accepted
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
@@ -1629,7 +1679,7 @@ nothing was sent.` and that the session received nothing (attach to it).
    `prompts/investigate.md` (keep the rest), and launch **Investigate and plan** on a throwaway
    ticket. Confirm the session's first message contains your line. Delete the file, launch again
    once the first session has finished, and confirm the built-in text is back.
-10. Open a ticket's Claude dialog and press **Prompts**. Confirm the four prompts load with the
+10. Open a ticket's Claude dialog and press **Prompts**. Confirm the five prompts load with the
     badge `default` (or `custom` if you kept a file), and that deleting `{STATUS_FILE}` from a box
     shows the warning while **Save** stays enabled. Add a line you will recognise at the top of
     **Investigate and plan prompt**, press **Save**, and confirm `Saved.`, the badge `custom` and

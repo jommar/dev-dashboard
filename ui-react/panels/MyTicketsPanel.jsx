@@ -375,6 +375,7 @@ export function MyTicketsPanel({ config, active }) {
           onClose={() => setOpenClaudeKey(null)}
           launch={claude.launch}
           answer={claude.answer}
+          approve={claude.approve}
         />
       )}
     </BoardPanel>

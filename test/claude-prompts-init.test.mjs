@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   ANSWERS_TEMPLATE,
+  APPROVE_TEMPLATE,
   EARLIER_ID,
   IMPLEMENT,
   IMPLEMENT_TEMPLATE,
@@ -32,11 +33,12 @@ import {
   statusFile,
 } from './claude-launcher-fixture.mjs';
 
-// The four starter files, in the order they are reported.
+// The starter files, in the order they are reported.
 const STARTERS = [
   ['investigate.md', INVESTIGATE_TEMPLATE],
   ['implement.md', IMPLEMENT_TEMPLATE],
   ['answers.md', ANSWERS_TEMPLATE],
+  ['approve.md', APPROVE_TEMPLATE],
   ['groom.md', GROOM_TEMPLATE],
 ];
 
@@ -67,7 +69,7 @@ const snapshot = (dir) =>
       ]),
   );
 
-test('scenario 130: it creates the prompts folder and writes the four built-in texts, placeholders intact', async (t) => {
+test('scenario 130: it creates the prompts folder and writes the five built-in texts, placeholders intact', async (t) => {
   const dir = path.join(tempRoot(t), 'nested', 'prompts');
 
   const result = await initPrompts({ dir, fs });
@@ -79,6 +81,7 @@ test('scenario 130: it creates the prompts folder and writes the four built-in t
   );
   assert.deepEqual(fs.readdirSync(dir).sort(), [
     'answers.md',
+    'approve.md',
     'groom.md',
     'implement.md',
     'investigate.md',
@@ -113,6 +116,7 @@ test('scenario 131: a file that is already there is kept as it is, and only the 
       ['investigate.md', 'kept'],
       ['implement.md', 'wrote'],
       ['answers.md', 'kept'],
+      ['approve.md', 'wrote'],
       ['groom.md', 'wrote'],
     ],
   );

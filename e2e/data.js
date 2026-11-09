@@ -1349,7 +1349,8 @@ export function claudeQuestion(id, question, answer = null) {
 // An entry's `unanswered` count and `blocks` follow from its state, phase, flags and questions, as
 // the server derives them. While a session works, each phase names the other's reason: the phase
 // that runs says a session is running, the other says which phase is. Implement needs the plan
-// marked done (`flags.done`) once every question has an answer. `unsent` (the answers are complete
+// marked done (`flags.done`) and approved (`flags.approved`, which Approve sets and changed answers
+// withdraw) once every question has an answer. `unsent` (the answers are complete
 // but were never sent to the session) is not derived: a spec sets it on the entry.
 function claudeDerived(entry) {
   const unanswered = entry.questions.filter(({ answer }) => !answer?.trim()).length;
@@ -1360,11 +1361,15 @@ function claudeDerived(entry) {
       investigate: implementing ? 'implement_running' : 'session_running',
       implement: implementing ? 'session_running' : 'investigate_running',
       answer: 'session_running',
+      resend: 'session_running',
+      approve: 'session_running',
     },
     unknown: {
       investigate: 'listing_unavailable',
       implement: 'listing_unavailable',
       answer: 'listing_unavailable',
+      resend: 'listing_unavailable',
+      approve: 'listing_unavailable',
     },
   }[entry.state];
   // A groom session blocks only another groom launch; the workflow never blocks it nor is blocked.
@@ -1384,13 +1389,24 @@ function claudeDerived(entry) {
         : null;
   // The server's order: open questions, then answers never sent (a stale `done` cannot be trusted),
   // then a plan not marked done.
-  const implement = unanswered
+  const approved = entry.flags.approved === true;
+  const planReady = unanswered
     ? 'questions_unanswered'
     : entry.unsent
       ? 'answers_not_sent'
       : entry.flags.done
         ? null
         : 'plan_not_done';
+  const implement = planReady ?? (approved ? null : 'not_approved');
+  // Approve needs the same ready plan and is open once; Resend needs only a planned, fully answered one.
+  const approve = planReady ?? (approved ? 'already_approved' : null);
+  const resend = !entry.questions.length
+    ? 'no_questions'
+    : unanswered
+      ? 'questions_unanswered'
+      : planned
+        ? null
+        : 'not_planned';
   return {
     ...entry,
     unanswered,
@@ -1402,6 +1418,8 @@ function claudeDerived(entry) {
         investigate: null,
         implement: planned ? implement : 'not_planned',
         answer: entry.questions.length ? null : 'no_questions',
+        resend,
+        approve: planned ? approve : 'not_planned',
       }),
       groom,
       review: reviewBlock,
@@ -1416,7 +1434,8 @@ export function claudeEntry(state, reason, overrides = {}) {
     phase: 'investigate-and-plan',
     state,
     reason,
-    flags: { 'investigate-and-plan': false, 'implement-plan': false, done: false },
+    flags: { 'investigate-and-plan': false, 'implement-plan': false, done: false, approved: false },
+    approvedAt: null,
     questions: [],
     goTo: CLAUDE_NO_SESSIONS,
     ...overrides,
@@ -1431,6 +1450,7 @@ const CLAUDE_PROMPT_LABELS = {
   investigate: 'Investigate and plan prompt',
   implement: 'Implement plan prompt',
   answers: 'Answers message',
+  approve: 'Approval message',
   groom: 'Groom ticket prompt',
 };
 const CLAUDE_PROMPT_PLACEHOLDERS = ['{KEY}', '{SLUG}', '{STATUS_FILE}'];
@@ -1439,6 +1459,8 @@ export const CLAUDE_PROMPT_DEFAULTS = {
   implement: 'Build the plan for {KEY} in the folder {SLUG} and record progress in {STATUS_FILE}.',
   answers:
     'The answers for {KEY} changed. Changes: {CHANGE}. Questions: {QUESTION_IDS}. Update the plan and write {STATUS_FILE}.',
+  approve:
+    'The user approved the plan for {KEY}. Check it once more and set done in {STATUS_FILE}.',
   // Grooming has no status file: its built-in text and placeholders never mention one.
   groom: 'Groom ticket {KEY} and write the result under the folder {SLUG} as groom.md.',
 };
@@ -1631,16 +1653,40 @@ function claudeResponse(url, method, { claude }, body) {
     const answered = claudeDerived(entry);
     const send = claude.sends.shift() ?? claudeSend(answered);
     // A notice that was sent is acted on at once: the session updates the plan and marks it done.
+    // Answers that changed revise the plan, which withdraws the approval; a resend alone does not.
+    const revised = Object.keys(body.answers).length > 0;
     const ticket =
       send.status === 'sent'
         ? claudeDerived({
             ...answered,
             state: 'done',
             reason: 'plan_ready',
-            flags: { ...answered.flags, done: true },
+            flags: {
+              ...answered.flags,
+              done: true,
+              approved: revised ? false : answered.flags.approved === true,
+            },
+            approvedAt: revised ? null : (answered.approvedAt ?? null),
             unsent: false,
           })
         : answered;
+    claude.tickets[body.key] = ticket;
+    return { json: { ok: true, key: body.key, ticket: structuredClone(ticket), send } };
+  }
+  if (pathname === '/api/claude/approve') {
+    const entry = claude.tickets[body?.key];
+    if (!entry) return claudeFailure(400, 'INVALID_TICKET');
+    if (entry.blocks.approve) return claudeFailure(409, 'CLAUDE_REFUSED', [entry.blocks.approve]);
+    const send = claude.sends.shift() ?? { status: 'sent' };
+    // The session re-checks the plan and marks it done again at once.
+    const ticket =
+      send.status === 'sent'
+        ? claudeDerived({
+            ...entry,
+            flags: { ...entry.flags, approved: true },
+            approvedAt: '2026-10-08T09:00:00.000Z',
+          })
+        : entry;
     claude.tickets[body.key] = ticket;
     return { json: { ok: true, key: body.key, ticket: structuredClone(ticket), send } };
   }

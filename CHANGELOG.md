@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added **Approve plan** and **Resend answers** to the Claude dialog. Approve is open only once
+  the planning session marked the plan `done` (and the plan file exists, every question is answered
+  and the answers were sent): `POST /api/claude/approve` stops the idle session, sets `done` to
+  `false` and `approved` to `true` in `status.json` (adding the key to older files, putting the file
+  back if the resume does not deliver), resumes it with a new `prompts/approve.md` message (a final
+  consistency check, nothing implemented, `done` set again) and records `approved: { at }` in
+  `launch.json`. **Implement plan now needs the approval** (`not_approved`; absent or non-true
+  reads as not approved), and answers that differ from the last send withdraw it, while a pure
+  resend does not. **Resend answers** posts `resend: true` to `POST /api/claude/answers` to send
+  the saved answers again even when unchanged, keeping every other gate. Entries gain
+  `flags.approved`, `approvedAt` and `blocks.resend` / `blocks.approve`; the prompt editor lists a
+  fifth prompt, `approve`. The send path shared by answers and approval was extracted; no
+  stop/resume timing or logging change.
 - Replaced Home's Sprint/KPI/Needs You/Services widgets with team/person velocity:
   explicit Generate/Refresh saves an all-team browser snapshot, restored without
   automatic fetching or expiry. Team defaults to Nexus and persists; Everyone/person

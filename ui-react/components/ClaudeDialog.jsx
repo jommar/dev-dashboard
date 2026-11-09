@@ -6,7 +6,10 @@
 // says, in words, under them) and, when the planning session asked any, the numbered questions as
 // auto-growing text boxes. The footer stays in view beside the body's scroll: it holds Prompts
 // (on the left), Save answers (linked to the questions form by its id), the progress, the result of
-// the last save, and Close. Prompts swaps the body for the prompt editor, still in this one dialog:
+// the last save, and Close. Between the phase rows and the questions sits Approve plan, open only
+// once the plan is marked done: it tells the planning session the plan is approved, and Implement
+// plan opens after it. Under the questions, Resend answers sends the saved answers again, even
+// unchanged. Prompts swaps the body for the prompt editor, still in this one dialog:
 // the footer then holds Back (the same button, so it keeps focus) and Close, and everything this
 // component holds (answer drafts, copy status, the last send result) is there when Back returns.
 import { useEffect, useId, useRef, useState } from 'react';
@@ -36,6 +39,9 @@ const REASON_TEXT = {
   answers_not_sent:
     'All questions are answered, but they have not been sent to the session. Press Save answers to send them.',
   plan_not_done: 'Claude has not marked the plan done. Check the session before implementing.',
+  not_approved: 'Approve the plan first.',
+  already_approved: 'The plan is approved.',
+  implement_started: 'Implement plan has started.',
   not_planned: 'Run Investigate and plan first.',
   plan_missing: 'The plan file was not found.',
   questions_unanswered: 'Answer the open questions first.',
@@ -50,6 +56,12 @@ const SKIPPED_TEXT = {
   not_planned: 'Saved. The plan is not ready yet, so nothing was sent.',
   implement_started: 'Saved. Implement plan has started, so nothing was sent.',
 };
+
+function approveText({ send }) {
+  if (send?.status === 'sent') return 'Approval sent. Claude is checking the plan.';
+  const why = REASON_TEXT[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
+  return `Approval not sent: ${why}. Press Approve plan to retry.`;
+}
 
 function sendText({ send, ticket }) {
   if (send?.status === 'sent') return 'Answers sent. Claude is updating the plan.';
@@ -76,7 +88,14 @@ const NOT_STARTED = {
   questions: [],
   goTo: { investigate: null, implement: null, groom: null },
   groom: { state: 'none', reason: null },
-  blocks: { investigate: null, implement: 'not_planned', answer: 'no_questions', groom: null },
+  blocks: {
+    investigate: null,
+    implement: 'not_planned',
+    answer: 'no_questions',
+    resend: 'no_questions',
+    approve: 'not_planned',
+    groom: null,
+  },
 };
 
 const failureText = ({ errors, error }) =>
@@ -113,7 +132,15 @@ function ClaudeRow({ phase, label, disabled, hint, onRun, noSession, onGoTo, chi
   );
 }
 
-export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launch, answer }) {
+export function ClaudeDialog({
+  ticketKey,
+  summary,
+  entry: listed,
+  onClose,
+  launch,
+  answer,
+  approve,
+}) {
   const entry = listed ?? NOT_STARTED;
   const { blocks, questions, goTo } = entry;
   const dialogRef = useRef(null);
@@ -131,6 +158,7 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
   const [error, setError] = useState('');
   const [drafts, setDrafts] = useState({});
   const [sendResult, setSendResult] = useState('');
+  const [approveResult, setApproveResult] = useState('');
   const [copy, setCopy] = useState(null);
   const [editingPrompts, setEditingPrompts] = useState(false);
 
@@ -159,7 +187,7 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
   useEffect(() => {
     const focused = document.activeElement;
     if (!focused || focused === document.body || focused.disabled) closeButton.current?.focus();
-  }, [busy, blocks.investigate, blocks.implement, blocks.answer, blocks.groom]);
+  }, [busy, blocks.investigate, blocks.implement, blocks.answer, blocks.approve, blocks.groom]);
 
   const run = async (action) => {
     setBusy(true);
@@ -188,6 +216,19 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
     setDrafts((current) =>
       Object.fromEntries(Object.entries(current).filter(([id, text]) => changed[id] !== text)),
     );
+  };
+
+  // Sends the saved answers again, whether or not they changed; unsaved edits stay as drafts.
+  const resend = async () => {
+    setSendResult('');
+    const result = await run(() => answer(ticketKey, [], { resend: true }));
+    if (result.ok) setSendResult(sendText(result));
+  };
+
+  const approvePlan = async () => {
+    setApproveResult('');
+    const result = await run(() => approve(ticketKey));
+    if (result.ok) setApproveResult(approveText(result));
   };
 
   const copyCommand = async (side) => {
@@ -245,7 +286,7 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
                 noSession={!goTo.implement}
                 onGoTo={() => copyCommand('implement')}
               >
-                {/* Starting the session is the user's approval, so where the plan is stays in view. */}
+                {/* Approving the plan unlocks this, so where the plan is stays in view. */}
                 {entry.reason === 'plan_ready' && (
                   <span className="claude-action-hint" data-testid="claude-plan-hint">
                     {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`}
@@ -273,6 +314,37 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
                 )}
               </ClaudeRow>
             </ul>
+
+            {/* The plan session is told the plan is approved; Implement plan opens only after that. */}
+            <div className="claude-action" data-testid="claude-approve-row">
+              <Button
+                data-testid="claude-approve"
+                disabled={busy || Boolean(blocks.approve)}
+                onClick={approvePlan}
+              >
+                {entry.flags?.approved ? 'Approved' : 'Approve plan'}
+              </Button>
+              {blocks.approve && blocks.approve !== 'already_approved' && (
+                <span className="claude-action-hint" data-testid="claude-approve-hint">
+                  {REASON_TEXT[blocks.approve]}
+                </span>
+              )}
+              {entry.flags?.approved && (
+                <span className="claude-action-hint" data-testid="claude-approved-note">
+                  {entry.approvedAt
+                    ? `Approved ${new Date(entry.approvedAt).toLocaleString()}.`
+                    : 'Approved.'}
+                </span>
+              )}
+              {/* Always rendered, so a screen reader hears its text change rather than appear. */}
+              <p
+                className="claude-note claude-send-result"
+                role="status"
+                data-testid="claude-approve-result"
+              >
+                {approveResult}
+              </p>
+            </div>
 
             {error && (
               <p className="claude-error" role="alert" data-testid="claude-error">
@@ -367,6 +439,23 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
                     </li>
                   ))}
                 </ol>
+                {/* The saved answers again, even unchanged, for a send that never arrived. */}
+                <div className="claude-action">
+                  <Button
+                    type="button"
+                    data-testid="claude-questions-resend"
+                    disabled={busy || Boolean(blocks.resend) || dirty}
+                    onClick={resend}
+                  >
+                    Resend answers
+                  </Button>
+                  <span className="claude-action-hint" data-testid="claude-resend-hint">
+                    {dirty
+                      ? 'Save your changes first.'
+                      : (REASON_TEXT[blocks.resend] ??
+                        'Sends the saved answers to the session again, even if unchanged.')}
+                  </span>
+                </div>
               </form>
             )}
           </>

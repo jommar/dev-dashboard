@@ -1,5 +1,5 @@
 // claude-prompts-routes.test.mjs — the prompt routes on the production HTTP handler: list, save and
-// reset the four prompt files from the app. The prompt store, the launcher and the app are real,
+// reset the prompt files from the app. The prompt store, the launcher and the app are real,
 // over a temp prompts folder and the CLI double; an edit made through a route is what the next
 // launch and the next send read.
 //
@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   ANSWERS_TEMPLATE,
+  APPROVE_TEMPLATE,
   EARLIER_ID,
   GROOM,
   GROOM_TEMPLATE,
@@ -82,7 +83,7 @@ const assertFailed = (res, label) => {
 
 // ---- GET /api/claude/prompts ----
 
-test('scenario 170: GET lists the four prompts in order, each the built-in text when there is no file', async (t) => {
+test('scenario 170: GET lists the five prompts in order, each the built-in text when there is no file', async (t) => {
   const f = await claudeHttpFixture(t);
 
   const res = await list(f);
@@ -108,6 +109,7 @@ test('scenario 171: GET shows a usable file as custom with its trimmed text, the
     promptEntry('investigate', 'custom', 'Work on {KEY} now.'),
     promptEntry('implement', 'default'),
     promptEntry('answers', 'custom', 'Read {STATUS_FILE}: {CHANGE} {QUESTION_IDS}'),
+    promptEntry('approve', 'default'),
     promptEntry('groom', 'default'),
   ]);
 });
@@ -123,6 +125,7 @@ test('scenario 171: GET shows a file that cannot be used as unusable, with the b
     promptEntry('investigate', 'default'),
     promptEntry('implement', 'unusable'),
     promptEntry('answers', 'default'),
+    promptEntry('approve', 'default'),
     promptEntry('groom', 'default'),
   ]);
 });
@@ -161,13 +164,14 @@ test('scenario 173: PUT saves the trimmed text with one newline and answers with
   }
   assert.deepEqual(fs.readdirSync(f.promptsDir).sort(), [
     'answers.md',
+    'approve.md',
     'groom.md',
     'implement.md',
     'investigate.md',
   ]);
   assert.deepEqual(
     (await list(f)).json().prompts.map(({ source }) => source),
-    ['custom', 'custom', 'custom', 'custom'],
+    ['custom', 'custom', 'custom', 'custom', 'custom'],
   );
 });
 
@@ -267,7 +271,7 @@ test('scenario 180: DELETE removes the file and answers with the built-in entry,
   assert.deepEqual(fs.readdirSync(f.promptsDir), ['implement.md'], 'the other file stays');
   assert.deepEqual(
     (await list(f)).json().prompts.map(({ source }) => source),
-    ['default', 'custom', 'default', 'default'],
+    ['default', 'custom', 'default', 'default', 'default'],
   );
 });
 
@@ -304,7 +308,7 @@ const UNKNOWN_PATHS = [
   PROMPTS,
 ];
 
-test('scenario 183: any name but the four is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
+test('scenario 183: any name but the five is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
   const f = await claudeHttpFixture(t);
   // Where `../investigate` and `../answers` would land if a name became part of a path.
   fs.writeFileSync(path.join(f.root, 'investigate.md'), 'outside');
@@ -433,7 +437,7 @@ test('scenario 185: the prompt routes answer while setup is incomplete, like the
   const removed = await reset(f, 'implement');
 
   assert.equal(listed.status, 200);
-  assert.equal(listed.json().prompts.length, 4);
+  assert.equal(listed.json().prompts.length, 5);
   assert.equal(saved.status, 200);
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.json().prompt, promptEntry('implement', 'default'));
@@ -597,6 +601,7 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['investigate', 'custom', 'my own {KEY}'],
       ['implement', 'unusable', IMPLEMENT_TEMPLATE],
       ['answers', 'default', ANSWERS_TEMPLATE],
+      ['approve', 'default', APPROVE_TEMPLATE],
       ['groom', 'default', GROOM_TEMPLATE],
     ],
   );
@@ -613,6 +618,7 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['investigate', 'default'],
       ['implement', 'unusable'],
       ['answers', 'custom'],
+      ['approve', 'default'],
       ['groom', 'default'],
     ],
   );

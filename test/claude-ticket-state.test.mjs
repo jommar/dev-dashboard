@@ -134,7 +134,12 @@ for (const [label, overrides, state, reason, block] of REVIEW_STATES) {
     assert.equal(entry.blocks.review, block);
     assert.equal(entry.phase, null);
     assert.equal(entry.state, 'none');
-    assert.deepEqual(entry.flags, { [INVESTIGATE]: false, [IMPLEMENT]: false, done: false });
+    assert.deepEqual(entry.flags, {
+      [INVESTIGATE]: false,
+      [IMPLEMENT]: false,
+      done: false,
+      approved: false,
+    });
     assert.deepEqual(entry.questions, []);
     assert.equal(entry.unanswered, 0);
     assert.equal(entry.unsent, false);
@@ -329,21 +334,22 @@ test('scenario 14: a finished idle session with a pid is done with the plan read
   });
   assertEntry(entry, { state: 'done', reason: 'plan_ready', phase: INVESTIGATE });
   assert.deepEqual(entry.goTo, investigateOnly(ATTACH));
-  assert.equal(entry.blocks.implement, null);
+  assert.equal(entry.blocks.implement, 'not_approved', 'the plan waits for the approval');
+  assert.equal(entry.blocks.approve, null, 'and can be approved');
 });
 
 test('scenario 14: a finished session without a pid is done with the plan ready and a resume command', async () => {
   const entry = await derive({ entries: [listed({ id: FIRST_ID, state: 'done' })] });
   assertEntry(entry, { state: 'done', reason: 'plan_ready' });
   assert.deepEqual(entry.goTo, investigateOnly(RESUME));
-  assert.equal(entry.blocks.implement, null);
+  assert.equal(entry.blocks.implement, 'not_approved');
 });
 
 test('scenario 14: a session absent for ten minutes with the flag set is done without a go-to command', async () => {
   const entry = await derive({ launch: launchedAgo(TEN_MINUTES_MS), entries: [] });
   assertEntry(entry, { state: 'done', reason: 'plan_ready' });
   assert.deepEqual(entry.goTo, GO_TO_NONE);
-  assert.equal(entry.blocks.implement, null);
+  assert.equal(entry.blocks.implement, 'not_approved');
 });
 
 test('scenario 14: the implement phase with its flag set is done and implemented', async () => {
@@ -407,6 +413,8 @@ test('scenario 15: an unavailable listing is unknown, blocks every action and ha
     investigate: 'listing_unavailable',
     implement: 'listing_unavailable',
     answer: 'listing_unavailable',
+    resend: 'listing_unavailable',
+    approve: 'listing_unavailable',
     groom: 'listing_unavailable',
     review: 'listing_unavailable',
   });
@@ -606,6 +614,8 @@ const BLOCKS_WHILE_INVESTIGATING = {
   investigate: 'session_running',
   implement: 'investigate_running',
   answer: 'session_running',
+  resend: 'session_running',
+  approve: 'session_running',
   groom: null,
   review: null,
 };
@@ -613,6 +623,8 @@ const BLOCKS_WHILE_IMPLEMENTING = {
   investigate: 'implement_running',
   implement: 'session_running',
   answer: 'session_running',
+  resend: 'session_running',
+  approve: 'session_running',
   groom: null,
   review: null,
 };
@@ -721,8 +733,14 @@ const sentFor = (questions) => ({ at: SENT_AT, answers: answeredMap(questions) }
 
 // A finished first run, flag set, its session done and the answers saved by the dashboard.
 // `sent` is what launch.json recorded of the last send.
-const planned = ({ questions = ANSWERED, done = false, sent, ...overrides } = {}) => ({
-  status: statusFile({ investigate: true, done, questions }),
+const planned = ({
+  questions = ANSWERED,
+  done = false,
+  approved = false,
+  sent,
+  ...overrides
+} = {}) => ({
+  status: statusFile({ investigate: true, done, approved, questions }),
   launch: {
     [INVESTIGATE]: launchRecord({ id: FIRST_ID, answered: answeredMap(questions), sent }),
   },
@@ -747,7 +765,7 @@ test('scenario 77: done is a flag of the entry and anything but true reads false
     const entry = await derive({ status });
     assert.deepEqual(
       entry.flags,
-      { [INVESTIGATE]: true, [IMPLEMENT]: false, done: expected },
+      { [INVESTIGATE]: true, [IMPLEMENT]: false, done: expected, approved: false },
       label,
     );
     assert.notEqual(entry.blocks.answer, 'status_unreadable', `${label}: the file is readable`);
@@ -759,7 +777,9 @@ test('scenario 78: implement waits for done, so with the flag set, nothing open 
   const waiting = await derive(planned({ done: false, sent: sentFor(ANSWERED) }));
   assert.equal(waiting.blocks.implement, 'plan_not_done');
   const done = await derive(planned({ done: true, sent: sentFor(ANSWERED) }));
-  assert.equal(done.blocks.implement, null, 'done');
+  assert.equal(done.blocks.implement, 'not_approved', 'done, but not approved');
+  const approved = await derive(planned({ done: true, approved: true, sent: sentFor(ANSWERED) }));
+  assert.equal(approved.blocks.implement, null, 'done and approved');
 });
 
 test('scenario 79: the implement block reasons come in order, answers_not_sent then plan_not_done last', async () => {
@@ -777,7 +797,8 @@ test('scenario 79: the implement block reasons come in order, answers_not_sent t
     ['unsent, not done', planned({ done: false }), 'answers_not_sent'],
     ['unsent, done', planned({ done: true }), 'answers_not_sent'],
     ['sent, not done', planned({ done: false, sent }), 'plan_not_done'],
-    ['sent, done', planned({ done: true, sent }), null],
+    ['sent, done, not approved', planned({ done: true, sent }), 'not_approved'],
+    ['sent, done, approved', planned({ done: true, approved: true, sent }), null],
   ];
   for (const [label, arrangement, expected] of cases) {
     assert.equal((await derive(arrangement)).blocks.implement, expected, label);
@@ -860,6 +881,8 @@ test('scenario 82: while the investigate session works the entry is working, sen
         investigate: 'session_running',
         implement: 'investigate_running',
         answer: 'session_running',
+        resend: 'session_running',
+        approve: 'session_running',
         groom: null,
         review: null,
       },
@@ -909,7 +932,16 @@ test('scenario 101: an entry that is unsent blocks implement as answers_not_sent
       planned({ done: true, sent: { ...lastSend, answers: { q1: lastSend.answers.q1 } } }),
       'answers_not_sent',
     ],
-    ['sent, nothing changed, done true', planned({ done: true, sent: lastSend }), null],
+    [
+      'sent, nothing changed, done true',
+      planned({ done: true, approved: true, sent: lastSend }),
+      null,
+    ],
+    [
+      'sent, nothing changed, done true, not approved',
+      planned({ done: true, sent: lastSend }),
+      'not_approved',
+    ],
     [
       'sent, nothing changed, done false',
       planned({ done: false, sent: lastSend }),
@@ -1121,7 +1153,13 @@ const WITHOUT_GROOM = (entry) => {
   return {
     ...rest,
     goTo: { investigate: goTo.investigate, implement: goTo.implement },
-    blocks: { investigate: blocks.investigate, implement: blocks.implement, answer: blocks.answer },
+    blocks: {
+      investigate: blocks.investigate,
+      implement: blocks.implement,
+      answer: blocks.answer,
+      resend: blocks.resend,
+      approve: blocks.approve,
+    },
   };
 };
 
@@ -1249,7 +1287,7 @@ test('scenario 213: a ticket that was only groomed reads as a ticket never start
     assert.equal(entry.phase, null, `${label}: phase`);
     assert.deepEqual(
       entry.flags,
-      { [INVESTIGATE]: false, [IMPLEMENT]: false, done: false },
+      { [INVESTIGATE]: false, [IMPLEMENT]: false, done: false, approved: false },
       `${label}: flags`,
     );
     assert.deepEqual(entry.questions, [], `${label}: questions`);
@@ -1257,7 +1295,13 @@ test('scenario 213: a ticket that was only groomed reads as a ticket never start
     assert.equal(entry.unsent, false, `${label}: unsent`);
     assert.deepEqual(
       WITHOUT_GROOM(entry).blocks,
-      { investigate: null, implement: 'not_planned', answer: 'no_questions' },
+      {
+        investigate: null,
+        implement: 'not_planned',
+        answer: 'no_questions',
+        resend: 'no_questions',
+        approve: 'not_planned',
+      },
       `${label}: the workflow blocks are those of a ticket never started`,
     );
   }
@@ -1336,6 +1380,8 @@ test('scenario 215: a running groom session blocks only groom, and only while it
       investigate: null,
       implement: 'questions_unanswered',
       answer: null,
+      resend: 'questions_unanswered',
+      approve: 'questions_unanswered',
       groom: 'session_running',
       review: null,
     },
@@ -1455,4 +1501,103 @@ test('scenario 216: each of the three records gets the command of its own sessio
     implement: attachFor(IMPLEMENT_ID),
     groom: attachFor(GROOM_ID),
   });
+});
+
+// ---- approve and resend: the gates of the two planning-session messages ----
+
+test('approve block: the plan must be ready and done, with no implement run and no approval yet', async () => {
+  const sent = sentFor(ANSWERED);
+  const withImplement = (arrangement) => ({
+    ...arrangement,
+    launch: {
+      ...arrangement.launch,
+      [IMPLEMENT]: launchRecord({ name: IMPLEMENT_NAME, id: IMPLEMENT_ID }),
+    },
+  });
+  const cases = [
+    ['unreadable status', { ...planned({ done: true, sent }), status: null }, 'status_unreadable'],
+    [
+      'not planned',
+      { ...planned({ done: true, sent }), status: statusFile({ done: true, questions: ANSWERED }) },
+      'not_planned',
+    ],
+    ['plan file missing', planned({ done: true, sent, planPresent: false }), 'plan_missing'],
+    ['a question open', planned({ done: true, questions: OPEN }), 'questions_unanswered'],
+    ['answers unsent', planned({ done: true }), 'answers_not_sent'],
+    ['not done', planned({ done: false, sent }), 'plan_not_done'],
+    ['done', planned({ done: true, sent }), null],
+    ['already approved', planned({ done: true, approved: true, sent }), 'already_approved'],
+    ['an implement run', withImplement(planned({ done: true, sent })), 'implement_started'],
+  ];
+  for (const [label, arrangement, expected] of cases) {
+    assert.equal((await derive(arrangement)).blocks.approve, expected, label);
+  }
+});
+
+test('approve block: only a true flag counts, and a status without the key reads as not approved', async () => {
+  const sent = sentFor(ANSWERED);
+  const absent = planned({ done: true, sent });
+  delete absent.status.approved;
+  const entry = await derive(absent);
+  assert.equal(entry.flags.approved, false, 'absent is false');
+  assert.equal(entry.blocks.approve, null, 'and can be approved');
+  assert.equal(entry.blocks.implement, 'not_approved', 'and does not open implement');
+  for (const value of ['true', 1, null, {}]) {
+    const odd = planned({ done: true, sent });
+    odd.status.approved = value;
+    const result = await derive(odd);
+    assert.equal(result.flags.approved, false, `${JSON.stringify(value)} reads false`);
+    assert.equal(result.blocks.implement, 'not_approved', JSON.stringify(value));
+  }
+});
+
+test('approve: the entry carries when the approval was given', async () => {
+  const sent = sentFor(ANSWERED);
+  const arrangement = planned({ done: true, approved: true, sent });
+  arrangement.launch[INVESTIGATE].approved = { at: '2026-11-09T21:50:00.000Z' };
+
+  const entry = await derive(arrangement);
+
+  assert.equal(entry.approvedAt, '2026-11-09T21:50:00.000Z');
+  assert.equal((await derive(planned({ done: true, sent }))).approvedAt, null);
+});
+
+test('resend block: the gates of a send, whether or not anything changed, and not the done flag', async () => {
+  const sent = sentFor(ANSWERED);
+  const cases = [
+    ['unreadable status', { ...planned({ sent }), status: null }, 'status_unreadable'],
+    ['no questions', planned({ questions: [], sent }), 'no_questions'],
+    ['a question open', planned({ questions: OPEN }), 'questions_unanswered'],
+    [
+      'not planned',
+      { ...planned({ sent }), status: statusFile({ questions: ANSWERED }) },
+      'not_planned',
+    ],
+    ['nothing changed, not done', planned({ done: false, sent }), null],
+    ['nothing changed, done', planned({ done: true, sent }), null],
+    ['never sent', planned({ done: true }), null],
+  ];
+  for (const [label, arrangement, expected] of cases) {
+    assert.equal((await derive(arrangement)).blocks.resend, expected, label);
+  }
+  const withImplement = {
+    ...planned({ sent }),
+    launch: {
+      ...planned({ sent }).launch,
+      [IMPLEMENT]: launchRecord({ name: IMPLEMENT_NAME, id: IMPLEMENT_ID }),
+    },
+  };
+  assert.equal((await derive(withImplement)).blocks.resend, 'implement_started');
+});
+
+test('answersToSend: a resend lists every id even when nothing changed, a plain send skips', async () => {
+  const { answersToSend } = await import('../backend/claude-ticket-state.mjs');
+  const { status, launch } = planned({ done: true, sent: sentFor(ANSWERED) });
+
+  assert.deepEqual(answersToSend(status, launch), { skip: 'unchanged' });
+  const again = answersToSend(status, launch, { resend: true });
+  assert.deepEqual(
+    again.changed,
+    ANSWERED.map(({ id }) => id),
+  );
 });

@@ -28,6 +28,9 @@ const KNOWN_STATES = ['working', 'blocked', 'done'];
 const isText = (value) => typeof value === 'string';
 // `done` is the session's word that the planning phase is complete; anything but true reads false.
 const isDone = (status) => status?.done === true;
+// `approved` is the dashboard's record that the user approved the finished plan; only true counts,
+// so a status.json without the key reads as not approved.
+const isApproved = (status) => status?.approved === true;
 
 export const isTicketKey = (value) => isText(value) && TICKET_KEY.test(value);
 export const isQuestionId = (value) => isText(value) && QUESTION_ID.test(value);
@@ -83,7 +86,7 @@ function questionViews(status, launch) {
 }
 
 // The status.json an implement launch writes: the locked shape with the investigate flag set, `done`
-// as the session left it, and the questions the dashboard reads, each whole, keeping only the
+// and `approved` as they were, and the questions the dashboard reads, each whole, keeping only the
 // answers it saved. Nothing else the session left in the file survives.
 export function implementStatus(status, launch) {
   const isSaved = answerCheck(launch);
@@ -91,6 +94,7 @@ export function implementStatus(status, launch) {
     [INVESTIGATE]: true,
     [IMPLEMENT]: false,
     done: isDone(status),
+    approved: isApproved(status),
     questions: readQuestions(status).map((question) => ({
       id: question.id,
       question: question.question,
@@ -102,16 +106,41 @@ export function implementStatus(status, launch) {
 // A question is unanswered when its answer is null, missing or blank.
 const isUnanswered = ({ answer }) => !(isText(answer) && answer.trim());
 
-// Why implement cannot start from this status.json (null: unreadable), launch.json and plan file,
-// or null when it can. Answers not yet sent to the planning session block it, so an answer whose
-// send failed is never implemented against a stale `done`.
-export function implementBlock(status, launch, planPresent) {
+// Why the plan cannot be approved from this status.json (null: unreadable), launch.json and plan
+// file, or null when it can: the plan is ready (planned, the file there, every question answered
+// and the answers sent) and the session has marked it `done`. Answers not yet sent to the planning
+// session block it, so an answer whose send failed is never approved against a stale `done`.
+function planReadyBlock(status, launch, planPresent) {
   if (status === null) return 'status_unreadable';
   if (status?.[INVESTIGATE] !== true) return 'not_planned';
   if (!planPresent) return 'plan_missing';
   if (questionViews(status, launch).some(isUnanswered)) return 'questions_unanswered';
   if (!answersToSend(status, launch).skip) return 'answers_not_sent';
   return isDone(status) ? null : 'plan_not_done';
+}
+
+// Why implement cannot start, or null when it can: the plan is ready and the user approved it.
+export const implementBlock = (status, launch, planPresent) =>
+  planReadyBlock(status, launch, planPresent) ?? (isApproved(status) ? null : 'not_approved');
+
+// Why Approve is refused, or null when it can be sent: the plan is ready, no implement run has
+// started and the approval is not already given.
+export function approveBlock(status, launch, planPresent) {
+  const reason = planReadyBlock(status, launch, planPresent);
+  if (reason) return reason;
+  const records = readLaunch(launch);
+  if (!records.some(({ phase }) => phase === INVESTIGATE)) return 'not_planned';
+  if (records.some(({ phase }) => phase === IMPLEMENT)) return 'implement_started';
+  return isApproved(status) ? 'already_approved' : null;
+}
+
+// Why the saved answers cannot be sent again as they are, or null when they can: the gates of
+// `answersToSend` without the one that skips an unchanged set.
+export function resendBlock(status, launch) {
+  if (status === null) return 'status_unreadable';
+  if (readQuestions(status).length === 0) return 'no_questions';
+  const { skip } = answersToSend(status, launch, { resend: true });
+  return skip === 'incomplete' ? 'questions_unanswered' : (skip ?? null);
 }
 
 // The part every launch.json record shares, { name, launchedAt, id }, or null when the value is not
@@ -132,10 +161,11 @@ const textHashes = (hashes) =>
     ? Object.fromEntries(Object.entries(hashes).filter(([, hash]) => isText(hash)))
     : {};
 
-// The phases launch.json records, each as { phase, name, launchedAt, id, answered, sent }. An entry
-// that is not shaped like a record is ignored, an id that is not a short id is no id, `answered`
-// (question id to the hash of its saved answer) keeps only text values, and `sent` is what the last
-// send to the session recorded, { at, answers } with `answers` shaped like `answered`, or null.
+// The phases launch.json records, each as { phase, name, launchedAt, id, answered, sent, approved }.
+// An entry that is not shaped like a record is ignored, an id that is not a short id is no id,
+// `answered` (question id to the hash of its saved answer) keeps only text values, `sent` is what the
+// last send to the session recorded, { at, answers } with `answers` shaped like `answered`, or null,
+// and `approved` is { at } once Approve was delivered, or null.
 export function readLaunch(launch) {
   return PHASES.flatMap((phase) => {
     const base = readRecord(launch?.[phase]);
@@ -145,7 +175,9 @@ export function readLaunch(launch) {
       record.sent && typeof record.sent === 'object'
         ? { at: record.sent.at, answers: textHashes(record.sent.answers) }
         : null;
-    return [{ phase, ...base, answered: textHashes(record.answered), sent }];
+    const approved =
+      record.approved && typeof record.approved === 'object' ? { at: record.approved.at } : null;
+    return [{ phase, ...base, answered: textHashes(record.answered), sent, approved }];
   });
 }
 
@@ -195,8 +227,9 @@ function savedHashes(status, launch) {
 // Whether the saved answers should go to the planning session: { skip: reason } when not (the first
 // of: every question answered, the plan flag set, no implement run, an answer that differs from the
 // last send), otherwise { changed } (the ids of the answers that are new or differ from the last
-// send) and { hashes } (every question's hash, to record once the send is delivered).
-export function answersToSend(status, launch) {
+// send) and { hashes } (every question's hash, to record once the send is delivered). A `resend`
+// sends the whole set again: an unchanged set is no reason to skip and every id is listed.
+export function answersToSend(status, launch, { resend = false } = {}) {
   const questions = questionViews(status, launch);
   if (questions.length === 0 || questions.some(isUnanswered)) return { skip: 'incomplete' };
   if (status?.[INVESTIGATE] !== true) return { skip: 'not_planned' };
@@ -204,7 +237,7 @@ export function answersToSend(status, launch) {
   if (records.some(({ phase }) => phase === IMPLEMENT)) return { skip: 'implement_started' };
   const sent = records.find(({ phase }) => phase === INVESTIGATE)?.sent?.answers ?? {};
   const hashes = savedHashes(status, launch);
-  const changed = Object.keys(hashes).filter((id) => hashes[id] !== sent[id]);
+  const changed = Object.keys(hashes).filter((id) => resend || hashes[id] !== sent[id]);
   return changed.length ? { changed, hashes } : { skip: 'unchanged' };
 }
 
@@ -285,6 +318,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     [INVESTIGATE]: status?.[INVESTIGATE] === true,
     [IMPLEMENT]: status?.[IMPLEMENT] === true,
     done: isDone(status),
+    approved: isApproved(status),
   };
   const questions = questionViews(status, launch);
   const sendable = !answersToSend(status, launch).skip;
@@ -318,6 +352,9 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     answer:
       busy(running) ||
       (status === null ? 'status_unreadable' : questions.length === 0 ? 'no_questions' : null),
+    // Resend and Approve go to the planning session, so either phase working refuses them.
+    resend: busy(running) || resendBlock(status, launch),
+    approve: busy(running) || approveBlock(status, launch, planPresent),
     // Only a groom session of its own blocks grooming; the workflow never does.
     groom: !entries ? 'listing_unavailable' : groom.state === 'working' ? 'session_running' : null,
     review: reviewBlock(review, entries),
@@ -327,6 +364,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     state,
     reason,
     flags,
+    approvedAt: readLaunch(launch).find(({ phase }) => phase === INVESTIGATE)?.approved?.at ?? null,
     questions,
     unanswered,
     unsent: sendable && state !== 'working' && state !== 'unknown',

@@ -43,6 +43,7 @@ const { SETTLE_MS } = await wakeConstants();
 const TICKETS = '/api/claude/tickets';
 const LAUNCH = '/api/claude/launch';
 const ANSWERS = '/api/claude/answers';
+const APPROVE = '/api/claude/approve';
 const SECOND_KEY = 'TAP-5678';
 const ENTRY_KEYS = [
   'phase',
@@ -212,7 +213,12 @@ test('scenario 12: the ticket list holds exactly the valid state folders, each w
   }
   const [first, second] = [body.tickets[KEY], body.tickets[SECOND_KEY]];
   assert.deepEqual([first.phase, first.state, first.reason], [INVESTIGATE, 'done', 'plan_ready']);
-  assert.deepEqual(first.flags, { [INVESTIGATE]: true, [IMPLEMENT]: false, done: true });
+  assert.deepEqual(first.flags, {
+    [INVESTIGATE]: true,
+    [IMPLEMENT]: false,
+    done: true,
+    approved: false,
+  });
   assert.deepEqual([second.state, second.reason], ['waiting', 'questions']);
   assert.deepEqual(second.questions, [question('q1')]);
   assert.equal(second.unanswered, 1);
@@ -265,6 +271,7 @@ function guardedRequests() {
   return [
     [LAUNCH, launchBody],
     [ANSWERS, { key: SECOND_KEY, answers: { q1: 'Portage-backend' } }],
+    [APPROVE, { key: SECOND_KEY }],
   ].map(([route, body]) => ({ route, body: JSON.stringify(body) }));
 }
 
@@ -391,6 +398,8 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     investigate: 'session_running',
     implement: 'investigate_running',
     answer: 'session_running',
+    resend: 'session_running',
+    approve: 'session_running',
     groom: null,
     review: null,
   });
@@ -416,6 +425,8 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
     investigate: 'implement_running',
     implement: 'session_running',
     answer: 'session_running',
+    resend: 'session_running',
+    approve: 'session_running',
     groom: null,
     review: null,
   });
@@ -739,4 +750,56 @@ test('scenario 221: the ticket list shows a groomed ticket whose folder holds on
     kind: 'resume',
     command: `cd ~/pathwise && claude --resume ${sessionUuid(FIRST_ID)}`,
   });
+});
+
+// ---- resend and approve ----
+
+test('resend: the answers route sends unchanged answers again only when asked to', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedPlanned(f, { questions: [question('q1', FIRST_TEXT)] });
+
+  const plain = await f.http.json('POST', ANSWERS, { key: KEY, answers: [] });
+  assert.deepEqual(plain.json().send, { status: 'skipped', reason: 'unchanged' });
+  assert.equal(f.cli.resumes().length, 0);
+
+  const resend = await f.http.json('POST', ANSWERS, { key: KEY, answers: [], resend: true });
+
+  assert.equal(resend.status, 200);
+  assert.deepEqual(resend.json().send, { status: 'sent' });
+  assert.equal(f.cli.resumes().length, 1, 'the whole set went again');
+});
+
+test('approve: the route sends the approval to the planning session and records it', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedPlanned(f, { approved: false });
+  assert.equal(f.parsed().status.approved, false);
+
+  const res = await f.http.json('POST', APPROVE, { key: KEY });
+
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(Object.keys(body).sort(), ['key', 'ok', 'send', 'ticket']);
+  assert.deepEqual(body.send, { status: 'sent' });
+  assert.equal(body.ticket.flags.approved, true);
+  assert.equal(f.cli.resumes().length, 1, 'one resume of the planning session');
+  assert.equal(f.cli.resumes()[0].args[1], '--resume');
+  assert.equal(f.parsed().status.approved, true);
+  assert.ok(f.parsed().launch[INVESTIGATE].approved.at, 'the approval time is recorded');
+});
+
+test('approve: a plan that is not done is refused with the usual refusal reply', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedPlanned(f, { approved: false, done: false });
+
+  const res = await f.http.json('POST', APPROVE, { key: KEY });
+
+  assert.equal(res.status, 409);
+  assert.equal(res.json().code, 'CLAUDE_REFUSED');
+  assert.deepEqual(res.json().errors, ['plan_not_done']);
+  assert.equal(f.cli.resumes().length, 0);
+  assert.equal(f.parsed().status.approved, false);
+
+  const invalid = await f.http.json('POST', APPROVE, { key: 'not a key' });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.json().code, 'INVALID_TICKET');
 });
