@@ -1,9 +1,11 @@
 // ClaudeDialog.jsx — the one Claude menu for My Tickets, opened by a card's icon. A native modal
 // <dialog> rather than a popup in the card: cards and columns clip overflow, and a card that
 // remounts would lose its state. The panel mounts it only while a ticket is open (keyed by the
-// ticket), so its drafts, errors and copy status begin empty each time. It holds the four items
-// (Investigate and plan, Implement plan, and a Go to session for each of those two sessions) and,
-// when the planning session asked any, the questions as text inputs. A disabled item says why in words beside it.
+// ticket), so its drafts, errors and copy status begin empty each time. The body holds one row per
+// phase (its run button and its Go to session button side by side, then what a disabled button
+// says, in words, under them) and, when the planning session asked any, the numbered questions as
+// auto-growing text boxes. The footer stays in view beside the body's scroll: it holds Save answers
+// (linked to the questions form by its id), the progress, the result of the last save, and Close.
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
@@ -55,11 +57,11 @@ function sendText({ send, ticket }) {
   return SKIPPED_TEXT[send?.reason];
 }
 
-// The ticket's two sessions, each with its own Go to session item (`goTo` is keyed by the side).
-const GO_TO = [
-  ['investigate', 'Go to investigate and plan session'],
-  ['implement', 'Go to implement plan session'],
-];
+// The full name of each Go to session button (its text is just "Go to session"), by `goTo` side.
+const GO_TO_LABEL = {
+  investigate: 'Go to investigate and plan session',
+  implement: 'Go to implement plan session',
+};
 
 // A ticket the server lists nothing for has not been started.
 const NOT_STARTED = {
@@ -71,18 +73,33 @@ const NOT_STARTED = {
 const failureText = ({ errors, error }) =>
   REASON_TEXT[errors?.[0]] ?? error ?? 'The Claude request failed.';
 
-function ClaudeAction({ name, label, disabled, hint, onClick, children }) {
+// One phase: its run button and its Go to session button side by side, then the hints under both
+// (why the run button is off, then whatever the row's `children` add, then why there is no session).
+function ClaudeRow({ phase, label, disabled, hint, onRun, noSession, onGoTo, children }) {
   return (
     <li className="claude-action">
-      <Button data-testid={`claude-action-${name}`} disabled={disabled} onClick={onClick}>
+      <Button data-testid={`claude-action-${phase}`} disabled={disabled} onClick={onRun}>
         {label}
       </Button>
+      <Button
+        data-testid={`claude-action-goto-${phase}`}
+        aria-label={GO_TO_LABEL[phase]}
+        disabled={noSession}
+        onClick={onGoTo}
+      >
+        Go to session
+      </Button>
       {hint && (
-        <span className="claude-action-hint" data-testid={`claude-action-hint-${name}`}>
+        <span className="claude-action-hint" data-testid={`claude-action-hint-${phase}`}>
           {hint}
         </span>
       )}
       {children}
+      {noSession && (
+        <span className="claude-action-hint" data-testid={`claude-action-hint-goto-${phase}`}>
+          No session to join
+        </span>
+      )}
     </li>
   );
 }
@@ -100,6 +117,7 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
   // field and is released over the backdrop clicks the <dialog> too, and must not close it.
   const pressedBackdrop = useRef(false);
   const titleId = useId();
+  const formId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [drafts, setDrafts] = useState({});
@@ -195,19 +213,23 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
 
       <div className="claude-dialog-body">
         <ul className="claude-actions">
-          <ClaudeAction
-            name="investigate"
+          <ClaudeRow
+            phase="investigate"
             label="Investigate and plan"
             disabled={busy || Boolean(blocks.investigate)}
             hint={REASON_TEXT[blocks.investigate]}
-            onClick={() => run(() => launch(ticketKey, INVESTIGATE))}
+            onRun={() => run(() => launch(ticketKey, INVESTIGATE))}
+            noSession={!goTo.investigate}
+            onGoTo={() => copyCommand('investigate')}
           />
-          <ClaudeAction
-            name="implement"
+          <ClaudeRow
+            phase="implement"
             label="Implement plan"
             disabled={busy || Boolean(blocks.implement)}
             hint={REASON_TEXT[blocks.implement]}
-            onClick={() => run(() => launch(ticketKey, IMPLEMENT))}
+            onRun={() => run(() => launch(ticketKey, IMPLEMENT))}
+            noSession={!goTo.implement}
+            onGoTo={() => copyCommand('implement')}
           >
             {/* Starting the session is the user's approval, so where the plan is stays in view. */}
             {entry.reason === 'plan_ready' && (
@@ -215,17 +237,7 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
                 {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`}
               </span>
             )}
-          </ClaudeAction>
-          {GO_TO.map(([side, label]) => (
-            <ClaudeAction
-              key={side}
-              name={`goto-${side}`}
-              label={label}
-              disabled={!goTo[side]}
-              hint={goTo[side] ? undefined : 'No session to join'}
-              onClick={() => copyCommand(side)}
-            />
-          ))}
+          </ClaudeRow>
         </ul>
 
         {error && (
@@ -257,46 +269,98 @@ export function ClaudeDialog({ ticketKey, summary, entry: listed, onClose, launc
         )}
 
         {questions.length > 0 && (
-          <form className="claude-questions" data-testid="claude-questions" onSubmit={save}>
-            {questions.map(({ id, question, answer: saved }) => (
-              <label key={id} className="claude-question">
-                <span>{question}</span>
-                <input
-                  type="text"
-                  className="claude-question-input"
-                  data-testid={`claude-question-${id}`}
-                  maxLength={2000}
-                  value={Object.hasOwn(drafts, id) ? drafts[id] : (saved ?? '')}
-                  disabled={Boolean(blocks.answer)}
-                  onChange={(event) => {
-                    const { value } = event.target;
-                    setDrafts((current) => ({ ...current, [id]: value }));
-                  }}
-                />
-              </label>
-            ))}
-            <p className="claude-note" data-testid="claude-questions-progress">
-              {`${questions.filter(({ answer: saved }) => saved?.trim()).length} of ${questions.length} answered`}
-            </p>
+          <form
+            id={formId}
+            className="claude-questions"
+            data-testid="claude-questions"
+            onSubmit={save}
+          >
             <p className="claude-note">
               Save as you go. Nothing is sent to the session until every question has an answer.
             </p>
-            <Button
-              type="submit"
-              data-testid="claude-questions-save"
-              disabled={busy || Boolean(blocks.answer) || !(dirty || entry.unsent)}
-            >
-              Save answers
-            </Button>
-            {/* Always rendered, so a screen reader hears its text change rather than appear. */}
-            <p className="claude-note" role="status" data-testid="claude-send-result">
-              {sendResult}
-            </p>
+            <ol className="claude-question-list">
+              {questions.map(({ id, question, answer: saved }, index) => (
+                <li key={id} className="claude-question">
+                  {/* The number and the tick sit outside the label, so its name is the question. */}
+                  <div className="claude-question-head">
+                    <span className="claude-question-number" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <label htmlFor={`${formId}-${id}`}>{question}</label>
+                    {saved?.trim() && (
+                      <span
+                        className="claude-question-answered"
+                        role="img"
+                        aria-label="Answered"
+                        data-testid={`claude-question-answered-${id}`}
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                          focusable="false"
+                        >
+                          <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+                        </svg>
+                      </span>
+                    )}
+                  </div>
+                  <textarea
+                    id={`${formId}-${id}`}
+                    className="claude-question-input"
+                    data-testid={`claude-question-${id}`}
+                    rows={2}
+                    maxLength={2000}
+                    autoComplete="off"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
+                    data-bwignore="true"
+                    value={Object.hasOwn(drafts, id) ? drafts[id] : (saved ?? '')}
+                    disabled={Boolean(blocks.answer)}
+                    onChange={(event) => {
+                      const { value } = event.target;
+                      setDrafts((current) => ({ ...current, [id]: value }));
+                    }}
+                  />
+                </li>
+              ))}
+            </ol>
           </form>
         )}
       </div>
 
       <footer className="claude-dialog-foot">
+        {questions.length > 0 && (
+          <>
+            <div className="claude-dialog-foot-status">
+              <p className="claude-note" data-testid="claude-questions-progress">
+                {`${questions.filter(({ answer: saved }) => saved?.trim()).length} of ${questions.length} answered`}
+              </p>
+              {/* Always rendered, so a screen reader hears its text change rather than appear. */}
+              <p
+                className="claude-note claude-send-result"
+                role="status"
+                data-testid="claude-send-result"
+              >
+                {sendResult}
+              </p>
+            </div>
+            <Button
+              type="submit"
+              form={formId}
+              data-testid="claude-questions-save"
+              disabled={busy || Boolean(blocks.answer) || !(dirty || entry.unsent)}
+            >
+              Save answers
+            </Button>
+          </>
+        )}
         <Button ref={closeButton} data-testid="claude-dialog-close" onClick={() => close.current()}>
           Close
         </Button>

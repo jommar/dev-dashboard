@@ -2,8 +2,17 @@
 
 ## Unreleased
 
-- The Claude dialog now has two Go to items, **Go to investigate and plan session** and
-  **Go to implement plan session**, each copying the command for its own phase's session
+- Reworked the Claude dialog layout. It is now two phase rows, each with its run button and
+  its own **Go to session** button side by side (they stack at 480px wide and below), and the
+  hints sit in a line under the row. Questions are numbered and show a tick (accessible name
+  `Answered`) once they have a saved answer. The answers are auto-growing multi-line boxes
+  (CSS only, `field-sizing: content`; a browser without it shows a fixed-height box that
+  scrolls) with password-manager overlays turned off. **Save answers**, the `N of M answered`
+  line and the result of the last save moved into the pinned footer beside **Close**, so Save
+  is on screen without scrolling. No behaviour and no `data-testid` changed.
+- The Claude dialog now has two **Go to session** buttons, one per phase (named in full,
+  `Go to investigate and plan session` and `Go to implement plan session`, for assistive
+  tech), each copying the command for its own phase's session
   (`claude attach <id>` for a live or blocked one, a `claude --resume` from `~/pathwise` for a
   finished one) and disabled with `No session to join` when that phase was never launched or
   cannot be joined. The planning session stays reachable after Implement plan has launched,
@@ -35,9 +44,9 @@
 - Added a Claude icon to every My Tickets card. It shows where the ticket stands with
   Claude (not started, working, needs you, done, ended without finishing,
   unavailable) as a badge and a word, and opens a dialog with **Investigate and
-  plan**, **Implement plan** and a **Go to ... session** item per phase. Both launches
+  plan**, **Implement plan** and a **Go to session** button per phase. Both launches
   start a background `claude --bg` session from `~/pathwise`, named
-  `<KEY>-investigate-and-plan` or `<KEY>-implement-plan`; **Go to ... session** copies
+  `<KEY>-investigate-and-plan` or `<KEY>-implement-plan`; **Go to session** copies
   the command that attaches to or resumes that phase's session.
   Questions the planning session asks appear in the dialog as text inputs, and
   **Implement plan** stays disabled until you have saved an answer to each. State

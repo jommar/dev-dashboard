@@ -112,15 +112,26 @@
   padding: var(--s4) var(--s5);
   overflow-y: auto;
 }
+/* Always in view: only the body scrolls. Progress and the last result sit on the left and may wrap;
+   the buttons sit on the right. */
 .claude-dialog-foot {
   display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: var(--s2) var(--s3);
   padding: var(--s3) var(--s5);
   border-top: 1px solid var(--border);
   background: var(--panel2);
 }
+.claude-dialog-foot-status {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
 
-/* The three items, one per row, each with the reason it is off beside it. */
+/* One row per phase: the run button and its Go to session button side by side (stacked on a phone),
+   then each hint on a line of its own under both. */
 .claude-actions {
   display: flex;
   flex-direction: column;
@@ -136,8 +147,17 @@
   gap: var(--s1) var(--s3);
 }
 .claude-action-hint {
+  flex: 1 1 100%;
   color: var(--muted);
   font-size: var(--fs-sm);
+}
+@media (max-width: 480px) {
+  .claude-action > button {
+    flex: 1 1 100%;
+  }
+  .claude-dialog-foot-status {
+    flex-basis: 100%;
+  }
 }
 
 /* Go to session: the copy status (a live region, so it is always in the body and takes no room
@@ -161,11 +181,10 @@
   font-size: var(--fs-xs);
 }
 
-/* The planning session's questions, one labelled input each. */
+/* The planning session's questions: a numbered list, one labelled box each. */
 .claude-questions {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: var(--s3);
   padding-top: var(--s3);
   border-top: 1px solid var(--border);
@@ -176,25 +195,62 @@
   font-size: var(--fs-sm);
 }
 /* The send result is empty until a save; it takes no room until then. */
-.claude-note:empty {
-  margin-top: calc(var(--s3) * -1);
+.claude-send-result:not(:empty) {
+  margin-top: var(--s1);
+}
+.claude-question-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .claude-question {
   display: flex;
   flex-direction: column;
   gap: var(--s1);
-  align-self: stretch;
   color: var(--strong);
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
+.claude-question-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.claude-question-number {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.claude-question-head label {
+  flex: 1 1 auto;
+}
+.claude-question-answered {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  color: var(--green);
+}
+/* The box grows with its text by CSS alone: about two lines empty, about twelve at most, then it
+   scrolls. The width is fixed, or content sizing would shrink it to its text. */
 .claude-question-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: calc(2lh + 14px);
+  max-height: calc(12lh + 14px);
   padding: 6px var(--s2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
   font: inherit;
+  field-sizing: content;
+  overflow-y: auto;
+  resize: none;
 }
 .claude-question-input:focus-visible {
   outline: 2px solid var(--accent);

@@ -12,7 +12,9 @@ import { BOARD_THREAD_TS, claudeEntry, claudeQuestion, ticketBoardData } from '.
 // `claude-dialog-close` and `claude-plan-hint` inside. Go to session is two items, one per phase,
 // and every id it has takes the phase as a suffix: `claude-action-goto-investigate` /
 // `claude-action-goto-implement`, `claude-action-hint-goto-<phase>`, `claude-goto-copied-<phase>`
-// and `claude-goto-fallback-<phase>`.
+// and `claude-goto-fallback-<phase>`. The dialog's footer is `.claude-dialog-foot` (a class: the
+// element has no test id) and its scrolling body `.claude-dialog-body`; each phase is one list item of
+// `.claude-actions`.
 
 const KEY = 'TAP-9001';
 const SUMMARY = 'Invented fix for the failing export job';
@@ -150,6 +152,13 @@ test('scenario 22: the icon opens a dialog with its four items and Escape closes
       'No session to join',
     );
   }
+  // With no questions the footer holds Close and nothing else.
+  const foot = dialog.locator('.claude-dialog-foot');
+  await expect(foot.getByRole('button')).toHaveCount(1);
+  await expect(foot.getByTestId('claude-dialog-close')).toBeVisible();
+  for (const id of ['claude-questions-save', 'claude-questions-progress', 'claude-send-result']) {
+    await expect(dialog.getByTestId(id)).toHaveCount(0);
+  }
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(icon).toBeFocused();
@@ -216,12 +225,46 @@ test('scenario 25: questions are answered in the dialog and unlock Implement pla
   const second = dialog.getByLabel(Q2);
   await expect(first).toHaveAttribute('data-testid', 'claude-question-q1');
   await expect(second).toHaveAttribute('data-testid', 'claude-question-q2');
+  // The number and the tick stay out of the label: its accessible name is the question, exactly.
+  for (const [text, id] of [
+    [Q1, 'q1'],
+    [Q2, 'q2'],
+  ]) {
+    await expect(dialog.getByRole('textbox', { name: text, exact: true })).toHaveAttribute(
+      'data-testid',
+      `claude-question-${id}`,
+    );
+  }
   await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
   await expect(dialog.getByTestId('claude-action-hint-implement')).toContainText(
     'Answer the open questions first',
   );
   const save = dialog.getByTestId('claude-questions-save');
   await expect(save).toBeDisabled();
+
+  // The answer is a growing text area that the password managers leave alone.
+  await expect(first).toHaveJSProperty('tagName', 'TEXTAREA');
+  await expect(first).toHaveAttribute('maxlength', '2000');
+  await expect(first).toHaveAttribute('autocomplete', 'off');
+  await expect(first).toHaveAttribute('data-lpignore', 'true');
+  await expect(first).toHaveAttribute('data-1p-ignore', 'true');
+  await expect(first).toHaveAttribute('data-bwignore', 'true');
+  const emptyHeight = (await second.boundingBox()).height;
+  await second.fill(Array.from({ length: 8 }, (_, line) => `line ${line + 1}`).join('\n'));
+  const grown = (await second.boundingBox()).height;
+  expect(grown, 'eight lines make the box taller than an empty one').toBeGreaterThan(
+    emptyHeight + 40,
+  );
+  await second.fill(Array.from({ length: 60 }, (_, line) => `line ${line + 1}`).join('\n'));
+  expect((await second.boundingBox()).height, 'a long answer stops growing').toBeLessThan(400);
+  expect(await second.evaluate((box) => box.scrollHeight > box.clientHeight)).toBe(true);
+  await second.fill('');
+  // Enter adds a line to an answer; only Save sends it.
+  await first.fill('line one');
+  await first.press('Enter');
+  await first.pressSequentially('line two');
+  await expect(first).toHaveValue('line one\nline two');
+  expect(bodiesTo(dashboard, '/api/claude/answers')).toEqual([]);
 
   await first.fill('Portage-backend');
   await save.click();
@@ -635,20 +678,73 @@ test('scenario 48: answers are saved as you go and sent only when every question
   const dialog = await openDialog(page);
   const progress = dialog.getByTestId('claude-questions-progress');
   await expect(progress).toContainText('0 of 3 answered');
-  await expect(dialog.getByTestId('claude-questions')).toContainText(STANDING_HINT);
   const save = dialog.getByTestId('claude-questions-save');
   const result = dialog.getByTestId('claude-send-result');
 
+  // The standing hint is in the body above the first question, never in the footer.
+  const hint = dialog.locator('.claude-dialog-body').getByText(STANDING_HINT);
+  await expect(hint).toHaveCount(1);
+  const foot = dialog.locator('.claude-dialog-foot');
+  await expect(foot.getByText(STANDING_HINT)).toHaveCount(0);
+  const hintBox = await hint.boundingBox();
+  const firstBox = await dialog.getByTestId('claude-question-q1').boundingBox();
+  expect(hintBox.y + hintBox.height, 'the hint sits above the questions').toBeLessThanOrEqual(
+    firstBox.y,
+  );
+
+  // The questions are a numbered list.
+  const items = dialog.getByTestId('claude-questions').getByRole('listitem');
+  await expect(items).toHaveCount(3);
+  for (const [index, text] of [Q1, Q2, Q3].entries()) {
+    await expect(items.nth(index)).toHaveText(new RegExp(`^\\s*${index + 1}(?!\\d)`));
+    await expect(items.nth(index)).toContainText(text);
+  }
+
+  // Progress, the result, Save and Close share the footer; Save is outside the form and submits it.
+  for (const id of [
+    'claude-questions-progress',
+    'claude-send-result',
+    'claude-questions-save',
+    'claude-dialog-close',
+  ]) {
+    await expect(foot.getByTestId(id)).toHaveCount(1);
+  }
+  const form = dialog.getByTestId('claude-questions');
+  await expect(form.getByTestId('claude-questions-save')).toHaveCount(0);
+  const formId = await form.getAttribute('id');
+  expect(formId, 'the form has an id for Save to point at').toBeTruthy();
+  await expect(save).toHaveAttribute('type', 'submit');
+  await expect(save).toHaveAttribute('form', formId);
+  const [progressBox, saveBox, closeBox] = await Promise.all(
+    ['claude-questions-progress', 'claude-questions-save', 'claude-dialog-close'].map((id) =>
+      foot.getByTestId(id).boundingBox(),
+    ),
+  );
+  expect(progressBox.x + progressBox.width, 'progress is left of the buttons').toBeLessThanOrEqual(
+    saveBox.x,
+  );
+  expect(saveBox.x + saveBox.width, 'Save comes before Close').toBeLessThanOrEqual(closeBox.x);
+
+  // A tick shows a saved answer; a draft alone does not.
+  const tick = (id) => dialog.getByTestId(`claude-question-answered-${id}`);
+  for (const id of ['q1', 'q2', 'q3']) await expect(tick(id)).toHaveCount(0);
   await dialog.getByLabel(Q1).fill('Portage-backend');
+  await expect(tick('q1')).toHaveCount(0);
   await save.click();
   await expect(result).toHaveText('Saved. 2 questions still need an answer; nothing was sent.');
   await expect(progress).toContainText('1 of 3 answered');
+  await expect(tick('q1')).toBeVisible();
+  await expect(tick('q1')).toHaveAccessibleName('Answered');
+  await expect(tick('q2')).toHaveCount(0);
+  await expect(tick('q3')).toHaveCount(0);
 
   await dialog.getByLabel(Q2).fill('Yes, behind a setting');
   await dialog.getByLabel(Q3).fill('No');
+  await expect(tick('q2')).toHaveCount(0);
   await save.click();
   await expect(result).toHaveText(SENT_LINE);
   await expect(progress).toContainText('3 of 3 answered');
+  for (const id of ['q1', 'q2', 'q3']) await expect(tick(id)).toBeVisible();
   await expect(save).toBeDisabled();
   expect(bodiesTo(dashboard, '/api/claude/answers')).toEqual([
     { key: KEY, answers: { q1: 'Portage-backend' } },
@@ -778,9 +874,9 @@ test('scenario 51: the icon and dialog tell answers not sent, plan not done and 
   const hint = dialog.getByTestId('claude-answers-hint');
   await expect(hint).toHaveText(ANSWERS_NOT_SENT);
   const hintBox = await hint.boundingBox();
-  const formBox = await dialog.getByTestId('claude-questions').boundingBox();
+  const firstBox = await dialog.getByTestId('claude-question-q1').boundingBox();
   expect(hintBox.y + hintBox.height, 'the hint sits above the questions').toBeLessThanOrEqual(
-    formBox.y,
+    firstBox.y,
   );
   await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
   await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(ANSWERS_NOT_SENT);
@@ -825,8 +921,16 @@ test('scenario 52: both Go to session items work at once and each copies its own
   await expect(dialog.getByTestId('claude-action-goto')).toHaveCount(0);
   const investigate = dialog.getByTestId('claude-action-goto-investigate');
   const implement = dialog.getByTestId('claude-action-goto-implement');
-  await expect(investigate).toHaveText(LABEL.investigate);
-  await expect(implement).toHaveText(LABEL.implement);
+  // Each button says "Go to session"; its accessible name is the phase's full label.
+  await expect(investigate).toHaveText('Go to session');
+  await expect(implement).toHaveText('Go to session');
+  await expect(
+    dialog.getByRole('button', { name: LABEL.investigate, exact: true }),
+  ).toHaveAttribute('data-testid', 'claude-action-goto-investigate');
+  await expect(dialog.getByRole('button', { name: LABEL.implement, exact: true })).toHaveAttribute(
+    'data-testid',
+    'claude-action-goto-implement',
+  );
   await expect(investigate).toBeEnabled();
   await expect(implement).toBeEnabled();
   await expect(dialog.getByTestId('claude-action-hint-goto-investigate')).toHaveCount(0);
@@ -843,3 +947,159 @@ test('scenario 52: both Go to session items work at once and each copies its own
     ATTACH.command,
   ]);
 });
+
+// Each phase is one row: its run button and its own Go to session button, side by side on a wide
+// screen and stacked on a phone, with that row's hints on lines of their own under the buttons (the
+// run hint, then the plan path, then the Go to session hint).
+for (const [width, stacked] of [
+  [1440, false],
+  [390, true],
+]) {
+  test(`scenario 53: each phase row holds its run and Go to session buttons with the hints under them at ${width}px`, async ({
+    page,
+    dashboard,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openBoard(page, dashboard, {
+      [KEY]: claudeEntry('working', 'running', { goTo: sessions(ATTACH) }),
+      'TAP-9002': claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: sessions(RESUME) }),
+    });
+
+    // A row's buttons share a line when wide and sit one above the other when narrow; the lower edge
+    // of the two is where its hints may start.
+    const buttonsOf = async (row, run, goTo) => {
+      const runBox = await row.getByTestId(run).boundingBox();
+      const goBox = await row.getByTestId(goTo).boundingBox();
+      if (stacked) {
+        expect(goBox.y, `${goTo} is below ${run}`).toBeGreaterThanOrEqual(
+          runBox.y + runBox.height - 1,
+        );
+      } else {
+        const centre = ({ y, height }) => y + height / 2;
+        expect(
+          Math.abs(centre(goBox) - centre(runBox)),
+          `${goTo} is on the line of ${run}`,
+        ).toBeLessThanOrEqual(4);
+        expect(goBox.x, `${goTo} is right of ${run}`).toBeGreaterThanOrEqual(
+          runBox.x + runBox.width - 1,
+        );
+      }
+      return Math.max(runBox.y + runBox.height, goBox.y + goBox.height);
+    };
+    // Each hint, in the order given, is in the row, under the buttons and under the one before.
+    const hintsUnder = async (row, bottom, ids) => {
+      let edge = bottom;
+      for (const id of ids) {
+        const box = await row.getByTestId(id).boundingBox();
+        expect(box.y, `${id} is under what comes before it`).toBeGreaterThanOrEqual(edge - 1);
+        edge = box.y + box.height;
+      }
+    };
+    const noOverflow = async (dialog) => {
+      const body = dialog.locator('.claude-dialog-body');
+      expect(await body.evaluate((box) => box.scrollWidth - box.clientWidth)).toBeLessThanOrEqual(
+        0,
+      );
+      const box = await dialog.boundingBox();
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    };
+
+    let dialog = await openDialog(page);
+    const rows = dialog.locator('.claude-actions > li');
+    await expect(rows).toHaveCount(2);
+    const [investigate, implement] = [rows.nth(0), rows.nth(1)];
+    for (const [row, phase] of [
+      [investigate, 'investigate'],
+      [implement, 'implement'],
+    ]) {
+      await expect(row.getByTestId(`claude-action-${phase}`)).toBeVisible();
+      await expect(row.getByTestId(`claude-action-goto-${phase}`)).toBeVisible();
+    }
+    // Investigate and plan runs: Investigate has its run hint, Implement its run hint and no session.
+    const investigateBottom = await buttonsOf(
+      investigate,
+      'claude-action-investigate',
+      'claude-action-goto-investigate',
+    );
+    const implementBottom = await buttonsOf(
+      implement,
+      'claude-action-implement',
+      'claude-action-goto-implement',
+    );
+    await hintsUnder(investigate, investigateBottom, ['claude-action-hint-investigate']);
+    await expect(investigate.getByTestId('claude-action-hint-goto-investigate')).toHaveCount(0);
+    await hintsUnder(implement, implementBottom, [
+      'claude-action-hint-implement',
+      'claude-action-hint-goto-implement',
+    ]);
+    await noOverflow(dialog);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
+
+    // Plan ready: the plan path sits under the Implement row's buttons, above its Go to session hint.
+    dialog = await openDialog(page, 'TAP-9002');
+    const planRow = dialog.locator('.claude-actions > li').nth(1);
+    const planBottom = await buttonsOf(
+      planRow,
+      'claude-action-implement',
+      'claude-action-goto-implement',
+    );
+    await hintsUnder(planRow, planBottom, [
+      'claude-plan-hint',
+      'claude-action-hint-goto-implement',
+    ]);
+    await expect(planRow.getByTestId('claude-action-hint-implement')).toHaveCount(0);
+    await noOverflow(dialog);
+  });
+}
+
+// The footer holds Save beside Close and stays on screen: with many long questions only the body
+// scrolls, so Save answers is in view without scrolling, on a wide screen and on a phone, and still
+// is when a long result wraps.
+const LONG_QUESTION =
+  'which team owns the retry policy for failed export jobs, and what should happen when the cap is reached? ';
+for (const width of [1440, 390]) {
+  test(`scenario 54: Save answers stays on screen with many long questions at ${width}px`, async ({
+    page,
+    dashboard,
+  }) => {
+    await page.setViewportSize({ width, height: 700 });
+    const questions = [
+      'Alpha',
+      'Bravo',
+      'Charlie',
+      'Delta',
+      'Echo',
+      'Foxtrot',
+      'Golf',
+      'Hotel',
+    ].map((name, index) => claudeQuestion(`q${index + 1}`, `${name}: ${LONG_QUESTION.repeat(3)}`));
+    await openBoard(page, dashboard, {
+      [KEY]: claudeEntry('waiting', 'questions', { flags: PLANNED, questions }),
+    });
+    const dialog = await openDialog(page);
+    const body = dialog.locator('.claude-dialog-body');
+    expect(
+      await body.evaluate((box) => box.scrollHeight - box.clientHeight),
+      'the questions are taller than the body, which scrolls',
+    ).toBeGreaterThan(0);
+    expect(await body.evaluate((box) => box.scrollTop)).toBe(0);
+    const foot = dialog.locator('.claude-dialog-foot');
+    const onScreen = async () => {
+      for (const id of ['claude-questions-save', 'claude-dialog-close']) {
+        await expect(dialog.getByTestId(id), `${id} is on screen`).toBeInViewport({ ratio: 1 });
+      }
+      await expect(foot).toBeInViewport({ ratio: 1 });
+    };
+    await onScreen();
+
+    // A result that wraps over several lines does not push the footer off the screen.
+    dashboard.data.claude.sends.push({ status: 'failed', reason: 'session_not_found' });
+    await dialog.getByTestId('claude-question-q1').fill('Portage-backend');
+    await dialog.getByTestId('claude-questions-save').click();
+    await expect(foot.getByTestId('claude-send-result')).toContainText(
+      'Answers saved, but they could not be sent',
+    );
+    await onScreen();
+  });
+}
