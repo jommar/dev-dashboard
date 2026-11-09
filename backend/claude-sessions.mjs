@@ -36,9 +36,12 @@ const STARTED_ID = /(?<![\w-])[0-9a-f]{8}(?![\w-])/;
 const delivered = (reason) => ({ status: 'delivered', ...(reason && { reason }) });
 const failure = (status, reason) => ({ status, reason });
 
-// A live process has a numeric pid, a finished session has none; any other pid is not trusted.
+// A live process has a numeric pid, a finished session has none; any other pid is not trusted. The
+// one exception is a session the CLI lists as `stopped` (ended with `claude stop`), which it reports
+// with `pid: null`: that is finished, and without it such a session could never be resumed.
 export function stateOf(entry) {
   if (typeof entry.pid === 'number') return 'live';
+  if (entry.pid === null && entry.state === 'stopped') return 'finished';
   return 'pid' in entry ? 'unknown' : 'finished';
 }
 

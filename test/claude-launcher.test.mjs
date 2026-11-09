@@ -261,7 +261,7 @@ for (const phase of [IMPLEMENT, GROOM]) {
 for (const [label, record, entries, reason] of [
   ['working', reviewRecord(), [reviewEntry({ state: 'working' })], 'session_running'],
   ['starting', reviewRecord({ launchedAt: START_MS - 5_000, id: null }), [], 'session_running'],
-  ['unrecognised state', reviewRecord(), [reviewEntry({ state: 'stopped' })], 'unrecognised_state'],
+  ['unrecognised state', reviewRecord(), [reviewEntry({ state: 'paused' })], 'unrecognised_state'],
 ]) {
   test(`review launch: fresh ${label} refuses without any file mutation`, async (t) => {
     const env = await launcherEnvironment(t);
@@ -3795,4 +3795,91 @@ test('every send against a session that never goes fails as live_at_resume witho
     assert.equal(logged.length, 1, `${label}: logged once`);
     assert.match(logged[0], new RegExp(`"ticket":"${KEY}"`), label);
   }
+});
+
+// ---- a session ended with `claude stop` is listed as stopped with pid null: finished, resumable ----
+
+const STOPPED_ENTRY = { state: 'stopped', pid: null };
+const stoppedPlanListing = () => [listed({ id: EARLIER_ID, ...STOPPED_ENTRY })];
+
+test('stopped plan session: the list keeps every action open that it opens for done', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, { ...SENT_PAIR(), listing: stoppedPlanListing() });
+  withoutApproved(env);
+
+  const { tickets } = await env.launcher.list();
+
+  const entry = tickets[KEY];
+  assert.deepEqual([entry.state, entry.reason], ['done', 'plan_ready']);
+  assert.equal(entry.blocks.approve, null);
+  assert.equal(entry.blocks.resend, null);
+  assert.equal(entry.blocks.answer, null);
+  assert.equal(entry.blocks.implement, 'not_approved', 'only the approval is missing');
+  assert.deepEqual(entry.goTo.investigate, {
+    kind: 'resume',
+    command: `cd ~/pathwise && claude --resume ${sessionUuid(EARLIER_ID)}`,
+  });
+});
+
+test('stopped plan session: Approve, Resend and a changed answer each resume it without a stop or a wait', async (t) => {
+  const sends = {
+    approve: (env) => {
+      withoutApproved(env);
+      return env.launcher.approve(approveBody);
+    },
+    resend: (env) => env.launcher.answer({ ...answerBody([]), resend: true }),
+    'changed answer': (env) => env.launcher.answer(answerBody({ q2: 'a different answer' })),
+  };
+  for (const [label, send] of Object.entries(sends)) {
+    const env = await routingEnvironment(t);
+    seedAsked(env, { ...SENT_PAIR(), listing: stoppedPlanListing() });
+
+    const result = await send(env);
+
+    assert.deepEqual(result.send, { status: 'sent' }, label);
+    assert.equal(env.fake.stops().length, 0, `${label}: nothing to stop`);
+    assert.equal(env.fake.resumes().length, 1, `${label}: resumed once`);
+    assert.deepEqual(env.timers.scheduled, [], `${label}: it did not wait`);
+  }
+});
+
+test('stopped review session: Re-review is open and resumes it', async (t) => {
+  const env = await routingEnvironment(t);
+  seedReview(env, [reviewEntry(STOPPED_ENTRY)]);
+  const { tickets } = await env.launcher.list();
+  assert.equal(tickets[KEY].blocks.rereview, null);
+  assert.equal(tickets[KEY].blocks.review, null);
+
+  const result = await env.launcher.rereview(rereviewBody);
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.fake.stops().length, 0);
+  assert.equal(env.fake.resumes().length, 1);
+  assert.equal(env.fake.resumes()[0].sessionId, sessionUuid(REVIEW_ID));
+});
+
+test('stopped groom session: a new groom launch is allowed, as after done', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  env.seed(KEY, { launch: { ...env.parsed().launch, [GROOM]: earlierGroom() } });
+  env.cli.setListing([listed({ id: EARLIER_ID }), groomSession(STOPPED_ENTRY)]);
+
+  const result = await env.launcher.launch(groomLaunchBody());
+
+  assert.equal(result.ok, true);
+  assert.equal(env.cli.launches().length, 1);
+});
+
+test('stopped session with a process id is still live and still refuses a resume', async (t) => {
+  const env = await routingEnvironment(t);
+  seedAsked(env, {
+    ...SENT_PAIR(),
+    listing: [listed({ id: EARLIER_ID, state: 'stopped', pid: 4242 })],
+  });
+  env.fake.liveAfterStop(Infinity);
+
+  const result = await throughGap(env, env.launcher.answer({ ...answerBody([]), resend: true }));
+
+  assert.notDeepEqual(result.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 0);
 });

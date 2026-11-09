@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Fixed a ticket reading `unknown / unrecognised_state` (dialog: "Claude status is unavailable", with
+  Approve, Resend and Implement all off) after its session was ended with `claude stop`. The CLI lists
+  such a session as `state: "stopped"` with `pid: null`; the dashboard now treats `stopped` as a
+  finished, resumable session wherever it treats `done` that way (phase state, the `claude --resume`
+  join command, review and groom state, Re-review), and the sessions module reads `stopped` with a
+  null pid as finished so it can be resumed. `stopped` with a numeric pid is still live, a null pid on
+  any other state is still unknown, and every other unfamiliar state stays `unrecognised_state`.
+  This also removes the dead end after a failed send: a session left stopped by our own stop can be
+  retried.
+
 - Fixed a lost send: after stopping a live session the dashboard waited a fixed 15 seconds and then
   resumed it, which makes the CLI start a copy if the process had not gone yet, so answers could
   vanish. It now polls a fresh listing once a second (`FINISH_POLL_MS`, at most `FINISH_POLL_LIMIT`

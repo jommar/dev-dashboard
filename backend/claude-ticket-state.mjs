@@ -23,7 +23,10 @@ const QUESTION_TEXT_LIMIT = 500;
 export const ANSWER_MAX_LENGTH = 2000;
 // A session the CLI has not listed yet is still starting for this long after its launch.
 const START_WINDOW_MS = 30_000;
-const KNOWN_STATES = ['working', 'blocked', 'done'];
+// `stopped` is what the CLI lists for a session ended with `claude stop` (no process): finished and
+// resumable, so it is treated exactly as `done` wherever the state is read.
+const FINISHED_STATES = ['done', 'stopped'];
+const KNOWN_STATES = ['working', 'blocked', ...FINISHED_STATES];
 
 const isText = (value) => typeof value === 'string';
 // `done` is the session's word that the planning phase is complete; anything but true reads false.
@@ -280,7 +283,7 @@ function goToFor(session) {
     return isShortId(session.id)
       ? { kind: 'attach', command: `claude attach ${session.id}` }
       : null;
-  return session.state === 'done' && isSessionId(session.sessionId)
+  return FINISHED_STATES.includes(session.state) && isSessionId(session.sessionId)
     ? { kind: 'resume', command: `cd ~/pathwise && claude --resume ${session.sessionId}` }
     : null;
 }

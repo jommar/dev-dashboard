@@ -100,7 +100,7 @@ const REVIEW_STATES = [
   ],
   [
     'unfamiliar listed state',
-    { entries: [reviewEntry({ state: 'stopped' })] },
+    { entries: [reviewEntry({ state: 'paused' })] },
     'unknown',
     'unrecognised_state',
     'unrecognised_state',
@@ -236,7 +236,7 @@ test('review state: resolves its own record by id and then name/time, not anothe
 test('review state: unknown review fails closed without changing existing unfamiliar-groom policy', async () => {
   const entry = await derive({
     launch: { [GROOM]: groomRecord(), [REVIEW]: reviewRecord() },
-    entries: [groomEntry({ state: 'stopped' }), reviewEntry({ state: 'stopped' })],
+    entries: [groomEntry({ state: 'paused' }), reviewEntry({ state: 'paused' })],
   });
   assert.deepEqual(entry.review, { state: 'unknown', reason: 'unrecognised_state' });
   assert.equal(entry.blocks.review, 'unrecognised_state');
@@ -423,7 +423,7 @@ test('scenario 15: an unavailable listing is unknown, blocks every action and ha
 });
 
 test('scenario 15: a session in an unrecognised state is unknown and has no go-to command', async () => {
-  const entry = await derive({ entries: [listed({ id: FIRST_ID, state: 'stopped' })] });
+  const entry = await derive({ entries: [listed({ id: FIRST_ID, state: 'paused' })] });
   assertEntry(entry, { state: 'unknown', reason: 'unrecognised_state' });
   assert.deepEqual(entry.goTo, GO_TO_NONE);
 });
@@ -1110,7 +1110,7 @@ test('scenario 115: a session in an unknown state gives no command for its phase
       status: bothStatus,
       launch: bothLaunched(),
       entries: [
-        listed({ id: INVESTIGATE_ID, state: 'stopped', ...extra }),
+        listed({ id: INVESTIGATE_ID, state: 'paused', ...extra }),
         workingEntry({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
       ],
     });
@@ -1125,7 +1125,7 @@ test('scenario 115: a session in an unknown state gives no command for its phase
       launch: bothLaunched(),
       entries: [
         listed({ id: INVESTIGATE_ID }),
-        listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME, state: 'stopped', ...extra }),
+        listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME, state: 'paused', ...extra }),
       ],
     });
     assert.deepEqual(
@@ -1235,7 +1235,7 @@ const GROOM_STATES = [
   ],
   [
     'a session in a state the dashboard does not know',
-    { entries: [groomEntry({ state: 'stopped' })] },
+    { entries: [groomEntry({ state: 'paused' })] },
     'unknown',
     'unrecognised_state',
   ],
@@ -1460,7 +1460,7 @@ test('scenario 216: goTo.groom joins the groom session by the command for its st
       attachFor(GROOM_ID),
     ],
     ['a finished session', groomEntry({ state: 'done' }), resumeFor(GROOM_ID)],
-    ['a state that is not known', groomEntry({ state: 'stopped' }), null],
+    ['a state that is not known', groomEntry({ state: 'paused' }), null],
   ];
   for (const [label, session, expected] of rows) {
     const entry = await groomed({ entries: [session] });
@@ -1606,4 +1606,113 @@ test('answersToSend: a resend lists every id even when nothing changed, a plain 
     again.changed,
     ANSWERED.map(({ id }) => id),
   );
+});
+
+// ---- `stopped` (a session ended with `claude stop`, listed with pid null) is a finished session ----
+
+const STOPPED = { state: 'stopped', pid: null };
+const ENDED_PLAN = {
+  status: statusFile({
+    investigate: true,
+    done: true,
+    questions: [question('q1', 'Portage-backend')],
+  }),
+  launch: {
+    [INVESTIGATE]: launchRecord({
+      id: FIRST_ID,
+      answered: answeredMap([question('q1', 'Portage-backend')]),
+      sent: {
+        at: START_MS - HOUR_MS,
+        answers: answeredMap([question('q1', 'Portage-backend')]),
+      },
+    }),
+  },
+};
+
+test('stopped: a plan session ended with claude stop is done, resumable, and keeps Approve and Resend open', async () => {
+  const entry = await derive({ ...ENDED_PLAN, entries: [listed({ id: FIRST_ID, ...STOPPED })] });
+
+  assertEntry(entry, { state: 'done', reason: 'plan_ready', phase: INVESTIGATE });
+  assert.deepEqual(entry.goTo, investigateOnly(RESUME), 'the resume command, as for done');
+  assert.equal(entry.blocks.approve, null);
+  assert.equal(entry.blocks.resend, null);
+  assert.equal(entry.blocks.answer, null);
+  assert.equal(entry.blocks.investigate, null);
+  assert.equal(entry.blocks.implement, 'not_approved', 'only the approval is missing');
+});
+
+test('stopped: every entry reads exactly as it does for a done session without a pid', async () => {
+  const scenarios = {
+    'plan ready': ENDED_PLAN,
+    'plan not marked done': {
+      ...ENDED_PLAN,
+      status: { ...ENDED_PLAN.status, done: false },
+    },
+    'approved plan': { ...ENDED_PLAN, status: { ...ENDED_PLAN.status, approved: true } },
+    'open question': {
+      ...ENDED_PLAN,
+      status: statusFile({ investigate: true, questions: [question('q1')] }),
+    },
+    'plan flag never set': { status: statusFile(), launch: ENDED_PLAN.launch },
+  };
+  for (const [label, scenario] of Object.entries(scenarios)) {
+    const done = await derive({ ...scenario, entries: [listed({ id: FIRST_ID, state: 'done' })] });
+    const stopped = await derive({
+      ...scenario,
+      entries: [listed({ id: FIRST_ID, ...STOPPED })],
+    });
+    assert.deepEqual(stopped, done, label);
+  }
+});
+
+test('stopped: an implement session ended with claude stop is implemented and resumable', async () => {
+  const entry = await derive({
+    status: statusFile({ investigate: true, implement: true, done: true, approved: true }),
+    launch: bothLaunched(),
+    entries: [
+      listed({ id: INVESTIGATE_ID, state: 'done' }),
+      listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME, ...STOPPED }),
+    ],
+  });
+
+  assertEntry(entry, { state: 'done', reason: 'implemented', phase: IMPLEMENT });
+  assert.deepEqual(entry.goTo.implement, resumeFor(IMPLEMENT_ID));
+});
+
+test('stopped: a stopped review session is done and Re-review stays open', async () => {
+  const entry = await derive({
+    launch: { [REVIEW]: reviewRecord() },
+    entries: [reviewEntry(STOPPED)],
+  });
+
+  assert.deepEqual(entry.review, { state: 'done', reason: 'finished' });
+  assert.equal(entry.blocks.review, null, 'a new review may start');
+  assert.equal(entry.blocks.rereview, null, 'and a re-review may be sent');
+});
+
+test('stopped: a stopped groom session is done and blocks nothing, with a resume command', async () => {
+  const entry = await derive({
+    launch: { [GROOM]: groomRecord() },
+    entries: [groomEntry(STOPPED)],
+  });
+
+  assert.deepEqual(entry.groom, { state: 'done', reason: 'finished' });
+  assert.equal(entry.blocks.groom, null);
+  assert.deepEqual(entry.goTo.groom, resumeFor(GROOM_ID));
+});
+
+test('stopped: is never running, so a ticket that only has stopped sessions is not working', async () => {
+  const { sessionRunning, sideActionState } = await import('../backend/claude-ticket-state.mjs');
+  const entries = [reviewEntry(STOPPED)];
+  assert.equal(sessionRunning(entries, reviewRecord(), START_MS), false);
+  assert.equal(sideActionState(reviewRecord(), entries, START_MS).state, 'done');
+});
+
+test('stopped: any other unfamiliar state is still unrecognised', async () => {
+  const entry = await derive({
+    launch: { [REVIEW]: reviewRecord() },
+    entries: [reviewEntry({ state: 'stopping', pid: null })],
+  });
+  assert.deepEqual(entry.review, { state: 'unknown', reason: 'unrecognised_state' });
+  assert.equal(entry.blocks.rereview, 'unrecognised_state');
 });

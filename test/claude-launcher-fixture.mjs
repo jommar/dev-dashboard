@@ -801,6 +801,10 @@ export function seedPlanned(
 // one (which then works). `onResume(fn)` runs as a resume is made, before it answers, so a test
 // can look at the files at that moment (`onStop(fn)` does the same for a stop). Outcomes can be
 // forced per call kind.
+// No process: no pid key, or `pid: null` on a session the CLI lists as `stopped`.
+const isFinished = (entry) =>
+  !('pid' in entry) || (entry.pid === null && entry.state === 'stopped');
+
 export function createFakeSessions() {
   const calls = [];
   const state = {
@@ -882,7 +886,7 @@ export function createFakeSessions() {
       if (state.resumeOutcome) return state.resumeOutcome;
       const entry = find(sessionId);
       if (!entry) return { status: 'delivered', reason: 'not_listed' };
-      if (state.dying || 'pid' in entry) return { status: 'waiting', reason: 'live_at_resume' };
+      if (state.dying || !isFinished(entry)) return { status: 'waiting', reason: 'live_at_resume' };
       Object.assign(entry, { state: 'working', status: 'busy', pid: 4242 });
       return { status: 'delivered', reason: 'resumed' };
     },

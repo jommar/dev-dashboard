@@ -1621,6 +1621,9 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
   `implemented`, `plan_missing`, `plan_not_done` (`failed`), `ended_without_flag`,
   `session_missing`, `listing_unavailable`, `unrecognised_state` or `null` (for `none`). The
   icon's state word comes from `reason`.
+  A session the CLI lists as `working`, `blocked`, `done` or `stopped` (ended with `claude stop`,
+  listed with a null pid) is recognised; `stopped` is a finished, resumable session exactly like
+  `done`. Any other listed state is `unrecognised_state`.
 - Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
   `unanswered` counts the open ones.
 - `blocks` is `{ investigate, implement, answer, groom, review }`, each a reason string or `null` (why that

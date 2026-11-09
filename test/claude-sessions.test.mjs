@@ -1689,3 +1689,44 @@ test('a stop or a resume made without a ticket (the Slack wake) logs nothing', a
     [],
   );
 });
+
+// ---- a session ended with `claude stop` is listed as stopped with pid null: finished ----
+
+test('stateOf: a stopped session with a null pid is finished; other null or text pids stay unknown', async () => {
+  const { stateOf } = await import('../backend/claude-sessions.mjs');
+  assert.equal(stateOf({ state: 'stopped', pid: null }), 'finished');
+  assert.equal(stateOf({ state: 'stopped' }), 'finished');
+  assert.equal(stateOf({ state: 'stopped', pid: 4242 }), 'live', 'a process is a process');
+  assert.equal(stateOf({ state: 'stopped', pid: '4242' }), 'unknown');
+  assert.equal(stateOf({ state: 'done', pid: null }), 'unknown', 'only stopped is trusted so');
+  assert.equal(stateOf({ state: 'paused', pid: null }), 'unknown');
+});
+
+test('resume continues a stopped session whose pid is null, in its own directory', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A, { state: 'stopped', pid: null })]);
+
+  const result = await env.sessions.resume({
+    sessionId: SESSION_A,
+    notice: 'continue',
+    ticket: 'TAP-1',
+  });
+
+  assert.deepStrictEqual(result, { status: 'delivered', reason: 'resumed' });
+  assert.equal(env.exec.spawns().length, 1, 'one resume was run');
+  assertSpawn(env.exec.spawns()[0], {
+    sessionId: SESSION_A,
+    notice: 'continue',
+    cwd: FINISHED_CWD,
+  });
+});
+
+test('resume still refuses a null-pid session that is not listed as stopped', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A, { pid: null })]);
+
+  const result = await env.sessions.resume({ sessionId: SESSION_A, notice: 'continue' });
+
+  assert.deepStrictEqual(result, { status: 'waiting', reason: 'live_at_resume' });
+  assert.equal(env.exec.spawns().length, 0);
+});

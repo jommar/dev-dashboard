@@ -98,7 +98,7 @@ test('review route: existing launch endpoint accepts review and lists its indepe
 test('review route: unknown listed review state returns a 409 refusal without mutation', async (t) => {
   const f = await claudeHttpFixture(t);
   f.seed(KEY, { launch: { [REVIEW]: reviewRecord() } });
-  f.cli.setListing([reviewEntry({ state: 'stopped' })]);
+  f.cli.setListing([reviewEntry({ state: 'paused' })]);
   const before = f.files();
   const res = await f.http.json('POST', LAUNCH, { key: KEY, phase: REVIEW });
   assert.equal(res.status, 409);
