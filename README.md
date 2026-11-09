@@ -1174,11 +1174,19 @@ By default the notice (the message in `prompts/answers.md` if you wrote one, see
 the ids (it reads "answers to questions q1, q2" the first time and "changed answers to questions
 q2" after a send, naming the answers that are new or differ from the last send) and points at
 `status.json`, where the answers are in `questions[].answer`. The dashboard never puts answer text
-in it. It tells the session to update the plan, checklist and spec under
-`.orchestrator/<key in lower case>/` wherever the
-answers change anything, to implement nothing and stop at the approval gate, and to set `done` to
-`true` as its very last action, changing only that key. If an answer raises a new question, it
-appends it with `answer: null`, leaves `done` `false` and stops.
+in it. On every delivery the session reads the latest status and plan, checklist and spec under
+`.orchestrator/<key in lower case>/`, applies all current decisions, and reassesses ambiguities and
+follow-up questions. It may revise still-unanswered questions in place; answered questions and their
+history stay unchanged, with new or revised follow-ups appended under fresh increasing `qN` ids and
+`answer: null`. This loop can repeat after each answer delivery. A **Decision documentation** section
+in the plan maps question ids and decisions to their effects and affected doc sections, separating
+confirmed decisions from provisional defaults. The session updates all three artifacts in place,
+removes superseded assumptions, aligns scenarios and checklist proving commands, and records concrete
+project-doc paths and required implementation-time updates in the plan/checklist rather than editing
+them during planning. It implements nothing and stops at the approval gate. Only after no unanswered
+questions remain and all three artifacts reflect the latest decisions may its last action set `done`
+to `true`; otherwise it keeps or resets `done` to `false` and stops for the next answer delivery. Status
+edits preserve unrelated state and leave the planning flag intact.
 
 The reply is `{ ok, key, send, ticket }` with `send` `{ status, reason? }`, `status` being `sent`,
 `skipped` or `failed`. A failed send is not an HTTP error: the answers stay saved (they are never
