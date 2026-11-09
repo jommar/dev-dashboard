@@ -13,8 +13,11 @@ import {
 
 const NO_PEOPLE = Object.freeze([]);
 const RESERVED_PERSON_LABELS = new Set(['Everyone', 'Unassigned', 'Unknown assignee']);
+const sprintIdentity = (entry) => String(entry.sprint.id ?? entry.sprint.name);
+const sprintWindow = (series, sprintId) =>
+  sprintId ? series.filter((entry) => sprintIdentity(entry) === sprintId) : series;
 
-function comparisonPeople(people) {
+function comparisonPeople(people, sprintId) {
   const sorted = [...people].sort(
     (a, b) => a.displayName.localeCompare(b.displayName) || a.id.localeCompare(b.id),
   );
@@ -35,19 +38,21 @@ function comparisonPeople(people) {
       } while (reserved.has(label) || used.has(label));
     }
     used.add(label);
+    const series = sprintWindow(person.series, sprintId);
     const byStatus = { done: 0, inProgress: 0, notStarted: 0 };
-    for (const entry of person.series)
+    for (const entry of series)
       for (const status of Object.keys(byStatus)) byStatus[status] += entry.byStatus[status];
     return {
       ...person,
+      series,
       label,
-      points: person.series.reduce((total, entry) => total + entry.points, 0),
+      points: series.reduce((total, entry) => total + entry.points, 0),
       byStatus,
     };
   });
 }
 
-function PersonBreakdown({ people, personId, sprintCount, onSelect }) {
+function PersonBreakdown({ people, personId, sprintCount, sprintName, onSelect }) {
   const maximum = Math.max(0, ...people.map((person) => person.points)) || 1;
   return (
     <section
@@ -58,7 +63,8 @@ function PersonBreakdown({ people, personId, sprintCount, onSelect }) {
       <div className="home-velocity-people-head">
         <h3 id="home-velocity-people-title">People</h3>
         <span>
-          Total points · {sprintCount} displayed {sprintCount === 1 ? 'sprint' : 'sprints'}
+          Total points ·{' '}
+          {sprintName || `${sprintCount} displayed ${sprintCount === 1 ? 'sprint' : 'sprints'}`}
         </span>
       </div>
       <ul className="home-velocity-people-list">
@@ -102,7 +108,11 @@ function PersonBreakdown({ people, personId, sprintCount, onSelect }) {
 
 export function HomePanel({ active }) {
   const api = useDashboardApi();
-  const [selection, setSelection] = useState(() => ({ team: readVelocityTeam(), person: '' }));
+  const [selection, setSelection] = useState(() => ({
+    team: readVelocityTeam(),
+    person: '',
+    sprint: '',
+  }));
   const [data, setData] = useState(() => readVelocitySnapshot());
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState('');
@@ -121,9 +131,15 @@ export function HomePanel({ active }) {
       setSaveFailed(!writeVelocitySnapshot(snapshot));
       setSelection((current) => {
         const board = snapshot.boards.find((entry) => entry.name === current.team);
-        return board?.people.some((person) => person.id === current.person)
-          ? current
-          : { ...current, person: '' };
+        return {
+          ...current,
+          person: board?.people.some((person) => person.id === current.person)
+            ? current.person
+            : '',
+          sprint: board?.series.some((entry) => sprintIdentity(entry) === current.sprint)
+            ? current.sprint
+            : '',
+        };
       });
     } catch (error) {
       setFailure(error.message);
@@ -132,14 +148,21 @@ export function HomePanel({ active }) {
       setLoading(false);
     }
   }, [api]);
-  const { team, person: personId } = selection;
+  const { team, person: personId, sprint: sprintId } = selection;
   const boards = data?.boards;
   const teams = useMemo(() => {
     const names = (boards || []).map((board) => board.name);
     return names.includes(team) ? names : [team, ...names];
   }, [boards, team]);
   const selected = boards?.find((board) => board.name === team);
-  const people = useMemo(() => comparisonPeople(selected?.people || NO_PEOPLE), [selected]);
+  const series = useMemo(
+    () => sprintWindow(selected?.series || [], sprintId),
+    [selected, sprintId],
+  );
+  const people = useMemo(
+    () => comparisonPeople(selected?.people || NO_PEOPLE, sprintId),
+    [selected, sprintId],
+  );
   const chosenPerson = people.find((person) => person.id === personId);
   const choosePerson = (id) => setSelection((current) => ({ ...current, person: id }));
   const generated = data && new Date(data.updatedAt).toLocaleString();
@@ -150,16 +173,16 @@ export function HomePanel({ active }) {
   );
   const chart = useMemo(
     () =>
-      selected?.series.length ? (
+      series.length ? (
         <TeamVelocityChart
           key={team}
           team={team}
           personLabel={chosenPerson?.label || 'Everyone'}
-          series={chosenPerson?.series || selected.series}
-          scaleSeries={selected.series}
+          series={chosenPerson?.series || series}
+          scaleSeries={series}
         />
       ) : null,
-    [selected, team, chosenPerson],
+    [series, team, chosenPerson],
   );
 
   return (
@@ -176,7 +199,7 @@ export function HomePanel({ active }) {
                 data-testid="home-velocity-team"
                 value={team}
                 onChange={(event) => {
-                  setSelection({ team: event.target.value, person: '' });
+                  setSelection({ team: event.target.value, person: '', sprint: '' });
                   writeVelocityTeam(event.target.value);
                 }}
               >
@@ -198,6 +221,23 @@ export function HomePanel({ active }) {
                 {people.map((person) => (
                   <option key={person.id} value={person.id}>
                     {person.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="home-velocity-team-field">
+              Sprint
+              <select
+                data-testid="home-velocity-sprint"
+                value={sprintId}
+                onChange={(event) =>
+                  setSelection((current) => ({ ...current, sprint: event.target.value }))
+                }
+              >
+                <option value="">All displayed sprints</option>
+                {selected?.series.map((entry) => (
+                  <option key={sprintIdentity(entry)} value={sprintIdentity(entry)}>
+                    {entry.sprint.name}
                   </option>
                 ))}
               </select>
@@ -258,7 +298,8 @@ export function HomePanel({ active }) {
                 <PersonBreakdown
                   people={people}
                   personId={personId}
-                  sprintCount={selected.series.length}
+                  sprintCount={series.length}
+                  sprintName={sprintId ? series[0]?.sprint.name : undefined}
                   onSelect={choosePerson}
                 />
               )}

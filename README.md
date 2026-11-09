@@ -413,7 +413,16 @@ point scale across people. This is not a productivity ranking. Display
 labels are disambiguated consistently across the selector, rows and chart.
 Person selection is not persisted: Team changes and reloads reset Everyone;
 Refresh retains the selected person only if that identity still exists for the
-selected team. Both selectors remain usable during generation.
+selected team. The selectors remain usable during generation.
+
+**Sprint** defaults to **All displayed sprints**. Choose a named sprint to compare
+everyone's total points and status bars over that same single sprint; the chart
+uses the same window for Everyone or the selected person, with a shared team
+chart scale. People stay listed even at zero points, and the comparison caption
+names the selected sprint. This filters the full saved snapshot locally without
+changing it or fetching. Person changes keep Sprint; Team changes and reloads
+reset Sprint to All. Refresh retains a sprint still present by its ID (or name
+when no ID exists), otherwise safely returns to All.
 
 **Sprint history · story points** shows up to eight latest active/closed sprints
 per team, oldest to newest, with Completed, In progress and Not started stacks

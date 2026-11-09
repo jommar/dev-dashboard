@@ -7,6 +7,7 @@ const alexA = `person:${'a'.repeat(64)}`;
 const alexB = `person:${'b'.repeat(64)}`;
 const team = (page) => page.getByTestId('home-velocity-team');
 const person = (page) => page.getByTestId('home-velocity-person');
+const sprint = (page) => page.getByTestId('home-velocity-sprint');
 const chart = (page) => page.getByTestId('home-velocity-chart');
 const refresh = (page) => page.getByTestId('home-refresh');
 const reads = (dashboard) =>
@@ -591,6 +592,118 @@ test('person velocity stays local with alphabetical same-window comparison and r
       .snapshot.boards.find(({ name }) => name === 'Nexus')
       .people.map(({ id }) => id),
   ).not.toContain(alexA);
+});
+
+test('one sprint compares every person on the same local window and shared scales @regression', async ({
+  page,
+  dashboard,
+}) => {
+  const original = structuredClone(dashboard.data.teamVelocity);
+  const nexus = original.boards.find(({ name }) => name === 'Nexus');
+  await seedVelocitySnapshot(page, original);
+  await page.goto('/#/home');
+  await expect(sprint(page)).toHaveAccessibleName('Sprint');
+  await expect(sprint(page)).toHaveValue('');
+  expect(await sprint(page).locator('option').allTextContents()).toEqual([
+    'All displayed sprints',
+    ...nexus.series.map(({ sprint }) => sprint.name),
+  ]);
+  const saved = await stored(page);
+  const rows = page.getByTestId('home-velocity-person-row');
+  const comparison = page.getByTestId('home-velocity-people');
+  await sprint(page).selectOption('2');
+  await expect(page.getByTestId('home-velocity-total')).toHaveText(['4.75']);
+  await expect(comparison).toContainText('Total points · Nexus Sprint 2');
+  await expect(rows.locator('strong')).toHaveText(['2.5', '1.25', '1', '0']);
+  const sum = (await rows.locator('strong').allTextContents()).reduce(
+    (total, value) => total + Number(value),
+    0,
+  );
+  expect(sum).toBe(Number(await page.getByTestId('home-velocity-total').textContent()));
+  const axis = await page.getByTestId('home-velocity-axis').textContent();
+  for (const [index, p] of nexus.people.entries()) {
+    const meter = rows.nth(index).getByTestId('home-velocity-person-meter');
+    for (const status of ['done', 'inProgress', 'notStarted']) {
+      const segment = meter.locator(`[data-status="${status}"]`);
+      const proportion = await segment.evaluate(
+        (el) => el.getBoundingClientRect().width / el.parentElement.getBoundingClientRect().width,
+      );
+      expect(proportion).toBeCloseTo(p.series[1].byStatus[status] / 2.5, 2);
+      const color = await chart(page)
+        .locator(`.home-velocity-swatch[data-status="${status}"]`)
+        .evaluate((el) => getComputedStyle(el).backgroundColor);
+      await expect(segment).toHaveCSS('background-color', color);
+    }
+    await rows.nth(index).click();
+    await expect(person(page)).toHaveValue(p.id);
+    await expect(sprint(page)).toHaveValue('2');
+    await expect(page.getByTestId('home-velocity-total')).toHaveText([String(p.series[1].points)]);
+    await expect(page.getByTestId('home-velocity-axis')).toHaveText(axis);
+    await expect(rows).toHaveCount(4);
+    await expect(rows.locator('strong')).toHaveText(['2.5', '1.25', '1', '0']);
+  }
+  await person(page).selectOption('');
+  await sprint(page).selectOption('Nexus Sprint 1');
+  await expect(page.getByTestId('home-velocity-total')).toHaveText(['0']);
+  await expect(rows.locator('strong')).toHaveText(['0', '0', '0', '0']);
+  await expect(comparison).toContainText('Total points · Nexus Sprint 1');
+  await expect(person(page).locator('option')).toHaveCount(5);
+  await sprint(page).selectOption('');
+  await expect(comparison).toContainText('Total points · 4 displayed sprints');
+  await expect(rows.locator('strong')).toHaveText(['5.5', '4.25', '3', '0']);
+  await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '4.75', '0', '8']);
+  expect(await stored(page)).toBe(saved);
+  expect(dashboard.data.teamVelocity).toEqual(original);
+  expect(reads(dashboard)).toBe(0);
+});
+
+test('sprint selection survives person and valid refresh but resets on team reload or removal @regression', async ({
+  page,
+  dashboard,
+}) => {
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
+  await page.goto('/#/home');
+  await sprint(page).selectOption('2');
+  await person(page).selectOption(alexA);
+  await expect(sprint(page)).toHaveValue('2');
+  await team(page).selectOption('Mobile');
+  await expect(sprint(page)).toHaveValue('');
+  await expect(person(page)).toHaveValue('');
+  await expect(sprint(page).locator('option')).toHaveText([
+    'All displayed sprints',
+    'Mobile Sprint 11',
+  ]);
+  await team(page).selectOption('Nexus');
+  await sprint(page).selectOption('2');
+  await person(page).selectOption(alexB);
+  expect(reads(dashboard)).toBe(0);
+  const nexus = dashboard.data.teamVelocity.boards.find(({ name }) => name === 'Nexus');
+  // Stable ids retain selection even if a refreshed sprint name changes.
+  for (const series of [nexus.series, ...nexus.people.map((p) => p.series)])
+    series[1].sprint.name = 'Nexus Sprint 22';
+  await refresh(page).click();
+  await expect(refresh(page)).toBeEnabled();
+  await expect(sprint(page)).toHaveValue('2');
+  await expect(person(page)).toHaveValue(alexB);
+  await expect(page.getByTestId('home-velocity-total')).toHaveText(['1.25']);
+  await expect(page.getByTestId('home-velocity-people')).toContainText(
+    'Total points · Nexus Sprint 22',
+  );
+  for (const series of [nexus.series, ...nexus.people.map((p) => p.series)]) series.splice(1, 1);
+  await refresh(page).click();
+  await expect(refresh(page)).toBeEnabled();
+  await expect(sprint(page)).toHaveValue('');
+  await expect(person(page)).toHaveValue(alexB);
+  await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '0', '3']);
+  await expect(page.getByTestId('home-velocity-people')).toContainText(
+    'Total points · 3 displayed sprints',
+  );
+  expect(JSON.parse(await stored(page)).snapshot).toEqual(dashboard.data.teamVelocity);
+  await sprint(page).selectOption('4');
+  await page.reload();
+  await expect(sprint(page)).toHaveValue('');
+  await expect(person(page)).toHaveValue('');
+  expect(reads(dashboard)).toBe(2);
 });
 
 test('snapshot arithmetic rejects a manual result without replacing last-good chart cache or date @regression', async ({
