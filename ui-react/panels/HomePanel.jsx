@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardNote, BoardPanel, BoardSection, BoardState } from '../components/BoardShell.jsx';
 import { Button } from '../components/Primitives.jsx';
 import { TeamVelocityChart } from '../components/TeamVelocityChart.jsx';
@@ -13,7 +13,10 @@ import {
 
 const NO_PEOPLE = Object.freeze([]);
 const RESERVED_PERSON_LABELS = new Set(['Everyone', 'Unassigned', 'Unknown assignee']);
-const sprintIdentity = (entry) => String(entry.sprint.id ?? entry.sprint.name);
+const sprintIdentity = (entry) => {
+  const number = entry.sprint.name.match(/\bsprint\s+(\d+)\b/i);
+  return number ? `Sprint ${Number(number[1])}` : entry.sprint.name;
+};
 const sprintWindow = (series, sprintId) =>
   sprintId ? series.filter((entry) => sprintIdentity(entry) === sprintId) : series;
 
@@ -29,27 +32,49 @@ function comparisonPeople(people, sprintId) {
   const used = new Set();
   for (const person of sorted)
     totals.set(person.displayName, (totals.get(person.displayName) || 0) + 1);
-  return sorted.map((person) => {
-    let label = person.displayName;
-    if (totals.get(label) > 1 || RESERVED_PERSON_LABELS.has(label)) {
-      let ordinal = 1;
-      do {
-        label = `${person.displayName} (${ordinal++})`;
-      } while (reserved.has(label) || used.has(label));
-    }
-    used.add(label);
-    const series = sprintWindow(person.series, sprintId);
-    const byStatus = { done: 0, inProgress: 0, notStarted: 0 };
-    for (const entry of series)
-      for (const status of Object.keys(byStatus)) byStatus[status] += entry.byStatus[status];
-    return {
-      ...person,
-      series,
-      label,
-      points: series.reduce((total, entry) => total + entry.points, 0),
-      byStatus,
-    };
-  });
+  return sorted
+    .map((person) => {
+      let label = person.displayName;
+      if (totals.get(label) > 1 || RESERVED_PERSON_LABELS.has(label)) {
+        let ordinal = 1;
+        do {
+          label = `${person.displayName} (${ordinal++})`;
+        } while (reserved.has(label) || used.has(label));
+      }
+      used.add(label);
+      const series = sprintWindow(person.series, sprintId);
+      const byStatus = { done: 0, inProgress: 0, notStarted: 0 };
+      for (const entry of series)
+        for (const status of Object.keys(byStatus)) byStatus[status] += entry.byStatus[status];
+      return {
+        ...person,
+        series,
+        label,
+        points: series.reduce((total, entry) => total + entry.points, 0),
+        byStatus,
+      };
+    })
+    .filter((person) => !sprintId || person.series.some((entry) => entry.count > 0));
+}
+
+function reconcileSelection(boards, current) {
+  const sprint = boards.some((board) => sprintWindow(board.series, current.sprint).length)
+    ? current.sprint
+    : '';
+  const eligible = sprint
+    ? boards.filter((board) => sprintWindow(board.series, sprint).length)
+    : boards;
+  const team =
+    sprint && !eligible.some((board) => board.name === current.team)
+      ? eligible[0].name
+      : current.team;
+  const board = eligible.find((entry) => entry.name === team);
+  const person = comparisonPeople(board?.people || NO_PEOPLE, sprint).some(
+    (entry) => entry.id === current.person,
+  )
+    ? current.person
+    : '';
+  return { team, sprint, person };
 }
 
 function PersonBreakdown({ people, personId, sprintCount, sprintName, onSelect }) {
@@ -114,6 +139,13 @@ export function HomePanel({ active }) {
     sprint: '',
   }));
   const [data, setData] = useState(() => readVelocitySnapshot());
+  const previousTeam = useRef(selection.team);
+  useEffect(() => {
+    if (previousTeam.current !== selection.team) {
+      writeVelocityTeam(selection.team);
+      previousTeam.current = selection.team;
+    }
+  }, [selection.team]);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState('');
   const [saveFailed, setSaveFailed] = useState(false);
@@ -129,18 +161,7 @@ export function HomePanel({ active }) {
         throw new Error('The velocity response is invalid. Generate a new snapshot to try again');
       setData(snapshot);
       setSaveFailed(!writeVelocitySnapshot(snapshot));
-      setSelection((current) => {
-        const board = snapshot.boards.find((entry) => entry.name === current.team);
-        return {
-          ...current,
-          person: board?.people.some((person) => person.id === current.person)
-            ? current.person
-            : '',
-          sprint: board?.series.some((entry) => sprintIdentity(entry) === current.sprint)
-            ? current.sprint
-            : '',
-        };
-      });
+      setSelection((current) => reconcileSelection(snapshot.boards, current));
     } catch (error) {
       setFailure(error.message);
     } finally {
@@ -150,10 +171,19 @@ export function HomePanel({ active }) {
   }, [api]);
   const { team, person: personId, sprint: sprintId } = selection;
   const boards = data?.boards;
+  const sprints = useMemo(
+    () =>
+      [...new Set((boards || []).flatMap((board) => board.series.map(sprintIdentity)))].sort(
+        (a, b) => b.localeCompare(a, undefined, { numeric: true }),
+      ),
+    [boards],
+  );
   const teams = useMemo(() => {
-    const names = (boards || []).map((board) => board.name);
-    return names.includes(team) ? names : [team, ...names];
-  }, [boards, team]);
+    const names = (boards || [])
+      .filter((board) => !sprintId || sprintWindow(board.series, sprintId).length)
+      .map((board) => board.name);
+    return sprintId || names.includes(team) ? names : [team, ...names];
+  }, [boards, team, sprintId]);
   const selected = boards?.find((board) => board.name === team);
   const series = useMemo(
     () => sprintWindow(selected?.series || [], sprintId),
@@ -194,13 +224,32 @@ export function HomePanel({ active }) {
         controls={
           <>
             <label className="home-velocity-team-field">
+              Sprint
+              <select
+                data-testid="home-velocity-sprint"
+                value={sprintId}
+                onChange={(event) => {
+                  const sprint = event.target.value;
+                  setSelection((current) =>
+                    reconcileSelection(boards || [], { ...current, sprint }),
+                  );
+                }}
+              >
+                <option value="">All displayed sprints</option>
+                {sprints.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="home-velocity-team-field">
               Team
               <select
                 data-testid="home-velocity-team"
                 value={team}
                 onChange={(event) => {
-                  setSelection({ team: event.target.value, person: '', sprint: '' });
-                  writeVelocityTeam(event.target.value);
+                  setSelection({ team: event.target.value, person: '', sprint: sprintId });
                 }}
               >
                 {teams.map((name) => (
@@ -221,23 +270,6 @@ export function HomePanel({ active }) {
                 {people.map((person) => (
                   <option key={person.id} value={person.id}>
                     {person.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="home-velocity-team-field">
-              Sprint
-              <select
-                data-testid="home-velocity-sprint"
-                value={sprintId}
-                onChange={(event) =>
-                  setSelection((current) => ({ ...current, sprint: event.target.value }))
-                }
-              >
-                <option value="">All displayed sprints</option>
-                {selected?.series.map((entry) => (
-                  <option key={sprintIdentity(entry)} value={sprintIdentity(entry)}>
-                    {entry.sprint.name}
                   </option>
                 ))}
               </select>
@@ -299,7 +331,7 @@ export function HomePanel({ active }) {
                   people={people}
                   personId={personId}
                   sprintCount={series.length}
-                  sprintName={sprintId ? series[0]?.sprint.name : undefined}
+                  sprintName={sprintId || undefined}
                   onSelect={choosePerson}
                 />
               )}

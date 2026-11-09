@@ -403,8 +403,8 @@ remains an actionable empty state. Home no longer requests personal tickets or
 PRs; the application's shared service feed still operates independently.
 
 **Team** defaults to **Nexus** and remembers explicit changes across reloads.
-An unavailable saved team stays selected with a named no-history state, rather
-than silently switching teams. **Person** defaults to **Everyone** (the whole
+In All displayed sprints, an unavailable saved team stays selected with a named
+no-history state, rather than silently switching teams. **Person** defaults to **Everyone** (the whole
 team); selecting a person or a row in the alphabetical **People** breakdown
 scopes the chart locally, with no request. Total points include all statuses over
 the same displayed sprint window, including zero totals, Unassigned and Unknown
@@ -412,17 +412,23 @@ assignee where present. Thin bars use the chart's status colors and a shared
 point scale across people. This is not a productivity ranking. Display
 labels are disambiguated consistently across the selector, rows and chart.
 Person selection is not persisted: Team changes and reloads reset Everyone;
-Refresh retains the selected person only if that identity still exists for the
-selected team. The selectors remain usable during generation.
+Refresh retains the selected person only if that identity still exists in the
+selected team/sprint window. The selectors remain usable during generation.
 
-**Sprint** defaults to **All displayed sprints**. Choose a named sprint to compare
-everyone's total points and status bars over that same single sprint; the chart
-uses the same window for Everyone or the selected person, with a shared team
-chart scale. People stay listed even at zero points, and the comparison caption
-names the selected sprint. This filters the full saved snapshot locally without
-changing it or fetching. Person changes keep Sprint; Team changes and reloads
-reset Sprint to All. Refresh retains a sprint still present by its ID (or name
-when no ID exists), otherwise safely returns to All.
+The selectors cascade left to right: **Sprint → Team → Person**. **Sprint** defaults
+to **All displayed sprints**, followed by unique global sprints in descending numeric
+order. Team-specific names such as Nexus Sprint 22 and Mobile Sprint 22 share
+**Sprint 22**, regardless of Jira ID; nonstandard names match exactly. Choosing a
+sprint limits Team to teams containing it and Person/People to those with sprint
+memberships, including zero-point and unestimated work, Unassigned and Unknown.
+An eligible Team and Person are retained; otherwise Team switches to the first
+eligible team and Person resets to Everyone. Automatic Team changes are remembered
+like explicit changes. Team changes keep Sprint and reset Person; Person changes
+keep both parents. Everyone, individual charts and People status bars use the same
+sprint window and shared team/person scales, with the selected sprint in the caption.
+All mode restores the full team and people choices. Refresh reconciles these same
+dependencies, returning to All only if the global sprint disappeared. Reload keeps
+only Team. All filtering uses the full saved snapshot without changing it or fetching.
 
 **Sprint history · story points** shows up to eight latest active/closed sprints
 per team, oldest to newest, with Completed, In progress and Not started stacks
@@ -473,7 +479,7 @@ the saved all-team result locally.
 Browser-local localStorage records are separate from work filters:
 
 - `dev-dashboard.home-velocity`: `{ version: 1, team }`, defaulting to Nexus
-  when absent/invalid; written only on explicit Team changes.
+  when absent/invalid; written on explicit or cascading Team changes.
 - `dev-dashboard.home-velocity.snapshot`: `{ version: 2, snapshot }`, holding
   the entire API aggregate and original timestamp. Only validated whitelisted
   fields are restored/saved. Invalid structure, impossible arithmetic,
