@@ -1,3 +1,4 @@
+@import './styles/fonts.css';
 @import './styles/tokens.css';
 @import './styles/base.css';
 @import './styles/tabs.css';
@@ -56,9 +57,19 @@
 }
 
 body {
-  background: var(--bg);
+  /* A faint cyan wash from the top edge gives the flat dark page some depth. */
+  background:
+    radial-gradient(
+      1100px 360px at 50% -140px,
+      color-mix(in srgb, var(--accent) 8%, transparent),
+      transparent
+    ),
+    var(--bg);
+  background-repeat: no-repeat;
   color: var(--fg);
   font-family: var(--font-text);
+  /* Inter Tight is set close; a touch of tracking keeps small text legible. */
+  letter-spacing: 0.012em;
 }
 /* Preserve the established card-list packing contract exactly. */
 .home-cols {

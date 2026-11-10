@@ -16,6 +16,8 @@
   flex-direction: column;
   gap: var(--s3);
   padding: var(--s4) var(--s4) var(--s3);
+  margin-bottom: var(--s3);
+  box-shadow: 0 1px 0 var(--border);
 }
 .board-bar {
   display: flex;
@@ -26,8 +28,9 @@
 .board-title {
   margin-right: var(--s2);
   color: var(--strong);
-  font-size: var(--fs-xl);
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
 }
 /* The sub line (a sprint, an account) and the counts are each one muted line, truncated at the
    end; the sub line takes the free width. */
@@ -131,8 +134,12 @@
   /* The toolbar is a header, not a form: the title and the counts each get a row,
      the sub line takes the next, the controls the one after, and the search row
      carries the Filters button. */
+  .board-toolbar {
+    margin-bottom: 0;
+  }
   .board-title {
     order: 1;
+    font-size: var(--fs-xl);
   }
   .board-meta {
     order: 2;
@@ -182,21 +189,33 @@
   font-size: var(--fs-sm);
 }
 
-/* What the body shows instead of a board (BoardState): a dashed box, muted when empty, red for
-   an error, amber for a warning that sits above content. */
+/* What the body shows instead of a board (BoardState): a quiet, centred well, muted when empty,
+   red for an error, amber for a warning that sits above content. */
 .board-state {
-  padding: var(--s3);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
+  margin: 0 0 var(--s3);
+  padding: var(--s5) var(--s4);
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
   color: var(--muted);
+  font-size: var(--fs-md);
+  text-align: center;
 }
 .board-state[data-kind='error'] {
   color: var(--red);
 }
 .board-state[data-kind='warning'] {
   margin: 0 0 var(--s3);
+  padding: var(--s3);
   border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 6%, transparent);
   color: var(--amber);
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+
+.board-body > .board-state {
+  margin-inline: var(--s4);
 }
 
 /* The switch between views of one board: a segmented control, one tab selected. It sits in the
@@ -249,6 +268,11 @@
   }
   .board-card-action:hover {
     background: color-mix(in srgb, var(--accent) 8%, var(--panel2));
+  }
+  .board-card:hover {
+    box-shadow:
+      var(--shadow),
+      0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
   }
 }
 /* Touch targets match .btn: 36 px of tab inside 4 px of padding is 44 px. */
@@ -382,6 +406,7 @@
   overflow: hidden;
   background: var(--bg);
   border-radius: var(--radius);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent);
   scroll-snap-align: start;
 }
 .board-column-head {
@@ -442,7 +467,9 @@
   background: var(--panel2);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow);
-  transition: background-color 150ms var(--ease-out);
+  transition:
+    background-color 150ms var(--ease-out),
+    box-shadow 150ms var(--ease-out);
 }
 /* A card that is a button (a Slack thread): the browser's own chrome is removed, and it fills the
    column width, left-aligned, inheriting the surrounding type. Its background is the card's. */

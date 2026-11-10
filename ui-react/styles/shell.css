@@ -10,10 +10,15 @@
   gap: 32px;
   min-height: 76px;
   padding: 14px 32px;
-  background: var(--panel);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--strong) 3%, var(--panel)),
+    var(--panel)
+  );
   box-shadow:
     0 1px 0 var(--border),
-    inset 0 1px 0 color-mix(in srgb, var(--strong) 5%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--strong) 6%, transparent),
+    0 10px 24px -16px rgb(0 0 0 / 0.7);
 }
 .app-head h1 {
   flex: none;
@@ -29,11 +34,18 @@
   text-decoration: none;
   border-radius: var(--radius-sm);
 }
+.brand-name {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: color 150ms var(--ease-out);
+}
 .brand-mark {
   display: grid;
   place-items: center;
   width: 36px;
   height: 36px;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--accent-fill) 55%, transparent);
 }
 .brand-mark img {
   display: block;
@@ -52,6 +64,10 @@
   align-items: center;
   gap: 10px;
   margin-left: auto;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border);
   color: var(--muted);
   font: 10px/1.3 var(--mono);
   white-space: nowrap;
@@ -68,6 +84,9 @@
 }
 #connection-status[data-state='connected'] {
   color: var(--green);
+}
+#connection-status[data-state='connected']::before {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent);
 }
 #connection-status[data-state='reconnecting'] {
   color: var(--amber);

@@ -174,11 +174,13 @@ input {
   color: var(--text);
   transition:
     border-color 120ms ease,
+    background-color 120ms ease,
     color 120ms ease;
   min-height: 36px;
 }
 .btn:hover {
   border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel2));
 }
 .btn.start {
   color: var(--accent);
@@ -200,6 +202,9 @@ input {
 .btn.primary:hover {
   border-color: var(--accent);
   background: var(--accent);
+}
+.btn:not(:disabled):active {
+  transform: translateY(1px);
 }
 .btn.primary:disabled {
   border-color: var(--border);
@@ -259,7 +264,11 @@ input {
 
 .card {
   min-width: 0;
-  background: var(--panel);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--strong) 2.5%, var(--panel)),
+    var(--panel) 140px
+  );
   border: 0;
   box-shadow: var(--shadow);
   border-radius: var(--radius);
