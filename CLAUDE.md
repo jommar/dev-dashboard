@@ -96,6 +96,12 @@ screens' polling and shared board contracts below remain unchanged.
 
 ## UI layout: the shared board (My Tickets, Slack, Pull Requests)
 
+Services also uses `BoardPanel` / `BoardSection`, with a scrolling `.board-pane`
+containing its explicit service grid rather than board columns. Keep service
+identity, status and controls compact above the stable log viewport; the reserved
+feedback footer sits outside the log so polling and feedback do not shift it.
+Service-specific layout stays in `services.css`, not the shared board stylesheet.
+
 My Tickets, Slack and Pull Requests share one screen shape with different data, built from one set of
 primitives — `ui-react/components/BoardShell.jsx` and `ui-react/styles/board.css` — not screen-specific copies.
 Toolbar, notes, states, board frame, columns and card shell are changed there and all three screens get
