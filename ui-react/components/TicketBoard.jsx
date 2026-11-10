@@ -259,7 +259,6 @@ function TicketCard({
       </div>
       <TicketLaunchers
         ticketKey={ticket.key}
-        className="my-tickets-card-links"
         testId={testId('links')}
         slackLinks={slackLinks}
         onOpenThread={onOpenThread}

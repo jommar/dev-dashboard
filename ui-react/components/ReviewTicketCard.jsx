@@ -56,20 +56,19 @@ export function ReviewTicketCard({
         <span className="board-card-stat">
           {prs.length} {discoveryComplete ? '' : 'known '}PR{prs.length === 1 ? '' : 's'}
         </span>
-        <TicketLaunchers
-          ticketKey={ticket.key}
-          className="review-ticket-actions"
-          testId={`prs-ticket-actions-${ticket.key}`}
-          slackLinks={slackLinks}
-          onOpenThread={onOpenThread}
-          claudeProps={{
-            testId: `prs-claude-icon-${ticket.key}`,
-            label: `Claude code review for ${ticket.key}`,
-            tooltip: false,
-          }}
-          onOpenClaude={onOpenClaude}
-        />
       </div>
+      <TicketLaunchers
+        ticketKey={ticket.key}
+        testId={`prs-ticket-actions-${ticket.key}`}
+        slackLinks={slackLinks}
+        onOpenThread={onOpenThread}
+        claudeProps={{
+          testId: `prs-claude-icon-${ticket.key}`,
+          label: `Claude code review for ${ticket.key}`,
+          tooltip: false,
+        }}
+        onOpenClaude={onOpenClaude}
+      />
       <p className="board-card-summary" title={ticket.summary}>
         {ticket.summary}
       </p>

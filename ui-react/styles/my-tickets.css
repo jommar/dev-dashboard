@@ -82,17 +82,6 @@ input[type='checkbox'] {
   color: var(--text);
   line-height: 0;
 }
-/* The row under the figures: the Slack chips at its start, the Claude icon at its right edge. */
-.my-tickets-card-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s1) var(--s2);
-  min-width: 0;
-}
-.my-tickets-card-links .my-ticket-slack {
-  margin: 0;
-}
 .my-tickets-card-sprint {
   margin: var(--s1) 0 0;
   overflow: hidden;

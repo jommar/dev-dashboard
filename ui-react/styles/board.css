@@ -473,6 +473,18 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* The row under a card's top line: the Slack chips at its start, the Claude icon at its right edge
+   (TicketLaunchers). */
+.board-card-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  min-width: 0;
+}
+.board-card-links .my-ticket-slack {
+  margin: 0;
+}
 .board-card-summary {
   display: -webkit-box;
   margin: 0;

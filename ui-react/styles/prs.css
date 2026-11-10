@@ -342,42 +342,6 @@
   font-weight: 600;
   text-decoration: none;
 }
-/* The launchers share one row at the card's right edge: Slack threads that name the ticket, then
-   Claude, joined by a hairline into one segmented control. A ticket with no thread shows Claude
-   alone. */
-.review-ticket-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  margin-left: auto;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  background: var(--panel);
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-.review-ticket-actions .my-ticket-slack {
-  margin: 0;
-  gap: 1px;
-}
-.review-ticket-actions .my-ticket-slack:not(:empty) + .claude-icon {
-  margin-left: var(--s1);
-  position: relative;
-}
-.review-ticket-actions .my-ticket-slack:not(:empty) + .claude-icon::before {
-  content: '';
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: calc(-1 * var(--s1) / 2 - 1px);
-  width: 1px;
-  background: var(--border-strong);
-}
-.review-ticket-actions .slack-thread-link:hover,
-.review-ticket-actions .slack-thread-link:focus-visible,
-.review-ticket-actions .claude-icon:hover,
-.review-ticket-actions .claude-icon:focus-visible {
-  background: var(--panel2);
-}
 .review-ticket-meta {
   display: flex;
   flex-direction: column;
