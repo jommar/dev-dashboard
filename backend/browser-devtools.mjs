@@ -14,6 +14,9 @@ import path from 'node:path';
 import { spawn as spawnDefault } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { writeFileAtomic } from './credentials.mjs';
+import { DEFAULT_DEVTOOLS_URL } from '../ui/devtools-defaults.js';
+
+export { DEFAULT_DEVTOOLS_URL };
 
 const PORT_FIRST = 9300;
 const PORT_LAST = 9399;
@@ -193,7 +196,7 @@ export function createBrowserDevtools({
   }
 
   function normalizeUrl(input) {
-    if (input === undefined || input === null || input === '') return 'about:blank';
+    if (input === undefined || input === null || input === '') return DEFAULT_DEVTOOLS_URL;
     const value = String(input).trim();
     if (value === 'about:blank') return value;
     let parsed;

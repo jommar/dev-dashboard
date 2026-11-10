@@ -4,6 +4,7 @@ import { Button } from '../components/Primitives.jsx';
 import { DevtoolsViewer } from '../components/DevtoolsViewer.jsx';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { DEVTOOLS_POLL_MS } from '../../ui/polling.js';
+import { DEFAULT_DEVTOOLS_URL } from '../../ui/devtools-defaults.js';
 import { timeAgo } from '../../ui/dom.js';
 import {
   getDevtoolsBrowsers,
@@ -128,7 +129,7 @@ export function DevtoolsPanel({ active }) {
         <input
           data-testid="devtools-url-input"
           value={url}
-          placeholder="about:blank"
+          placeholder={DEFAULT_DEVTOOLS_URL}
           onChange={(event) => setUrl(event.target.value)}
         />
       </label>

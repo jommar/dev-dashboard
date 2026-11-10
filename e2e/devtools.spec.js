@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures.js';
 import { devtoolsFrame } from './data.js';
+import { DEFAULT_DEVTOOLS_URL } from '../ui/devtools-defaults.js';
 
 // The fixture's two rows: one running, one stopped on its own profile.
 const RUNNING = 'b-3f9a2c7d';
@@ -59,11 +60,16 @@ test.describe('devtools panel', () => {
     const { id, port } = dashboard.data.devtools.nextLaunch;
     await expect(page.getByTestId(`devtools-row-${id}`)).toHaveCount(0);
 
+    await expect(page.getByTestId('devtools-url-input')).toHaveAttribute(
+      'placeholder',
+      DEFAULT_DEVTOOLS_URL,
+    );
     await page.getByTestId('devtools-label-input').fill('QA');
     await page.getByTestId('devtools-launch').click();
 
     await expect(page.getByTestId(`devtools-row-${id}`)).toBeVisible();
     await expect(page.getByTestId(`devtools-label-${id}`)).toHaveText('QA');
+    await expect(page.getByTestId(`devtools-url-${id}`)).toHaveText(DEFAULT_DEVTOOLS_URL);
     await expect(page.getByTestId(`devtools-port-${id}`)).toHaveText(String(port));
     expect(lastCall(dashboard)).toMatchObject({
       method: 'POST',
