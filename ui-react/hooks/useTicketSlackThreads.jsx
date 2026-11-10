@@ -13,10 +13,12 @@ import { slackCoverage } from '../../ui/slack-coverage.js';
 //
 // `source` is the panel's name in `slack-session-changed` events; `active` is whether its tab is
 // the visible one; `resolveOpener(ts)` is where focus returns when the dialog closes.
+// `includeMentions` adds the threads the user was mentioned in to the ones they started: a board
+// of other people's tickets (Pull Requests) finds its threads there, since someone else opened them.
 // Returns `loadSlack` (call it from the panel's own load), `openThread` (hand it a thread, with
 // `selectedTicketKey` when the ticket is known), `linksByTicket`, the `dialog` element to render
 // inside the panel, and the coverage warnings (`snapshot`, `incomplete`, ...).
-export function useTicketSlackThreads({ source, active, resolveOpener }) {
+export function useTicketSlackThreads({ source, active, resolveOpener, includeMentions = false }) {
   const api = useDashboardApi();
   const [snapshot, setSnapshot] = useState(null);
   const [openThread, setOpenThread] = useState(null);
@@ -121,11 +123,20 @@ export function useTicketSlackThreads({ source, active, resolveOpener }) {
       expiredDialog.current = false;
     }
   }, [openThread, loadSlack]);
-  const linksByTicket = useMemo(
-    () =>
-      threadsByTicket((snapshot?.started || []).filter((row) => eligibleSlackRoot(row.ts, now))),
-    [snapshot, now],
-  );
+  const linksByTicket = useMemo(() => {
+    const rows = [
+      ...(snapshot?.started || []),
+      ...(includeMentions ? snapshot?.mentions || [] : []),
+    ];
+    const seen = new Set();
+    return threadsByTicket(
+      rows.filter((row) => {
+        if (seen.has(row.ts)) return false;
+        seen.add(row.ts);
+        return eligibleSlackRoot(row.ts, now);
+      }),
+    );
+  }, [snapshot, includeMentions, now]);
   return {
     snapshot,
     loadSlack,

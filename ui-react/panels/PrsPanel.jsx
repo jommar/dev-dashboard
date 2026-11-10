@@ -17,7 +17,6 @@ import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
 import { hasCompletePrCoverage, reviewColumns } from '../../ui/review-board.js';
 import { ticketPrefix } from '../../ui/work-filters.js';
-import { normalizeTicketKey } from '../../ui/slack-ticket-links.js';
 import { PR_POLL_MS } from '../../ui/polling.js';
 
 const NO_TICKETS = Object.freeze([]);
@@ -53,7 +52,12 @@ export function PrsPanel({ config, active }) {
     openThread,
     linksByTicket,
     dialog: slackDialog,
-  } = useTicketSlackThreads({ source: 'prs', active, resolveOpener: resolveThreadOpener });
+  } = useTicketSlackThreads({
+    source: 'prs',
+    active,
+    resolveOpener: resolveThreadOpener,
+    includeMentions: true,
+  });
   const dataRef = useRef(data);
   dataRef.current = data;
   const load = useCallback(
@@ -135,7 +139,7 @@ export function PrsPanel({ config, active }) {
                   ticket={ticket}
                   jiraBase={config.jiraBase}
                   prCoverage={data?.prCoverage}
-                  slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
+                  linksByTicket={linksByTicket}
                   onOpenThread={openThread}
                   onOpenClaude={setOpenClaudeKey}
                 />

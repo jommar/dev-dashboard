@@ -1080,3 +1080,25 @@ test('while the review works both buttons are off and the reason is said once', 
   );
   await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('working');
 });
+
+test('a thread someone else started and mentioned the user in gets its Slack button on the PR card', async ({
+  page,
+  dashboard,
+}) => {
+  ticketBoardData(dashboard.data);
+  const { started, ...rest } = dashboard.data.slack.threads;
+  const [mentioned] = started;
+  // The thread is under `mentions` only: My Tickets never reads it, the PR board does.
+  dashboard.data.slack.threads = { ...rest, started: [], mentions: [mentioned] };
+  dashboard.data.reviewTickets.tickets[0].key = 'TAP-9002';
+  await page.goto('/#/prs');
+  const button = ticket(page, 'TAP-9002').getByTestId(`slack-thread-link-${mentioned.ts}`);
+  await expect(button).toBeVisible();
+  await expect(ticket(page, 'DEMO-2').locator('.slack-thread-link')).toHaveCount(0);
+  await button.click();
+  await expect(page.getByTestId('slack-thread-close')).toBeVisible();
+  await page.goto('/#/my-tickets');
+  await expect(
+    page.getByTestId('panel-my-tickets').getByTestId(`slack-thread-link-${mentioned.ts}`),
+  ).toHaveCount(0);
+});
