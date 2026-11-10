@@ -61,6 +61,9 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
   await context.exposeBinding('__unexpectedDashboardNetwork', (_source, url) =>
     unexpected.push(url),
   );
+  await context.exposeBinding('__devtoolsStreamClosed', () => {
+    if (data.devtools) data.devtools.subscriptions = {};
+  });
   await context.addInitScript(
     ({ services }) => {
       document.addEventListener('securitypolicyviolation', (event) => {
@@ -83,9 +86,10 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
           this.onopen = null;
           this.onmessage = null;
           this.onerror = null;
-          // The DevTools viewer's live view: opened per browser, closed with the viewer.
+          // The DevTools live view: ONE stream for the whole wall and the viewer, so a spec can
+          // count them. Like the server it says its id first; a spec sends everything after that.
           const screencast =
-            new URL(this.url).pathname === '/api/devtools/browsers/screencast' &&
+            new URL(this.url).pathname === '/api/devtools/stream' &&
             new URL(this.url).origin === location.origin;
           if (this.url !== location.origin + '/api/events' && !screencast) {
             window.__unexpectedDashboardNetwork(`EventSource ${this.url}`);
@@ -93,8 +97,14 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
             return;
           }
           if (screencast) {
+            this.screencast = true;
             screencasts.push(this);
-            setTimeout(() => this.emit('open'), 0);
+            setTimeout(() => {
+              this.emit('open');
+              this.emit('hello', {
+                stream: `e2e-stream-${String(screencasts.length).padStart(8, '0')}`,
+              });
+            }, 0);
             return;
           }
           streams.push(this);
@@ -108,15 +118,24 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
           if (this.readyState === 2) return;
           if (type === 'open') this.readyState = 1;
           if (type === 'error') this.readyState = 0;
-          const event = ['message', 'setup-required', 'frame', 'status', 'target', 'tabs'].includes(
-            type,
-          )
+          const event = [
+            'message',
+            'setup-required',
+            'hello',
+            'frame',
+            'status',
+            'target',
+            'tabs',
+          ].includes(type)
             ? new MessageEvent(type, { data: JSON.stringify(snapshot) })
             : new Event(type);
           this.dispatchEvent(event);
           this['on' + type]?.(event);
         }
         close() {
+          // Closing the live-view stream is what makes the server let go of everything it held.
+          if (this.screencast && this.readyState !== 2)
+            Promise.resolve(window.__devtoolsStreamClosed()).catch(() => {});
           this.readyState = 2;
         }
       }
@@ -154,11 +173,11 @@ export const test = base.extend({
   dashboardFixture: [null, { option: true }],
   dashboard: [
     async ({ context, baseURL, dashboardFixture }, use) => {
-      const mock = await installDashboardMocks(
-        context,
-        baseURL,
-        dashboardFixture || dashboardData(),
-      );
+      // `{ build }` makes the data afresh for each test, so one that changes it cannot leak into the next.
+      const data = dashboardFixture?.build
+        ? dashboardFixture.build()
+        : dashboardFixture || dashboardData();
+      const mock = await installDashboardMocks(context, baseURL, data);
       await use(mock);
       expect(mock.unexpected, 'Unexpected network was blocked').toEqual([]);
       expect(mock.pageErrors, 'Browser runtime errors').toEqual([]);

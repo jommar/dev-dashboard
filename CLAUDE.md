@@ -29,12 +29,27 @@ column pack the next card up instead.
 **The pattern**, retained in `ui-react/styles/*.css`:
 
 ```css
-.some-group-container { columns: 1; column-gap: <n>px; }
-@media (min-width: 760px)  { .some-group-container { columns: 2; } }
-@media (min-width: 1700px) { .some-group-container { columns: 3; } }
+.some-group-container {
+  columns: 1;
+  column-gap: <n>px;
+}
+@media (min-width: 760px) {
+  .some-group-container {
+    columns: 2;
+  }
+}
+@media (min-width: 1700px) {
+  .some-group-container {
+    columns: 3;
+  }
+}
 
-.some-card { break-inside: avoid; }          /* required, or a card can split across columns */
-.some-card + .some-card { margin-top: <n>px; }  /* inter-item spacing; column layout doesn't collapse margins the way flex/block does */
+.some-card {
+  break-inside: avoid;
+} /* required, or a card can split across columns */
+.some-card + .some-card {
+  margin-top: <n>px;
+} /* inter-item spacing; column layout doesn't collapse margins the way flex/block does */
 ```
 
 Breakpoints (760px / 1700px, 1 → 2 → 3 columns) are fixed across every surface that uses this pattern,
@@ -93,6 +108,18 @@ current-assignee/status/estimate sprint-membership caveats, last-good data on
 failed generation and the separate unsaved-snapshot warning on storage failure.
 Do not infer historical delivered work or change the standalone report. Other
 screens' polling and shared board contracts below remain unchanged.
+
+## DevTools: a wall of live tiles
+
+DevTools is a `.board-pane` holding `.devtools-wall`, a real grid
+(`grid-template-columns: repeat(auto-fill, minmax(280px, 1fr))`), not masonry: tiles are uniform
+(16:10 picture under a one-line header), so rows leave no dead space. Every tile shows its browser
+live on ONE shared `EventSource` (`/api/devtools/stream`; subscribe by POST, `ui/devtools-stream.js`),
+never one stream per tile: a browser allows ~6 per host and the dashboard holds one already. A tile
+is view-only at `tile` quality (small, slow); the viewer it opens raises that browser to `full` while
+open. A tile pauses (unsubscribes, last frame kept, "Paused") when scrolled out of the pane, when the
+page is hidden or when the screen is not shown. Frames paint straight into the `<img>`; tiles are
+memoized so the panel's once-a-second countdown repaints nothing.
 
 ## UI layout: the shared board (My Tickets, Slack, Pull Requests)
 

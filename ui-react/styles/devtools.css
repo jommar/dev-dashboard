@@ -1,5 +1,7 @@
-/* DevTools: the debug-browser table. The board pane owns the scroll and the
-   fill; this sheet only styles the launch form, the table and the status text. */
+/* DevTools: a wall of live tiles, one per debug browser. The board pane owns the scroll and the
+   fill; this sheet styles the launch bar, the wall's grid and a tile. The wall is a real grid with
+   an explicit column rule, not masonry: tiles are uniform (a 16:10 picture under a one-line
+   header), so rows never leave dead space. */
 .devtools-launch {
   display: flex;
   flex-wrap: wrap;
@@ -8,8 +10,10 @@
 }
 .devtools-launch label {
   display: flex;
+  flex: 1 1 160px;
   flex-direction: column;
   gap: var(--s1);
+  max-width: 360px;
   color: var(--muted);
   font-size: var(--fs-xs);
 }
@@ -18,7 +22,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--panel2);
-  color: var(--fg);
+  color: var(--text);
   font: inherit;
   transition: border-color 120ms var(--ease-out);
 }
@@ -26,54 +30,206 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-.devtools-table-wrap {
-  overflow-x: auto;
-}
-.devtools-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-sm);
-}
-.devtools-table th,
-.devtools-table td {
-  padding: var(--s2) var(--s3);
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  vertical-align: top;
-}
-.devtools-table th {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.devtools-port,
-.devtools-pid {
-  color: var(--strong);
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-.devtools-url {
-  max-width: 320px;
-  overflow-wrap: anywhere;
-}
-.devtools-status[data-status='running'] {
-  color: var(--ok);
-}
-.devtools-status[data-status='stopped'] {
-  color: var(--muted);
-}
 .devtools-feedback {
   margin: 0;
   color: var(--muted);
   font-size: var(--fs-sm);
 }
 
-.devtools-actions {
+/* The wall: as many columns of at least 280 px as fit, sharing the width. */
+.devtools-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  align-items: start;
+  gap: var(--s3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@media (max-width: 599px) {
+  .devtools-wall {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s2);
+  }
+}
+
+.devtools-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+  padding: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel2);
+}
+.devtools-tile-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  min-width: 0;
+}
+.devtools-tile-label {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--strong);
+  font-size: var(--fs-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The port is what a person reads out to an agent, so it is the biggest thing on the tile. */
+.devtools-tile-port {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.devtools-tile-portnumber {
+  color: var(--strong);
+  font-family: var(--mono);
+  font-size: var(--fs-2xl);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.devtools-tile[data-state='stopped'] .devtools-tile-portnumber {
+  color: var(--muted);
+}
+.devtools-tile-state {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+.devtools-tile-status {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--muted);
+  font-weight: 600;
+}
+/* The dot is never the only signal: the state is always written beside it. */
+.devtools-tile-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.devtools-tile-status[data-status='live'] {
+  color: var(--green);
+}
+.devtools-tile-status[data-status='connecting'],
+.devtools-tile-status[data-status='paused'] {
+  color: var(--amber);
+}
+.devtools-tile-status[data-status='lost'] {
+  color: var(--red);
+}
+.devtools-tile-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The picture: always 16:10, the frame fitted inside it, so a frame of another shape or size never
+   moves anything. When the browser runs it is a button that opens the full viewer. */
+.devtools-tile-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+}
+.devtools-tile-open {
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out);
+}
+.devtools-tile-open:hover {
+  border-color: var(--border-strong);
+}
+.devtools-tile-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.devtools-tile-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.devtools-tile-image[hidden] {
+  display: none;
+}
+.devtools-tile-overlay {
+  position: absolute;
+  inset: auto var(--s2) var(--s2) var(--s2);
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--strong);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+.devtools-tile-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s1);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+.devtools-tile-emptyhint {
+  font-size: var(--fs-xs);
+}
+
+.devtools-tile-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--s2);
+}
+.devtools-tile-details {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.devtools-tile-details summary {
+  width: max-content;
+  cursor: pointer;
+}
+.devtools-tile-details summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.devtools-tile-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--s1) var(--s2);
+  margin: var(--s2) 0 0;
+}
+.devtools-tile-facts dt {
+  color: var(--muted);
+}
+.devtools-tile-facts dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.devtools-tile-pid {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The in-app viewer: a modal <dialog> like the Slack thread dialog, a flex column so the header
@@ -228,7 +384,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .devtools-launch input {
+  .devtools-launch input,
+  .devtools-tile-open {
     transition: none;
   }
 }

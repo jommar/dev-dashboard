@@ -23,6 +23,7 @@ import { PROMPT_NAMES, createPromptStore } from './claude-prompts.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
 import { createBrowserDevtools } from './browser-devtools.mjs';
 import { createBrowserScreencast } from './browser-screencast.mjs';
+import { createDevtoolsStreams } from './devtools-stream.mjs';
 
 const MAX_LINKS_PER_REQUEST = 50;
 // The `Sec-Fetch-Site` values of a request that another site's page made. A client that sends none
@@ -143,6 +144,8 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const browserDevtools = integrations.browserDevtools || createBrowserDevtools();
   const browserScreencast =
     integrations.browserScreencast || createBrowserScreencast({ devtools: browserDevtools });
+  const devtoolsStreams =
+    integrations.devtoolsStreams || createDevtoolsStreams({ screencast: browserScreencast });
   const slackWatcher =
     integrations.slackWatcher ||
     createSlackWatcher({ slack, store: slackWatchStore, settings, sessions: claudeSessions });
@@ -295,48 +298,27 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       [`DELETE /api/claude/prompts/${name}`, () => promptCall(() => claudePrompts.remove(name))],
     ]),
   );
-  // The live view of a debug browser, as Server-Sent Events: `frame`, `status`, `target` and
-  // `tabs` messages until the viewer leaves or the browser stops. It is as sensitive as the signed-in
-  // session it shows, so another site's page may not open one. A frame is dropped, never queued,
-  // while the client has not drained the last write.
-  const streamScreencast = async (res, id) => {
-    await browserScreencast.check(id);
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-store',
-      Connection: 'keep-alive',
+  // The live view of every debug browser a dashboard tab watches, as ONE Server-Sent Events stream:
+  // `hello` (the stream's id) first, then `frame`, `status`, `target` and `tabs` messages, each
+  // tagged with the browser's `id`. Which browsers it carries is chosen by POST (subscribe,
+  // unsubscribe). It is as sensitive as the signed-in sessions it shows, so another site's page may not
+  // open one. A frame is dropped, never queued, while the client has not drained the last write.
+  const openDevtoolsStream = (res) => {
+    const handle = devtoolsStreams.open({
+      send: (event, payload) => {
+        // The headers go out with the first message, so a refused stream is still a JSON error.
+        if (!res.headersSent)
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-store',
+            Connection: 'keep-alive',
+          });
+        return res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+      },
+      end: () => res.end(),
     });
-    let gone = false;
-    let congested = false;
-    let leave = null;
-    const emit = (event, payload) =>
-      !gone && res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
-    res.on('close', () => {
-      gone = true;
-      leave?.();
-    });
-    try {
-      leave = await browserScreencast.subscribe(id, {
-        status: (status) => emit('status', status),
-        target: (target) => emit('target', target),
-        tabs: (tabs) => emit('tabs', tabs),
-        frame: (frame) => {
-          if (congested) return;
-          if (emit('frame', frame) === false) {
-            congested = true;
-            res.once('drain', () => {
-              congested = false;
-            });
-          }
-        },
-        end: () => res.end(),
-      });
-    } catch {
-      emit('status', { status: 'lost', reason: 'unavailable' });
-      res.end();
-      return;
-    }
-    if (gone) leave();
+    res.on('drain', handle.drained);
+    res.on('close', handle.close);
   };
   const guard = () => {
     if (!settings.getSetupStatus().ready)
@@ -485,6 +467,17 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
           const { id } = await readJson(request);
           return { ok: true, ...(await browserDevtools.remove(id)) };
         },
+        // Which browsers the live view stream carries, and at what quality (tile or full).
+        'POST /api/devtools/stream/subscribe': async (request) => {
+          const { stream, id, quality } = await readJson(request);
+          await devtoolsStreams.subscribe(stream, id, quality);
+          return { ok: true };
+        },
+        'POST /api/devtools/stream/unsubscribe': async (request) => {
+          const { stream, id } = await readJson(request);
+          devtoolsStreams.unsubscribe(stream, id);
+          return { ok: true };
+        },
         // Mouse, wheel and key events for a viewed browser; the module whitelists every field.
         'POST /api/devtools/browsers/input': async (request) => {
           const { id, event, targetId } = await readJson(request);
@@ -498,10 +491,10 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
           return { ok: true };
         },
       };
-      if (req.method === 'GET' && pathname === '/api/devtools/browsers/screencast') {
+      if (req.method === 'GET' && pathname === '/api/devtools/stream') {
         if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
           throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
-        await streamScreencast(res, url.searchParams.get('id'));
+        openDevtoolsStream(res);
         return;
       }
       const tableRoute =
@@ -662,6 +655,11 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'INVALID_TAB',
         'UNKNOWN_TAB',
         'TAB_CHANGED',
+        'INVALID_STREAM',
+        'UNKNOWN_STREAM',
+        'INVALID_QUALITY',
+        'TOO_MANY_STREAMS',
+        'TOO_MANY_SUBSCRIPTIONS',
       ];
       const code = allowed.includes(error.code) ? error.code : 'OPERATION_FAILED';
       const conflict = ['SETUP_REQUIRED', 'REVISION_CONFLICT', 'SERVICE_IN_USE'].includes(code);
@@ -686,6 +684,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   handler.slackWatcher = slackWatcher;
   handler.close = () => {
     slackWatcher.stop();
+    devtoolsStreams.close();
     browserScreencast.close?.();
     unsubscribe?.();
     for (const res of clients) res.end();

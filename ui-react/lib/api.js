@@ -235,10 +235,14 @@ export const stopDevtoolsBrowser = (id) =>
   watchRequest('/api/devtools/browsers/stop', { method: 'POST', body: { id } });
 export const removeDevtoolsBrowser = (id) =>
   watchRequest('/api/devtools/browsers/remove', { method: 'POST', body: { id } });
-// The live view of one running browser: an event stream of frame, status, target and tabs messages.
-// Closing the source is what ends the viewing.
-export const openDevtoolsScreencast = (id) =>
-  new EventSource(`/api/devtools/browsers/screencast?id=${encodeURIComponent(id)}`);
+// The one live-view event stream of every browser this tab shows: `hello` (its id), then frame,
+// status, target and tabs messages tagged with a browser's id. Closing the source ends all of them.
+export const openDevtoolsStream = () => new EventSource('/api/devtools/stream');
+// Which browsers the stream carries, each at a quality ('tile' or 'full').
+export const subscribeDevtoolsStream = (stream, id, quality) =>
+  watchRequest('/api/devtools/stream/subscribe', { method: 'POST', body: { stream, id, quality } });
+export const unsubscribeDevtoolsStream = (stream, id) =>
+  watchRequest('/api/devtools/stream/unsubscribe', { method: 'POST', body: { stream, id } });
 // `targetId` is the tab the viewer was looking at: the server refuses input once it has changed.
 export const sendDevtoolsInput = (id, event, targetId) =>
   watchRequest('/api/devtools/browsers/input', { method: 'POST', body: { id, event, targetId } });

@@ -338,9 +338,11 @@ export function homeVelocityData() {
   return snapshot;
 }
 
-// The debug browsers the DevTools panel lists: one running, one stopped, each on its own profile.
-// `calls` records every POST so a spec can assert exactly what the panel sent, and `nextLaunch` is
-// the record a launch creates, so a spec can name the row it expects without reading the render.
+// The debug browsers the DevTools wall shows: three running and one stopped, each on its own
+// profile. `calls` records every POST so a spec can assert exactly what the panel sent,
+// `subscriptions` is what the live-view stream holds (browser id to quality, as the server would
+// keep it) and `streamCalls` the requests that changed it, and `nextLaunch` is the record a launch
+// creates, so a spec can name the tile it expects without reading the render.
 export function devtoolsData(overrides = {}) {
   return {
     browsers: [
@@ -364,11 +366,55 @@ export function devtoolsData(overrides = {}) {
         startedAt: '2026-11-11T08:30:00.000Z',
         status: 'stopped',
       },
+      {
+        id: 'b-a41e90c2',
+        label: 'Checkout flow',
+        port: 9302,
+        pid: 41004,
+        profileDir: '/home/example/.config/dev-dashboard/browsers/b-a41e90c2/profile',
+        url: 'https://example.invalid/checkout',
+        startedAt: '2026-11-11T08:45:00.000Z',
+        status: 'running',
+      },
+      {
+        id: 'b-d90b5e13',
+        label: 'Reports',
+        port: 9303,
+        pid: 41005,
+        profileDir: '/home/example/.config/dev-dashboard/browsers/b-d90b5e13/profile',
+        url: 'https://example.invalid/reports',
+        startedAt: '2026-11-11T08:15:00.000Z',
+        status: 'running',
+      },
     ],
-    nextLaunch: { id: 'b-5e0f6a1b', port: 9302 },
+    nextLaunch: { id: 'b-5e0f6a1b', port: 9304 },
     calls: [],
+    streamCalls: [],
+    subscriptions: {},
     ...overrides,
   };
+}
+
+// `count` running browsers, enough to fill the wall past one screen.
+export function devtoolsBrowsers(count) {
+  return Array.from({ length: count }, (_, at) => {
+    const id = `b-w${String(at + 1).padStart(3, '0')}`;
+    return {
+      id,
+      label: `Agent ${at + 1}`,
+      port: 9300 + at,
+      pid: 42000 + at,
+      profileDir: `/home/example/.config/dev-dashboard/browsers/${id}/profile`,
+      url: 'about:blank',
+      startedAt: `2026-11-11T09:${String(59 - at).padStart(2, '0')}:00.000Z`,
+      status: 'running',
+    };
+  });
+}
+
+// Dashboard data whose wall holds `count` running browsers.
+export function devtoolsWallData(count) {
+  return { ...dashboardData(), devtools: devtoolsData({ browsers: devtoolsBrowsers(count) }) };
 }
 
 // A solid-colour PNG, small enough to inline: the viewer paints whatever image bytes a frame
@@ -412,11 +458,12 @@ export function devtoolsTabs(current = 'T1', { mode = 'auto', ids = ['T1', 'T2',
   };
 }
 
-// One screencast frame as the stream sends it: a 16:9 image of a 1280x720 page. The image is
-// 160x90, so a point on it maps to its own position times eight.
-export function devtoolsFrame(colour = [40, 90, 160]) {
+// One screencast frame as the stream sends it: by default a 16:9 image of a 1280x720 page. The
+// image is 160x90, so a point on it maps to its own position times eight. `size` makes another
+// shape, for a frame that is not the shape of the last.
+export function devtoolsFrame(colour = [40, 90, 160], [width, height] = [160, 90]) {
   return {
-    data: solidPng(160, 90, colour).toString('base64'),
+    data: solidPng(width, height, colour).toString('base64'),
     metadata: { deviceWidth: 1280, deviceHeight: 720, offsetTop: 0, pageScaleFactor: 1 },
   };
 }
@@ -1884,12 +1931,39 @@ function claudeResponse(url, method, { claude }, body) {
 
 // Mirrors the server's contract for the DevTools routes. A launch appends `nextLaunch` under the
 // posted label and URL, and Stop/Start flip the record's status, so the panel's own re-read is what
-// turns a row. Every POST is recorded in `calls`, in order.
+// turns a tile. Every POST is recorded in `calls`, in order. Subscribing a browser to the live-view
+// stream is refused for one that is unknown or stopped, as the server does, and otherwise held in
+// `subscriptions` until it is unsubscribed (or the stream closes: see the mock EventSource).
 function devtoolsResponse(url, method, { devtools }, body) {
   const { pathname } = url;
   if (method === 'GET' && pathname === '/api/devtools/browsers')
     return { json: { browsers: structuredClone(devtools.browsers) } };
   if (method !== 'POST') return null;
+  // The live-view stream's subscriptions are kept apart from `calls`, which stay the browser actions
+  // and the viewer's input, so a spec reading the last of them is not disturbed by a tile scrolling.
+  if (
+    pathname === '/api/devtools/stream/subscribe' ||
+    pathname === '/api/devtools/stream/unsubscribe'
+  ) {
+    devtools.streamCalls.push({ path: pathname, body: structuredClone(body) });
+    const browser = devtools.browsers.find((entry) => entry.id === body?.id);
+    if (pathname.endsWith('/unsubscribe')) {
+      delete devtools.subscriptions[body?.id];
+      return { json: { ok: true } };
+    }
+    if (!browser)
+      return {
+        status: 404,
+        json: { code: 'UNKNOWN_BROWSER', error: 'UNKNOWN BROWSER', errors: [] },
+      };
+    if (browser.status !== 'running')
+      return {
+        status: 409,
+        json: { code: 'BROWSER_NOT_RUNNING', error: 'BROWSER NOT RUNNING', errors: [] },
+      };
+    devtools.subscriptions[body.id] = body.quality;
+    return { json: { ok: true } };
+  }
   devtools.calls.push({ method, path: pathname, body: structuredClone(body) });
   if (pathname === '/api/devtools/browsers') {
     const { id, port } = devtools.nextLaunch;
@@ -1916,6 +1990,7 @@ function devtoolsResponse(url, method, { devtools }, body) {
     const starting = pathname.endsWith('/start');
     browser.status = starting ? 'running' : 'stopped';
     browser.pid = starting ? 41003 : null;
+    if (!starting) delete devtools.subscriptions[browser.id]; // a stopped browser's stream ends
     return { json: { ok: true, browser: structuredClone(browser) } };
   }
   // Input and tab choices are only recorded: what the viewer sent is the contract under test, and
@@ -1925,6 +2000,7 @@ function devtoolsResponse(url, method, { devtools }, body) {
   if (pathname === '/api/devtools/browsers/remove') {
     const before = devtools.browsers.length;
     devtools.browsers = devtools.browsers.filter((entry) => entry.id !== body?.id);
+    delete devtools.subscriptions[body?.id];
     if (devtools.browsers.length === before)
       return {
         status: 404,

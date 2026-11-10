@@ -895,7 +895,15 @@ test('the board stylesheets use tokens only, short transitions and honour reduce
 test('the DevTools sheet stays token-only, short and DevTools-scoped', () => {
   const css = read('styles/devtools.css');
   assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, 'colours come from tokens, never a hex literal');
-  assert.doesNotMatch(css, /(?<![\w-])columns:\s*\d/, 'a table is not a masonry card list');
+  assert.doesNotMatch(css, /(?<![\w-])columns:\s*\d/, 'the wall is a uniform grid, not masonry');
+  // The recurring bug of this repo: a `display: grid` with no column rule is one column forever.
+  const wall = css.match(/\.devtools-wall\s*\{([^}]*)\}/)?.[1] || '';
+  assert.match(wall, /display:\s*grid/);
+  assert.match(
+    wall,
+    /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(\d+px,\s*1fr\)\)/,
+    'the wall names its columns',
+  );
   const declarations = [...css.matchAll(/transition(?:-duration|-property)?\s*:\s*([^;}]+)/g)];
   for (const [, value] of declarations) {
     for (const [, amount, unit] of value.matchAll(/(\d*\.?\d+)\s*(ms|s)\b/g)) {
@@ -922,6 +930,27 @@ test('the DevTools sheet stays token-only, short and DevTools-scoped', () => {
     .flatMap((selector) => selector.split(','));
   for (const selector of selectors)
     assert.match(selector.trim(), /^\.devtools\b/, `${selector.trim()} stays DevTools-scoped`);
+});
+
+test('a DevTools tile is view-only: it can watch a browser but never send it input or a tab', () => {
+  const tile = read('components/DevtoolsTile.jsx');
+  assert.doesNotMatch(
+    tile,
+    /sendDevtoolsInput|selectDevtoolsTab|screencast-input|createInputQueue/,
+  );
+  assert.doesNotMatch(tile, /onMouse|onKey|onWheel|onPointer/, 'no input handler on a tile');
+  assert.match(tile, /devtoolsStream\.watch\(id, 'tile'/, 'a tile watches at tile quality');
+  // One shared stream: nothing but the stream client opens an EventSource for the wall.
+  for (const file of [
+    'components/DevtoolsTile.jsx',
+    'components/DevtoolsViewer.jsx',
+    'hooks/useScreencast.js',
+  ])
+    assert.doesNotMatch(
+      read(file),
+      /new EventSource|openDevtoolsStream/,
+      `${file} opens no stream`,
+    );
 });
 
 test('the primary routes are unchanged', () => {

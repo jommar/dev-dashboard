@@ -2,7 +2,12 @@
 // Every collaborator is injected: no fetch, no WebSocket, no timer and no browser is real.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createBrowserScreencast, viewableTargets } from '../backend/browser-screencast.mjs';
+import {
+  SCREENCAST,
+  createBrowserScreencast,
+  viewableTargets,
+} from '../backend/browser-screencast.mjs';
+import { createDevtoolsStreams } from '../backend/devtools-stream.mjs';
 
 const RUNNING = { id: 'b-0001', port: 9300, status: 'running', pid: 4001 };
 const OTHER = { id: 'b-0002', port: 9301, status: 'running', pid: 4002 };
@@ -226,7 +231,9 @@ test('refuses an unknown or stopped instance before opening anything', async () 
     status: 409,
   });
   const portless = harness({ records: [{ ...RUNNING, port: null }] });
-  await assert.rejects(portless.screencast.check(RUNNING.id), { code: 'BROWSER_NOT_RUNNING' });
+  await assert.rejects(portless.screencast.subscribe(RUNNING.id, {}), {
+    code: 'BROWSER_NOT_RUNNING',
+  });
   assert.deepEqual([h.fetched, h.sockets], [[], []]);
 });
 
@@ -354,6 +361,193 @@ test('two instances stream independently', async () => {
   h.sockets[0].push('Page.screencastFrame', frame(1, 'YQ=='));
   assert.equal(a.seen.frames.length, 1);
   assert.equal(b.seen.frames.length, 0);
+});
+
+// -- quality ---------------------------------------------------------------------------------------
+// A browser has one screencast whatever the number of viewers; it runs at the highest quality any of
+// them wants and is restarted, on the same page link, when that changes.
+
+const startsOf = (socket) =>
+  socket.sent.filter(({ method }) => method === 'Page.startScreencast').map(({ params }) => params);
+const methodsAfterEnable = (socket) =>
+  socket.methods().slice(socket.methods().indexOf('Page.enable'));
+
+test('a tile is a small, slow, low-quality screencast; full is the sharp one', async () => {
+  const tile = harness();
+  await tile.screencast.subscribe(RUNNING.id, tile.listener(), 'tile');
+  await settle();
+  assert.deepEqual(startsOf(tile.sockets[0]), [SCREENCAST.tile]);
+  assert.deepEqual(SCREENCAST.tile, {
+    format: 'jpeg',
+    quality: 40,
+    maxWidth: 480,
+    maxHeight: 300,
+    everyNthFrame: 2,
+  });
+
+  const full = harness();
+  await full.screencast.subscribe(RUNNING.id, full.listener(), 'full');
+  await settle();
+  assert.deepEqual(startsOf(full.sockets[0]), [SCREENCAST.full]);
+  assert.deepEqual(SCREENCAST.full, {
+    format: 'jpeg',
+    quality: 60,
+    maxWidth: 1280,
+    maxHeight: 800,
+    everyNthFrame: 1,
+  });
+});
+
+test('two viewers that want different qualities start it once, at the higher', async () => {
+  const h = harness();
+  await h.screencast.subscribe(RUNNING.id, h.listener(), 'tile');
+  await h.screencast.subscribe(RUNNING.id, h.listener(), 'full');
+  await settle();
+  assert.deepEqual(startsOf(h.sockets[0]), [SCREENCAST.full]);
+  assert.ok(!h.sockets[0].methods().includes('Page.stopScreencast'));
+});
+
+test('a viewer that wants more restarts the screencast on the same link, and leaving undoes it', async () => {
+  const h = harness();
+  const wall = h.listener();
+  await h.screencast.subscribe(RUNNING.id, wall, 'tile');
+  await settle();
+  const fetches = h.fetched.length;
+  const statuses = wall.seen.statuses.length;
+  assert.deepEqual(startsOf(h.sockets[0]), [SCREENCAST.tile]);
+
+  const viewer = h.listener();
+  const leave = await h.screencast.subscribe(RUNNING.id, viewer, 'full');
+  await settle();
+  assert.deepEqual(methodsAfterEnable(h.sockets[0]), [
+    'Page.enable',
+    'Page.startScreencast',
+    'Page.stopScreencast',
+    'Page.startScreencast',
+  ]);
+  assert.deepEqual(startsOf(h.sockets[0]), [SCREENCAST.tile, SCREENCAST.full]);
+  assert.equal(h.sockets.length, 1, 'no re-attach');
+  assert.equal(h.browsers.length, 1);
+  assert.equal(h.fetched.length, fetches, 'no new discovery');
+  assert.equal(wall.seen.statuses.length, statuses, 'no status flicker for anybody');
+  assert.equal(h.sockets[0].readyState, 1);
+
+  leave();
+  await settle();
+  assert.deepEqual(startsOf(h.sockets[0]), [SCREENCAST.tile, SCREENCAST.full, SCREENCAST.tile]);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(wall.seen.statuses.length, statuses);
+});
+
+test('a viewer changing what it wants is the same as one joining or leaving', async () => {
+  const h = harness();
+  const other = h.listener();
+  await h.screencast.subscribe(OTHER.id, other, 'tile');
+  const leave = await h.screencast.subscribe(RUNNING.id, h.listener(), 'tile');
+  await settle();
+
+  leave.setQuality('full');
+  await settle();
+  assert.deepEqual(startsOf(h.sockets[1]), [SCREENCAST.tile, SCREENCAST.full]);
+  assert.deepEqual(startsOf(h.sockets[0]), [SCREENCAST.tile], 'another browser is untouched');
+
+  leave.setQuality('full'); // already so
+  leave.setQuality('huge'); // not a level
+  leave.setQuality(undefined);
+  await settle();
+  assert.equal(startsOf(h.sockets[1]).length, 2);
+
+  leave.setQuality('tile');
+  await settle();
+  assert.deepEqual(startsOf(h.sockets[1]).at(-1), SCREENCAST.tile);
+  leave();
+  leave.setQuality('full'); // a viewer that left cannot change anything
+  await settle();
+  assert.equal(startsOf(h.sockets[1]).length, 3);
+});
+
+test('no frame made with the old settings is delivered once the quality changed', async () => {
+  const h = harness();
+  const wall = h.listener();
+  const leave = await h.screencast.subscribe(RUNNING.id, wall, 'tile');
+  await settle();
+  const [socket] = h.sockets;
+  socket.push('Page.screencastFrame', frame(1, 'dGlsZQ=='));
+  assert.equal(wall.seen.frames.length, 1);
+
+  leave.setQuality('full');
+  // Chromium still had frames in flight: each is acked (it sends nothing more until it is) and
+  // dropped, until the answer to the stop says the old screencast is over.
+  socket.push('Page.screencastFrame', frame(2, 'b2xk'));
+  assert.deepEqual(socket.sent.at(-1).params, { sessionId: 2 }, 'acked');
+  assert.equal(wall.seen.frames.length, 1, 'but not delivered');
+  await settle();
+  socket.push('Page.screencastFrame', frame(3, 'ZnVsbA=='));
+  assert.deepEqual(
+    wall.seen.frames.map((entry) => entry.data),
+    ['dGlsZQ==', 'ZnVsbA=='],
+  );
+
+  // A late joiner is handed the last frame that was delivered, never a dropped one.
+  const late = h.listener();
+  await h.screencast.subscribe(RUNNING.id, late, 'tile');
+  assert.equal(late.seen.frames[0].data, 'ZnVsbA==');
+});
+
+test('a late tile gets the last frame as it is, even when a viewer has the browser at full size', async () => {
+  const h = harness();
+  await h.screencast.subscribe(RUNNING.id, h.listener(), 'full');
+  await settle();
+  h.sockets[0].push('Page.screencastFrame', frame(1, 'YmlnZnJhbWU='));
+  const tile = h.listener();
+  await h.screencast.subscribe(RUNNING.id, tile, 'tile');
+  // The picture is simply scaled by whoever draws it; the screencast stays at full while watched.
+  assert.equal(tile.seen.frames[0].data, 'YmlnZnJhbWU=');
+  await settle();
+  assert.equal(startsOf(h.sockets[0]).length, 1);
+});
+
+test('a quality asked for while the page attaches is the one it starts with', async () => {
+  const h = harness();
+  const wall = h.listener();
+  const leave = await h.screencast.subscribe(RUNNING.id, wall, 'tile');
+  leave.setQuality('full'); // before the browser has answered at all
+  await settle();
+  assert.deepEqual(startsOf(h.sockets[0]), [SCREENCAST.full]);
+  assert.ok(!h.sockets[0].methods().includes('Page.stopScreencast'));
+});
+
+test('a tab switch attaches the new tab at the quality now wanted', async () => {
+  const h = harness({ targets: [page('T1'), page('T2')] });
+  await h.screencast.subscribe(RUNNING.id, h.listener(), 'tile');
+  const leave = await h.screencast.subscribe(RUNNING.id, h.listener(), 'full');
+  await settle();
+  leave();
+  await settle();
+  assert.deepEqual(startsOf(h.sockets[0]).at(-1), SCREENCAST.tile);
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  await settle();
+  assert.equal(h.sockets.length, 2, 'a different page is a new link');
+  assert.deepEqual(startsOf(h.sockets[1]), [SCREENCAST.tile]);
+});
+
+test('a link that drops while the quality changes recovers at the quality wanted', async () => {
+  const h = harness();
+  const wall = h.listener();
+  const leave = await h.screencast.subscribe(RUNNING.id, wall, 'tile');
+  await settle();
+  leave.setQuality('full');
+  h.sockets[0].readyState = 3;
+  h.sockets[0].emit('close');
+  await settle();
+  assert.deepEqual(wall.seen.statuses.at(-1), { status: 'connecting', reason: 'reconnecting' });
+  await h.retry();
+  assert.equal(h.sockets.length, 2);
+  assert.deepEqual(startsOf(h.sockets[1]), [SCREENCAST.full]);
+  assert.equal(wall.seen.statuses.at(-1).status, 'live');
+  // Frames flow again: the dropped link's settling did not carry over.
+  h.sockets[1].push('Page.screencastFrame', frame(1, 'YQ=='));
+  assert.equal(wall.seen.frames.length, 1);
 });
 
 test('re-attaches to another page when the target closes, with a status for the viewer', async () => {
@@ -1076,4 +1270,101 @@ test('the title re-read stops with the last viewer and while disconnected', asyn
   again.browsers[0].emit('close');
   await again.tick();
   assert.ok(!again.browsers[0].methods().includes('Target.getTargets'));
+});
+
+// -- through the shared stream -----------------------------------------------------------------------
+// The stream layer multiplexes onto these sessions: one CDP connection per browser, whoever is
+// watching it and however many streams they are on.
+
+function wired(options) {
+  const h = harness(options);
+  const hub = createDevtoolsStreams({ screencast: h.screencast });
+  const open = () => {
+    const sink = {
+      messages: [],
+      ended: 0,
+      send: (event, payload) => !sink.messages.push([event, payload]),
+      end: () => {
+        sink.ended += 1;
+      },
+    };
+    return { sink, handle: hub.open(sink) };
+  };
+  return { h, hub, open };
+}
+
+test('streams on one browser share its connection, which runs at the highest quality of them', async () => {
+  const { h, hub, open } = wired();
+  const wall = open();
+  const viewer = open();
+  await hub.subscribe(wall.handle.id, RUNNING.id, 'tile');
+  await hub.subscribe(wall.handle.id, OTHER.id, 'tile');
+  await settle();
+  assert.deepEqual(startsOf(h.sockets[0]), [SCREENCAST.tile]);
+  assert.deepEqual(startsOf(h.sockets[1]), [SCREENCAST.tile]);
+
+  await hub.subscribe(viewer.handle.id, RUNNING.id, 'full');
+  await settle();
+  assert.equal(h.sockets.length, 2, 'a second stream shares the session');
+  assert.deepEqual(startsOf(h.sockets[0]), [SCREENCAST.tile, SCREENCAST.full]);
+  assert.deepEqual(startsOf(h.sockets[1]), [SCREENCAST.tile], 'the other browser stays a tile');
+
+  h.sockets[0].push('Page.screencastFrame', frame(1, 'ZnVsbA=='));
+  h.sockets[1].push('Page.screencastFrame', frame(1, 'dGlsZQ=='));
+  const framed = (entry) =>
+    entry.sink.messages
+      .filter(([event]) => event === 'frame')
+      .map(([, body]) => [body.id, body.data]);
+  assert.deepEqual(framed(wall), [
+    [RUNNING.id, 'ZnVsbA=='],
+    [OTHER.id, 'dGlsZQ=='],
+  ]);
+  assert.deepEqual(framed(viewer), [[RUNNING.id, 'ZnVsbA==']]);
+
+  // The viewer's stream goes away: that browser drops back to a tile, and nothing else is touched.
+  viewer.handle.close();
+  await settle();
+  assert.deepEqual(startsOf(h.sockets[0]).at(-1), SCREENCAST.tile);
+  assert.equal(h.sockets[0].readyState, 1);
+});
+
+test('closing the last stream of a browser stops its screencast and closes its links', async () => {
+  const { h, hub, open } = wired();
+  const wall = open();
+  await hub.subscribe(wall.handle.id, RUNNING.id, 'tile');
+  await hub.subscribe(wall.handle.id, OTHER.id, 'tile');
+  await settle();
+  wall.handle.close();
+  await settle();
+  for (const socket of h.sockets) {
+    assert.equal(socket.methods().at(-1), 'Page.stopScreencast');
+    assert.equal(socket.readyState, 3);
+  }
+  assert.ok(h.browsers.every((socket) => socket.readyState === 3));
+});
+
+test('an instance that stops is announced on the stream, torn down, and may be watched again', async () => {
+  const { h, hub, open } = wired();
+  const wall = open();
+  await hub.subscribe(wall.handle.id, RUNNING.id, 'tile');
+  await hub.subscribe(wall.handle.id, OTHER.id, 'tile');
+  await settle();
+
+  h.stop(RUNNING.id);
+  const statuses = wall.sink.messages.filter(([event]) => event === 'status');
+  assert.deepEqual(statuses.at(-1), [
+    'status',
+    { id: RUNNING.id, status: 'lost', reason: 'stopped' },
+  ]);
+  assert.equal(h.sockets[0].methods().at(-1), 'Page.stopScreencast');
+  await settle();
+  assert.equal(h.sockets[0].readyState, 3);
+  assert.equal(h.sockets[1].readyState, 1, 'the neighbour is untouched');
+  assert.equal(wall.sink.ended, 0, 'the stream itself carries on');
+
+  // A new subscription to the same browser starts afresh.
+  await hub.subscribe(wall.handle.id, RUNNING.id, 'tile');
+  await settle();
+  assert.equal(h.sockets.length, 3);
+  assert.deepEqual(startsOf(h.sockets[2]), [SCREENCAST.tile]);
 });

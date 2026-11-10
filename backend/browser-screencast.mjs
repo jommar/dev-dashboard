@@ -9,6 +9,10 @@
 // subscribers. Input goes back through parseInputEvent, so a viewer can only ever send the
 // handful of whitelisted mouse and key commands, never an arbitrary CDP method.
 //
+// Each subscriber wants a quality: `tile` (small and slow, for a wall) or `full`. The one
+// screencast runs at the highest any of them wants, and is restarted on the same page link
+// (`Page.stopScreencast`, then `Page.startScreencast` with the new settings) when that changes.
+//
 // Which tab is shown: by default the newest one opened (auto); a viewer can pin one, and a pinned
 // tab that closes falls back to auto. The choice is the session's, so every viewer of the
 // instance sees the same tab. A selection is only ever a target the browser itself reported.
@@ -18,18 +22,18 @@
 
 import { fail } from './browser-devtools.mjs';
 import { parseInputEvent } from './screencast-input.mjs';
+import { isQuality, topQuality } from '../ui/screencast-quality.js';
 
 const HOST = '127.0.0.1';
 const RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000];
 const DISCOVERY_TIMEOUT_MS = 2000;
 const OPEN_TIMEOUT_MS = 4000;
 const COMMAND_TIMEOUT_MS = 3000;
-const SCREENCAST = {
-  format: 'jpeg',
-  quality: 60,
-  maxWidth: 1280,
-  maxHeight: 800,
-  everyNthFrame: 1,
+// What Chromium is asked for at each quality. A `tile` is a small, low-rate picture for a wall of
+// browsers; `full` is the one being looked at, as sharp as the viewer can use.
+export const SCREENCAST = {
+  tile: { format: 'jpeg', quality: 40, maxWidth: 480, maxHeight: 300, everyNthFrame: 2 },
+  full: { format: 'jpeg', quality: 60, maxWidth: 1280, maxHeight: 800, everyNthFrame: 1 },
 };
 const OPEN = 1; // WebSocket.OPEN
 const NOT_A_VIEW = /^(devtools|chrome-extension):/;
@@ -225,6 +229,8 @@ export function createBrowserScreencast({
           }),
         );
       } catch {}
+      // A frame that arrives while the screencast is being re-shaped was made with the old settings.
+      if (session.settling) return;
       session.lastFrame = frameOf(params);
       tell(session, 'frame', session.lastFrame);
     } else if (message.method === 'Page.frameNavigated' && !params.frame?.parentId) {
@@ -397,8 +403,45 @@ export function createBrowserScreencast({
     url.port = String(session.port);
     return open(session, session, url.href, onPageMessage, async () => {
       await send(session, 'Page.enable');
-      await send(session, 'Page.startScreencast', SCREENCAST);
+      session.reshaping = false;
+      session.settling = false;
+      session.shape = wantedQuality(session);
+      await send(session, 'Page.startScreencast', SCREENCAST[session.shape]);
     });
+  }
+
+  // The quality the screencast should run at: the highest any viewer asked for.
+  const wantedQuality = (session) =>
+    topQuality([...session.subscriptions].map((subscription) => subscription.quality)) || 'tile';
+
+  // A viewer came, left or changed what it asked for: if the screencast should now run at another
+  // quality, change it on the page link it is on. Chromium is told to stop and then to start with
+  // the new settings; frames that arrive in between (made with the old ones) are acked and dropped,
+  // and the stop's answer says there are no more. Nothing is re-attached and no status changes.
+  async function reshape(session) {
+    if (session.reshaping || session.closed || session.status !== 'live') return;
+    const ws = session.ws;
+    session.reshaping = true;
+    try {
+      while (session.ws === ws && !session.closed && session.shape !== wantedQuality(session)) {
+        const next = wantedQuality(session);
+        session.settling = true;
+        await send(session, 'Page.stopScreencast');
+        session.settling = false;
+        if (session.ws !== ws) return;
+        session.shape = next;
+        await send(session, 'Page.startScreencast', SCREENCAST[next]);
+      }
+    } catch {
+      // The link failed under us: the usual recovery runs, unless a newer attachment already has.
+      if (session.ws === ws && !session.closed) lose(session);
+    } finally {
+      // A newer attachment (another link) starts from a clean slate in `attach`.
+      if (session.ws === ws) {
+        session.reshaping = false;
+        session.settling = false;
+      }
+    }
   }
 
   // (Re)starts the whole attachment; a newer call makes an older one still in flight give up.
@@ -427,6 +470,7 @@ export function createBrowserScreencast({
       const notice = session.notice;
       session.notice = '';
       setStatus(session, 'live', notice);
+      reshape(session); // what viewers asked for while it attached
     } catch {
       if (stale()) return;
       lose(session);
@@ -507,6 +551,9 @@ export function createBrowserScreencast({
       target: null,
       lastFrame: null,
       ws: null,
+      shape: null, // the quality the running screencast was started with
+      reshaping: false, // the screencast is being restarted at another quality
+      settling: false, // ...and frames are dropped until Chromium says the old one stopped
       seq: 0,
       pending: new Map(),
       browser: newLink(),
@@ -529,10 +576,13 @@ export function createBrowserScreencast({
     return session;
   }
 
-  // Joins (or starts) the instance's one stream. `listener` may define status, target, tabs, frame
-  // and end; a joiner is told the current state, tabs and last frame at once, since a still page
-  // sends none.
-  async function subscribe(id, listener) {
+  // Joins (or starts) the instance's one stream, wanting it at `quality` (`tile` or `full`; the
+  // screencast runs at the highest any viewer wants). `listener` may define status, target, tabs,
+  // frame and end; a joiner is told the current state, tabs and last frame at once, since a still
+  // page sends none. That frame is whatever size the screencast last made: the viewer scales it.
+  //
+  // Returns the function that leaves; `leave.setQuality(level)` changes what this viewer wants.
+  async function subscribe(id, listener, quality = 'full') {
     const record = await resolveInstance(id);
     let session = sessions.get(id);
     if (session && session.port !== record.port) {
@@ -540,9 +590,10 @@ export function createBrowserScreencast({
       session = null;
     }
     const fresh = !session;
+    const subscription = { listener, quality };
     session = session || create(record);
-    const subscription = { listener };
-    session.subscriptions.add(subscription);
+    session.subscriptions.add(subscription); // before the first attach, which reads it
+
     if (!fresh && session.status === 'lost') {
       session.attempt = 0;
       setStatus(session, 'connecting');
@@ -552,13 +603,21 @@ export function createBrowserScreencast({
     if (session.target) listener.target?.(session.target);
     if (session.tabsPayload) listener.tabs?.(session.tabsPayload);
     if (session.lastFrame) listener.frame?.(session.lastFrame);
+    if (!fresh) reshape(session);
     let left = false;
-    return () => {
+    const leave = () => {
       if (left) return;
       left = true;
       session.subscriptions.delete(subscription);
       if (session.subscriptions.size === 0) close(session);
+      else reshape(session);
     };
+    leave.setQuality = (level) => {
+      if (left || !isQuality(level) || subscription.quality === level) return;
+      subscription.quality = level;
+      reshape(session);
+    };
+    return leave;
   }
 
   // Which tab the viewers see: `targetId` pins that tab, null goes back to following the newest.
@@ -618,5 +677,5 @@ export function createBrowserScreencast({
     for (const session of [...sessions.values()]) release(session, 'stopped');
   }
 
-  return { check: resolveInstance, subscribe, selectTab, input, close: shutdown };
+  return { subscribe, selectTab, input, close: shutdown };
 }

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BoardPanel, BoardSection, BoardState, RefreshControl } from '../components/BoardShell.jsx';
 import { Button } from '../components/Primitives.jsx';
+import { DevtoolsTile } from '../components/DevtoolsTile.jsx';
 import { DevtoolsViewer } from '../components/DevtoolsViewer.jsx';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { DEVTOOLS_POLL_MS } from '../../ui/polling.js';
 import { DEFAULT_DEVTOOLS_URL } from '../../ui/devtools-defaults.js';
-import { timeAgo } from '../../ui/dom.js';
 import {
   getDevtoolsBrowsers,
   launchDevtoolsBrowser,
@@ -14,9 +14,14 @@ import {
   removeDevtoolsBrowser,
 } from '../lib/api.js';
 
-// The DevTools tab opens a visible Chromium with a CDP port, so a human can sign
-// in and an agent attaches with `agent-browser connect <port>`. One instance per
-// agent, each on its own profile, so several can run side by side.
+// The registry with one record swapped for its newer self.
+const replaced = (browser) => (current) =>
+  current.map((entry) => (entry.id === browser.id ? browser : entry));
+
+// The DevTools tab is a wall of live tiles, one per debug browser: each is a real Chromium window
+// with a CDP port, so a human can sign in and an agent attaches with
+// `agent-browser connect <port>`. One instance per agent, each on its own profile, so several run
+// side by side. A tile opens the full viewer (and "Take control") for its browser.
 export function DevtoolsPanel({ active }) {
   const [browsers, setBrowsers] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -51,41 +56,69 @@ export function DevtoolsPanel({ active }) {
     loaded,
   });
 
-  const act = async (request, id, done) => {
+  // Runs one action on one browser: the tile is busy meanwhile, and the answer says how it went.
+  // `job` returns the feedback line, or null when it has already said why it failed.
+  const run = useCallback(async (id, job) => {
     setBusy(id);
     setFeedback('');
     try {
-      const result = await request(id);
-      if (!result.ok) {
-        setFeedback(result.error || 'That did not work.');
-        return;
-      }
-      setBrowsers((current) =>
-        current.map((entry) => (entry.id === result.browser.id ? result.browser : entry)),
-      );
-      setFeedback(done);
+      const said = await job();
+      if (said) setFeedback(said);
     } finally {
       setBusy(null);
     }
-  };
+  }, []);
 
-  // Remove is the only action that discards a profile; Stop keeps it so Start
-  // comes back signed in.
-  const remove = async (id) => {
-    setBusy(id);
-    setFeedback('');
-    try {
-      const result = await removeDevtoolsBrowser(id);
-      if (!result.ok) {
-        setFeedback(result.error || 'Could not remove that browser.');
-        return;
-      }
-      setBrowsers((current) => current.filter((entry) => entry.id !== id));
-      setFeedback('Removed.');
-    } finally {
-      setBusy(null);
-    }
-  };
+  const change = useCallback(
+    (request, { id, label: name }, done) =>
+      run(id, async () => {
+        const result = await request(id);
+        if (!result.ok) return result.error || 'That did not work.';
+        setBrowsers(replaced(result.browser));
+        return done(name);
+      }),
+    [run],
+  );
+
+  // Restart is Stop then Start, so the profile (and the sign-in) is kept, as in Stop and Start.
+  const restart = useCallback(
+    ({ id, label: name }) =>
+      run(id, async () => {
+        const stopped = await stopDevtoolsBrowser(id);
+        if (!stopped.ok) return stopped.error || 'Could not stop that browser.';
+        setBrowsers(replaced(stopped.browser));
+        const started = await startDevtoolsBrowser(id);
+        if (!started.ok) return started.error || 'Stopped, but it did not start again.';
+        setBrowsers(replaced(started.browser));
+        return `Restarted ${name}.`;
+      }),
+    [run],
+  );
+
+  // Remove is the only action that discards a profile; Stop keeps it so Start comes back signed in.
+  const remove = useCallback(
+    ({ id }) =>
+      run(id, async () => {
+        const result = await removeDevtoolsBrowser(id);
+        if (!result.ok) return result.error || 'Could not remove that browser.';
+        setBrowsers((current) => current.filter((entry) => entry.id !== id));
+        return 'Removed.';
+      }),
+    [run],
+  );
+
+  // One handler for every tile, so tiles can be memoized: what a tile asked for, and of which browser.
+  const onAction = useCallback(
+    (kind, browser) => {
+      if (kind === 'open') setViewing(browser.id);
+      else if (kind === 'start')
+        change(startDevtoolsBrowser, browser, (name) => `Started ${name}.`);
+      else if (kind === 'stop') change(stopDevtoolsBrowser, browser, (name) => `Stopped ${name}.`);
+      else if (kind === 'restart') restart(browser);
+      else if (kind === 'remove') remove(browser);
+    },
+    [change, restart, remove],
+  );
 
   const launch = async (event) => {
     event.preventDefault();
@@ -134,7 +167,7 @@ export function DevtoolsPanel({ active }) {
         />
       </label>
       <Button type="submit" data-testid="devtools-launch" disabled={busy === 'launch'}>
-        New browser
+        Launch
       </Button>
     </form>
   );
@@ -145,12 +178,15 @@ export function DevtoolsPanel({ active }) {
     </p>
   ) : null;
 
+  const running = browsers.filter((entry) => entry.status === 'running').length;
+
   return (
     <BoardPanel id="devtools" active={active}>
       <BoardSection
         name="devtools"
         title="DevTools"
-        sub="Visible Chromium windows with a CDP port, one per agent."
+        sub="Every debug browser, live. Open one to look closer or take control."
+        meta={loaded && browsers.length ? `${running} running · ${browsers.length} total` : ''}
         controls={
           <RefreshControl
             name="devtools"
@@ -170,91 +206,26 @@ export function DevtoolsPanel({ active }) {
           <BoardState kind="loading" testId="devtools-loading" label="Loading browsers…" />
         ) : browsers.length === 0 ? (
           <BoardState kind="empty" testId="devtools-empty">
-            No debug browsers yet. Open one, sign in, then tell the agent its port.
+            No browsers yet — launch one above, sign in, then tell the agent its port.
           </BoardState>
         ) : (
           <div className="board-pane devtools-pane" data-testid="devtools-browsers">
-            <div className="devtools-table-wrap">
-              <table className="devtools-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Label</th>
-                    <th scope="col">Port</th>
-                    <th scope="col">Start at</th>
-                    <th scope="col">PID</th>
-                    <th scope="col">Started</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {browsers.map((browser) => (
-                    <tr key={browser.id} data-testid={`devtools-row-${browser.id}`}>
-                      <td data-testid={`devtools-label-${browser.id}`}>{browser.label}</td>
-                      <td className="devtools-port" data-testid={`devtools-port-${browser.id}`}>
-                        {browser.port ?? '—'}
-                      </td>
-                      <td className="devtools-url" data-testid={`devtools-url-${browser.id}`}>
-                        {browser.url}
-                      </td>
-                      <td className="devtools-pid" data-testid={`devtools-pid-${browser.id}`}>
-                        {browser.pid ?? '—'}
-                      </td>
-                      <td data-testid={`devtools-started-${browser.id}`}>
-                        {timeAgo(browser.startedAt)}
-                      </td>
-                      <td>
-                        <span
-                          className="devtools-status"
-                          data-status={browser.status}
-                          data-testid={`devtools-status-${browser.id}`}
-                        >
-                          {browser.status}
-                        </span>
-                      </td>
-                      <td className="devtools-actions">
-                        {browser.status === 'running' && (
-                          <Button
-                            data-testid={`devtools-view-${browser.id}`}
-                            onClick={() => setViewing(browser.id)}
-                          >
-                            View
-                          </Button>
-                        )}
-                        {browser.status === 'running' ? (
-                          <Button
-                            data-testid={`devtools-stop-${browser.id}`}
-                            disabled={busy === browser.id}
-                            onClick={() =>
-                              act(stopDevtoolsBrowser, browser.id, `Stopped ${browser.label}.`)
-                            }
-                          >
-                            Stop
-                          </Button>
-                        ) : (
-                          <Button
-                            data-testid={`devtools-start-${browser.id}`}
-                            disabled={busy === browser.id}
-                            onClick={() =>
-                              act(startDevtoolsBrowser, browser.id, `Started ${browser.label}.`)
-                            }
-                          >
-                            Start
-                          </Button>
-                        )}
-                        <Button
-                          data-testid={`devtools-remove-${browser.id}`}
-                          disabled={busy === browser.id}
-                          onClick={() => remove(browser.id)}
-                        >
-                          Remove
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul
+              className="devtools-wall"
+              role="list"
+              aria-label="Debug browsers"
+              data-testid="devtools-wall"
+            >
+              {browsers.map((browser) => (
+                <DevtoolsTile
+                  key={browser.id}
+                  browser={browser}
+                  active={active}
+                  busy={busy === browser.id}
+                  onAction={onAction}
+                />
+              ))}
+            </ul>
           </div>
         )}
       </BoardSection>
