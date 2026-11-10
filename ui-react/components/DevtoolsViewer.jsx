@@ -3,11 +3,17 @@
 // View-only by default. "Take control" forwards the mouse, wheel and keyboard to the browser;
 // releasing it (the button, or Esc) stops forwarding at once. Frames are painted straight into
 // the <img> by the screencast hook, so a stream of them never re-renders this component.
+//
+// A strip of the browser's tabs sits above the picture. By default the viewer follows the newest
+// tab; choosing one pins it (and brings it to the front of the browser window), and "Auto-follow
+// newest" lets go. Choosing a tab releases control, so input never lands on a tab not just looked at.
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
+import { BoardTabs, tabDomId, tabPanelDomId } from './BoardShell.jsx';
 import { useScreencast } from '../hooks/useScreencast.js';
-import { sendDevtoolsInput } from '../lib/api.js';
+import { selectDevtoolsTab, sendDevtoolsInput } from '../lib/api.js';
 import { createInputQueue, keyInput, mouseInput, wheelInput } from '../../ui/screencast-input.js';
+import { tabLabel } from '../../ui/devtools-tabs.js';
 
 const STATUS_TEXT = {
   connecting: 'Connecting…',
@@ -20,7 +26,13 @@ const REASON_TEXT = {
   unreachable: 'Browser not reachable',
   unavailable: 'Browser not available',
   disconnected: 'Disconnected from the dashboard',
+  switching: 'Switching tab…',
 };
+// Said beside "Live" when the picture is not what the viewer last asked for.
+const LIVE_NOTE = {
+  'tab-closed': 'the pinned tab closed, following the newest',
+};
+const TABS = 'devtools-viewer';
 
 function DevtoolsViewerView({ id, label, port, onClose }) {
   const dialogRef = useRef(null);
@@ -42,8 +54,13 @@ function DevtoolsViewerView({ id, label, port, onClose }) {
     if (imageRef.current) imageRef.current.src = `data:image/jpeg;base64,${data}`;
     setHasFrame(true);
   }, []);
-  const { status, reason, target } = useScreencast(id, onFrame);
-  const send = useMemo(() => createInputQueue((event) => sendDevtoolsInput(id, event)), [id]);
+  const { status, reason, target, tabs } = useScreencast(id, onFrame);
+  const targetId = target?.id;
+  // One queue per tab: whatever a switch leaves queued is still addressed to the tab it was for.
+  const send = useMemo(
+    () => createInputQueue((event) => sendDevtoolsInput(id, event, targetId)),
+    [id, targetId],
+  );
 
   useEffect(() => {
     controlRef.current = control;
@@ -55,6 +72,15 @@ function DevtoolsViewerView({ id, label, port, onClose }) {
   useEffect(() => {
     if (control) stageRef.current?.focus();
   }, [control]);
+  // A different tab is a different page: control is given again, never carried over.
+  useEffect(() => {
+    setControl(false);
+  }, [targetId]);
+
+  const choose = (tab) => {
+    setControl(false);
+    selectDevtoolsTab(id, tab);
+  };
 
   // A modal <dialog> traps focus itself, but does not remember where it came from.
   useEffect(() => {
@@ -138,7 +164,15 @@ function DevtoolsViewerView({ id, label, port, onClose }) {
     return () => stage.removeEventListener('wheel', wheel);
   }, [control, send, geometry]);
 
-  const text = reason && status !== 'live' ? REASON_TEXT[reason] : STATUS_TEXT[status];
+  const note = status === 'live' ? LIVE_NOTE[reason] : '';
+  const text = note
+    ? `${STATUS_TEXT.live} · ${note}`
+    : reason && status !== 'live'
+      ? REASON_TEXT[reason]
+      : STATUS_TEXT[status];
+  const strip = tabs?.tabs || [];
+  const current = strip.find((tab) => tab.current)?.id;
+  const auto = tabs?.mode !== 'pinned';
 
   return (
     <dialog
@@ -171,7 +205,50 @@ function DevtoolsViewerView({ id, label, port, onClose }) {
         </span>
       </header>
 
-      <div className="devtools-viewer-body">
+      {strip.length > 0 && (
+        <div className="devtools-viewer-bar" data-mode={auto ? 'auto' : 'pinned'}>
+          <div className="devtools-viewer-tabs" data-testid="devtools-viewer-tabs">
+            <BoardTabs
+              name={TABS}
+              label="Browser tabs"
+              value={current}
+              onChange={choose}
+              tabs={strip.map((tab) => ({
+                id: tab.id,
+                testId: `devtools-viewer-tab-${tab.id}`,
+                label: (
+                  <span
+                    className="devtools-viewer-tabname"
+                    title={`${tab.title} ${tab.url}`.trim()}
+                  >
+                    {tabLabel(tab)}
+                  </span>
+                ),
+              }))}
+            />
+          </div>
+          <Button
+            data-testid="devtools-viewer-auto"
+            aria-pressed={auto}
+            disabled={auto}
+            onClick={() => choose(null)}
+          >
+            Auto-follow newest
+          </Button>
+          <span className="devtools-viewer-tabhint" data-testid="devtools-viewer-tabhint">
+            Choosing a tab also brings it to the front of the browser window.
+          </span>
+        </div>
+      )}
+
+      <div
+        className="devtools-viewer-body"
+        {...(current && {
+          id: tabPanelDomId(TABS),
+          role: 'tabpanel',
+          'aria-labelledby': tabDomId(TABS, current),
+        })}
+      >
         <div
           ref={stageRef}
           className="devtools-viewer-stage"

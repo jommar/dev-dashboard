@@ -295,8 +295,8 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       [`DELETE /api/claude/prompts/${name}`, () => promptCall(() => claudePrompts.remove(name))],
     ]),
   );
-  // The live view of a debug browser, as Server-Sent Events: `frame`, `status` and `target`
-  // messages until the viewer leaves or the browser stops. It is as sensitive as the signed-in
+  // The live view of a debug browser, as Server-Sent Events: `frame`, `status`, `target` and
+  // `tabs` messages until the viewer leaves or the browser stops. It is as sensitive as the signed-in
   // session it shows, so another site's page may not open one. A frame is dropped, never queued,
   // while the client has not drained the last write.
   const streamScreencast = async (res, id) => {
@@ -319,6 +319,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       leave = await browserScreencast.subscribe(id, {
         status: (status) => emit('status', status),
         target: (target) => emit('target', target),
+        tabs: (tabs) => emit('tabs', tabs),
         frame: (frame) => {
           if (congested) return;
           if (emit('frame', frame) === false) {
@@ -486,8 +487,14 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         },
         // Mouse, wheel and key events for a viewed browser; the module whitelists every field.
         'POST /api/devtools/browsers/input': async (request) => {
-          const { id, event } = await readJson(request);
-          await browserScreencast.input(id, event);
+          const { id, event, targetId } = await readJson(request);
+          await browserScreencast.input(id, event, targetId);
+          return { ok: true };
+        },
+        // Which tab the live view shows: a tab the browser reported, or null to follow the newest.
+        'POST /api/devtools/browsers/tab': async (request) => {
+          const { id, targetId } = await readJson(request);
+          await browserScreencast.selectTab(id, targetId);
           return { ok: true };
         },
       };
@@ -652,6 +659,9 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'BROWSER_NOT_RUNNING',
         'SCREENCAST_NOT_ACTIVE',
         'INVALID_INPUT',
+        'INVALID_TAB',
+        'UNKNOWN_TAB',
+        'TAB_CHANGED',
       ];
       const code = allowed.includes(error.code) ? error.code : 'OPERATION_FAILED';
       const conflict = ['SETUP_REQUIRED', 'REVISION_CONFLICT', 'SERVICE_IN_USE'].includes(code);

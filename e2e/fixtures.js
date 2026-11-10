@@ -108,7 +108,9 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
           if (this.readyState === 2) return;
           if (type === 'open') this.readyState = 1;
           if (type === 'error') this.readyState = 0;
-          const event = ['message', 'setup-required', 'frame', 'status', 'target'].includes(type)
+          const event = ['message', 'setup-required', 'frame', 'status', 'target', 'tabs'].includes(
+            type,
+          )
             ? new MessageEvent(type, { data: JSON.stringify(snapshot) })
             : new Event(type);
           this.dispatchEvent(event);

@@ -2,7 +2,7 @@
 // Every collaborator is injected: no fetch, no WebSocket, no timer and no browser is real.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createBrowserScreencast, pickTarget } from '../backend/browser-screencast.mjs';
+import { createBrowserScreencast, viewableTargets } from '../backend/browser-screencast.mjs';
 
 const RUNNING = { id: 'b-0001', port: 9300, status: 'running', pid: 4001 };
 const OTHER = { id: 'b-0002', port: 9301, status: 'running', pid: 4002 };
@@ -13,8 +13,13 @@ const page = (id, url = 'https://example.invalid/', extra = {}) => ({
   type: 'page',
   title: `Title ${id}`,
   url,
-  webSocketDebuggerUrl: `ws://localhost:9222/devtools/page/${id}`,
   ...extra,
+});
+const infoOf = (target) => ({
+  targetId: target.id,
+  type: target.type,
+  title: target.title,
+  url: target.url,
 });
 
 const settle = async () => {
@@ -22,20 +27,30 @@ const settle = async () => {
 };
 
 function harness({ records = [RUNNING, OTHER, STOPPED], targets = [page('T1')] } = {}) {
-  const sockets = [];
+  const sockets = []; // page-level connections
+  const browsers = []; // browser-level connections
   const fetched = [];
   const timers = [];
   const stopListeners = new Set();
-  const state = { targets, discoveryFails: false, refuseCommands: false, hang: false };
+  const state = {
+    targets,
+    discoveryFails: false,
+    listFails: false,
+    refuseCommands: false,
+    refuseActivate: false,
+    hang: false,
+    extra: [], // targets only a re-read of the list reveals
+  };
 
   class FakeSocket {
     constructor(url) {
       this.url = url;
+      this.browser = url.includes('/devtools/browser/');
       this.readyState = 0;
       this.sent = [];
       this.listeners = {};
-      sockets.push(this);
-      if (!state.hang) setImmediate(() => this.open());
+      (this.browser ? browsers : sockets).push(this);
+      if (this.browser || !state.hang) setImmediate(() => this.open());
     }
     addEventListener(type, listener) {
       (this.listeners[type] ||= []).push(listener);
@@ -44,17 +59,37 @@ function harness({ records = [RUNNING, OTHER, STOPPED], targets = [page('T1')] }
       for (const listener of this.listeners[type] || []) listener(event);
     }
     open() {
+      if (this.readyState === 3) return; // closed while connecting: it never opens
       this.readyState = 1;
       this.emit('open');
     }
     send(raw) {
       const message = JSON.parse(raw);
       this.sent.push(message);
+      // The browser reports every open target before it answers the discovery command, in an
+      // order that means nothing (here: newest first, so a wrong guess about it would show).
+      if (message.method === 'Target.setDiscoverTargets')
+        for (const target of [...state.targets].reverse())
+          this.push('Target.targetCreated', { targetInfo: infoOf(target) });
+      if (message.method === 'Target.getTargets') {
+        setImmediate(() =>
+          this.emit('message', {
+            data: JSON.stringify({
+              id: message.id,
+              result: { targetInfos: [...state.targets, ...state.extra].map(infoOf) },
+            }),
+          }),
+        );
+        return;
+      }
       if (message.id !== undefined && message.method !== 'Page.screencastFrameAck') {
+        const refused =
+          (state.refuseCommands && message.method.startsWith('Input.')) ||
+          (state.refuseActivate && message.method === 'Target.activateTarget');
         setImmediate(() =>
           this.emit('message', {
             data: JSON.stringify(
-              state.refuseCommands && message.method.startsWith('Input.')
+              refused
                 ? { id: message.id, error: { message: 'refused' } }
                 : { id: message.id, result: {} },
             ),
@@ -87,7 +122,12 @@ function harness({ records = [RUNNING, OTHER, STOPPED], targets = [page('T1')] }
     fetch: async (url) => {
       fetched.push(url);
       if (state.discoveryFails) throw new Error('ECONNREFUSED');
-      return { ok: true, status: 200, json: async () => state.targets };
+      // The tab list is newest first, the order the real browser keeps it in.
+      const body = url.endsWith('/json/list')
+        ? [...state.targets].reverse()
+        : { webSocketDebuggerUrl: 'ws://localhost:9222/devtools/browser/BR1' };
+      if (url.endsWith('/json/list') && state.listFails) return { ok: false, status: 500 };
+      return { ok: true, status: 200, json: async () => body };
     },
     WebSocket: FakeSocket,
     setTimeout(fn, ms) {
@@ -101,25 +141,53 @@ function harness({ records = [RUNNING, OTHER, STOPPED], targets = [page('T1')] }
     retryDelays: [10, 20],
   });
   const listener = () => {
-    const seen = { statuses: [], targets: [], frames: [], ended: 0 };
+    const seen = { statuses: [], targets: [], tabs: [], frames: [], ended: 0 };
     return {
       seen,
       status: (value) => seen.statuses.push(value),
       target: (value) => seen.targets.push(value),
+      tabs: (value) => seen.tabs.push(value),
       frame: (value) => seen.frames.push(value),
       end: () => {
         seen.ended += 1;
       },
     };
   };
+  // What the browser says happened, on the live browser-level connection.
+  const browserEvent = (method, params) => browsers.at(-1).push(method, params);
   return {
     screencast,
     sockets,
+    browsers,
     fetched,
     state,
     listener,
     stop: (id) => stopListeners.forEach((fn) => fn(id)),
+    opened(target) {
+      state.targets = [...state.targets, target];
+      browserEvent('Target.targetCreated', { targetInfo: infoOf(target) });
+    },
+    changed(id, fields) {
+      state.targets = state.targets.map((target) =>
+        target.id === id ? { ...target, ...fields } : target,
+      );
+      browserEvent('Target.targetInfoChanged', {
+        targetInfo: infoOf(state.targets.find((target) => target.id === id)),
+      });
+    },
+    closed(id) {
+      state.targets = state.targets.filter((target) => target.id !== id);
+      browserEvent('Target.targetDestroyed', { targetId: id });
+    },
     // The back-off timers only: the open and command guards are longer and never fire here.
+    // The title re-read timer, the only one that long.
+    tick: async () => {
+      for (const timer of timers.filter((entry) => entry.live && entry.ms === 3000)) {
+        timer.live = false;
+        await timer.fn();
+      }
+      await settle();
+    },
     retry: async () => {
       for (const timer of timers.filter((entry) => entry.live && entry.ms <= 20)) {
         timer.live = false;
@@ -136,20 +204,15 @@ const frame = (sessionId, data = 'AAAA') => ({
   metadata: { deviceWidth: 1280, deviceHeight: 720, offsetTop: 0, pageScaleFactor: 1 },
 });
 
-test('picks a real tab over devtools, extension and non-page targets', () => {
-  const worker = {
-    id: 'W',
-    type: 'service_worker',
-    url: 'https://x/',
-    webSocketDebuggerUrl: 'ws://x',
-  };
+test('lists real tabs ahead of devtools, extension and non-page targets', () => {
+  const worker = { id: 'W', type: 'service_worker', url: 'https://x/' };
   const tools = page('D', 'devtools://devtools/bundled/inspector.html');
   const extension = page('E', 'chrome-extension://abc/popup.html');
-  assert.equal(pickTarget([worker, tools, extension, page('P1'), page('P2')]).id, 'P1');
-  assert.equal(pickTarget([worker, tools, extension]).id, 'D', 'any page beats none');
-  assert.equal(pickTarget([worker]), null);
-  assert.equal(pickTarget([page('N', 'x', { webSocketDebuggerUrl: undefined })]), null);
-  assert.equal(pickTarget(undefined), null);
+  const ids = (targets) => viewableTargets(targets).map((target) => target.id);
+  assert.deepEqual(ids([worker, tools, extension, page('P1'), page('P2')]), ['P1', 'P2']);
+  assert.deepEqual(ids([worker, tools, extension]), ['D', 'E'], 'any page beats none');
+  assert.deepEqual(ids([worker]), []);
+  assert.deepEqual(ids(undefined), []);
 });
 
 test('refuses an unknown or stopped instance before opening anything', async () => {
@@ -174,7 +237,15 @@ test('discovers the page on the registry port and starts a bounded jpeg screenca
   assert.deepEqual(viewer.seen.statuses, [{ status: 'connecting', reason: '' }]);
   await settle();
 
-  assert.deepEqual(h.fetched, ['http://127.0.0.1:9300/json/list']);
+  assert.deepEqual(h.fetched.sort(), [
+    'http://127.0.0.1:9300/json/list',
+    'http://127.0.0.1:9300/json/version',
+  ]);
+  // The browser-level connection is on the registry port whatever host the browser reported.
+  assert.equal(h.browsers.length, 1);
+  assert.equal(h.browsers[0].url, 'ws://127.0.0.1:9300/devtools/browser/BR1');
+  assert.deepEqual(h.browsers[0].methods(), ['Target.setDiscoverTargets']);
+  assert.deepEqual(h.browsers[0].sent[0].params, { discover: true });
   assert.equal(h.sockets.length, 1);
   // Pinned to this instance's loopback port whatever host the browser reported.
   assert.equal(h.sockets[0].url, 'ws://127.0.0.1:9300/devtools/page/T1');
@@ -248,7 +319,7 @@ test('one connection per instance, stopped when the last viewer leaves', async (
   const late = h.listener();
   const leaveLate = await h.screencast.subscribe(RUNNING.id, late);
   assert.equal(h.sockets.length, 1, 'the second viewer shares the connection');
-  assert.equal(h.fetched.length, 1);
+  assert.equal(h.fetched.length, 2, 'the version and the list, once');
   assert.deepEqual(late.seen.statuses, [{ status: 'live', reason: '' }]);
   assert.equal(late.seen.frames[0].data, 'bGFzdA==');
 
@@ -275,9 +346,9 @@ test('two instances stream independently', async () => {
   await h.screencast.subscribe(RUNNING.id, a);
   await h.screencast.subscribe(OTHER.id, b);
   await settle();
-  assert.deepEqual(h.fetched.sort(), [
-    'http://127.0.0.1:9300/json/list',
-    'http://127.0.0.1:9301/json/list',
+  assert.deepEqual(h.fetched.filter((url) => url.endsWith('/json/version')).sort(), [
+    'http://127.0.0.1:9300/json/version',
+    'http://127.0.0.1:9301/json/version',
   ]);
   assert.equal(h.sockets.length, 2);
   h.sockets[0].push('Page.screencastFrame', frame(1, 'YQ=='));
@@ -439,7 +510,7 @@ test('a restarted instance on a new port gets a fresh session', async () => {
   await h.screencast.subscribe(RUNNING.id, fresh);
   await settle();
   assert.equal(old.seen.ended, 1);
-  assert.equal(h.fetched.at(-1), 'http://127.0.0.1:9305/json/list');
+  assert.ok(h.fetched.includes('http://127.0.0.1:9305/json/version'));
   assert.equal(h.sockets.at(-1).url, 'ws://127.0.0.1:9305/devtools/page/T1');
 });
 
@@ -509,4 +580,500 @@ test('input needs the stream to be live, not merely subscribed', async () => {
   await assert.rejects(h.screencast.input(RUNNING.id, { type: 'mouseMoved', x: 1, y: 1 }), {
     code: 'SCREENCAST_NOT_ACTIVE',
   });
+});
+
+// -- the tab strip and switching ------------------------------------------------------------------
+
+const watch = async (targets, viewer) => {
+  const h = harness({ targets });
+  const listener = viewer || h.listener();
+  await h.screencast.subscribe(RUNNING.id, listener);
+  await settle();
+  return { h, viewer: listener };
+};
+const shownId = (h) => h.sockets.at(-1).url.split('/').at(-1);
+
+test('builds the tab list from the page targets, leaving out devtools and extension pages', async () => {
+  const worker = { id: 'W', type: 'service_worker', title: 'sw', url: 'https://x/' };
+  const { h, viewer } = await watch([
+    page('T1'),
+    page('D', 'devtools://devtools/bundled/inspector.html'),
+    worker,
+    page('E', 'chrome-extension://abc/popup.html'),
+    page('T2', 'https://example.invalid/two'),
+  ]);
+  assert.deepEqual(viewer.seen.tabs.at(-1), {
+    mode: 'auto',
+    tabs: [
+      { id: 'T1', title: 'Title T1', url: 'https://example.invalid/', current: false },
+      { id: 'T2', title: 'Title T2', url: 'https://example.invalid/two', current: true },
+    ],
+  });
+  assert.equal(shownId(h), 'T2', 'auto shows the newest');
+
+  // When nothing else is open, the internal pages are all there is to show.
+  const only = await watch([page('D', 'devtools://devtools/bundled/inspector.html')]);
+  assert.deepEqual(
+    only.viewer.seen.tabs.at(-1).tabs.map((tab) => tab.id),
+    ['D'],
+  );
+});
+
+test('auto follows the newest tab opened, on the same stream, without stealing focus', async () => {
+  const { h, viewer } = await watch([page('T1')]);
+  const first = h.sockets[0];
+  first.push('Page.screencastFrame', frame(1, 'b2xk'));
+  const before = viewer.seen.frames.length;
+
+  h.opened(page('T2', 'https://example.invalid/two'));
+  // At once: the old screencast is stopped and the viewer is told it is switching.
+  assert.equal(first.methods().at(-1), 'Page.stopScreencast');
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'connecting', reason: 'switching' });
+  await settle();
+  assert.equal(first.readyState, 3);
+  assert.equal(h.sockets.length, 2);
+  assert.equal(shownId(h), 'T2');
+  assert.deepEqual(h.sockets[1].methods(), ['Page.enable', 'Page.startScreencast']);
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'live', reason: '' });
+  assert.equal(viewer.seen.targets.at(-1).id, 'T2');
+  assert.deepEqual(
+    viewer.seen.tabs.at(-1).tabs.map(({ id, current }) => [id, current]),
+    [
+      ['T1', false],
+      ['T2', true],
+    ],
+  );
+  // The same subscriber saw all of it, nothing was opened twice, and the old tab's late frames
+  // are not painted.
+  assert.equal(h.browsers.length, 1);
+  assert.equal(h.fetched.length, 2, 'no discovery again for a switch');
+  first.push('Page.screencastFrame', frame(2, 'c3RhbGU='));
+  assert.equal(viewer.seen.frames.length, before);
+  h.sockets[1].push('Page.screencastFrame', frame(1, 'bmV3'));
+  assert.equal(viewer.seen.frames.at(-1).data, 'bmV3');
+
+  // Auto never raises a tab: it was opened in front already.
+  assert.ok(!h.browsers[0].methods().includes('Target.activateTarget'));
+  // A devtools page opening is not a tab to follow, and a title change is not a switch.
+  h.opened(page('D', 'devtools://devtools/bundled/inspector.html'));
+  h.changed('T2', { title: 'Retitled' });
+  await settle();
+  assert.equal(h.sockets.length, 2);
+  assert.equal(viewer.seen.tabs.at(-1).tabs.find((tab) => tab.id === 'T2').title, 'Retitled');
+  assert.ok(!h.browsers[0].methods().includes('Target.activateTarget'));
+});
+
+test('a tab that changes nothing visible is not announced again', async () => {
+  const { h, viewer } = await watch([page('T1')]);
+  const announced = viewer.seen.tabs.length;
+  h.changed('T1', { title: 'Title T1' });
+  h.changed('T1', { title: 'Title T1' });
+  assert.equal(viewer.seen.tabs.length, announced);
+  h.changed('T1', { title: 'Next' });
+  assert.equal(viewer.seen.tabs.length, announced + 1);
+});
+
+test('choosing a tab pins it, brings it to the front and stops following new tabs', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2')]);
+  assert.equal(shownId(h), 'T2');
+  const old = h.sockets[0];
+
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  const activate = h.browsers[0].sent.find(({ method }) => method === 'Target.activateTarget');
+  assert.deepEqual(activate.params, { targetId: 'T1' });
+  assert.equal(old.methods().at(-1), 'Page.stopScreencast');
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'connecting', reason: 'switching' });
+  await settle();
+  assert.equal(shownId(h), 'T1');
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'live', reason: '' });
+  assert.equal(viewer.seen.tabs.at(-1).mode, 'pinned');
+  assert.equal(viewer.seen.tabs.at(-1).tabs.find((tab) => tab.current).id, 'T1');
+
+  // A tab opened later does not take the view away from the pinned one.
+  h.opened(page('T3'));
+  await settle();
+  assert.equal(h.sockets.length, 2);
+  assert.equal(shownId(h), 'T1');
+  assert.equal(viewer.seen.tabs.at(-1).tabs.length, 3);
+  assert.equal(viewer.seen.tabs.at(-1).mode, 'pinned');
+});
+
+test('choosing the tab already shown pins it without a switch', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2')]);
+  await h.screencast.selectTab(RUNNING.id, 'T2');
+  await settle();
+  assert.equal(h.sockets.length, 1, 'nothing to restart');
+  assert.equal(viewer.seen.tabs.at(-1).mode, 'pinned');
+  assert.equal(h.browsers[0].methods().at(-1), 'Target.activateTarget', 'it is still raised');
+});
+
+test('auto-follow returns to the newest tab, and does nothing when it is already shown', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2')]);
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  await settle();
+  await h.screencast.selectTab(RUNNING.id, null);
+  assert.deepEqual(
+    h.browsers[0].sent
+      .filter(({ method }) => method === 'Target.activateTarget')
+      .map((m) => m.params),
+    [{ targetId: 'T1' }, { targetId: 'T2' }],
+  );
+  await settle();
+  assert.equal(shownId(h), 'T2');
+  assert.equal(viewer.seen.tabs.at(-1).mode, 'auto');
+
+  const sockets = h.sockets.length;
+  const activations = h.browsers[0].methods().filter((m) => m === 'Target.activateTarget').length;
+  await h.screencast.selectTab(RUNNING.id, null);
+  await settle();
+  assert.equal(h.sockets.length, sockets);
+  assert.equal(
+    h.browsers[0].methods().filter((m) => m === 'Target.activateTarget').length,
+    activations,
+  );
+});
+
+test('a pinned tab that closes falls back to the newest and says so', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2')]);
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  await settle();
+  h.opened(page('T3'));
+
+  h.closed('T1');
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'connecting', reason: 'switching' });
+  await settle();
+  assert.equal(shownId(h), 'T3');
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'live', reason: 'tab-closed' });
+  assert.equal(viewer.seen.tabs.at(-1).mode, 'auto');
+  assert.deepEqual(
+    viewer.seen.tabs.at(-1).tabs.map((tab) => tab.id),
+    ['T2', 'T3'],
+  );
+
+  // The next choice clears the note, and the note does not come back with a later reconnect.
+  await h.screencast.selectTab(RUNNING.id, 'T2');
+  await settle();
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'live', reason: '' });
+});
+
+test('a pinned tab whose page socket closes first still falls back, through the back-off', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2')]);
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  await settle();
+  // The tab closes: its own socket drops before any target event, and the browser forgets it.
+  h.state.targets = h.state.targets.filter((target) => target.id !== 'T1');
+  h.sockets.at(-1).readyState = 3;
+  h.sockets.at(-1).emit('close');
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'connecting', reason: 'reconnecting' });
+  await h.retry();
+  assert.equal(shownId(h), 'T2');
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'live', reason: 'tab-closed' });
+  assert.equal(viewer.seen.tabs.at(-1).mode, 'auto');
+});
+
+test('when the shown tab closes and none is left, it retries instead of freezing', async () => {
+  const { h, viewer } = await watch([page('T1')]);
+  h.closed('T1');
+  h.sockets[0].readyState = 3;
+  h.sockets[0].emit('close');
+  assert.equal(viewer.seen.statuses.at(-1).reason, 'reconnecting');
+  h.state.targets = [page('T9')];
+  await h.retry();
+  assert.equal(shownId(h), 'T9');
+  assert.equal(viewer.seen.statuses.at(-1).status, 'live');
+});
+
+test('a selection must be a tab the browser reported', async () => {
+  const worker = { id: 'W', type: 'service_worker', title: 'sw', url: 'https://x/' };
+  const { h } = await watch([
+    page('T1'),
+    page('T2'),
+    page('D', 'devtools://devtools/bundled/inspector.html'),
+    worker,
+  ]);
+  const before = h.browsers[0].sent.length;
+  for (const targetId of ['NOPE', 'D', 'W', 'ws://127.0.0.1:1/devtools/page/T1'])
+    await assert.rejects(
+      h.screencast.selectTab(RUNNING.id, targetId),
+      { code: 'UNKNOWN_TAB', status: 404 },
+      targetId,
+    );
+  for (const targetId of [undefined, '', 7, {}, ['T1'], 'x'.repeat(200)])
+    await assert.rejects(
+      h.screencast.selectTab(RUNNING.id, targetId),
+      { code: 'INVALID_TAB', status: 400 },
+      String(targetId),
+    );
+  await assert.rejects(h.screencast.selectTab('b-not-viewed', 'T1'), {
+    code: 'SCREENCAST_NOT_ACTIVE',
+    status: 409,
+  });
+  assert.equal(h.browsers[0].sent.length, before, 'nothing reached the browser');
+  assert.equal(h.sockets.length, 1);
+
+  // A tab that has closed is no longer a valid choice.
+  h.closed('T1');
+  await assert.rejects(h.screencast.selectTab(RUNNING.id, 'T1'), { code: 'UNKNOWN_TAB' });
+});
+
+test('a selection needs a browser being viewed, not one that was left', async () => {
+  const h = harness();
+  const leave = await h.screencast.subscribe(RUNNING.id, h.listener());
+  await settle();
+  leave();
+  await assert.rejects(h.screencast.selectTab(RUNNING.id, 'T1'), { code: 'SCREENCAST_NOT_ACTIVE' });
+});
+
+test('a switch that cannot raise the tab still switches', async () => {
+  const { h } = await watch([page('T1'), page('T2')]);
+  h.state.refuseActivate = true;
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  await settle();
+  assert.equal(shownId(h), 'T1');
+});
+
+test('rapid switches leave exactly one screencast running', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2'), page('T3')]);
+  h.screencast.selectTab(RUNNING.id, 'T1');
+  h.screencast.selectTab(RUNNING.id, 'T2');
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  await settle();
+  const running = h.sockets.filter((socket) => socket.readyState === 1);
+  assert.equal(running.length, 1);
+  assert.equal(running[0].url.split('/').at(-1), 'T1');
+  assert.equal(viewer.seen.statuses.at(-1).status, 'live');
+  assert.equal(viewer.seen.targets.at(-1).id, 'T1');
+  for (const socket of h.sockets.filter((entry) => entry !== running[0]))
+    assert.ok(socket.readyState === 3 || socket.readyState === 0, 'the others were let go');
+});
+
+test('input never lands on another tab, nor while a switch is in progress', async () => {
+  const { h } = await watch([page('T1'), page('T2')]);
+  const event = { type: 'mouseMoved', x: 1, y: 1 };
+  await h.screencast.input(RUNNING.id, event, 'T2');
+  assert.equal(h.sockets[0].sent.at(-1).method, 'Input.dispatchMouseEvent');
+  await h.screencast.input(RUNNING.id, event); // the id is optional
+
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  // Mid-switch: the stream is connecting, so there is nothing to deliver to.
+  await assert.rejects(h.screencast.input(RUNNING.id, event, 'T1'), {
+    code: 'SCREENCAST_NOT_ACTIVE',
+    status: 409,
+  });
+  await settle();
+  const old = h.sockets[0].sent.length;
+  // Live again on T1: input for the tab that was shown before is refused.
+  await assert.rejects(h.screencast.input(RUNNING.id, event, 'T2'), {
+    code: 'TAB_CHANGED',
+    status: 409,
+  });
+  await assert.rejects(h.screencast.input(RUNNING.id, event, null), { code: 'TAB_CHANGED' });
+  assert.equal(h.sockets[0].sent.length, old);
+  assert.equal(h.sockets[1].methods().includes('Input.dispatchMouseEvent'), false);
+  await h.screencast.input(RUNNING.id, event, 'T1');
+  assert.equal(h.sockets[1].sent.at(-1).method, 'Input.dispatchMouseEvent');
+});
+
+test('the browser-level connection ends with the last viewer, with the page one', async () => {
+  const h = harness();
+  const leaveFirst = await h.screencast.subscribe(RUNNING.id, h.listener());
+  const leaveSecond = await h.screencast.subscribe(RUNNING.id, h.listener());
+  await settle();
+  assert.equal(h.browsers.length, 1, 'one per instance, not per viewer');
+  leaveFirst();
+  assert.equal(h.browsers[0].readyState, 1);
+  leaveSecond();
+  await settle();
+  assert.equal(h.browsers[0].readyState, 3);
+  assert.equal(h.sockets[0].readyState, 3);
+
+  // Nothing carries over: a new viewer has no pin, and starts its own connections.
+  const again = h.listener();
+  await h.screencast.subscribe(RUNNING.id, again);
+  await settle();
+  assert.equal(h.browsers.length, 2);
+  assert.equal(again.seen.tabs.at(-1).mode, 'auto');
+});
+
+test('the browser-level connection ends when the instance stops or the service shuts down', async () => {
+  const h = harness();
+  await h.screencast.subscribe(RUNNING.id, h.listener());
+  await h.screencast.subscribe(OTHER.id, h.listener());
+  await settle();
+  h.stop(RUNNING.id);
+  await settle();
+  assert.deepEqual(
+    h.browsers.map((socket) => socket.readyState),
+    [3, 1],
+  );
+  h.screencast.close();
+  await settle();
+  assert.deepEqual(
+    h.browsers.map((socket) => socket.readyState),
+    [3, 3],
+  );
+  // A stopped session does not react to a late event.
+  h.sockets[0].emit('close');
+  await h.retry();
+  assert.equal(h.sockets.length, 2);
+});
+
+test('a browser-level connection that drops starts the whole attachment over', async () => {
+  const { h, viewer } = await watch([page('T1')]);
+  h.browsers[0].readyState = 3;
+  h.browsers[0].emit('close');
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'connecting', reason: 'reconnecting' });
+  assert.equal(h.sockets[0].readyState, 3, 'the page connection is let go too');
+  await h.retry();
+  assert.equal(h.browsers.length, 2);
+  assert.equal(h.sockets.length, 2);
+  assert.equal(viewer.seen.statuses.at(-1).status, 'live');
+});
+
+test('tab discovery that fails is retried like a page that does not answer', async () => {
+  const h = harness();
+  const viewer = h.listener();
+  h.state.discoveryFails = true;
+  await h.screencast.subscribe(RUNNING.id, viewer);
+  await settle();
+  assert.ok(h.fetched.length >= 1);
+  assert.deepEqual(viewer.seen.statuses.at(-1), { status: 'connecting', reason: 'reconnecting' });
+  assert.equal(h.browsers.length, 0);
+  h.state.discoveryFails = false;
+  await h.retry();
+  assert.equal(viewer.seen.statuses.at(-1).status, 'live');
+});
+
+test('a late joiner is told the tabs along with the state', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2')]);
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  await settle();
+  const late = h.listener();
+  await h.screencast.subscribe(RUNNING.id, late);
+  assert.equal(h.browsers.length, 1);
+  assert.deepEqual(late.seen.tabs, [viewer.seen.tabs.at(-1)]);
+  assert.equal(late.seen.tabs[0].mode, 'pinned');
+  assert.deepEqual(late.seen.statuses, [{ status: 'live', reason: '' }]);
+  // Every viewer hears a change, not only the one that made it.
+  h.opened(page('T3'));
+  assert.equal(late.seen.tabs.at(-1).tabs.length, 3);
+  assert.equal(viewer.seen.tabs.at(-1).tabs.length, 3);
+});
+
+test('what a page says about its tab is cleaned and capped before a viewer sees it', async () => {
+  const many = Array.from({ length: 30 }, (_, index) => page(`M${index}`));
+  const { h, viewer } = await watch([
+    page('First', 'https://example.invalid/', { title: 'a\u0000b\u001b[31mc\nd\u0085e' }),
+    ...many,
+  ]);
+  // The newest is shown, the strip holds the most recent 20, and the oldest are left off.
+  const { tabs } = viewer.seen.tabs.at(-1);
+  assert.equal(tabs.length, 20);
+  assert.deepEqual(
+    tabs.map((tab) => tab.id),
+    many.slice(10).map((tab) => tab.id),
+  );
+  assert.ok(tabs.at(-1).current);
+
+  // Pinning an old one keeps it in the strip even though it is beyond the cap.
+  await h.screencast.selectTab(RUNNING.id, 'First');
+  await settle();
+  const pinned = viewer.seen.tabs.at(-1).tabs;
+  assert.equal(pinned.length, 20);
+  assert.equal(pinned[0].id, 'First');
+  assert.equal(pinned[0].title, 'a b [31mc d e');
+  assert.ok(pinned.every((tab) => !/\p{Cc}/u.test(tab.title + tab.url + tab.id)));
+
+  h.changed('M29', { title: 't'.repeat(1000), url: `https://example.invalid/${'u'.repeat(2000)}` });
+  const long = viewer.seen.tabs.at(-1).tabs.at(-1);
+  assert.equal(long.title.length, 120);
+  assert.equal(long.url.length, 500);
+
+  // Neither a hostile id nor a flood of tabs gets in: ids over the cap are ignored, and what is
+  // remembered is bounded.
+  h.opened(page('x'.repeat(500)));
+  assert.ok(!JSON.stringify(viewer.seen.tabs.at(-1)).includes('xxxxxxxxxx'));
+  for (let index = 0; index < 250; index += 1) h.opened(page(`Z${index}`));
+  await assert.rejects(h.screencast.selectTab(RUNNING.id, 'M5'), { code: 'UNKNOWN_TAB' });
+  await h.screencast.selectTab(RUNNING.id, 'Z249');
+});
+
+test('the order tabs were opened in comes from the browser list, not from how they are announced', async () => {
+  // The fake announces newest first; the list says the same, newest first, and auto takes the
+  // newest of them: T3, not the first announced.
+  const { h, viewer } = await watch([page('T1'), page('T2'), page('T3')]);
+  assert.equal(shownId(h), 'T3');
+  assert.deepEqual(
+    viewer.seen.tabs.at(-1).tabs.map((tab) => tab.id),
+    ['T1', 'T2', 'T3'],
+  );
+  // Without a usable list, a tab still gets in, in the order it was announced.
+  const bare = harness({ targets: [page('T1'), page('T2')] });
+  bare.state.listFails = true;
+  await bare.screencast.subscribe(RUNNING.id, bare.listener());
+  await settle();
+  assert.equal(bare.sockets.length, 1);
+});
+
+test('what was known keeps its order across a reconnect, and a tab opened meanwhile is newest', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2')]);
+  await h.screencast.selectTab(RUNNING.id, 'T1');
+  await settle();
+  h.opened(page('T3'));
+  h.browsers[0].readyState = 3;
+  h.browsers[0].emit('close');
+  h.state.targets = [...h.state.targets, page('T4')]; // opened while the connection was down
+  h.state.targets = h.state.targets.filter((target) => target.id !== 'T2'); // and one closed
+  await h.retry();
+  assert.deepEqual(
+    viewer.seen.tabs.at(-1).tabs.map((tab) => tab.id),
+    ['T1', 'T3', 'T4'],
+  );
+  assert.equal(viewer.seen.tabs.at(-1).mode, 'pinned', 'the pin survives a reconnect');
+  assert.equal(shownId(h), 'T1');
+  await h.screencast.selectTab(RUNNING.id, null);
+  await settle();
+  assert.equal(shownId(h), 'T4');
+});
+
+test('titles are re-read while the browser is watched, because Chromium does not announce them', async () => {
+  const { h, viewer } = await watch([page('T1'), page('T2')]);
+  const announced = viewer.seen.tabs.length;
+  // A page retitles itself: no event reaches the browser-level connection.
+  h.state.targets = h.state.targets.map((target) =>
+    target.id === 'T1' ? { ...target, title: 'Typed later' } : target,
+  );
+  h.state.extra = [page('Stray')]; // a tab only the re-read knows: it is not added from there
+  await h.tick();
+  assert.ok(h.browsers[0].methods().includes('Target.getTargets'));
+  assert.equal(viewer.seen.tabs.length, announced + 1);
+  const { tabs } = viewer.seen.tabs.at(-1);
+  assert.equal(tabs.find((tab) => tab.id === 'T1').title, 'Typed later');
+  assert.deepEqual(
+    tabs.map((tab) => tab.id),
+    ['T1', 'T2'],
+  );
+  assert.equal(h.sockets.length, 1, 'a new title is not a switch');
+
+  // It goes on while watched and quietly changes nothing when nothing changed.
+  await h.tick();
+  assert.equal(viewer.seen.tabs.length, announced + 1);
+  assert.equal(h.browsers[0].methods().filter((m) => m === 'Target.getTargets').length, 2);
+});
+
+test('the title re-read stops with the last viewer and while disconnected', async () => {
+  const h = harness();
+  const leave = await h.screencast.subscribe(RUNNING.id, h.listener());
+  await settle();
+  leave();
+  await h.tick();
+  assert.ok(!h.browsers[0].methods().includes('Target.getTargets'));
+
+  const again = harness();
+  await again.screencast.subscribe(RUNNING.id, again.listener());
+  await settle();
+  again.browsers[0].readyState = 3;
+  again.browsers[0].emit('close');
+  await again.tick();
+  assert.ok(!again.browsers[0].methods().includes('Target.getTargets'));
 });

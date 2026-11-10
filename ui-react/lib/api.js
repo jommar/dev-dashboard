@@ -235,12 +235,16 @@ export const stopDevtoolsBrowser = (id) =>
   watchRequest('/api/devtools/browsers/stop', { method: 'POST', body: { id } });
 export const removeDevtoolsBrowser = (id) =>
   watchRequest('/api/devtools/browsers/remove', { method: 'POST', body: { id } });
-// The live view of one running browser: an event stream of frame, status and target messages.
+// The live view of one running browser: an event stream of frame, status, target and tabs messages.
 // Closing the source is what ends the viewing.
 export const openDevtoolsScreencast = (id) =>
   new EventSource(`/api/devtools/browsers/screencast?id=${encodeURIComponent(id)}`);
-export const sendDevtoolsInput = (id, event) =>
-  watchRequest('/api/devtools/browsers/input', { method: 'POST', body: { id, event } });
+// `targetId` is the tab the viewer was looking at: the server refuses input once it has changed.
+export const sendDevtoolsInput = (id, event, targetId) =>
+  watchRequest('/api/devtools/browsers/input', { method: 'POST', body: { id, event, targetId } });
+// A tab the live view should show (it is brought to the front too); null follows the newest.
+export const selectDevtoolsTab = (id, targetId) =>
+  watchRequest('/api/devtools/browsers/tab', { method: 'POST', body: { id, targetId } });
 
 export const getSlackWatch = () => watchRequest('/api/slack/watch');
 export const getSlackWatchSessions = () => watchRequest('/api/slack/watch/sessions');

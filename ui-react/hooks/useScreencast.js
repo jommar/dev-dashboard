@@ -5,6 +5,8 @@ import { openDevtoolsScreencast } from '../lib/api.js';
 // reconnect would only ask again and be refused.
 const FINAL_REASONS = ['stopped', 'unavailable'];
 
+const IDLE = { status: 'connecting', reason: '', target: null, tabs: null };
+
 const read = (event) => {
   try {
     return JSON.parse(event.data);
@@ -17,14 +19,14 @@ const read = (event) => {
 // them never re-renders the viewer); what the viewer needs to say about the connection is state.
 // The source is closed when the component leaves or `id` changes, which ends the viewing.
 export function useScreencast(id, onFrame) {
-  const [state, setState] = useState({ status: 'connecting', reason: '', target: null });
+  const [state, setState] = useState(IDLE);
   const frame = useRef(onFrame);
   useEffect(() => {
     frame.current = onFrame;
   }, [onFrame]);
 
   useEffect(() => {
-    setState({ status: 'connecting', reason: '', target: null });
+    setState(IDLE);
     const source = openDevtoolsScreencast(id);
     source.addEventListener('frame', (event) => {
       const message = read(event);
@@ -43,6 +45,12 @@ export function useScreencast(id, onFrame) {
     source.addEventListener('target', (event) => {
       const message = read(event);
       if (message) setState((current) => ({ ...current, target: message }));
+    });
+    // The strip: `{ mode, tabs }`, each tab `{ id, title, url, current }`.
+    source.addEventListener('tabs', (event) => {
+      const message = read(event);
+      if (message && Array.isArray(message.tabs))
+        setState((current) => ({ ...current, tabs: message }));
     });
     // A closed source was refused (the browser is gone); a connecting one is retrying by itself.
     source.addEventListener('error', () =>

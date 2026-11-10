@@ -132,6 +132,42 @@
 .devtools-viewer-status[data-status='lost'] {
   color: var(--red);
 }
+/* The tab strip: the shared BoardTabs row, scrolling sideways rather than wrapping so a browser with
+   many tabs keeps a one-line bar, with the auto-follow control and the hint beside it. */
+.devtools-viewer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  padding: var(--s2) var(--s4);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.devtools-viewer-tabs {
+  flex: 1 1 320px;
+  min-width: 0;
+  overflow-x: auto;
+}
+.devtools-viewer-tabs .board-tabs {
+  flex-wrap: nowrap;
+  width: max-content;
+  max-width: none;
+}
+.devtools-viewer-tabs .board-tab {
+  flex: none;
+}
+.devtools-viewer-tabname {
+  display: block;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.devtools-viewer-tabhint {
+  flex: 1 1 100%;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
 .devtools-viewer-body {
   display: flex;
   flex: 1 1 auto;
@@ -161,6 +197,10 @@
   width: 100%;
   max-height: max(120px, calc(94vh - 180px));
   object-fit: contain;
+}
+/* The strip takes about 90 px of the same dialog, so the picture gives that much back. */
+.devtools-viewer-bar ~ .devtools-viewer-body .devtools-viewer-image {
+  max-height: max(120px, calc(94vh - 270px));
 }
 .devtools-viewer-image[hidden] {
   display: none;

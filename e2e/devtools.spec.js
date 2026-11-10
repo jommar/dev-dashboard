@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures.js';
-import { devtoolsFrame } from './data.js';
+import { devtoolsFrame, devtoolsTabs } from './data.js';
 import { DEFAULT_DEVTOOLS_URL } from '../ui/devtools-defaults.js';
 
 // The fixture's two rows: one running, one stopped on its own profile.
@@ -416,5 +416,230 @@ test.describe('devtools viewer', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('devtools-viewer')).toHaveCount(0);
     await expect.poll(async () => (await screencastState(page))[0].readyState).toBe(2);
+  });
+});
+
+// -- the tab strip ---------------------------------------------------------------------------------
+// The server's side is played by the spec: a click only posts the choice, and the strip, the status
+// and the shown tab change when the spec emits what the server would have sent back.
+
+const tabCalls = ({ data }) =>
+  data.devtools.calls.filter(({ path }) => path === '/api/devtools/browsers/tab');
+const tab = (page, tabId) => page.getByTestId(`devtools-viewer-tab-${tabId}`);
+const showTabs = (page, ...args) => emitScreencast(page, 'tabs', devtoolsTabs(...args));
+const liveOnTabs = async (page, ...args) => {
+  await openViewer(page);
+  await goLive(page);
+  await showTabs(page, ...args);
+  await expect(tab(page, 'T1')).toBeVisible();
+};
+// What the server sends once it has moved the view to `to`.
+const switchedTo = async (page, to, options) => {
+  await emitScreencast(page, 'status', { status: 'connecting', reason: 'switching' });
+  await emitScreencast(page, 'target', { id: to, title: '', url: 'https://example.invalid/x' });
+  await showTabs(page, to, options);
+  await emitScreencast(page, 'status', { status: 'live', reason: '' });
+  await emitScreencast(page, 'frame', devtoolsFrame([160, 90, 40]));
+};
+
+test.describe('devtools viewer tabs', () => {
+  test('there is no strip until the browser has sent its tabs', async ({ page }) => {
+    await openViewer(page);
+    await goLive(page);
+    await expect(page.getByTestId('devtools-viewer-tabs')).toHaveCount(0);
+    await expect(page.getByTestId('devtools-viewer-auto')).toHaveCount(0);
+  });
+
+  test('shows each tab by title, else its site, with the shown one marked', async ({ page }) => {
+    await liveOnTabs(page, 'T1');
+    const strip = page.getByRole('tablist', { name: 'Browser tabs' });
+    await expect(strip.getByRole('tab')).toHaveCount(3);
+    await expect(tab(page, 'T1')).toHaveText('Admin home');
+    await expect(tab(page, 'T2')).toHaveText('reports.example.invalid');
+    await expect(tab(page, 'T3')).toHaveText('Checkout');
+    await expect(tab(page, 'T1')).toHaveAttribute('aria-selected', 'true');
+    await expect(tab(page, 'T2')).toHaveAttribute('aria-selected', 'false');
+    // Only the shown tab is a Tab stop; the rest are reached with the arrow keys.
+    await expect(tab(page, 'T1')).toHaveAttribute('tabindex', '0');
+    await expect(tab(page, 'T3')).toHaveAttribute('tabindex', '-1');
+    // The picture is the tab's panel, named by the shown tab.
+    const panel = page.getByRole('tabpanel');
+    await expect(panel).toHaveCount(1);
+    await expect(panel.getByTestId('devtools-viewer-stage')).toHaveCount(1);
+    await expect(panel).toHaveAttribute(
+      'aria-labelledby',
+      (await tab(page, 'T1').getAttribute('id')) ?? '',
+    );
+    await expect(tab(page, 'T1')).toHaveAttribute(
+      'aria-controls',
+      (await panel.getAttribute('id')) ?? '',
+    );
+    // Auto is on, so there is nothing to return to; the hint says what choosing does.
+    await expect(page.getByTestId('devtools-viewer-auto')).toBeDisabled();
+    await expect(page.getByTestId('devtools-viewer-auto')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('devtools-viewer-tabhint')).toHaveText(
+      'Choosing a tab also brings it to the front of the browser window.',
+    );
+  });
+
+  test('a long title is truncated, not allowed to widen the strip', async ({ page }) => {
+    await openViewer(page);
+    await goLive(page);
+    const long = devtoolsTabs('T1');
+    long.tabs[0].title = 'An extremely long page title '.repeat(12);
+    await emitScreencast(page, 'tabs', long);
+    await expect(tab(page, 'T1')).toBeVisible();
+    expect((await tab(page, 'T1').boundingBox()).width).toBeLessThan(320);
+    await expect(tab(page, 'T3')).toBeVisible();
+  });
+
+  test('clicking a tab posts that choice, releases control and pins it', async ({
+    page,
+    dashboard,
+  }) => {
+    await liveOnTabs(page, 'T1');
+    await takeControl(page);
+
+    await tab(page, 'T3').click();
+    await expect(page.getByTestId('devtools-viewer-control')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    await expect(page.getByTestId('devtools-viewer-stage')).toHaveAttribute(
+      'data-control',
+      'false',
+    );
+    await expect.poll(() => tabCalls(dashboard)).toHaveLength(1);
+    expect(tabCalls(dashboard)[0]).toEqual({
+      method: 'POST',
+      path: '/api/devtools/browsers/tab',
+      body: { id: RUNNING, targetId: 'T3' },
+    });
+
+    // The server answers with the new view; the strip follows it and offers to unpin.
+    await switchedTo(page, 'T3', { mode: 'pinned' });
+    await expect(tab(page, 'T3')).toHaveAttribute('aria-selected', 'true');
+    await expect(tab(page, 'T1')).toHaveAttribute('aria-selected', 'false');
+    await expect(page.getByTestId('devtools-viewer-auto')).toBeEnabled();
+    await expect(page.getByTestId('devtools-viewer-auto')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('devtools-viewer-control')).toBeEnabled();
+    await expect(page.getByTestId('devtools-viewer-control')).toHaveText('Take control');
+  });
+
+  test('Auto-follow newest posts null and is off once it is on', async ({ page, dashboard }) => {
+    await liveOnTabs(page, 'T2', { mode: 'pinned' });
+    await page.getByTestId('devtools-viewer-auto').click();
+    await expect.poll(() => tabCalls(dashboard)).toHaveLength(1);
+    expect(tabCalls(dashboard)[0].body).toEqual({ id: RUNNING, targetId: null });
+
+    await switchedTo(page, 'T3');
+    await expect(tab(page, 'T3')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('devtools-viewer-auto')).toBeDisabled();
+    await expect(page.getByTestId('devtools-viewer-auto')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('the arrow keys, Home and End move between tabs and choose them', async ({
+    page,
+    dashboard,
+  }) => {
+    await liveOnTabs(page, 'T1');
+    await tab(page, 'T1').focus();
+    const chosen = () => tabCalls(dashboard).map(({ body }) => body.targetId);
+
+    await page.keyboard.press('ArrowRight');
+    await expect(tab(page, 'T2')).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(tab(page, 'T3')).toBeFocused();
+    await page.keyboard.press('ArrowRight'); // wraps
+    await expect(tab(page, 'T1')).toBeFocused();
+    await page.keyboard.press('ArrowLeft'); // wraps back
+    await expect(tab(page, 'T3')).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(tab(page, 'T1')).toBeFocused();
+    await expect.poll(chosen).toEqual(['T2', 'T3', 'T1', 'T3', 'T1']);
+  });
+
+  test('a tab that opens joins the strip and, when following, becomes the one shown', async ({
+    page,
+  }) => {
+    await liveOnTabs(page, 'T1', { ids: ['T1', 'T2'] });
+    await expect(page.getByRole('tab')).toHaveCount(2);
+    await switchedTo(page, 'T4', { ids: ['T1', 'T2', 'T4'] });
+    await expect(page.getByRole('tab')).toHaveCount(3);
+    await expect(tab(page, 'T4')).toHaveText('Fourth tab');
+    await expect(tab(page, 'T4')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('devtools-viewer-sub')).toHaveText(
+      'Port 9300 · https://example.invalid/x',
+    );
+  });
+
+  test('says so when the pinned tab closes and the view follows the newest', async ({ page }) => {
+    await liveOnTabs(page, 'T1', { mode: 'pinned' });
+    await emitScreencast(page, 'status', { status: 'connecting', reason: 'switching' });
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveText('Switching tab…');
+    await expect(page.getByTestId('devtools-viewer-control')).toBeDisabled();
+
+    await emitScreencast(page, 'target', { id: 'T3', title: '', url: 'https://example.invalid/x' });
+    await showTabs(page, 'T3', { ids: ['T2', 'T3'] });
+    await emitScreencast(page, 'status', { status: 'live', reason: 'tab-closed' });
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveText(
+      'Live · the pinned tab closed, following the newest',
+    );
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveAttribute('data-status', 'live');
+    await expect(page.getByRole('tab')).toHaveCount(2);
+    await expect(page.getByTestId('devtools-viewer-auto')).toBeDisabled();
+
+    // The note goes with the next change of view.
+    await switchedTo(page, 'T2', { ids: ['T2', 'T3'] });
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveText('Live');
+  });
+
+  test('control is released when the shown tab changes, and input is addressed to its tab', async ({
+    page,
+    dashboard,
+  }) => {
+    await liveOnTabs(page, 'T1');
+    await takeControl(page);
+    const { x, y } = await centreOfImage(page);
+    await page.mouse.move(x, y);
+    await expect.poll(() => inputs(dashboard).length).toBeGreaterThan(0);
+    expect(inputs(dashboard).every(({ body }) => body.targetId === 'T1')).toBe(true);
+
+    // The view moves on its own (a tab an agent opened): control goes, and stays gone.
+    await switchedTo(page, 'T3', { ids: ['T1', 'T2', 'T3'] });
+    await expect(page.getByTestId('devtools-viewer-control')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    await expect(page.getByTestId('devtools-viewer-stage')).toHaveAttribute(
+      'data-control',
+      'false',
+    );
+    const before = inputs(dashboard).length;
+    await page.mouse.click(x, y);
+    await page.keyboard.type('x');
+    expect(inputs(dashboard).length).toBe(before);
+
+    // Taken again, it addresses the tab now shown.
+    await takeControl(page);
+    await page.mouse.move(x + 3, y + 3);
+    await expect.poll(() => inputs(dashboard).length).toBeGreaterThan(before);
+    expect(inputs(dashboard).at(-1).body.targetId).toBe('T3');
+  });
+
+  test('Escape still releases control before it closes, with the strip showing', async ({
+    page,
+  }) => {
+    await liveOnTabs(page, 'T1');
+    await takeControl(page);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('devtools-viewer-control')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    await expect(page.getByTestId('devtools-viewer')).toBeVisible();
+    await tab(page, 'T1').focus();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('devtools-viewer')).toHaveCount(0);
   });
 });

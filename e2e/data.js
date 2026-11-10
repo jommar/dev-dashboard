@@ -398,6 +398,20 @@ function solidPng(width, height, [red, green, blue]) {
   ]);
 }
 
+// The `tabs` message the stream sends: `current` names the tab shown, and a pinned strip says so.
+export function devtoolsTabs(current = 'T1', { mode = 'auto', ids = ['T1', 'T2', 'T3'] } = {}) {
+  const tabs = {
+    T1: { id: 'T1', title: 'Admin home', url: 'https://example.invalid/admin' },
+    T2: { id: 'T2', title: '', url: 'https://reports.example.invalid/q3' },
+    T3: { id: 'T3', title: 'Checkout', url: 'https://example.invalid/checkout' },
+    T4: { id: 'T4', title: 'Fourth tab', url: 'https://example.invalid/four' },
+  };
+  return {
+    mode,
+    tabs: ids.map((id) => ({ ...tabs[id], current: id === current })),
+  };
+}
+
 // One screencast frame as the stream sends it: a 16:9 image of a 1280x720 page. The image is
 // 160x90, so a point on it maps to its own position times eight.
 export function devtoolsFrame(colour = [40, 90, 160]) {
@@ -1904,8 +1918,10 @@ function devtoolsResponse(url, method, { devtools }, body) {
     browser.pid = starting ? 41003 : null;
     return { json: { ok: true, browser: structuredClone(browser) } };
   }
-  // Input is only recorded: what the viewer sent is the contract under test.
-  if (pathname === '/api/devtools/browsers/input') return { json: { ok: true } };
+  // Input and tab choices are only recorded: what the viewer sent is the contract under test, and
+  // a spec plays the server's side by emitting the `tabs` and `status` it would answer with.
+  if (pathname === '/api/devtools/browsers/input' || pathname === '/api/devtools/browsers/tab')
+    return { json: { ok: true } };
   if (pathname === '/api/devtools/browsers/remove') {
     const before = devtools.browsers.length;
     devtools.browsers = devtools.browsers.filter((entry) => entry.id !== body?.id);

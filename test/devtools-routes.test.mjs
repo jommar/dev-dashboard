@@ -58,7 +58,8 @@ async function endpoint(t, overrides = {}) {
     },
   };
   // The live view, with the real input whitelist: it is the part that must answer 400.
-  const views = { listeners: [], left: 0, inputs: [] };
+  const views = { listeners: [], left: 0, inputs: [], tabs: [] };
+  const refuse = (code, message, status) => Object.assign(new Error(message), { code, status });
   const browserScreencast = {
     check: async (id) => {
       views.listeners.push(['check', id]);
@@ -77,14 +78,28 @@ async function endpoint(t, overrides = {}) {
       views.listeners.push(['subscribe', id, listener]);
       listener.status({ status: 'live', reason: '' });
       listener.target({ id: 'T1', title: 'Home', url: 'https://example.invalid/' });
+      listener.tabs({
+        mode: 'auto',
+        tabs: [{ id: 'T1', title: 'Home', url: 'https://example.invalid/', current: true }],
+      });
       listener.frame({ data: 'ZnJhbWU=', metadata: { deviceWidth: 1280, deviceHeight: 720 } });
       return () => {
         views.left += 1;
       };
     },
-    input: async (id, event) => {
+    input: async (id, event, targetId) => {
       const parsed = parseInputEvent(event);
-      views.inputs.push([id, parsed]);
+      if (overrides.tabChanged) throw refuse('TAB_CHANGED', 'The viewed tab changed.', 409);
+      views.inputs.push([id, parsed, targetId]);
+    },
+    // The same refusals as the module, so the route's mapping of each is what is under test.
+    selectTab: async (id, targetId) => {
+      if (targetId !== null && !(typeof targetId === 'string' && targetId))
+        throw refuse('INVALID_TAB', 'Choose a tab, or null for the newest.', 400);
+      if (overrides.notViewed) throw refuse('SCREENCAST_NOT_ACTIVE', 'Not viewed.', 409);
+      if (targetId !== null && targetId !== 'T1' && targetId !== 'T2')
+        throw refuse('UNKNOWN_TAB', 'That tab is not open.', 404);
+      views.tabs.push([id, targetId]);
     },
   };
   const handler = createHttpHandler({
@@ -181,7 +196,7 @@ test('removes an instance by id', async (t) => {
 
 const FRAMED = (text) => text.includes('event: frame');
 
-test('streams status, target and frames as server-sent events without setup', async (t) => {
+test('streams status, target, tabs and frames as server-sent events without setup', async (t) => {
   const { stream, views } = await endpoint(t);
   const response = await stream(`/api/devtools/browsers/screencast?id=${INSTANCE.id}`, {
     enough: FRAMED,
@@ -199,6 +214,13 @@ test('streams status, target and frames as server-sent events without setup', as
   assert.deepEqual(messages, [
     ['status', { status: 'live', reason: '' }],
     ['target', { id: 'T1', title: 'Home', url: 'https://example.invalid/' }],
+    [
+      'tabs',
+      {
+        mode: 'auto',
+        tabs: [{ id: 'T1', title: 'Home', url: 'https://example.invalid/', current: true }],
+      },
+    ],
     ['frame', { data: 'ZnJhbWU=', metadata: { deviceWidth: 1280, deviceHeight: 720 } }],
   ]);
   assert.deepEqual(
@@ -324,4 +346,95 @@ test('input is a state-changing request: another origin is refused', async (t) =
     assert.equal(response.status, 403, JSON.stringify(headers));
   }
   assert.deepEqual(views.inputs, []);
+});
+
+test('forwards the tab an input was meant for, and answers 409 once it changed', async (t) => {
+  const { request, views } = await endpoint(t);
+  const event = { type: 'mouseMoved', x: 10, y: 20 };
+  const sent = await request('/api/devtools/browsers/input', {
+    method: 'POST',
+    body: { id: INSTANCE.id, event, targetId: 'T1' },
+  });
+  assert.equal(sent.status, 200);
+  assert.equal(views.inputs[0][2], 'T1');
+
+  const changed = await endpoint(t, { tabChanged: true });
+  const response = await changed.request('/api/devtools/browsers/input', {
+    method: 'POST',
+    body: { id: INSTANCE.id, event, targetId: 'T0' },
+  });
+  assert.equal(response.status, 409);
+  assert.equal(response.json.code, 'TAB_CHANGED');
+});
+
+test('selects a tab, or null to follow the newest', async (t) => {
+  const { request, views } = await endpoint(t);
+  for (const targetId of ['T2', null]) {
+    const response = await request('/api/devtools/browsers/tab', {
+      method: 'POST',
+      body: { id: INSTANCE.id, targetId },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.json, { ok: true });
+  }
+  assert.deepEqual(views.tabs, [
+    [INSTANCE.id, 'T2'],
+    [INSTANCE.id, null],
+  ]);
+});
+
+test('answers 400 for a tab that is not a string or null, 404 for one not open, 409 when not viewed', async (t) => {
+  const { request, views } = await endpoint(t);
+  for (const body of [
+    { id: INSTANCE.id },
+    { id: INSTANCE.id, targetId: 7 },
+    { id: INSTANCE.id, targetId: '' },
+    { id: INSTANCE.id, targetId: { id: 'T1' } },
+  ]) {
+    const response = await request('/api/devtools/browsers/tab', { method: 'POST', body });
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal(response.json.code, 'INVALID_TAB');
+  }
+  const unknown = await request('/api/devtools/browsers/tab', {
+    method: 'POST',
+    body: { id: INSTANCE.id, targetId: 'T-gone' },
+  });
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.json.code, 'UNKNOWN_TAB');
+  assert.deepEqual(views.tabs, []);
+
+  const idle = await endpoint(t, { notViewed: true });
+  const response = await idle.request('/api/devtools/browsers/tab', {
+    method: 'POST',
+    body: { id: INSTANCE.id, targetId: 'T1' },
+  });
+  assert.equal(response.status, 409);
+  assert.equal(response.json.code, 'SCREENCAST_NOT_ACTIVE');
+});
+
+test('choosing a tab is a state-changing request: another origin is refused', async (t) => {
+  const { request, views } = await endpoint(t);
+  const body = { id: INSTANCE.id, targetId: 'T1' };
+  for (const headers of [
+    { origin: 'https://attacker.invalid' },
+    { 'sec-fetch-site': 'cross-site' },
+    { 'sec-fetch-site': 'same-site' },
+  ]) {
+    const response = await request('/api/devtools/browsers/tab', {
+      method: 'POST',
+      body,
+      headers,
+    });
+    assert.equal(response.status, 403, JSON.stringify(headers));
+  }
+  assert.deepEqual(views.tabs, []);
+});
+
+test('choosing a tab needs no setup, like the rest of the live view', async (t) => {
+  const { request } = await endpoint(t); // settings.initialize() only: setup is not ready
+  const response = await request('/api/devtools/browsers/tab', {
+    method: 'POST',
+    body: { id: INSTANCE.id, targetId: null },
+  });
+  assert.equal(response.status, 200);
 });

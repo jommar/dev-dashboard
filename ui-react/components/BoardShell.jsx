@@ -22,8 +22,8 @@ export function BoardPanel({ id, active, busy, children }) {
 }
 
 // The DOM ids that tie a BoardTabs row (by `name`) to the body BoardSection renders as its panel.
-const tabDomId = (name, id) => `board-tab-${name}-${id}`;
-const tabPanelDomId = (name) => `board-tabpanel-${name}`;
+export const tabDomId = (name, id) => `board-tab-${name}-${id}`;
+export const tabPanelDomId = (name) => `board-tabpanel-${name}`;
 
 // The card: the toolbar (title, optional sub line, counts, controls, then `filters` and `notes`),
 // then the body. Test ids default to `${name}-section|title|sub|meta|list`; `testIds` overrides any.
