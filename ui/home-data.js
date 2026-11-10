@@ -5,6 +5,7 @@
 //
 // Everything here takes the raw /api/prs and /api/my-tickets payloads exactly
 // as the server sends them.
+import { allSprints } from './sprint-data.js';
 
 export function sprintKeyOf(sprint) {
   return String(sprint.id ?? sprint.name);
@@ -79,30 +80,7 @@ export function selectableSprints(tickets) {
   if (tickets && Array.isArray(tickets.allSprints) && tickets.allSprints.length) {
     return tickets.allSprints;
   }
-  const byId = new Map();
-  for (const t of allTickets(tickets)) {
-    for (const s of t?.sprints || []) {
-      if (!s || typeof s.name !== 'string' || !s.name) continue;
-      const key = s.id ?? s.name;
-      if (!byId.has(key)) byId.set(key, s);
-    }
-  }
-  const rank = (s) => ({ active: 0, future: 1, closed: 2 })[s.state] ?? 3;
-  const endsAt = (s) => {
-    const t = Date.parse(s.endDate);
-    return Number.isFinite(t) ? t : 0;
-  };
-  return [...byId.values()].sort((a, b) => {
-    if (rank(a) !== rank(b)) return rank(a) - rank(b);
-    if (a.state === 'future' || b.state === 'future') {
-      const ea = endsAt(a) || Number.MAX_SAFE_INTEGER;
-      const eb = endsAt(b) || Number.MAX_SAFE_INTEGER;
-      if (ea !== eb) return ea - eb;
-    } else if (endsAt(a) !== endsAt(b)) {
-      return endsAt(b) - endsAt(a);
-    }
-    return String(a.name).localeCompare(String(b.name));
-  });
+  return allSprints(allTickets(tickets));
 }
 
 // The progress entry for one sprint, active or closed. sprintProgress() above

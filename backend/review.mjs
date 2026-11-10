@@ -3,15 +3,8 @@
 // Mirrors jira.mjs: zero deps, same token, degrades to {} on any failure so the
 // PR list is never blocked by a review-fetch problem.
 import { captureConfiguration } from './settings.mjs';
-
-export function headers(tokenStr) {
-  return {
-    Authorization: `Bearer ${tokenStr}`,
-    'Content-Type': 'application/json',
-    Accept: 'application/vnd.github+json',
-    'User-Agent': 'dev-dashboard',
-  };
-}
+import { postGraphql, pullRequestQuery } from './github-api.mjs';
+export { headers } from './github-api.mjs';
 
 function validPrNumber(value) {
   return Number.isSafeInteger(value) && value > 0;
@@ -20,18 +13,13 @@ function validPrNumber(value) {
 // One pullRequest per alias, so a single POST covers every PR page. Each field
 // stays on a separate line so GraphQL tokens cannot be merged accidentally.
 function query(prs, cursors = {}) {
-  const aliases = prs.map((p, i) => {
-    const [owner, repo] = p.repo.split('/');
+  return pullRequestQuery(prs, (_, i) => {
     const after = cursors[i] ? `, after: ${JSON.stringify(cursors[i])}` : '';
     return (
-      `a${i}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repo)}) {\n` +
-      `pullRequest(number: ${p.number}) {\n` +
-      '  reviewDecision\n' +
-      `  reviews(first: 100${after}) { pageInfo { hasNextPage endCursor } nodes { state submittedAt author { login } } }\n` +
-      '}\n}'
+      '\n  reviewDecision\n' +
+      `  reviews(first: 100${after}) { pageInfo { hasNextPage endCursor } nodes { state submittedAt author { login } } }\n`
     );
   });
-  return `query {\n${aliases.join('\n')}\n}`;
 }
 
 // Newest actionable state from a review list: the newest APPROVED or CHANGES_REQUESTED
@@ -96,7 +84,6 @@ export async function fetchReviews(prs, options) {
 export async function fetchReviewData(prs, { snapshot } = {}) {
   const captured = captureConfiguration(snapshot);
   const tokenStr = captured.credentials.githubToken;
-  const GRAPHQL = `${captured.github.api}/graphql`;
   if (!tokenStr || !prs) return { available: false, reviews: {} };
   if (!prs.every((pr) => pr && validPrNumber(pr.number))) {
     return { available: false, reviews: {} };
@@ -108,13 +95,7 @@ export async function fetchReviewData(prs, { snapshot } = {}) {
     const cursors = {};
     const pending = new Set(prs.map((_, i) => i));
     while (pending.size) {
-      const res = await fetch(GRAPHQL, {
-        method: 'POST',
-        redirect: 'error',
-        headers: headers(tokenStr),
-        body: JSON.stringify({ query: query(prs, cursors) }),
-        signal: AbortSignal.timeout(15000),
-      });
+      const res = await postGraphql(captured, query(prs, cursors));
       if (!res.ok) return { available: false, reviews: {} };
       const json = await res.json();
       if (!json.data || json.errors) return { available: false, reviews: {} };
@@ -199,18 +180,13 @@ function summarizeQueueReviews(nodes, reviewDecision) {
 
 async function postQueueReviews(pending, config) {
   try {
-    const res = await fetch(`${config.github.api}/graphql`, {
-      method: 'POST',
-      redirect: 'error',
-      headers: headers(config.credentials.githubToken),
-      body: JSON.stringify({
-        query: query(
-          pending.map((entry) => entry.pr),
-          Object.fromEntries(pending.map((entry, index) => [index, entry.cursor])),
-        ),
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const res = await postGraphql(
+      config,
+      query(
+        pending.map((entry) => entry.pr),
+        Object.fromEntries(pending.map((entry, index) => [index, entry.cursor])),
+      ),
+    );
     if (!res.ok) return null;
     const json = await res.json();
     return json?.data && typeof json.data === 'object' ? json : null;

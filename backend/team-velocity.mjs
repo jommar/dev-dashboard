@@ -9,16 +9,12 @@
 // test/team-velocity.test.mjs). The per-board chart is a stacked column by
 // status, local to this report (the Home tab keeps its own velocity chart).
 import fs from 'node:fs';
-import { jiraConfig } from './jira.mjs';
+import { jiraConfig, authorization, storyPointsOf } from './jira.mjs';
 import { captureConfiguration } from './settings.mjs';
+import { esc } from '../ui/dom.js';
 
 export const TEAM_VELOCITY_MAX_ISSUES = 5000;
 export const DEFAULT_KEEP_SPRINTS = 8;
-
-function authorization(email, token) {
-  const b64 = Buffer.from(`${email}:${token}`, 'utf8').toString('base64');
-  return `Basic ${b64}`;
-}
 
 // Board name is the sprint-name prefix ("Nexus Sprint 17" -> "Nexus"), so one
 // Jira board's sprints stay together without a board-id lookup.
@@ -77,10 +73,6 @@ function statusBandOf(issue) {
   if (category === 'Done') return 'done';
   if (category === 'In Progress') return 'inProgress';
   return 'notStarted';
-}
-
-function storyPointsOf(raw) {
-  return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null;
 }
 
 // Board -> sprintKey -> { sprint, points, count, unestimated, byUser, byStatus }. A
@@ -142,14 +134,6 @@ export function boardSeries(bySprint, keep = DEFAULT_KEEP_SPRINTS) {
       (a, b) => endsAt(a) - endsAt(b) || String(a.sprint.name).localeCompare(String(b.sprint.name)),
     )
     .slice(-keep);
-}
-
-function esc(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 function shortSprint(name) {

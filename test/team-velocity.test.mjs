@@ -58,6 +58,37 @@ test('buildTeamBoards skips future sprints and labels missing assignees', () => 
   });
 });
 
+test('buildTeamBoards keeps zero and fractional estimates without coercing invalid values', () => {
+  const estimates = [0, 0.5, 3, -1, '3', NaN, Infinity, -Infinity, null, undefined];
+  const boards = buildTeamBoards(
+    estimates.map((points, index) =>
+      issue(`N-${index}`, `Person ${index}`, points, [
+        sprint(1404, 'Nexus Sprint 17', 'active', '2026-09-11'),
+      ]),
+    ),
+  );
+  const entry = boards.get('Nexus').get('1404');
+  assert.equal(entry.points, 3.5);
+  assert.equal(entry.count, 10);
+  assert.equal(entry.unestimated, 7);
+  assert.deepEqual(entry.byStatus, { done: 3.5, inProgress: 0, notStarted: 0 });
+  assert.deepEqual(
+    [...entry.byUser.values()],
+    [
+      { points: 0, count: 1 },
+      { points: 0.5, count: 1 },
+      { points: 3, count: 1 },
+      { points: 0, count: 1 },
+      { points: 0, count: 1 },
+      { points: 0, count: 1 },
+      { points: 0, count: 1 },
+      { points: 0, count: 1 },
+      { points: 0, count: 1 },
+      { points: 0, count: 1 },
+    ],
+  );
+});
+
 test('buildTeamBoards counts a carried ticket in every listed sprint', () => {
   const boards = buildTeamBoards([
     issue('N-1', 'Ann', 5, [
@@ -109,7 +140,7 @@ test('boardSeries orders chronologically and keeps the most recent', () => {
 });
 
 test('renderTeamVelocityHtml renders the stacked chart and escapes names', () => {
-  const byUser = new Map([['<Ann & Co>', { points: 5, count: 1 }]]);
+  const byUser = new Map([['<Ann & "Co">\'s', { points: 5, count: 1 }]]);
   const boards = new Map([
     [
       'Nexus',
@@ -136,7 +167,7 @@ test('renderTeamVelocityHtml renders the stacked chart and escapes names', () =>
   assert.match(html, /snapshot 2026-09-04/);
   assert.doesNotMatch(html, /<h2>Empty<\/h2>/);
   assert.doesNotMatch(html, /<Ann/);
-  assert.match(html, /&lt;Ann &amp; Co&gt;/);
+  assert.match(html, /&lt;Ann &amp; &quot;Co&quot;&gt;'s/);
   // Portable single file: Tailwind via CDN, no relative dashboard links.
   assert.match(html, /https:\/\/cdn\.tailwindcss\.com/);
   assert.doesNotMatch(html, /ui\/styles/);

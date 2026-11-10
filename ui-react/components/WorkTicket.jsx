@@ -1,7 +1,8 @@
 import { inSprints } from '../../ui/home-data.js';
 import { slug, timeAgo } from '../../ui/dom.js';
-import { jiraStatusKind } from '../../ui/components/pr-card.js';
+import { jiraStatusKind } from '../../ui/jira-status.js';
 import { SprintPill } from './SprintPill.jsx';
+import { TicketStatusPill } from './TicketStatusPill.jsx';
 import { SlackThreadLinks } from './SlackThreadLink.jsx';
 
 export function WorkTicketRow({
@@ -42,14 +43,7 @@ export function WorkTicketRow({
         {ticket.summary || ''}
       </span>
       <div className="my-ticket-meta">
-        <span
-          className="pill ticket-status"
-          data-jira-status-kind={kind}
-          data-tooltip={ticket.status}
-          data-testid={testId('status')}
-        >
-          {ticket.status}
-        </span>
+        <TicketStatusPill status={ticket.status} testId={testId('status')} />
         {showSprint && (
           <SprintPill sprint={ticket.sprint} testId={`my-tickets-item-sprint-${key}`} />
         )}

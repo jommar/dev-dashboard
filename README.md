@@ -985,7 +985,7 @@ Settings. Legacy Jira environment keys are imported as described under
 can omit status data; incomplete Jira setup restricts the whole UI to Settings.
 
 The ticket status pill (and the card's side rail) is color-coded by status
-kind — all site statuses are mapped in `ui/components/pr-card.js`:
+kind — all site statuses are mapped in `ui/jira-status.js`:
 
 | Kind      | Color         | Statuses                                                                                                                                                                                                                                                                                                |
 | --------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

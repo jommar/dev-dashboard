@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import { once } from 'node:events';
+import { listenHttp, requestRaw } from './http-test-fixture.mjs';
 import { createHttpHandler } from '../backend/http-app.mjs';
 import {
   settingsFixture,
@@ -73,42 +72,16 @@ async function endpoint(t, { ready = true, result = PAYLOAD, error } = {}) {
       },
     },
   });
-  const server = http.createServer(handler);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  t.after(async () => {
-    handler.close();
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  });
-  const request = ({ headers = {}, method = 'GET' } = {}) =>
-    new Promise((resolve, reject) => {
-      const req = http.request(
-        `http://127.0.0.1:${server.address().port}/api/team-velocity`,
-        { headers, method },
-        (res) => {
-          let text = '';
-          res.on('data', (chunk) => {
-            text += chunk;
-          });
-          res.on('end', () => {
-            try {
-              resolve({
-                status: res.statusCode,
-                headers: res.headers,
-                text,
-                json: JSON.parse(text),
-              });
-            } catch (error) {
-              reject(error);
-            }
-          });
-        },
-      );
-      req.setTimeout(2000, () => req.destroy(new Error('synthetic route request timed out')));
-      req.on('error', reject);
-      req.end();
+  const { origin } = await listenHttp(t, handler);
+  const request = async ({ headers = {}, method = 'GET' } = {}) => {
+    const response = await requestRaw(origin, '/api/team-velocity', {
+      headers,
+      method,
+      timeout: 2000,
+      timeoutMessage: 'synthetic route request timed out',
     });
+    return { ...response, json: JSON.parse(response.text) };
+  };
   return { request, calls, snapshots };
 }
 

@@ -1095,6 +1095,53 @@ export function slackAppThreadLink(teamId, channelId, threadTs) {
   return `https://app.slack.com/client/${teamId}/${channelId}/thread/${channelId}-${threadTs}`;
 }
 
+export function slackThreadRow({
+  text,
+  createdAt,
+  activityAt,
+  teamId,
+  channelId,
+  author,
+  replyCount,
+  ...extra
+}) {
+  const ts = `${Math.floor(createdAt / 1000)}.${String((createdAt % 1000) * 1000).padStart(6, '0')}`;
+  return {
+    ts,
+    url: slackAppThreadLink(teamId, channelId, ts),
+    watchKey: `${channelId}:${ts}`,
+    text,
+    subjectText: text,
+    author,
+    starter: author,
+    replyCount,
+    activityAt: typeof activityAt === 'number' ? new Date(activityAt).toISOString() : activityAt,
+    needsReply: false,
+    attachedSessions: 0,
+    ...extra,
+  };
+}
+
+export function slackThreadRead(thread, { channel, author, replyCount, ...extra }) {
+  return {
+    ts: thread.ts,
+    url: thread.url,
+    watchKey: thread.watchKey,
+    channel,
+    replyCount,
+    ...extra,
+    messages: [
+      {
+        ts: thread.ts,
+        at: new Date(Number(thread.ts) * 1000).toISOString(),
+        author,
+        text: thread.text,
+        mrkdwn: thread.text,
+      },
+    ],
+  };
+}
+
 export function watchSession(sessionId, delivery = null) {
   return { sessionId, delivery };
 }

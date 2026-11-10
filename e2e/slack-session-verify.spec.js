@@ -1,6 +1,6 @@
 import { createSlackIntegration, slackPaths } from '../backend/slack.mjs';
 import { test, expect } from './fixtures.js';
-import { slackAppThreadLink, ticketBoardData } from './data.js';
+import { slackThreadRow, slackThreadRead, ticketBoardData } from './data.js';
 
 const NOW = Date.parse('2026-03-09T16:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -10,39 +10,23 @@ const PERSON = { id: 'U0EXAMPLE1', name: 'Sam Example' };
 
 function row(text, offset) {
   const created = NOW - DAY - offset * 1000;
-  const ts = `${Math.floor(created / 1000)}.000000`;
-  return {
-    ts,
-    url: slackAppThreadLink(TEAM, CHANNEL, ts),
-    watchKey: `${CHANNEL}:${ts}`,
+  return slackThreadRow({
     text,
-    subjectText: text,
+    createdAt: created,
+    activityAt: NOW - 60 * 60 * 1000,
+    teamId: TEAM,
+    channelId: CHANNEL,
     author: PERSON,
-    starter: PERSON,
     replyCount: 1,
-    activityAt: new Date(NOW - 60 * 60 * 1000).toISOString(),
-    needsReply: false,
-    attachedSessions: 0,
-  };
+  });
 }
 
 function threadRead(thread) {
-  return {
-    ts: thread.ts,
-    url: thread.url,
-    watchKey: thread.watchKey,
+  return slackThreadRead(thread, {
     channel: { id: CHANNEL, name: 'example_channel' },
+    author: PERSON,
     replyCount: 1,
-    messages: [
-      {
-        ts: thread.ts,
-        at: new Date(Number(thread.ts) * 1000).toISOString(),
-        author: PERSON,
-        text: thread.text,
-        mrkdwn: thread.text,
-      },
-    ],
-  };
+  });
 }
 
 function seed(dashboard, thread) {

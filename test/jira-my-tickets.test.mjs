@@ -192,6 +192,8 @@ test('storyPoints keeps 0 but rejects strings, negatives and absence', async () 
           issue('PT-NULL', null),
           issue('PT-STR', '3'),
           issue('PT-NEG', -1),
+          issue('PT-NAN', NaN),
+          issue('PT-INF', Infinity),
           issue('PT-MISSING', undefined),
         ],
       }),
@@ -206,6 +208,8 @@ test('storyPoints keeps 0 but rejects strings, negatives and absence', async () 
     assert.equal(points['PT-NULL'], null);
     assert.equal(points['PT-STR'], null);
     assert.equal(points['PT-NEG'], null);
+    assert.equal(points['PT-NAN'], null);
+    assert.equal(points['PT-INF'], null);
     assert.equal(points['PT-MISSING'], null);
     assert.equal(data.truncated, false);
   } finally {
@@ -225,6 +229,68 @@ test('my-tickets orders by recency so the cap drops stalest, not To Do', () => {
   assert.match(buildMyTicketsJql(), /ORDER BY updated DESC$/);
   assert.doesNotMatch(buildMyTicketsJql(), /ORDER BY status/);
 });
+
+for (const { name, tail = [], isLast, nextPageToken, truncated } of [
+  { name: 'exact terminal cap', isLast: true, truncated: false },
+  { name: 'accepted raw tail', tail: [{ key: 'LEFT-1' }], isLast: true, truncated: true },
+  { name: 'rejected raw tail', tail: [null, { key: 42 }], isLast: true, truncated: true },
+  { name: 'advertised next page', isLast: false, nextPageToken: 'unfetched', truncated: true },
+  { name: 'missing token terminates', isLast: false, truncated: false },
+  { name: 'isLast overrides token', isLast: true, nextPageToken: 'unfetched', truncated: false },
+]) {
+  test(`my-tickets accepted 200 cap: ${name}`, async (t) => {
+    for (const [key, value] of Object.entries({
+      JIRA_BASE_URL: 'https://example.atlassian.net',
+      JIRA_EMAIL: 'me@example.com',
+      JIRA_TOKEN: 'tok',
+    })) {
+      const previous = process.env[key];
+      t.after(() => {
+        if (previous === undefined) delete process.env[key];
+        else process.env[key] = previous;
+      });
+      process.env[key] = value;
+    }
+    const accepted = [
+      ...Array.from({ length: 198 }, (_, i) => ({ key: `CAP-${198 - i}` })),
+      { key: 'CAP-198' },
+      { key: '' },
+    ];
+    const pages = [];
+    for (let offset = 0; offset < 199; offset += 49) {
+      pages.push({
+        issues: [null, ...accepted.slice(offset, Math.min(offset + 49, 199))],
+        isLast: false,
+        nextPageToken: `page-${pages.length + 1}`,
+      });
+    }
+    pages.push({ issues: [false, {}, { key: 42 }, accepted[199], ...tail], isLast, nextPageToken });
+    let calls = 0;
+    t.mock.method(globalThis, 'fetch', async (input, init) => {
+      const url = new URL(input);
+      assert.equal(url.searchParams.get('maxResults'), '50');
+      assert.equal(url.searchParams.get('nextPageToken'), calls ? `page-${calls}` : null);
+      assert.equal(url.searchParams.get('fields'), MY_TICKETS_FIELDS);
+      assert.equal(init.redirect, 'error');
+      assert.deepEqual(init.headers, {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: 'Basic bWVAZXhhbXBsZS5jb206dG9r',
+      });
+      assert.equal(Object.hasOwn(init, 'signal'), false);
+      assert.ok(calls < pages.length, 'must not probe beyond the accepted cap');
+      return { ok: true, json: async () => pages[calls++] };
+    });
+    const data = await fetchMyTickets();
+    assert.equal(calls, pages.length);
+    assert.equal(data.total, 200);
+    assert.deepEqual(
+      data.tickets.map(({ key }) => key),
+      accepted.map(({ key }) => key),
+    );
+    assert.equal(data.truncated, truncated);
+  });
+}
 
 test('mapSprints orders active before future before closed', () => {
   const mapped = mapSprints([

@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { slug, timeAgo } from '../../ui/dom.js';
-import { jiraStatusKind } from '../../ui/components/pr-card.js';
+import { jiraStatusKind } from '../../ui/jira-status.js';
 import { filterActionTiers, filterTickets } from '../../ui/work-filters.js';
 import { PrItem } from './PrCard.jsx';
 import { WorkTicketRow } from './WorkTicket.jsx';

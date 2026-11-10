@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import { once } from 'node:events';
+import { listenHttp, requestRaw } from './http-test-fixture.mjs';
 import { settingsFixture, accept, githubToken, jiraToken } from './settings-fixture.mjs';
 
 const genericFailure = { code: 'OPERATION_FAILED', error: 'OPERATION FAILED', errors: [] };
@@ -71,32 +70,15 @@ async function startRoute(t, { ready }) {
       },
     },
   });
-  const server = http.createServer(handler);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  });
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const request = (pathname, method = 'GET', body) =>
-    new Promise((resolve, reject) => {
-      const req = http.request(
-        base + pathname,
-        { method, headers: { 'content-type': 'application/json' } },
-        (res) => {
-          let text = '';
-          res.on('data', (chunk) => {
-            text += chunk;
-          });
-          res.on('end', () =>
-            resolve({ status: res.statusCode, text, json: () => JSON.parse(text) }),
-          );
-        },
-      );
-      req.on('error', reject);
-      req.end(body);
+  const { origin } = await listenHttp(t, handler);
+  const request = async (pathname, method = 'GET', body) => {
+    const { status, text } = await requestRaw(origin, pathname, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body,
     });
+    return { status, text, json: () => JSON.parse(text) };
+  };
   return { fixture, store, calls, behaviour, request };
 }
 

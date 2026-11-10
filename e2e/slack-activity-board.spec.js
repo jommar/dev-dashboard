@@ -1,5 +1,11 @@
 import { test, expect, listReads } from './fixtures.js';
-import { slackAppThreadLink, slackWatchData, ticketBoardData, watchLink } from './data.js';
+import {
+  slackThreadRow,
+  slackThreadRead,
+  slackWatchData,
+  ticketBoardData,
+  watchLink,
+} from './data.js';
 
 const CHANNEL = 'C0EXAMPLE1';
 const TEAM = 'T0EXAMPLE1';
@@ -19,43 +25,28 @@ function slackTs(ms) {
 }
 
 function row(text, created, activity, extra = {}) {
-  const ts = slackTs(created);
-  return {
-    ts,
-    url: slackAppThreadLink(TEAM, CHANNEL, ts),
-    watchKey: `${CHANNEL}:${ts}`,
+  return slackThreadRow({
     text,
-    subjectText: text,
+    createdAt: created,
+    activityAt: activity,
+    teamId: TEAM,
+    channelId: CHANNEL,
     author: SAM,
     starter: SAM,
     replyCount: 1,
-    activityAt: typeof activity === 'number' ? new Date(activity).toISOString() : activity,
     latestReplyBy: RILEY,
-    needsReply: false,
-    attachedSessions: 0,
     ...extra,
-  };
+  });
 }
 
 function threadRead(thread) {
-  return {
-    ts: thread.ts,
-    url: thread.url,
-    watchKey: thread.watchKey,
+  return slackThreadRead(thread, {
     channel: { id: CHANNEL, name: 'example_channel' },
+    author: SAM,
     replyCount: thread.replyCount,
     truncated: false,
     names: { [SAM.id]: SAM.name },
-    messages: [
-      {
-        ts: thread.ts,
-        at: new Date(Number(thread.ts) * 1000).toISOString(),
-        author: SAM,
-        text: thread.text,
-        mrkdwn: thread.text,
-      },
-    ],
-  };
+  });
 }
 
 function seed(dashboard, now, started, mentions = []) {

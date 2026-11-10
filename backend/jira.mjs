@@ -9,6 +9,10 @@
 // resolves to {} rather than throwing, so PRs are never blocked by a missing
 // token.
 import { captureConfiguration } from './settings.mjs';
+import { collectCappedJiraIssues } from './jira-search.mjs';
+import { allSprints } from '../ui/sprint-data.js';
+
+export { allSprints } from '../ui/sprint-data.js';
 
 export function jiraConfig(snapshot) {
   const captured = captureConfiguration(snapshot);
@@ -273,44 +277,11 @@ export function activeSprints(tickets) {
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Every sprint found on the fetched tickets, deduped by id — the selector
-// source for Home's Sprint block. Active first (name A→Z, same order as
-// activeSprints), then future nearest-first, then closed most-recent-first so
-// "previous sprint" is the head of the closed run. Unknown states sort last.
-export function allSprints(tickets) {
-  const byId = new Map();
-  for (const t of tickets || []) {
-    for (const s of t?.sprints || []) {
-      if (!s || typeof s.name !== 'string' || !s.name) continue;
-      const key = s.id ?? s.name;
-      if (!byId.has(key)) byId.set(key, s);
-    }
-  }
-  const endsAt = (s) => {
-    const t = Date.parse(s.endDate);
-    return Number.isFinite(t) ? t : 0;
-  };
-  return [...byId.values()].sort((a, b) => {
-    const ra = SPRINT_STATE_ORDER[a.state] ?? 3;
-    const rb = SPRINT_STATE_ORDER[b.state] ?? 3;
-    if (ra !== rb) return ra - rb;
-    if (a.state === 'future' || b.state === 'future') {
-      // Nearest upcoming first; missing dates sort last within the group.
-      const ea = endsAt(a) || Number.MAX_SAFE_INTEGER;
-      const eb = endsAt(b) || Number.MAX_SAFE_INTEGER;
-      if (ea !== eb) return ea - eb;
-    } else if (endsAt(a) !== endsAt(b)) {
-      return endsAt(b) - endsAt(a);
-    }
-    return String(a.name).localeCompare(String(b.name));
-  });
-}
-
 // null, not 0, when the field is absent, non-numeric or negative: "nobody
 // estimated this" and "estimated at zero" must stay distinguishable, and a
 // string here means the configured field id is wrong rather than that the
 // ticket is worth "3".
-function storyPointsOf(raw) {
+export function storyPointsOf(raw) {
   return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null;
 }
 
@@ -384,56 +355,43 @@ export async function fetchMyTickets({ includeDone = false, snapshot } = {}) {
     throw new Error('no JIRA_BASE_URL, JIRA_EMAIL, or JIRA_TOKEN in environment — will not prompt');
   }
   const jql = buildMyTicketsJql({ includeDone });
-  const tickets = [];
-  let truncated = false;
-  let nextPageToken = null;
-  for (;;) {
-    const url = new URL(`${cfg.baseUrl}/rest/api/3/search/jql`);
-    url.searchParams.set('jql', jql);
-    url.searchParams.set(
-      'fields',
-      [
-        'summary',
-        'status',
-        'priority',
-        'issuetype',
-        'updated',
-        'created',
-        cfg.sprintField,
-        cfg.pointsField,
-      ]
-        .filter(Boolean)
-        .join(','),
-    );
-    url.searchParams.set('maxResults', String(MY_TICKETS_PAGE_SIZE));
-    if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
-    const res = await fetch(url, {
-      redirect: 'error',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: authorization(cfg.email, cfg.token),
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`jira search failed: ${res.status}`);
-    }
-    const data = await res.json();
-    const issues = data.issues || [];
-    for (const [i, issue] of issues.entries()) {
-      const mapped = mapTicketIssue(issue, cfg);
-      if (mapped) tickets.push(mapped);
-      if (tickets.length >= MY_TICKETS_MAX_ISSUES) {
-        // Only a real truncation if something was actually left behind —
-        // exactly MY_TICKETS_MAX_ISSUES matching issues is a complete answer.
-        truncated = i < issues.length - 1 || !(data.isLast || !data.nextPageToken);
-        break;
+  const { items: tickets, truncated } = await collectCappedJiraIssues({
+    maxIssues: MY_TICKETS_MAX_ISSUES,
+    mapIssue: (issue) => mapTicketIssue(issue, cfg),
+    fetchPage: async (nextPageToken) => {
+      const url = new URL(`${cfg.baseUrl}/rest/api/3/search/jql`);
+      url.searchParams.set('jql', jql);
+      url.searchParams.set(
+        'fields',
+        [
+          'summary',
+          'status',
+          'priority',
+          'issuetype',
+          'updated',
+          'created',
+          cfg.sprintField,
+          cfg.pointsField,
+        ]
+          .filter(Boolean)
+          .join(','),
+      );
+      url.searchParams.set('maxResults', String(MY_TICKETS_PAGE_SIZE));
+      if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
+      const res = await fetch(url, {
+        redirect: 'error',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: authorization(cfg.email, cfg.token),
+        },
+      });
+      if (!res.ok) {
+        throw new Error(`jira search failed: ${res.status}`);
       }
-    }
-    if (tickets.length >= MY_TICKETS_MAX_ISSUES) break;
-    if (data.isLast || !data.nextPageToken) break;
-    nextPageToken = data.nextPageToken;
-  }
+      return res.json();
+    },
+  });
   const { groupsByCategory, groupsByStatus } = groupTicketsByStatus(tickets);
   return {
     total: tickets.length,

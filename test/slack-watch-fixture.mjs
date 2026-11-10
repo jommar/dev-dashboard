@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import http from 'node:http';
-import { once } from 'node:events';
+import { listenHttp, requestRaw } from './http-test-fixture.mjs';
 import { settingsFixture, accept } from './settings-fixture.mjs';
 
 export const SESSION_A = '11111111-1111-4111-8111-111111111111';
@@ -742,20 +741,13 @@ export function findInTree(root, needles) {
   return found;
 }
 
-function httpRequest(base, method, pathname, { body, headers = {} } = {}) {
-  return new Promise((resolve, reject) => {
-    const req = http.request(base + pathname, { method, headers }, (res) => {
-      let text = '';
-      res.on('data', (chunk) => {
-        text += chunk;
-      });
-      res.on('end', () => resolve({ status: res.statusCode, text, json: () => JSON.parse(text) }));
-    });
-    req.on('error', reject);
-    req.end(
-      body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
-    );
+async function httpRequest(base, method, pathname, { body, headers = {} } = {}) {
+  const { status, text } = await requestRaw(base, pathname, {
+    method,
+    headers,
+    body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
   });
+  return { status, text, json: () => JSON.parse(text) };
 }
 
 // The whole watch stack over one temp home, with every boundary injected:
@@ -947,15 +939,7 @@ export async function watchFixture(t, options = {}) {
         slackWatcher: fixture.watcher,
       },
     });
-    const server = http.createServer(handler);
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    t.after(async () => {
-      handler.close?.();
-      server.closeAllConnections();
-      await new Promise((resolve) => server.close(resolve));
-    });
-    const base = `http://127.0.0.1:${server.address().port}`;
+    const { origin: base, server } = await listenHttp(t, handler);
     fixture.http = {
       base,
       port: server.address().port,

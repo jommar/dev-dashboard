@@ -7,11 +7,11 @@
 // so the My Tickets board never waits on or fails because of this data.
 import { captureConfiguration } from './settings.mjs';
 import { fetchOpenPRs } from './github.mjs';
-import { headers, summarizeReviews } from './review.mjs';
+import { summarizeReviews } from './review.mjs';
+import { postGraphql, pullRequestQuery } from './github-api.mjs';
 import { canonicalTicketKey } from '../ui/slack-ticket-links.js';
 
 const BATCH_SIZE = 50;
-const TIMEOUT_MS = 15_000;
 // Review threads read per PR. A PR with more reports `truncated`, so its counts are partial.
 const THREAD_CAP = 50;
 // Logins of the Copilot reviewer, lower-cased and without a trailing `[bot]`. GitHub's docs name
@@ -167,28 +167,13 @@ function commentsOf(json, alias) {
   return summarizeThreads(json?.data?.[alias]?.pullRequest);
 }
 
-// One alias per PR, so each PR's failure stays inside its own alias.
-function batchQuery(batch, selection) {
-  const aliases = batch.map((pr, index) => {
-    const [owner, name] = pr.repo.split('/');
-    return (
-      `a${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {\n` +
-      `pullRequest(number: ${pr.number}) {\n  ${selection}\n}\n}`
-    );
-  });
-  return `query {\n${aliases.join('\n')}\n}`;
-}
-
 // The parsed response, or null when the request failed or returned no data.
 async function postBatch(batch, selection, config) {
   try {
-    const res = await fetch(`${config.github.api}/graphql`, {
-      method: 'POST',
-      redirect: 'error',
-      headers: headers(config.credentials.githubToken),
-      body: JSON.stringify({ query: batchQuery(batch, selection) }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const res = await postGraphql(
+      config,
+      pullRequestQuery(batch, () => `\n  ${selection}\n`),
+    );
     if (!res.ok) return null;
     const json = await res.json();
     return json.data ? json : null;

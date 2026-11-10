@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import { once } from 'node:events';
+import { listenHttp, requestRaw } from './http-test-fixture.mjs';
 import { createHttpHandler } from '../backend/http-app.mjs';
 import { settingsFixture, accept, githubToken } from './settings-fixture.mjs';
 
@@ -40,41 +39,15 @@ async function ticketPrsEndpoint(t, { ready, result }) {
       },
     },
   });
-  const server = http.createServer(handler);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  t.after(async () => {
-    handler.close();
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  });
-  const request = (headers = {}, pathname = '/api/ticket-prs') =>
-    new Promise((resolve, reject) => {
-      const req = http.get(
-        `http://127.0.0.1:${server.address().port}${pathname}`,
-        { headers },
-        (res) => {
-          let text = '';
-          res.on('data', (chunk) => {
-            text += chunk;
-          });
-          res.on('end', () => {
-            try {
-              resolve({
-                status: res.statusCode,
-                headers: res.headers,
-                text,
-                json: JSON.parse(text),
-              });
-            } catch (error) {
-              reject(error);
-            }
-          });
-        },
-      );
-      req.setTimeout(2000, () => req.destroy(new Error('ticket-prs request timed out')));
-      req.on('error', reject);
+  const { origin } = await listenHttp(t, handler);
+  const request = async (headers = {}, pathname = '/api/ticket-prs') => {
+    const response = await requestRaw(origin, pathname, {
+      headers,
+      timeout: 2000,
+      timeoutMessage: 'ticket-prs request timed out',
     });
+    return { ...response, json: JSON.parse(response.text) };
+  };
   return { request, calls };
 }
 

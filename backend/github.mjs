@@ -9,6 +9,7 @@
 // required because the search API has no `author:@me`; it also means the fetch
 // never has to be told whose PRs to show.
 import { captureConfiguration } from './settings.mjs';
+import { postGraphql, pullRequestQuery } from './github-api.mjs';
 
 function headers(tokenStr) {
   return {
@@ -27,17 +28,6 @@ async function getLogin(tokenStr, config) {
   if (!res.ok) throw new Error(`github /user failed: ${res.status}`);
   const data = await res.json();
   return data.login;
-}
-
-function pullRequestAuthorsQuery(prs) {
-  const aliases = prs.map((pr, index) => {
-    const [owner, repo] = pr.repo.split('/');
-    return (
-      `a${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repo)}) {\n` +
-      `pullRequest(number: ${pr.number}) { author { login } }\n}`
-    );
-  });
-  return `query {\n${aliases.join('\n')}\n}`;
 }
 
 // Jira's dev-status author name is not a reliable GitHub identity. Resolve the
@@ -65,18 +55,10 @@ export async function fetchPrOwners(prs, { snapshot } = {}) {
     const owners = {};
     for (let offset = 0; offset < validPrs.length; offset += 50) {
       const batch = validPrs.slice(offset, offset + 50);
-      const res = await fetch(`${captured.github.api}/graphql`, {
-        method: 'POST',
-        redirect: 'error',
-        headers: {
-          Authorization: `Bearer ${tokenStr}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'dev-dashboard',
-        },
-        body: JSON.stringify({ query: pullRequestAuthorsQuery(batch) }),
-        signal: AbortSignal.timeout(15_000),
-      });
+      const res = await postGraphql(
+        captured,
+        pullRequestQuery(batch, () => ' author { login } '),
+      );
       if (!res.ok) continue;
       const json = await res.json();
       if (!json.data || json.errors) continue;

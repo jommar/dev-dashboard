@@ -105,11 +105,28 @@ test('view: Cards is the default, List is one row per ticket, and the choice liv
   page,
   dashboard,
 }) => {
+  dashboard.data.releases.tickets['18741'].mine.find((ticket) => ticket.key === 'DEMO-476').status =
+    'Code Review';
   await openReleases(page);
   await expect(page).toHaveURL(/#\/releases$/);
   await expect(page.getByTestId('releases-view-cards')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.release-ticket')).toHaveCount(6);
   await expect(page.locator('.release-row')).toHaveCount(0);
+  for (const [key, status, kind] of [
+    ['DEMO-1398', 'In Progress', 'active'],
+    ['DEMO-476', 'Code Review', 'unknown'],
+  ]) {
+    const pill = page.getByTestId(`release-ticket-status-${key}`);
+    await expect(pill).toHaveJSProperty('tagName', 'SPAN');
+    await expect(pill).toHaveText(status);
+    await expect(pill).toHaveClass('pill ticket-status');
+    await expect(pill).toHaveAttribute('data-tooltip', status);
+    await expect(pill).toHaveAttribute('data-jira-status-kind', kind);
+    await expect(page.getByTestId(`release-ticket-${key}`)).toHaveAttribute(
+      'data-jira-status-kind',
+      kind,
+    );
+  }
   const requests = releaseRequests(dashboard).length;
 
   await page.getByTestId('releases-view-list').click();
@@ -117,6 +134,21 @@ test('view: Cards is the default, List is one row per ticket, and the choice liv
   await expect(page.getByTestId('releases-view-list')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.release-row')).toHaveCount(6);
   await expect(page.locator('.release-ticket')).toHaveCount(0);
+  for (const [key, status, kind] of [
+    ['DEMO-1398', 'In Progress', 'active'],
+    ['DEMO-476', 'Code Review', 'unknown'],
+  ]) {
+    const pill = page.getByTestId(`release-row-status-${key}`);
+    await expect(pill).toHaveJSProperty('tagName', 'SPAN');
+    await expect(pill).toHaveText(status);
+    await expect(pill).toHaveClass('pill ticket-status');
+    await expect(pill).toHaveAttribute('data-tooltip', status);
+    await expect(pill).toHaveAttribute('data-jira-status-kind', kind);
+    await expect(page.getByTestId(`release-row-${key}`)).toHaveAttribute(
+      'data-jira-status-kind',
+      kind,
+    );
+  }
   await expect(page.getByTestId('release-row-DEMO-1398')).toHaveAttribute(
     'data-merge-state',
     'open',

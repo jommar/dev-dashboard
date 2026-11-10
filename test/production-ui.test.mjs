@@ -2,30 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import http from 'node:http';
-import { once } from 'node:events';
+import { listenHttp, requestRaw } from './http-test-fixture.mjs';
 import { fileURLToPath } from 'node:url';
 import { settingsFixture } from './settings-fixture.mjs';
 import { acquireDistTestLock } from './dist-test-lock.mjs';
 
 const dashboardRoot = fileURLToPath(new URL('../', import.meta.url));
 
-function request(origin, pathname, options = {}) {
-  return new Promise((resolve, reject) => {
-    const req = http.request(origin + pathname, options, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () =>
-        resolve({
-          status: res.statusCode,
-          headers: res.headers,
-          body: Buffer.concat(chunks).toString('utf8'),
-        }),
-      );
-    });
-    req.on('error', reject);
-    req.end(options.body);
-  });
+async function request(origin, pathname, options = {}) {
+  const { status, headers, text } = await requestRaw(origin, pathname, options);
+  return { status, headers, body: text };
 }
 
 test('production Node handler serves built assets safely without swallowing API routes', async (t) => {
@@ -81,15 +67,7 @@ test('production Node handler serves built assets safely without swallowing API 
     applySettings: () => {},
   };
   const handler = createHttpHandler({ settings, manager });
-  const server = http.createServer(handler);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  t.after(async () => {
-    handler.close();
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  });
-  const origin = `http://127.0.0.1:${server.address().port}`;
+  const { origin } = await listenHttp(t, handler);
   const failures = [];
 
   const page = await request(origin, '/');

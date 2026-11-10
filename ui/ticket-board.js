@@ -1,6 +1,6 @@
 // ticket-board.js — DOM-free ordering and wording for the My Tickets board.
 // No backend imports and no DOM access: this ships in the browser bundle.
-import { jiraStatusKind } from './components/pr-card.js';
+import { jiraStatusKind } from './jira-status.js';
 
 // Workflow bands, left to right: attention first so blocked work is visible
 // without scrolling, Done last.

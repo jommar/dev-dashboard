@@ -1,21 +1,11 @@
 import { hasBuiltUi, serveBuiltUi, serveUi } from './static.mjs';
 import { parseLines } from './log-lines.mjs';
 import { DEFAULT_TAIL_LINES } from './config.mjs';
-import {
-  fetchOpenPRs,
-  groupByTicket,
-  filterPrsByTicketStatus,
-  PR_DISCOVERY_UNAVAILABLE,
-  PR_DISCOVERY_INCOMPLETE,
-} from './github.mjs';
-import {
-  fetchMyTickets,
-  fetchTicketMetadata,
-  CODE_REVIEW_STATUS,
-  READY_FOR_CODE_REVIEW_STATUS,
-} from './jira.mjs';
+import { fetchOpenPRs, PR_DISCOVERY_UNAVAILABLE, PR_DISCOVERY_INCOMPLETE } from './github.mjs';
+import { fetchMyTickets, fetchTicketMetadata } from './jira.mjs';
 import { fetchUatPromoteCandidates } from './uat-promote.mjs';
-import { enrichOpenPRs, filterPrsNeedingApprovals } from './review.mjs';
+import { enrichOpenPRs } from './review.mjs';
+import { fetchPrDashboard } from './prs.mjs';
 import { fetchTicketPrs } from './ticket-prs.mjs';
 import { fetchReviewTickets } from './review-tickets.mjs';
 import { fetchHomeVelocity } from './home-velocity.mjs';
@@ -544,68 +534,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         return;
       }
       if (req.method === 'GET' && pathname === '/api/prs') {
-        const uatPromise = api.fetchUatPromoteCandidates(options);
-        const approvalPromise = api.fetchOpenPRs({ ...options, mine: false }).catch(() => null);
-        let data,
-          prsAvailable = true;
-        try {
-          data = await api.fetchOpenPRs(options);
-        } catch {
-          prsAvailable = false;
-          data = { prs: [], groups: {} };
-        }
-        const approvalData = await approvalPromise;
-        const draftPrs = data.prs
-          .filter((pr) => pr.draft)
-          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-        const draftGroups = groupByTicket(draftPrs);
-        const keys = Object.keys(data.groups).filter((key) => key !== 'Unticketed');
-        const { statuses: ticketStatuses, sprints: ticketSprints } = await api.fetchTicketMetadata(
-          keys,
-          options,
-        );
-        data.prs = filterPrsByTicketStatus(data.prs, ticketStatuses, CODE_REVIEW_STATUS);
-        data.groups = groupByTicket(data.prs);
-        const approvalKeys = approvalData
-          ? Object.keys(approvalData.groups).filter((key) => key !== 'Unticketed')
-          : [];
-        const { statuses: approvalStatuses, sprints: approvalTicketSprints } =
-          await api.fetchTicketMetadata(approvalKeys, options);
-        const [approvalReviewData, reviewData, uatData] = await Promise.all([
-          approvalData
-            ? api.enrichOpenPRs(approvalData.prs, options)
-            : { available: false, reviews: {} },
-          prsAvailable ? api.enrichOpenPRs(data.prs, options) : { available: false, reviews: {} },
-          uatPromise,
-        ]);
-        for (const pr of data.prs)
-          pr.reviews = reviewData.reviews[`${pr.repo}#${pr.number}`] || null;
-        const approvalThreshold = snapshot.minPrApprover;
-        const prsNeedingApprovals = approvalReviewData.available
-          ? filterPrsByTicketStatus(
-              filterPrsNeedingApprovals(approvalData.prs, approvalThreshold),
-              approvalStatuses,
-              READY_FOR_CODE_REVIEW_STATUS,
-            )
-          : [];
-        json(res, 200, {
-          ...data,
-          total: data.prs.length,
-          prsAvailable,
-          draftPrs,
-          draftGroups,
-          ticketStatuses,
-          ticketSprints,
-          approvalThreshold,
-          reviewDataAvailable: approvalReviewData.available,
-          prsNeedingApprovals,
-          approvalGroups: approvalReviewData.available ? groupByTicket(prsNeedingApprovals) : {},
-          approvalTicketStatuses: approvalStatuses,
-          approvalTicketSprints,
-          uatPromoteAvailable: uatData.available,
-          uatPromoteGroups: uatData.groups,
-          uatPromoteTotal: uatData.total,
-        });
+        json(res, 200, await fetchPrDashboard(options, api));
         return;
       }
       json(res, 404, { error: 'not found' });

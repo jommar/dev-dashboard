@@ -412,6 +412,52 @@ test('exactly 100 matching tickets is a complete answer and is not truncated', a
   assert.equal(data.truncated, false);
 });
 
+for (const { name, tail = [], isLast, nextPageToken, truncated } of [
+  { name: 'exact terminal cap', isLast: true, truncated: false },
+  { name: 'accepted raw tail', tail: [issue('99999', 'DEMO-9999')], isLast: true, truncated: true },
+  { name: 'rejected raw tail', tail: [null, { key: 42 }], isLast: true, truncated: true },
+  { name: 'advertised next page', isLast: false, nextPageToken: 'unfetched', truncated: true },
+  { name: 'missing token terminates', isLast: false, truncated: false },
+  { name: 'isLast overrides token', isLast: true, nextPageToken: 'unfetched', truncated: false },
+]) {
+  test(`release accepted 100 cap: ${name}`, async (t) => {
+    const accepted = [...manyIssues(98, 0), issue('70000', 'DEMO-3000'), issue('70999', '')];
+    const pages = [];
+    for (let offset = 0; offset < 99; offset += 49) {
+      pages.push({
+        issues: [null, ...accepted.slice(offset, Math.min(offset + 49, 99))],
+        isLast: false,
+        nextPageToken: `page-${pages.length + 1}`,
+      });
+    }
+    pages.push({ issues: [false, {}, { key: 42 }, accepted[99], ...tail], isLast, nextPageToken });
+    let page = 0;
+    const handlers = {
+      ...standardHandlers(),
+      search: (url, init) => {
+        assert.equal(url.searchParams.get('maxResults'), '50');
+        assert.equal(url.searchParams.get('nextPageToken'), page ? `page-${page}` : null);
+        assert.equal(init.redirect, 'error');
+        assert.deepEqual(Object.keys(init.headers).sort(), ['Accept', 'Authorization']);
+        assert.equal(init.headers.Accept, 'application/json');
+        assert.ok(init.headers.Authorization.startsWith('Basic '));
+        assert.ok(init.signal instanceof AbortSignal);
+        assert.ok(page < pages.length, 'must not probe beyond the accepted cap');
+        return Response.json(pages[page++]);
+      },
+    };
+    const { fetchRelease, calls } = await startRelease(t, handlers);
+    const data = await fetchRelease();
+    assert.equal(callsOf(calls, 'search').length, pages.length);
+    assert.equal(data.total, 100);
+    assert.deepEqual(
+      data.tickets.map(({ key }) => key),
+      ['', 'DEMO-3000', 'DEMO-3000', ...Array.from({ length: 97 }, (_, i) => `DEMO-${3001 + i}`)],
+    );
+    assert.equal(data.truncated, truncated);
+  });
+}
+
 test('an empty version list returns a null version and tickets without searching', async (t) => {
   const { fetchRelease, calls } = await startRelease(t, standardHandlers({ versions: [] }));
   const data = await fetchRelease({ versionId: null });

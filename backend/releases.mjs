@@ -3,6 +3,7 @@
 // summary/detail endpoints. GitHub is queried only to resolve linked PR authors;
 // "merged" is still Jira's copy of GitHub's state and can lag a fresh merge.
 import { jiraConfig, authorization } from './jira.mjs';
+import { collectCappedJiraIssues } from './jira-search.mjs';
 import { fetchPrOwners } from './github.mjs';
 import {
   orderVersions,
@@ -75,28 +76,19 @@ function projectKey() {
 // Same paging and cap rules as fetchMyTickets: exactly MAX_TICKETS matches is a
 // complete answer, one more is a truncation.
 async function fetchTicketIssues(cfg, jql) {
-  const issues = [];
-  let truncated = false;
-  let nextPageToken = null;
-  for (;;) {
-    const url = new URL(`${cfg.baseUrl}/rest/api/3/search/jql`);
-    url.searchParams.set('jql', jql);
-    url.searchParams.set('fields', SEARCH_FIELDS);
-    url.searchParams.set('maxResults', String(SEARCH_PAGE_SIZE));
-    if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
-    const data = await jiraGet(cfg, url, 'search');
-    const page = data.issues || [];
-    const lastPage = data.isLast || !data.nextPageToken;
-    for (const [index, issue] of page.entries()) {
-      if (issue && typeof issue.key === 'string') issues.push(issue);
-      if (issues.length >= MAX_TICKETS) {
-        truncated = index < page.length - 1 || !lastPage;
-        break;
-      }
-    }
-    if (issues.length >= MAX_TICKETS || lastPage) return { issues, truncated };
-    nextPageToken = data.nextPageToken;
-  }
+  const { items: issues, truncated } = await collectCappedJiraIssues({
+    maxIssues: MAX_TICKETS,
+    mapIssue: (issue) => (issue && typeof issue.key === 'string' ? issue : null),
+    fetchPage: (nextPageToken) => {
+      const url = new URL(`${cfg.baseUrl}/rest/api/3/search/jql`);
+      url.searchParams.set('jql', jql);
+      url.searchParams.set('fields', SEARCH_FIELDS);
+      url.searchParams.set('maxResults', String(SEARCH_PAGE_SIZE));
+      if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
+      return jiraGet(cfg, url, 'search');
+    },
+  });
+  return { issues, truncated };
 }
 
 const keyParts = (key) => {

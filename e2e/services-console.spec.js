@@ -6,6 +6,99 @@ const emitServices = (page, services) =>
     services,
   );
 
+test('service controls keep action labels, targets and lock scopes @regression', async ({
+  page,
+}) => {
+  const actions = [
+    {
+      action: 'start',
+      label: 'Start',
+      bulkLabel: 'Start all',
+      className: /\bstart\b/,
+      paths: ['/api/services/api/start', '/api/services/web/start', '/api/services/worker/start'],
+    },
+    {
+      action: 'stop',
+      label: 'Stop',
+      bulkLabel: 'Stop all',
+      className: /\bstop\b/,
+      paths: ['/api/services/api/stop', '/api/services/web/stop', '/api/services/worker/stop'],
+    },
+    {
+      action: 'restart',
+      label: 'Restart',
+      bulkLabel: 'Restart all',
+      className: /\brestart\b/,
+      paths: [
+        '/api/services/api/restart',
+        '/api/services/web/restart',
+        '/api/services/worker/restart',
+      ],
+    },
+  ];
+  const calls = [];
+  const held = [];
+  await page.route('**/api/services/*/*', (route) => {
+    const request = route.request();
+    calls.push({ method: request.method(), path: new URL(request.url()).pathname });
+    held.push(route);
+  });
+  const expectLocks = async (lockedIds) => {
+    for (const { action } of actions) {
+      for (const id of ['api', 'web', 'worker', 'all']) {
+        const button = page.getByTestId(`${action}-${id}`);
+        if (lockedIds.includes(id)) await expect(button).toBeDisabled();
+        else await expect(button).toBeEnabled();
+      }
+    }
+  };
+  await page.goto('/#/services');
+  await expect(page.getByTestId('log-api')).toContainText('line 120');
+  for (const { action, label, bulkLabel, className } of actions) {
+    for (const id of ['api', 'web', 'worker']) {
+      const button = page.getByTestId(`${action}-${id}`);
+      await expect(button).toHaveText(label);
+      await expect(button).toHaveClass(className);
+      await expect(button).toHaveAttribute('data-service', id);
+      await expect(button).toHaveAttribute('data-action', action);
+    }
+    const bulk = page.getByTestId(`${action}-all`);
+    await expect(bulk).toHaveText(bulkLabel);
+    await expect(bulk).toHaveClass(className);
+    await expect(bulk).not.toHaveAttribute('data-service');
+    await expect(bulk).not.toHaveAttribute('data-action');
+  }
+  await expectLocks([]);
+  for (const { action, paths } of actions) {
+    const before = calls.length;
+    await page.getByTestId(`${action}-worker`).click();
+    await expect.poll(() => calls.length).toBe(before + 1);
+    await expectLocks(['worker', 'all']);
+    expect(calls.slice(before)).toEqual([{ method: 'POST', path: paths[2] }]);
+    await held.shift().fulfill({ json: { ok: true } });
+    await expect(page.getByTestId('control-feedback-worker')).toHaveAttribute(
+      'data-state',
+      'success',
+    );
+    await expectLocks([]);
+    expect(calls).toHaveLength(before + 1);
+  }
+  for (const { action, paths } of actions) {
+    const before = calls.length;
+    await page.getByTestId(`${action}-all`).click();
+    await expect.poll(() => calls.length).toBe(before + 3);
+    await expectLocks(['api', 'web', 'worker', 'all']);
+    expect(calls.slice(before).sort((a, b) => a.path.localeCompare(b.path))).toEqual(
+      paths.map((path) => ({ method: 'POST', path })),
+    );
+    await Promise.all(held.splice(0).map((route) => route.fulfill({ json: { ok: true } })));
+    await expect(page.getByTestId('bulk-feedback')).toHaveAttribute('data-state', 'success');
+    await expectLocks([]);
+    expect(calls).toHaveLength(before + 3);
+  }
+  expect(calls).toHaveLength(12);
+});
+
 test('shared console reflects process counts without replacing consoles or discovery order @regression', async ({
   page,
   dashboard,

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { allSprints } from '../backend/jira.mjs';
 import {
   actionQueue,
   allTickets,
@@ -376,6 +377,7 @@ test('two active sprints keep independent totals and lists', () => {
 
 test('selectableSprints prefers the server list and falls back to tickets', () => {
   const server = { allSprints: [ACTIVE, PREV], groupsByCategory: {} };
+  assert.equal(selectableSprints(server), server.allSprints);
   assert.deepEqual(
     selectableSprints(server).map((s) => s.id),
     [1404, 1299],
@@ -389,6 +391,73 @@ test('selectableSprints prefers the server list and falls back to tickets', () =
     [1404, 1299],
   );
   assert.deepEqual(selectableSprints(null), []);
+});
+
+test('backend and Home fallback catalogs retain first objects, typed identities and literal order', () => {
+  const first = { id: 7, name: 'Zulu active', state: 'active', endDate: '2026-10-10' };
+  const nameOnly = { name: 'Name only', state: 'closed', endDate: 'invalid' };
+  const sprints = [
+    { id: 'unknown-old', name: 'Unknown old', state: 'paused', endDate: 'invalid' },
+    { id: 'future-invalid', name: 'Zulu future', state: 'future', endDate: 'invalid' },
+    { id: 'closed-old', name: 'Closed old', state: 'closed', endDate: '2026-09-01' },
+    { id: 'active-old', name: 'Alpha active', state: 'active', endDate: '2026-10-01' },
+    first,
+    { id: '7', name: 'Alpha active tie', state: 'active', endDate: '2026-10-10' },
+    { id: 'future-late', name: 'Alpha future', state: 'future', endDate: '2026-12-01' },
+    { id: 'future-near', name: 'Zulu near', state: 'future', endDate: '2026-11-01' },
+    { id: 'future-missing', name: 'Alpha missing', state: 'future' },
+    { id: 'closed-new', name: 'Closed new', state: 'closed', endDate: '2026-10-01' },
+    nameOnly,
+    { id: 'unknown-new', name: 'Unknown new', state: 'unexpected', endDate: '2026-12-01' },
+    { id: 'active-missing', name: 'Missing active', state: 'active' },
+    { id: 'active-invalid', name: 'Invalid active', state: 'active', endDate: 'bad' },
+  ];
+  const list = [
+    { sprints },
+    {
+      sprints: [
+        { id: 7, name: 'Replacement', state: 'future' },
+        { id: null, name: 'Name only', state: 'active' },
+        null,
+        {},
+        { name: '' },
+        { name: 12 },
+      ],
+    },
+    {},
+  ];
+  const before = structuredClone(list);
+  const payload = { groupsByCategory: { Done: list }, allSprints: [] };
+  for (const [label, found] of [
+    ['backend', allSprints(list)],
+    ['Home absent server list', selectableSprints({ groupsByCategory: { Done: list } })],
+    ['Home empty server list', selectableSprints(payload)],
+  ]) {
+    assert.deepEqual(
+      found.map((s) => s.id ?? s.name),
+      [
+        '7',
+        7,
+        'active-old',
+        'active-invalid',
+        'active-missing',
+        'future-near',
+        'future-late',
+        'future-missing',
+        'future-invalid',
+        'closed-new',
+        'closed-old',
+        'Name only',
+        'unknown-new',
+        'unknown-old',
+      ],
+      label,
+    );
+    assert.equal(found[1], first, label);
+    assert.equal(found[11], nameOnly, label);
+  }
+  assert.deepEqual(list, before);
+  assert.deepEqual(payload.allSprints, []);
 });
 
 test('sprintProgressFor scopes a closed sprint independently of the active one', () => {

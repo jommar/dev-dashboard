@@ -1,6 +1,7 @@
 import { slug, timeAgo } from '../../ui/dom.js';
-import { jiraStatusKind } from '../../ui/components/pr-card.js';
+import { jiraStatusKind } from '../../ui/jira-status.js';
 import { SprintPill } from './SprintPill.jsx';
+import { TicketStatusPill } from './TicketStatusPill.jsx';
 
 export function PrItem({ pr, variant = 'pr-open', approval }) {
   const state = pr.draft ? 'draft' : 'open';
@@ -142,14 +143,7 @@ export function TicketPrCard({
           ticket
         )}
         {ticketStatus && (
-          <span
-            className="pill ticket-status"
-            data-jira-status-kind={jiraStatusKind(ticketStatus)}
-            data-tooltip={ticketStatus}
-            data-testid={`${variant}-ticket-status-${key}`}
-          >
-            {ticketStatus}
-          </span>
+          <TicketStatusPill status={ticketStatus} testId={`${variant}-ticket-status-${key}`} />
         )}
         {sprint && ticket !== 'Unticketed' && (
           <SprintPill sprint={sprint} testId={`${variant}-ticket-sprint-${key}`} />

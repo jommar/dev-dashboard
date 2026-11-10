@@ -1,10 +1,85 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { once } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { listenHttp, requestRaw } from './http-test-fixture.mjs';
+import { acquireDistTestLock } from './dist-test-lock.mjs';
 import { settingsFixture, githubToken, jiraToken, assertNoSecrets } from './settings-fixture.mjs';
 
+const setupPage = '<!doctype html><main id="setup-ui-contract">setup dashboard</main>';
+
+async function setupIndex(t, dist) {
+  const releaseDistLock = await acquireDistTestLock();
+  const index = path.join(dist, 'index.html');
+  let hadDist;
+  let original;
+  try {
+    hadDist = fs.existsSync(dist);
+    original = fs.existsSync(index) ? fs.readFileSync(index) : null;
+  } catch (error) {
+    await releaseDistLock();
+    throw error;
+  }
+  t.after(async () => {
+    try {
+      if (original === null) fs.rmSync(index, { force: true });
+      else fs.writeFileSync(index, original);
+      if (!hadDist) {
+        try {
+          fs.rmdirSync(dist);
+        } catch (error) {
+          if (error.code !== 'ENOTEMPTY' && error.code !== 'ENOENT') throw error;
+        }
+      }
+    } finally {
+      await releaseDistLock();
+    }
+  });
+  fs.mkdirSync(dist, { recursive: true });
+  fs.writeFileSync(index, setupPage);
+}
+
+test('setup index restores absent and preexisting files and releases the lock after failure', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-index-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const state of ['absent', 'empty', 'assets', 'built']) {
+    const dist = path.join(root, state);
+    const index = path.join(dist, 'index.html');
+    const asset = path.join(dist, 'assets', 'keep.bin');
+    const original = Buffer.from([0, 0xff, 0xc3, 0xa9]);
+    if (state !== 'absent') fs.mkdirSync(dist);
+    if (state === 'assets' || state === 'built') {
+      fs.mkdirSync(path.dirname(asset));
+      fs.writeFileSync(asset, original);
+    }
+    if (state === 'built') fs.writeFileSync(index, original);
+    let cleanup;
+    await assert.rejects(
+      async () => {
+        try {
+          await setupIndex({ after: (callback) => (cleanup = callback) }, dist);
+          assert.equal(fs.readFileSync(index, 'utf8'), setupPage);
+          throw new Error('synthetic test failure');
+        } finally {
+          await cleanup?.();
+        }
+      },
+      { message: 'synthetic test failure' },
+    );
+    assert.equal(fs.existsSync(dist), state !== 'absent', state);
+    if (state === 'built') assert.deepEqual(fs.readFileSync(index), original);
+    else assert.equal(fs.existsSync(index), false, state);
+    if (state === 'assets' || state === 'built') assert.deepEqual(fs.readFileSync(asset), original);
+    const release = await acquireDistTestLock();
+    await release();
+  }
+});
+
 test('production HTTP handler gates every operation, unlocks setup, closes revoked SSE and bounds sanitized writes', async (t) => {
+  await setupIndex(t, fileURLToPath(new URL('../dist', import.meta.url)));
   const f = settingsFixture(t);
   const store = await f.store();
   await store.initialize();
@@ -57,32 +132,15 @@ test('production HTTP handler gates every operation, unlocks setup, closes revok
       }),
     },
   });
-  const server = http.createServer(handler);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  });
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const request = (pathname, method = 'GET', body) =>
-    new Promise((resolve, reject) => {
-      const req = http.request(
-        base + pathname,
-        { method, headers: { 'content-type': 'application/json' } },
-        (res) => {
-          let text = '';
-          res.on('data', (chunk) => {
-            text += chunk;
-          });
-          res.on('end', () =>
-            resolve({ status: res.statusCode, text, json: () => JSON.parse(text) }),
-          );
-        },
-      );
-      req.on('error', reject);
-      req.end(body);
+  const { origin: base } = await listenHttp(t, handler);
+  const request = async (pathname, method = 'GET', body) => {
+    const { status, text } = await requestRaw(base, pathname, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body,
     });
+    return { status, text, json: () => JSON.parse(text) };
+  };
   const operations = [
     ['/api/services'],
     ['/api/events'],
@@ -104,7 +162,10 @@ test('production HTTP handler gates every operation, unlocks setup, closes revok
   assert.deepEqual(work, []);
   for (const route of ['/api/config', '/api/settings'])
     assert.equal((await request(route)).status, 200, route);
-  assert.equal((await request('/')).status, 200);
+  const root = await request('/');
+  assert.equal(root.status, 200);
+  assert.match(root.text, /id="setup-ui-contract"/);
+  assert.equal(store.getSetupStatus().ready, false, 'root is accessible before setup unlocks');
   assert.equal((await request('/api/settings', 'PUT', '{bad')).status, 400);
   assert.equal(
     (await request('/api/settings', 'PUT', JSON.stringify({ value: 'x'.repeat(65537) }))).status,

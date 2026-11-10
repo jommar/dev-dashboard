@@ -1,5 +1,6 @@
 import { slug, timeAgo } from '../../ui/dom.js';
-import { jiraStatusKind } from '../../ui/components/pr-card.js';
+import { jiraStatusKind } from '../../ui/jira-status.js';
+import { TicketStatusPill } from './TicketStatusPill.jsx';
 
 const DEVELOPMENT_BASE = 'ops/development';
 const SAFE_LINK_RE = /^https:\/\//i;
@@ -93,14 +94,7 @@ function ReleaseTicketCard({ ticket, jiraBase }) {
         >
           {ticket.key}
         </a>
-        <span
-          className="pill ticket-status"
-          data-jira-status-kind={kind}
-          data-tooltip={ticket.status}
-          data-testid={`release-ticket-status-${key}`}
-        >
-          {ticket.status}
-        </span>
+        <TicketStatusPill status={ticket.status} testId={`release-ticket-status-${key}`} />
       </div>
       <div className="release-ticket-summary" data-testid={`release-ticket-summary-${key}`}>
         {ticket.summary || ''}
@@ -157,14 +151,7 @@ function ReleaseTicketRow({ ticket, jiraBase }) {
       <span className="release-row-summary" data-testid={`release-row-summary-${key}`}>
         {ticket.summary || ''}
       </span>
-      <span
-        className="pill ticket-status"
-        data-jira-status-kind={kind}
-        data-tooltip={ticket.status}
-        data-testid={`release-row-status-${key}`}
-      >
-        {ticket.status}
-      </span>
+      <TicketStatusPill status={ticket.status} testId={`release-row-status-${key}`} />
       {meta && (
         <span className="release-row-meta" data-testid={`release-row-meta-${key}`}>
           {meta}

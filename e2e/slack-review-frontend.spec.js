@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures.js';
-import { slackAppThreadLink, ticketBoardData } from './data.js';
+import { slackThreadRow, slackThreadRead, ticketBoardData } from './data.js';
 
 const NOW = Date.parse('2026-03-09T16:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -8,39 +8,23 @@ const CHANNEL = 'C0EXAMPLE1';
 const PERSON = { id: 'U0EXAMPLE1', name: 'Sam Example' };
 
 function row(text, created) {
-  const ts = `${Math.floor(created / 1000)}.${String((created % 1000) * 1000).padStart(6, '0')}`;
-  return {
-    ts,
-    url: slackAppThreadLink(TEAM, CHANNEL, ts),
-    watchKey: `${CHANNEL}:${ts}`,
+  return slackThreadRow({
     text,
-    subjectText: text,
+    createdAt: created,
+    activityAt: created,
+    teamId: TEAM,
+    channelId: CHANNEL,
     author: PERSON,
-    starter: PERSON,
     replyCount: 0,
-    activityAt: new Date(created).toISOString(),
-    needsReply: false,
-    attachedSessions: 0,
-  };
+  });
 }
 
 function threadRead(thread) {
-  return {
-    ts: thread.ts,
-    url: thread.url,
-    watchKey: thread.watchKey,
+  return slackThreadRead(thread, {
     channel: { id: CHANNEL, name: 'example_channel' },
+    author: PERSON,
     replyCount: 0,
-    messages: [
-      {
-        ts: thread.ts,
-        at: new Date(Number(thread.ts) * 1000).toISOString(),
-        author: PERSON,
-        text: thread.text,
-        mrkdwn: thread.text,
-      },
-    ],
-  };
+  });
 }
 
 function seed(dashboard, threads) {
