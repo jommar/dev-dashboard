@@ -58,6 +58,66 @@ test('ticket cards show assignee names and a readable fallback without changing 
   expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
 });
 
+for (const width of [390, 1440]) {
+  test(`Jira sprint badges show state, omit missing sprints and contain long names at ${width} @regression`, async ({
+    page,
+    dashboard,
+  }, testInfo) => {
+    const queue = dashboard.data.reviewTickets;
+    const [sample] = queue.tickets;
+    const longName = 'Nexus Sprint 23 — a deliberately long Jira sprint name for containment';
+    const sprints = [
+      { ...sample.sprint, name: 'Nexus Sprint 22', state: 'active' },
+      { ...sample.sprint, name: longName, state: 'future' },
+      { ...sample.sprint, name: 'Nexus Sprint 21', state: 'closed' },
+      null,
+    ];
+    queue.tickets = sprints.map((sprint, index) => ({
+      ...sample,
+      key: `DEMO-${index + 1}`,
+      sprint,
+      sprints: sprint ? [sprint] : [],
+      prs: [],
+    }));
+    queue.total = queue.tickets.length;
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/#/prs');
+    for (const [index, sprint] of sprints.entries()) {
+      const card = ticket(page, `DEMO-${index + 1}`);
+      const badge = card.getByTestId(`prs-ticket-sprint-DEMO-${index + 1}`);
+      if (!sprint) {
+        await expect(card).toBeVisible();
+        await expect(card.locator('.review-ticket-sprint')).toHaveCount(0);
+        await expect(card.locator('.ticket-sprint')).toHaveCount(0);
+        continue;
+      }
+      await expect(badge).toBeVisible();
+      await expect(badge).toHaveText(sprint.name);
+      await expect(badge).toHaveClass(/ticket-sprint/);
+      await expect(badge).toHaveAttribute('data-sprint-state', sprint.state);
+      await expect(badge).toHaveAttribute('data-tooltip', new RegExp(`^${sprint.state} · `));
+    }
+    const card = ticket(page, 'DEMO-2');
+    const badge = card.getByTestId('prs-ticket-sprint-DEMO-2');
+    await badge.scrollIntoViewIfNeeded();
+    await expect(badge).toHaveCSS('text-overflow', 'ellipsis');
+    expect(await badge.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    const cardBox = await card.boundingBox();
+    const badgeBox = await badge.boundingBox();
+    expect(badgeBox.x).toBeGreaterThanOrEqual(cardBox.x);
+    expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+      false,
+    );
+    const path = testInfo.outputPath(`pr-review-sprint-${width}.png`);
+    await card.screenshot({ path });
+    await testInfo.attach(`pr-review-sprint-${width}`, {
+      path,
+      contentType: 'image/png',
+    });
+  });
+}
+
 function mixedQueue(data) {
   const [first, second, empty] = data.reviewTickets.tickets;
   const frontend = { ...first.prs[0], repo: 'example/frontend', review: review() };

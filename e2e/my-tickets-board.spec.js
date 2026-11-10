@@ -152,11 +152,27 @@ test('a card shows its Jira link, named priority, points, update time and clampe
   expect(clamp).toEqual({ lines: '2', clipped: true });
 });
 
-test('a current-sprint card is marked and another sprint is named on the card @regression', async ({
+test('sprint badges show current, future and closed Jira sprints and omit missing sprints @regression', async ({
   page,
   dashboard,
 }) => {
-  ticketBoardData(dashboard.data);
+  const data = ticketBoardData(dashboard.data);
+  data.tickets.activeSprints[0].name = 'Nexus Sprint 22';
+  const closed = data.tickets.allSprints.find(({ state }) => state === 'closed');
+  Object.assign(
+    data.tickets.tickets.find(({ key }) => key === 'TAP-9003'),
+    {
+      sprint: closed,
+      sprints: [closed],
+    },
+  );
+  Object.assign(
+    data.tickets.tickets.find(({ key }) => key === 'TAP-9006'),
+    {
+      sprint: null,
+      sprints: [],
+    },
+  );
   await openBoard(page);
   const current = page.getByTestId('my-tickets-item-TAP-9001');
   await expect(current).toHaveAttribute('data-in-current-sprint', 'true');
@@ -166,7 +182,53 @@ test('a current-sprint card is marked and another sprint is named on the card @r
   await expect(other.getByTestId('my-tickets-item-sprint-label-TAP-9004')).toHaveText(
     'Following Sprint',
   );
+  for (const [key, state, name] of [
+    ['TAP-9001', 'active', 'Nexus Sprint 22'],
+    ['TAP-9004', 'future', 'Following Sprint'],
+    ['TAP-9003', 'closed', closed.name],
+  ]) {
+    const badge = page.getByTestId(`my-tickets-item-sprint-${key}`);
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveText(name);
+    await expect(badge).toHaveClass(/ticket-sprint/);
+    await expect(badge).toHaveAttribute('data-sprint-state', state);
+    await expect(badge).toHaveAttribute('data-tooltip', new RegExp(`^${state} · `));
+  }
+  await expect(page.getByTestId('my-tickets-item-sprint-label-TAP-9006')).toHaveCount(0);
+  await expect(page.getByTestId('my-tickets-item-TAP-9006').locator('.ticket-sprint')).toHaveCount(
+    0,
+  );
 });
+
+for (const width of [390, 1440]) {
+  test(`a long sprint badge stays inside the My Tickets card at ${width} @regression`, async ({
+    page,
+    dashboard,
+  }, testInfo) => {
+    const data = ticketBoardData(dashboard.data);
+    const longName = 'Nexus Sprint 22 — a deliberately long Jira sprint name for containment';
+    data.tickets.activeSprints[0].name = longName;
+    await page.setViewportSize({ width, height: 900 });
+    await openBoard(page);
+    const card = page.getByTestId('my-tickets-item-TAP-9001');
+    const badge = card.getByTestId('my-tickets-item-sprint-TAP-9001');
+    await badge.scrollIntoViewIfNeeded();
+    await expect(badge).toHaveText(longName);
+    await expect(badge).toHaveCSS('text-overflow', 'ellipsis');
+    expect(await badge.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    const cardBox = await card.boundingBox();
+    const badgeBox = await badge.boundingBox();
+    expect(badgeBox.x).toBeGreaterThanOrEqual(cardBox.x);
+    expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width);
+    expect(await sidewaysScroll(page)).toBe(false);
+    const path = testInfo.outputPath(`my-tickets-sprint-${width}.png`);
+    await card.screenshot({ path });
+    await testInfo.attach(`my-tickets-sprint-${width}`, {
+      path,
+      contentType: 'image/png',
+    });
+  });
+}
 
 // PR lines carry CI and review.
 

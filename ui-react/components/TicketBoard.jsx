@@ -18,6 +18,7 @@ import {
 import { canonicalTicketKey } from '../../ui/slack-ticket-links.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { Board, BoardColumn } from './BoardShell.jsx';
+import { SprintPill } from './SprintPill.jsx';
 
 // Jira priority names mapped to a chevron step: two up, one up, bars, one down,
 // two down. The shape carries the level; the name is in the label.
@@ -277,14 +278,11 @@ function TicketCard({
           ))}
         </ul>
       )}
-      {inCurrentSprint ? (
-        <span className="sr-only">In current sprint</span>
-      ) : (
-        ticket.sprint?.name && (
-          <p className="my-tickets-card-sprint" data-testid={testId('sprint-label')}>
-            {ticket.sprint.name}
-          </p>
-        )
+      {inCurrentSprint && <span className="sr-only">In current sprint</span>}
+      {ticket.sprint?.name && (
+        <p className="my-tickets-card-sprint" data-testid={testId('sprint-label')}>
+          <SprintPill sprint={ticket.sprint} testId={testId('sprint')} />
+        </p>
       )}
     </article>
   );

@@ -275,6 +275,7 @@ input[type='checkbox'] {
 
 /* Sprint pill beside .ticket-status on the PR tab; only the state colours differ. */
 .ticket-sprint {
+  display: inline-block;
   font-weight: 400;
   color: var(--sprint-color, var(--muted));
   border-color: var(--sprint-color, var(--border));

@@ -4,6 +4,7 @@ import { hasCompletePrCoverage, queueReviewState } from '../../ui/review-board.j
 import { reviewText } from '../../ui/ticket-board.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { DiffViewer } from './DiffViewer.jsx';
+import { SprintPill } from './SprintPill.jsx';
 
 export function ReviewTicketCard({
   ticket,
@@ -79,7 +80,11 @@ export function ReviewTicketCard({
             {ticket.assignee || 'Unassigned'}
           </span>
         </p>
-        {ticket.sprint?.name && <p className="review-ticket-sprint">{ticket.sprint.name}</p>}
+        {ticket.sprint?.name && (
+          <p className="review-ticket-sprint">
+            <SprintPill sprint={ticket.sprint} testId={`prs-ticket-sprint-${ticket.key}`} />
+          </p>
+        )}
       </div>
       {!discoveryComplete || reviewIncomplete ? (
         <p className="review-ticket-warning" data-testid={`prs-ticket-warning-${ticket.key}`}>
