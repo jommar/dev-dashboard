@@ -178,6 +178,8 @@
 }
 /* Two classes: the button primitive's own `margin: 0` outranks a single one. */
 .claude-dialog-foot .claude-dialog-foot-start {
+  display: flex;
+  gap: var(--s2);
   margin-right: auto;
 }
 .claude-dialog-foot-status {

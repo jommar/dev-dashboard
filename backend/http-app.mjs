@@ -28,6 +28,7 @@ import { withAttachedSessions } from './slack-model.mjs';
 import { createSlackWatchStore, isSessionId } from './slack-watch-store.mjs';
 import { createClaudeSessions } from './claude-sessions.mjs';
 import { createClaudeLauncher, failed } from './claude-launcher.mjs';
+import { createClaudeArtifacts } from './claude-artifacts.mjs';
 import { PROMPT_NAMES, createPromptStore } from './claude-prompts.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
 
@@ -60,6 +61,11 @@ async function readJson(req) {
   } catch {
     throw Object.assign(new Error('Malformed JSON.'), { code: 'INVALID_JSON', status: 400 });
   }
+}
+
+// One query-string value of a request, or null when it is absent.
+function queryParam(req, name) {
+  return new URL(req.url, 'http://localhost').searchParams.get(name);
 }
 
 function httpError(code, message, status) {
@@ -141,6 +147,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     integrations.claudeSessions || createClaudeSessions({ store: slackWatchStore });
   const claudeLauncher = integrations.claudeLauncher || createClaudeLauncher({ claudeSessions });
   const claudePrompts = integrations.claudePrompts || createPromptStore();
+  const claudeArtifacts = integrations.claudeArtifacts || createClaudeArtifacts();
   const slackWatcher =
     integrations.slackWatcher ||
     createSlackWatcher({ slack, store: slackWatchStore, settings, sessions: claudeSessions });
@@ -265,6 +272,10 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       return claudeLauncher.rereview({ key });
     },
     'GET /api/claude/prompts': () => ({ ok: true, prompts: claudePrompts.list() }),
+    // The Markdown a ticket's sessions left: the list, and one file by name. Read-only.
+    'GET /api/claude/artifacts': (req) => claudeArtifacts.list(queryParam(req, 'key')),
+    'GET /api/claude/artifact': (req) =>
+      claudeArtifacts.read(queryParam(req, 'key'), queryParam(req, 'name')),
   };
   // A prompt store call: its refusal of a bad text passes as it is, anything the disk does is a
   // failed Claude action.
@@ -617,6 +628,9 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'INVALID_TICKET',
         'INVALID_ANSWER',
         'INVALID_PROMPT',
+        'INVALID_ARTIFACT',
+        'ARTIFACT_NOT_FOUND',
+        'ARTIFACT_TOO_LARGE',
         'CLAUDE_REFUSED',
         'CLAUDE_FAILED',
       ];

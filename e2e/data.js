@@ -1508,6 +1508,8 @@ function claudeData() {
     tickets: {},
     calls: [],
     sends: [],
+    // The Markdown each ticket's sessions left, by ticket key then file name: `{ [key]: { [name]: text } }`.
+    artifacts: {},
     prompts: {
       entries: Object.fromEntries(
         Object.keys(CLAUDE_PROMPT_LABELS).map((name) => [name, claudePromptEntry(name)]),
@@ -1571,6 +1573,34 @@ function claudeResponse(url, method, { claude }, body) {
   const { pathname } = url;
   const prompts = claudePromptsResponse(pathname, method, claude, body);
   if (prompts) return prompts;
+  if (method === 'GET' && pathname === '/api/claude/artifacts') {
+    const key = url.searchParams.get('key');
+    const files = Object.entries(claude.artifacts[key] ?? {})
+      .sort(([a], [b]) => (a === '02-plan.md' ? -1 : b === '02-plan.md' ? 1 : a.localeCompare(b)))
+      .map(([name, text]) => ({
+        name,
+        size: text.length,
+        updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      }));
+    return { json: { ok: true, key, files } };
+  }
+  if (method === 'GET' && pathname === '/api/claude/artifact') {
+    const key = url.searchParams.get('key');
+    const name = url.searchParams.get('name');
+    const text = claude.artifacts[key]?.[name];
+    if (text === undefined) return claudeFailure(404, 'ARTIFACT_NOT_FOUND');
+    claude.artifactReads = [...(claude.artifactReads ?? []), `${key}/${name}`];
+    return {
+      json: {
+        ok: true,
+        key,
+        name,
+        size: text.length,
+        updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
+        text,
+      },
+    };
+  }
   if (method === 'GET' && pathname === '/api/claude/tickets')
     return {
       json: {

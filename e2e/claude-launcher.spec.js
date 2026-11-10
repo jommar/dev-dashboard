@@ -176,9 +176,10 @@ test('scenario 22: the icon opens a dialog with its four items and Escape closes
     await expect(dialog.getByTestId(`claude-action-hint-goto-${phase}`)).toHaveCount(0);
   }
   await expect(dialog.getByText('No session to join')).toHaveCount(0);
-  // With no questions the footer holds Prompts, on the left, and Close, and nothing else.
+  // With no questions the footer holds Prompts and Files, on the left, and Close, and nothing else.
   const foot = dialog.locator('.claude-dialog-foot');
-  await expect(foot.getByRole('button')).toHaveCount(2);
+  await expect(foot.getByRole('button')).toHaveCount(3);
+  await expect(foot.getByTestId('claude-files-open')).toBeVisible();
   await expect(foot.getByTestId('claude-prompts-open')).toBeVisible();
   await expect(foot.getByTestId('claude-dialog-close')).toBeVisible();
   const prompts = await foot.getByTestId('claude-prompts-open').boundingBox();
@@ -1364,10 +1365,12 @@ test('scenario 57: tab order follows the page: steps, session chip, Groom, answe
     'claude-action-investigate',
     'claude-action-goto-investigate',
     'claude-action-implement',
+    'claude-view-plan',
     'claude-action-groom',
     'claude-questions-resend',
     'claude-question-q1',
     'claude-prompts-open',
+    'claude-files-open',
     'claude-dialog-close',
   ]);
   // Escape closes it and the icon gets focus back.

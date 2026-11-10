@@ -281,6 +281,16 @@ export const saveClaudePrompt = (name, text) =>
 export const resetClaudePrompt = (name) =>
   watchRequest(`/api/claude/prompts/${name}`, { method: 'DELETE' });
 
+// The Markdown a ticket's Claude sessions left (plan, checklist, spec, groom notes), read-only:
+// the list of files, and one file's text by name. Refusals keep their code for the viewer to word.
+export const getClaudeArtifacts = (key) =>
+  watchRequest(`/api/claude/artifacts?key=${encodeURIComponent(key)}`);
+
+export const getClaudeArtifact = (key, name) =>
+  watchRequest(
+    `/api/claude/artifact?key=${encodeURIComponent(key)}&name=${encodeURIComponent(name)}`,
+  );
+
 export function subscribeServices(onSnapshot, onConnection = () => {}) {
   const source = new EventSource('/api/events');
   source.addEventListener('setup-required', () => {

@@ -20,6 +20,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { ClaudePromptsEditor } from './ClaudePromptsEditor.jsx';
+import { ArtifactViewer } from './ArtifactViewer.jsx';
 import {
   BUTTON_CLASS,
   DismissButton,
@@ -153,6 +154,8 @@ export function ClaudeDialog({
   const [approveResult, setApproveResult] = useState('');
   const [copy, setCopy] = useState(null);
   const [editingPrompts, setEditingPrompts] = useState(false);
+  // The Markdown viewer opened over this dialog: `{ name }` is the file to open first (or null).
+  const [viewing, setViewing] = useState(null);
 
   // Open once, trap focus (the browser does that for a modal) and give focus back to the ticket's
   // icon, which the key fully determines (a click does not focus a button in every browser).
@@ -280,309 +283,357 @@ export function ClaudeDialog({
   const liveText = Boolean(approveResult) || Boolean(copied);
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="claude-dialog"
-      aria-labelledby={titleId}
-      data-testid="claude-dialog"
-      onPointerDown={(event) => {
-        pressedBackdrop.current = event.target === dialogRef.current;
-      }}
-      onClick={(event) => {
-        // A backdrop click targets the <dialog> itself; everything inside it is a child.
-        if (event.target === dialogRef.current && pressedBackdrop.current) close.current();
-      }}
-    >
-      <header className="claude-dialog-head">
-        <h3 className="claude-dialog-title" id={titleId} data-testid="claude-dialog-title">
-          <span className="claude-dialog-key">{ticketKey}</span> {summary}
-        </h3>
-        <StatePill entry={listed} data-testid="claude-dialog-state" />
-      </header>
+    <>
+      <dialog
+        ref={dialogRef}
+        className="claude-dialog"
+        aria-labelledby={titleId}
+        data-testid="claude-dialog"
+        onPointerDown={(event) => {
+          pressedBackdrop.current = event.target === dialogRef.current;
+        }}
+        onClick={(event) => {
+          // A backdrop click targets the <dialog> itself; everything inside it is a child.
+          if (event.target === dialogRef.current && pressedBackdrop.current) close.current();
+        }}
+      >
+        <header className="claude-dialog-head">
+          <h3 className="claude-dialog-title" id={titleId} data-testid="claude-dialog-title">
+            <span className="claude-dialog-key">{ticketKey}</span> {summary}
+          </h3>
+          <StatePill entry={listed} data-testid="claude-dialog-state" />
+        </header>
 
-      <div className="claude-dialog-body">
-        {editingPrompts ? (
-          <ClaudePromptsEditor />
-        ) : (
-          <>
-            <ol className="claude-steps" aria-label="Workflow">
-              {steps.map((step) => (
-                <li
-                  key={step.phase}
-                  className="claude-step"
-                  data-step={step.phase}
-                  data-status={step.status}
-                  aria-current={step.current ? 'step' : undefined}
-                >
-                  <p className="claude-step-state">
-                    <StatusMark status={step.status} />
-                    <span
-                      data-testid={
-                        step.phase === 'approve' && entry.flags?.approved
-                          ? 'claude-approved-note'
-                          : `claude-step-state-${step.phase}`
-                      }
-                    >
-                      {step.caption}
-                    </span>
-                  </p>
-                  {/* Approving is done once approved: the step says so instead of a dead button. */}
-                  {!(step.phase === 'approve' && entry.flags?.approved) && (
-                    <Button
-                      className={BUTTON_CLASS[step.variant]}
-                      data-testid={
-                        step.phase === 'approve' ? 'claude-approve' : `claude-action-${step.phase}`
-                      }
-                      disabled={busy || Boolean(blockOf[step.phase])}
-                      aria-describedby={describedBy(step.phase)}
-                      onClick={runs[step.phase]}
-                    >
-                      {STEP_LABEL[step.phase]}
-                    </Button>
-                  )}
-                  {goTo[step.phase] && (
-                    <SessionChip phase={step.phase} onGoTo={() => copyCommand(step.phase)} />
-                  )}
-                  {/* Approving the plan unlocks this, so where the plan is stays in view. */}
-                  {step.phase === 'implement' && entry.reason === 'plan_ready' && (
-                    <span className="claude-step-note" data-testid="claude-plan-hint">
-                      {breakAtSlashes(
-                        `~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`,
-                      )}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ol>
-
-            <ul className="claude-reasons">
-              {reasons.map(({ phase, text, names, quiet }) => (
-                <li key={phase} className={quiet ? 'sr-only' : undefined}>
-                  <span className="claude-reason-step">{names.join(' · ')}</span>
-                  <span id={`${hintId}-${phase}`} data-testid={HINT_TESTID[phase]}>
-                    {text}
-                  </span>
-                </li>
-              ))}
-            </ul>
-
-            {/* The live regions are always rendered, so a screen reader hears their text change
-                rather than appear; with no text they take no room. */}
-            <div className={`claude-live${liveText ? ' has-text' : ''}`}>
-              <div className="claude-flash">
-                <p
-                  className="claude-note claude-send-result"
-                  role="status"
-                  data-testid="claude-approve-result"
-                >
-                  {approveResult}
-                </p>
-                {approveResult && <DismissButton onClick={() => setApproveResult('')} />}
-              </div>
-              <div className="claude-goto" role="status">
-                {copied?.copied && (
-                  <span data-testid={`claude-goto-copied-${copied.side}`}>Copied</span>
-                )}
-                {copied?.copied === false && "Couldn't copy — copy the command manually"}
-              </div>
-              {copied?.copied === false && (
-                <input
-                  className="claude-goto-fallback"
-                  data-testid={`claude-goto-fallback-${copied.side}`}
-                  readOnly
-                  value={copied.command}
-                  aria-label="Session command"
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-              )}
-            </div>
-
-            {error && (
-              <p className="claude-error" role="alert" data-testid="claude-error">
-                {error}
-              </p>
-            )}
-
-            {/* Grooming is not a step: it works on any ticket, on its own. */}
-            <section className="claude-groom" aria-labelledby={`${hintId}-groom`}>
-              <div className="claude-groom-main">
-                <span className="claude-groom-title" id={`${hintId}-groom`}>
-                  Independent
-                </span>
-                <Button
-                  className="subtle claude-groom-run"
-                  data-testid="claude-action-groom"
-                  disabled={busy || Boolean(blocks.groom)}
-                  onClick={() => run(() => launch(ticketKey, GROOM))}
-                >
-                  Groom ticket
-                </Button>
-                {goTo.groom && <SessionChip phase="groom" onGoTo={() => copyCommand('groom')} />}
-              </div>
-              {REASON_TEXT[blocks.groom] && (
-                <span className="claude-action-hint" data-testid="claude-action-hint-groom">
-                  {REASON_TEXT[blocks.groom]}
-                </span>
-              )}
-              <span className="claude-action-hint" data-testid="claude-groom-note">
-                Works on any ticket, on its own. Needs no plan and changes nothing in Jira until you
-                say so.
-              </span>
-              {/* Where the result is, once the session has finished. */}
-              {entry.groom?.state === 'done' && (
-                <span className="claude-action-hint" data-testid="claude-groom-path">
-                  {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/groom.md`}
-                </span>
-              )}
-            </section>
-
-            {entry.reason === 'answers_not_sent' && (
-              <p className="claude-note" data-testid="claude-answers-hint">
-                {REASON_TEXT.answers_not_sent}
-              </p>
-            )}
-
-            {questions.length > 0 && (
-              <form
-                id={formId}
-                className="claude-questions"
-                data-testid="claude-questions"
-                onSubmit={save}
-              >
-                <div className="claude-questions-head">
-                  <h4 className="claude-section-title">Questions</h4>
-                  <span className="claude-progress-count" aria-hidden="true">
-                    {answered}/{questions.length}
-                  </span>
-                  <span className="claude-progress" aria-hidden="true">
-                    <span style={{ width: `${(answered / questions.length) * 100}%` }} />
-                  </span>
-                  {/* The saved answers again, even unchanged, for a send that never arrived. */}
-                  <Button
-                    type="button"
-                    className="subtle claude-resend"
-                    data-testid="claude-questions-resend"
-                    disabled={busy || Boolean(blocks.resend) || dirty}
-                    aria-describedby={`${hintId}-resend`}
-                    onClick={resend}
+        <div className="claude-dialog-body">
+          {editingPrompts ? (
+            <ClaudePromptsEditor />
+          ) : (
+            <>
+              <ol className="claude-steps" aria-label="Workflow">
+                {steps.map((step) => (
+                  <li
+                    key={step.phase}
+                    className="claude-step"
+                    data-step={step.phase}
+                    data-status={step.status}
+                    aria-current={step.current ? 'step' : undefined}
                   >
-                    Resend answers
-                  </Button>
-                </div>
-                <p
-                  id={`${hintId}-resend`}
-                  className={`claude-note${resendShown ? '' : ' sr-only'}`}
-                  data-testid="claude-resend-hint"
-                >
-                  {dirty
-                    ? 'Save your changes first.'
-                    : (REASON_TEXT[blocks.resend] ??
-                      'Sends the saved answers to the session again, even if unchanged.')}
-                </p>
-                <p className="claude-note">
-                  Save as you go. Nothing is sent to the session until every question has an answer.
-                </p>
-                <ol className="claude-question-list">
-                  {questions.map(({ id, question, answer: saved }, index) => (
-                    <li key={id} className="claude-question">
-                      {/* The number and the tick sit outside the label, so its name is the question. */}
-                      <div className="claude-question-head">
-                        <span className="claude-question-number" aria-hidden="true">
-                          {index + 1}
-                        </span>
-                        <label htmlFor={`${formId}-${id}`}>{question}</label>
-                        {saved?.trim() && (
-                          <span
-                            className="claude-question-answered"
-                            role="img"
-                            aria-label="Answered"
-                            data-testid={`claude-question-answered-${id}`}
-                          >
-                            <svg
-                              width="14"
-                              height="14"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.8"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden="true"
-                              focusable="false"
-                            >
-                              <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
-                            </svg>
-                          </span>
+                    <p className="claude-step-state">
+                      <StatusMark status={step.status} />
+                      <span
+                        data-testid={
+                          step.phase === 'approve' && entry.flags?.approved
+                            ? 'claude-approved-note'
+                            : `claude-step-state-${step.phase}`
+                        }
+                      >
+                        {step.caption}
+                      </span>
+                    </p>
+                    {/* Approving is done once approved: the step says so instead of a dead button. */}
+                    {!(step.phase === 'approve' && entry.flags?.approved) && (
+                      <Button
+                        className={BUTTON_CLASS[step.variant]}
+                        data-testid={
+                          step.phase === 'approve'
+                            ? 'claude-approve'
+                            : `claude-action-${step.phase}`
+                        }
+                        disabled={busy || Boolean(blockOf[step.phase])}
+                        aria-describedby={describedBy(step.phase)}
+                        onClick={runs[step.phase]}
+                      >
+                        {STEP_LABEL[step.phase]}
+                      </Button>
+                    )}
+                    {goTo[step.phase] && (
+                      <SessionChip phase={step.phase} onGoTo={() => copyCommand(step.phase)} />
+                    )}
+                    {/* Approving the plan unlocks this, so where the plan is stays in view. */}
+                    {step.phase === 'implement' && entry.reason === 'plan_ready' && (
+                      <span className="claude-step-note" data-testid="claude-plan-hint">
+                        {breakAtSlashes(
+                          `~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`,
                         )}
-                      </div>
-                      <textarea
-                        id={`${formId}-${id}`}
-                        className="claude-question-input"
-                        data-testid={`claude-question-${id}`}
-                        rows={2}
-                        maxLength={2000}
-                        autoComplete="off"
-                        data-lpignore="true"
-                        data-1p-ignore="true"
-                        data-bwignore="true"
-                        value={Object.hasOwn(drafts, id) ? drafts[id] : (saved ?? '')}
-                        disabled={Boolean(blocks.answer)}
-                        onChange={(event) => {
-                          const { value } = event.target;
-                          setDrafts((current) => ({ ...current, [id]: value }));
-                        }}
-                      />
-                    </li>
-                  ))}
-                </ol>
-              </form>
-            )}
-          </>
-        )}
-      </div>
+                      </span>
+                    )}
+                    {step.phase === 'implement' && entry.reason === 'plan_ready' && (
+                      <button
+                        type="button"
+                        className="artifact-link"
+                        data-testid="claude-view-plan"
+                        onClick={() => setViewing({ name: '02-plan.md' })}
+                      >
+                        View plan
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ol>
 
-      <footer className="claude-dialog-foot">
-        {/* One button for both views, so the keyboard focus it holds survives the swap. */}
-        <Button
-          className="subtle claude-dialog-foot-start"
-          data-testid={editingPrompts ? 'claude-prompts-back' : 'claude-prompts-open'}
-          onClick={() => setEditingPrompts(!editingPrompts)}
-        >
-          {editingPrompts ? 'Back' : 'Prompts'}
-        </Button>
-        {!editingPrompts && questions.length > 0 && (
-          <>
-            <div className="claude-dialog-foot-status">
-              <p className="claude-note" data-testid="claude-questions-progress">
-                {`${answered} of ${questions.length} answered`}
-              </p>
-              {/* Always rendered, so a screen reader hears its text change rather than appear. */}
-              <div className="claude-flash">
-                <p
-                  className="claude-note claude-send-result"
-                  role="status"
-                  data-testid="claude-send-result"
-                >
-                  {sendResult}
-                </p>
-                {sendResult && <DismissButton onClick={() => setSendResult('')} />}
+              <ul className="claude-reasons">
+                {reasons.map(({ phase, text, names, quiet }) => (
+                  <li key={phase} className={quiet ? 'sr-only' : undefined}>
+                    <span className="claude-reason-step">{names.join(' · ')}</span>
+                    <span id={`${hintId}-${phase}`} data-testid={HINT_TESTID[phase]}>
+                      {text}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              {/* The live regions are always rendered, so a screen reader hears their text change
+                rather than appear; with no text they take no room. */}
+              <div className={`claude-live${liveText ? ' has-text' : ''}`}>
+                <div className="claude-flash">
+                  <p
+                    className="claude-note claude-send-result"
+                    role="status"
+                    data-testid="claude-approve-result"
+                  >
+                    {approveResult}
+                  </p>
+                  {approveResult && <DismissButton onClick={() => setApproveResult('')} />}
+                </div>
+                <div className="claude-goto" role="status">
+                  {copied?.copied && (
+                    <span data-testid={`claude-goto-copied-${copied.side}`}>Copied</span>
+                  )}
+                  {copied?.copied === false && "Couldn't copy — copy the command manually"}
+                </div>
+                {copied?.copied === false && (
+                  <input
+                    className="claude-goto-fallback"
+                    data-testid={`claude-goto-fallback-${copied.side}`}
+                    readOnly
+                    value={copied.command}
+                    aria-label="Session command"
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                )}
               </div>
-            </div>
+
+              {error && (
+                <p className="claude-error" role="alert" data-testid="claude-error">
+                  {error}
+                </p>
+              )}
+
+              {/* Grooming is not a step: it works on any ticket, on its own. */}
+              <section className="claude-groom" aria-labelledby={`${hintId}-groom`}>
+                <div className="claude-groom-main">
+                  <span className="claude-groom-title" id={`${hintId}-groom`}>
+                    Independent
+                  </span>
+                  <Button
+                    className="subtle claude-groom-run"
+                    data-testid="claude-action-groom"
+                    disabled={busy || Boolean(blocks.groom)}
+                    onClick={() => run(() => launch(ticketKey, GROOM))}
+                  >
+                    Groom ticket
+                  </Button>
+                  {goTo.groom && <SessionChip phase="groom" onGoTo={() => copyCommand('groom')} />}
+                </div>
+                {REASON_TEXT[blocks.groom] && (
+                  <span className="claude-action-hint" data-testid="claude-action-hint-groom">
+                    {REASON_TEXT[blocks.groom]}
+                  </span>
+                )}
+                <span className="claude-action-hint" data-testid="claude-groom-note">
+                  Works on any ticket, on its own. Needs no plan and changes nothing in Jira until
+                  you say so.
+                </span>
+                {/* Where the result is, once the session has finished. */}
+                {entry.groom?.state === 'done' && (
+                  <span className="claude-action-hint" data-testid="claude-groom-path">
+                    {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/groom.md`}
+                  </span>
+                )}
+                {entry.groom?.state === 'done' && (
+                  <button
+                    type="button"
+                    className="artifact-link"
+                    data-testid="claude-view-groom"
+                    onClick={() => setViewing({ name: 'groom.md' })}
+                  >
+                    View groom notes
+                  </button>
+                )}
+              </section>
+
+              {entry.reason === 'answers_not_sent' && (
+                <p className="claude-note" data-testid="claude-answers-hint">
+                  {REASON_TEXT.answers_not_sent}
+                </p>
+              )}
+
+              {questions.length > 0 && (
+                <form
+                  id={formId}
+                  className="claude-questions"
+                  data-testid="claude-questions"
+                  onSubmit={save}
+                >
+                  <div className="claude-questions-head">
+                    <h4 className="claude-section-title">Questions</h4>
+                    <span className="claude-progress-count" aria-hidden="true">
+                      {answered}/{questions.length}
+                    </span>
+                    <span className="claude-progress" aria-hidden="true">
+                      <span style={{ width: `${(answered / questions.length) * 100}%` }} />
+                    </span>
+                    {/* The saved answers again, even unchanged, for a send that never arrived. */}
+                    <Button
+                      type="button"
+                      className="subtle claude-resend"
+                      data-testid="claude-questions-resend"
+                      disabled={busy || Boolean(blocks.resend) || dirty}
+                      aria-describedby={`${hintId}-resend`}
+                      onClick={resend}
+                    >
+                      Resend answers
+                    </Button>
+                  </div>
+                  <p
+                    id={`${hintId}-resend`}
+                    className={`claude-note${resendShown ? '' : ' sr-only'}`}
+                    data-testid="claude-resend-hint"
+                  >
+                    {dirty
+                      ? 'Save your changes first.'
+                      : (REASON_TEXT[blocks.resend] ??
+                        'Sends the saved answers to the session again, even if unchanged.')}
+                  </p>
+                  <p className="claude-note">
+                    Save as you go. Nothing is sent to the session until every question has an
+                    answer.
+                  </p>
+                  <ol className="claude-question-list">
+                    {questions.map(({ id, question, answer: saved }, index) => (
+                      <li key={id} className="claude-question">
+                        {/* The number and the tick sit outside the label, so its name is the question. */}
+                        <div className="claude-question-head">
+                          <span className="claude-question-number" aria-hidden="true">
+                            {index + 1}
+                          </span>
+                          <label htmlFor={`${formId}-${id}`}>{question}</label>
+                          {saved?.trim() && (
+                            <span
+                              className="claude-question-answered"
+                              role="img"
+                              aria-label="Answered"
+                              data-testid={`claude-question-answered-${id}`}
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                                focusable="false"
+                              >
+                                <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+                              </svg>
+                            </span>
+                          )}
+                        </div>
+                        <textarea
+                          id={`${formId}-${id}`}
+                          className="claude-question-input"
+                          data-testid={`claude-question-${id}`}
+                          rows={2}
+                          maxLength={2000}
+                          autoComplete="off"
+                          data-lpignore="true"
+                          data-1p-ignore="true"
+                          data-bwignore="true"
+                          value={Object.hasOwn(drafts, id) ? drafts[id] : (saved ?? '')}
+                          disabled={Boolean(blocks.answer)}
+                          onChange={(event) => {
+                            const { value } = event.target;
+                            setDrafts((current) => ({ ...current, [id]: value }));
+                          }}
+                        />
+                      </li>
+                    ))}
+                  </ol>
+                </form>
+              )}
+            </>
+          )}
+        </div>
+
+        <footer className="claude-dialog-foot">
+          {/* One button for both views, so the keyboard focus it holds survives the swap. */}
+          <div className="claude-dialog-foot-start">
             <Button
-              type="submit"
-              form={formId}
-              className="primary"
-              data-testid="claude-questions-save"
-              disabled={busy || Boolean(blocks.answer) || !(dirty || entry.unsent)}
+              className="subtle"
+              data-testid={editingPrompts ? 'claude-prompts-back' : 'claude-prompts-open'}
+              onClick={() => setEditingPrompts(!editingPrompts)}
             >
-              Save answers
+              {editingPrompts ? 'Back' : 'Prompts'}
             </Button>
-          </>
-        )}
-        <Button ref={closeButton} data-testid="claude-dialog-close" onClick={() => close.current()}>
-          Close
-        </Button>
-      </footer>
-    </dialog>
+            {!editingPrompts && (
+              <Button
+                className="subtle"
+                aria-haspopup="dialog"
+                data-testid="claude-files-open"
+                onClick={() => setViewing({ name: null })}
+              >
+                Files
+              </Button>
+            )}
+          </div>
+          {!editingPrompts && questions.length > 0 && (
+            <>
+              <div className="claude-dialog-foot-status">
+                <p className="claude-note" data-testid="claude-questions-progress">
+                  {`${answered} of ${questions.length} answered`}
+                </p>
+                {/* Always rendered, so a screen reader hears its text change rather than appear. */}
+                <div className="claude-flash">
+                  <p
+                    className="claude-note claude-send-result"
+                    role="status"
+                    data-testid="claude-send-result"
+                  >
+                    {sendResult}
+                  </p>
+                  {sendResult && <DismissButton onClick={() => setSendResult('')} />}
+                </div>
+              </div>
+              <Button
+                type="submit"
+                form={formId}
+                className="primary"
+                data-testid="claude-questions-save"
+                disabled={busy || Boolean(blocks.answer) || !(dirty || entry.unsent)}
+              >
+                Save answers
+              </Button>
+            </>
+          )}
+          <Button
+            ref={closeButton}
+            data-testid="claude-dialog-close"
+            onClick={() => close.current()}
+          >
+            Close
+          </Button>
+        </footer>
+      </dialog>
+      {viewing && (
+        <ArtifactViewer
+          ticketKey={ticketKey}
+          initialName={viewing.name}
+          onClose={() => setViewing(null)}
+        />
+      )}
+    </>
   );
 }

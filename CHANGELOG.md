@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added a built-in Markdown viewer for the files a ticket's Claude sessions leave in
+  `~/pathwise/.orchestrator/<ticket>/` (plan, checklist, spec, groom notes). In the My Tickets Claude
+  dialog, View plan (beside the plan path), View groom notes (once a groom session is done) and a
+  Files button in the footer open it over the dialog: a file row (plan first), Reload, Copy path and
+  Close. Read-only. Two new routes serve it, `GET /api/claude/artifacts?key=` (the list) and
+  `GET /api/claude/artifact?key=&name=` (one file): only `.md` files directly inside that ticket's
+  folder, a checked ticket key and file name, no symlink followed out of the folder, 512 KB at most.
+  Rendering uses `react-markdown` with `remark-gfm` (tables, task lists, fenced code); raw HTML is
+  not rendered, only http(s) and mailto links are live (new tab, no opener), and images are never
+  fetched (the alt text shows). The Claude dialog's footer now holds Prompts and Files.
+
 - Redesigned both Claude dialogs on one visual language (frontend only: no API, route, prompt,
   state-machine or block-reason change, and every `data-testid` is kept). The My Tickets dialog now
   has a header with the key and a state pill (mark and word), a three-step workflow strip
