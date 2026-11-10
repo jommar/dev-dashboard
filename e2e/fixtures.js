@@ -67,6 +67,7 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
         window.__unexpectedDashboardNetwork(`CSP ${event.blockedURI}`);
       });
       const streams = [];
+      const screencasts = [];
       const clipboard = { writes: [], error: null };
       class MockEventSource extends EventTarget {
         static CONNECTING = 0;
@@ -82,9 +83,18 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
           this.onopen = null;
           this.onmessage = null;
           this.onerror = null;
-          if (this.url !== location.origin + '/api/events') {
+          // The DevTools viewer's live view: opened per browser, closed with the viewer.
+          const screencast =
+            new URL(this.url).pathname === '/api/devtools/browsers/screencast' &&
+            new URL(this.url).origin === location.origin;
+          if (this.url !== location.origin + '/api/events' && !screencast) {
             window.__unexpectedDashboardNetwork(`EventSource ${this.url}`);
             this.readyState = 2;
+            return;
+          }
+          if (screencast) {
+            screencasts.push(this);
+            setTimeout(() => this.emit('open'), 0);
             return;
           }
           streams.push(this);
@@ -98,10 +108,9 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
           if (this.readyState === 2) return;
           if (type === 'open') this.readyState = 1;
           if (type === 'error') this.readyState = 0;
-          const event =
-            type === 'message' || type === 'setup-required'
-              ? new MessageEvent(type, { data: JSON.stringify(snapshot) })
-              : new Event(type);
+          const event = ['message', 'setup-required', 'frame', 'status', 'target'].includes(type)
+            ? new MessageEvent(type, { data: JSON.stringify(snapshot) })
+            : new Event(type);
           this.dispatchEvent(event);
           this['on' + type]?.(event);
         }
@@ -122,7 +131,7 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
           },
         },
       });
-      window.__dashboardMock = { streams, clipboard };
+      window.__dashboardMock = { streams, screencasts, clipboard };
     },
     { services: data.services },
   );

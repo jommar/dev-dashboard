@@ -76,6 +76,117 @@
   gap: var(--s2);
 }
 
+/* The in-app viewer: a modal <dialog> like the Slack thread dialog, a flex column so the header
+   and footer stay put while the frame is sized by the stage. */
+.devtools-viewer {
+  width: min(1280px, 96vw);
+  max-height: 94vh;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.devtools-viewer[open] {
+  display: flex;
+  flex-direction: column;
+}
+.devtools-viewer::backdrop {
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+.devtools-viewer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+}
+.devtools-viewer-title {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-xl);
+}
+.devtools-viewer-sub {
+  margin: var(--s1) 0 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.devtools-viewer-status {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.devtools-viewer-status[data-status='live'] {
+  color: var(--ok);
+}
+.devtools-viewer-status[data-status='connecting'] {
+  color: var(--amber);
+}
+.devtools-viewer-status[data-status='lost'] {
+  color: var(--red);
+}
+.devtools-viewer-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--s3);
+  background: var(--bg);
+}
+.devtools-viewer-stage {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  outline: none;
+  user-select: none;
+}
+.devtools-viewer-stage[data-control='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  cursor: crosshair;
+}
+.devtools-viewer-image {
+  display: block;
+  width: 100%;
+  max-height: max(120px, calc(94vh - 180px));
+  object-fit: contain;
+}
+.devtools-viewer-image[hidden] {
+  display: none;
+}
+.devtools-viewer-wait {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.devtools-viewer-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--border);
+  background: var(--panel2);
+}
+.devtools-viewer-hint {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.devtools-viewer-close {
+  margin-left: auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .devtools-launch input {
     transition: none;

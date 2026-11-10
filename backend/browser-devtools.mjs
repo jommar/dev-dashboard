@@ -28,7 +28,7 @@ const BINARIES = [
 ];
 const VERSION = 1;
 
-function fail(code, message, status) {
+export function fail(code, message, status) {
   return Object.assign(new Error(message), { code, status });
 }
 
@@ -75,7 +75,18 @@ export function createBrowserDevtools({
   const root = path.join(home, '.config', 'dev-dashboard', 'browsers');
   const stateFile = path.join(root, 'instances.json');
   const children = new Map();
+  const stopListeners = new Set();
   let reconciled = false;
+
+  // Whatever streams from a browser (the screencast) must let go when it stops, however it
+  // stopped: Stop (which Remove runs first), or the child exiting under us.
+  function stopped(id) {
+    for (const listener of [...stopListeners]) {
+      try {
+        listener(id);
+      } catch {}
+    }
+  }
 
   // `ps -eo pid=,args=` is the only source of truth for a live browser, because
   // the record outlives the process that spawned it.
@@ -167,6 +178,7 @@ export function createBrowserDevtools({
         found.status = 'stopped';
         found.pid = null;
         writeState(current);
+        stopped(record.id);
       }
     };
     child.once?.('exit', settle);
@@ -335,6 +347,7 @@ export function createBrowserDevtools({
     record.status = 'stopped';
     record.pid = null;
     writeState(browsers);
+    stopped(id);
     return record;
   }
 
@@ -350,5 +363,10 @@ export function createBrowserDevtools({
     return { id };
   }
 
-  return { list, launch, start: startById, stop, remove };
+  function onStopped(listener) {
+    stopListeners.add(listener);
+    return () => stopListeners.delete(listener);
+  }
+
+  return { list, launch, start: startById, stop, remove, onStopped };
 }

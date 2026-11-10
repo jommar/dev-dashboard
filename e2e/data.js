@@ -1,3 +1,5 @@
+import { crc32, deflateSync } from 'node:zlib';
+
 function releasePr(repo, number, overrides = {}) {
   return {
     repo,
@@ -365,6 +367,42 @@ export function devtoolsData(overrides = {}) {
     nextLaunch: { id: 'b-5e0f6a1b', port: 9302 },
     calls: [],
     ...overrides,
+  };
+}
+
+// A solid-colour PNG, small enough to inline: the viewer paints whatever image bytes a frame
+// carries, and a real one has a real shape, which is what the letterbox maths needs.
+function solidPng(width, height, [red, green, blue]) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const framed = Buffer.alloc(body.length + 8);
+    framed.writeUInt32BE(data.length, 0);
+    body.copy(framed, 4);
+    framed.writeUInt32BE(crc32(body), body.length + 4);
+    return framed;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.concat([
+    Buffer.from([0]),
+    Buffer.from(Array(width).fill([red, green, blue]).flat()),
+  ]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(Buffer.concat(Array(height).fill(row)))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// One screencast frame as the stream sends it: a 16:9 image of a 1280x720 page. The image is
+// 160x90, so a point on it maps to its own position times eight.
+export function devtoolsFrame(colour = [40, 90, 160]) {
+  return {
+    data: solidPng(160, 90, colour).toString('base64'),
+    metadata: { deviceWidth: 1280, deviceHeight: 720, offsetTop: 0, pageScaleFactor: 1 },
   };
 }
 
@@ -1865,6 +1903,8 @@ function devtoolsResponse(url, method, { devtools }, body) {
     browser.pid = starting ? 41003 : null;
     return { json: { ok: true, browser: structuredClone(browser) } };
   }
+  // Input is only recorded: what the viewer sent is the contract under test.
+  if (pathname === '/api/devtools/browsers/input') return { json: { ok: true } };
   if (pathname === '/api/devtools/browsers/remove') {
     const before = devtools.browsers.length;
     devtools.browsers = devtools.browsers.filter((entry) => entry.id !== body?.id);

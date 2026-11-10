@@ -58,8 +58,15 @@ function harness({ taken = [], ps = '', env } = {}) {
       },
     },
     spawn(binary, args) {
-      spawns.push({ binary, args });
-      const child = { pid: 4000 + spawns.length, once() {}, unref() {} };
+      const child = {
+        pid: 4000 + spawns.length + 1,
+        exits: [],
+        once(event, listener) {
+          if (event === 'exit') this.exits.push(listener);
+        },
+        unref() {},
+      };
+      spawns.push({ binary, args, child });
       return child;
     },
     kill(pid, signal) {
@@ -256,4 +263,42 @@ test('removing a running browser stops it first', async () => {
     'an attached browser is not left running',
   );
   assert.deepEqual(await h.devtools.list(), []);
+});
+
+test('tells listeners when a browser stops, is removed or exits, and not after they leave', async () => {
+  const h = harness();
+  const stopped = [];
+  const leave = h.devtools.onStopped((id) => stopped.push(id));
+  const first = await h.devtools.launch({ label: 'One' });
+  const second = await h.devtools.launch({ label: 'Two' });
+  const third = await h.devtools.launch({ label: 'Three' });
+  h.setPs('');
+  assert.deepEqual(stopped, [], 'launching is not stopping');
+
+  await h.devtools.stop(first.id);
+  assert.deepEqual(stopped, [first.id]);
+
+  await h.devtools.remove(second.id);
+  assert.deepEqual(stopped, [first.id, second.id]);
+
+  // The child exiting under us, which is how a browser closed from its own window ends.
+  h.spawns[2].child.exits.forEach((listener) => listener());
+  assert.deepEqual(stopped, [first.id, second.id, third.id]);
+
+  leave();
+  await h.devtools.stop(third.id);
+  assert.equal(stopped.length, 3, 'a listener that left hears nothing more');
+});
+
+test('a late exit of a replaced child does not announce the restarted browser as stopped', async () => {
+  const h = harness();
+  const stopped = [];
+  h.devtools.onStopped((id) => stopped.push(id));
+  const browser = await h.devtools.launch({ label: 'Restarted' });
+  h.setPs('');
+  await h.devtools.stop(browser.id);
+  await h.devtools.start(browser.id);
+  stopped.length = 0;
+  h.spawns[0].child.exits.forEach((listener) => listener());
+  assert.deepEqual(stopped, [], 'the old process is not the running one');
 });

@@ -22,6 +22,7 @@ import { createClaudeArtifacts } from './claude-artifacts.mjs';
 import { PROMPT_NAMES, createPromptStore } from './claude-prompts.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
 import { createBrowserDevtools } from './browser-devtools.mjs';
+import { createBrowserScreencast } from './browser-screencast.mjs';
 
 const MAX_LINKS_PER_REQUEST = 50;
 // The `Sec-Fetch-Site` values of a request that another site's page made. A client that sends none
@@ -140,6 +141,8 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const claudePrompts = integrations.claudePrompts || createPromptStore();
   const claudeArtifacts = integrations.claudeArtifacts || createClaudeArtifacts();
   const browserDevtools = integrations.browserDevtools || createBrowserDevtools();
+  const browserScreencast =
+    integrations.browserScreencast || createBrowserScreencast({ devtools: browserDevtools });
   const slackWatcher =
     integrations.slackWatcher ||
     createSlackWatcher({ slack, store: slackWatchStore, settings, sessions: claudeSessions });
@@ -292,6 +295,48 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       [`DELETE /api/claude/prompts/${name}`, () => promptCall(() => claudePrompts.remove(name))],
     ]),
   );
+  // The live view of a debug browser, as Server-Sent Events: `frame`, `status` and `target`
+  // messages until the viewer leaves or the browser stops. It is as sensitive as the signed-in
+  // session it shows, so another site's page may not open one. A frame is dropped, never queued,
+  // while the client has not drained the last write.
+  const streamScreencast = async (res, id) => {
+    await browserScreencast.check(id);
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store',
+      Connection: 'keep-alive',
+    });
+    let gone = false;
+    let congested = false;
+    let leave = null;
+    const emit = (event, payload) =>
+      !gone && res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    res.on('close', () => {
+      gone = true;
+      leave?.();
+    });
+    try {
+      leave = await browserScreencast.subscribe(id, {
+        status: (status) => emit('status', status),
+        target: (target) => emit('target', target),
+        frame: (frame) => {
+          if (congested) return;
+          if (emit('frame', frame) === false) {
+            congested = true;
+            res.once('drain', () => {
+              congested = false;
+            });
+          }
+        },
+        end: () => res.end(),
+      });
+    } catch {
+      emit('status', { status: 'lost', reason: 'unavailable' });
+      res.end();
+      return;
+    }
+    if (gone) leave();
+  };
   const guard = () => {
     if (!settings.getSetupStatus().ready)
       throw Object.assign(new Error('Complete Settings setup.'), {
@@ -439,7 +484,19 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
           const { id } = await readJson(request);
           return { ok: true, ...(await browserDevtools.remove(id)) };
         },
+        // Mouse, wheel and key events for a viewed browser; the module whitelists every field.
+        'POST /api/devtools/browsers/input': async (request) => {
+          const { id, event } = await readJson(request);
+          await browserScreencast.input(id, event);
+          return { ok: true };
+        },
       };
+      if (req.method === 'GET' && pathname === '/api/devtools/browsers/screencast') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        await streamScreencast(res, url.searchParams.get('id'));
+        return;
+      }
       const tableRoute =
         devtoolsRoutes[routeKey] ||
         slackWatchRoutes[routeKey] ||
@@ -592,6 +649,9 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'BROWSER_NOT_FOUND',
         'LAUNCH_FAILED',
         'INVALID_URL',
+        'BROWSER_NOT_RUNNING',
+        'SCREENCAST_NOT_ACTIVE',
+        'INVALID_INPUT',
       ];
       const code = allowed.includes(error.code) ? error.code : 'OPERATION_FAILED';
       const conflict = ['SETUP_REQUIRED', 'REVISION_CONFLICT', 'SERVICE_IN_USE'].includes(code);
@@ -616,6 +676,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   handler.slackWatcher = slackWatcher;
   handler.close = () => {
     slackWatcher.stop();
+    browserScreencast.close?.();
     unsubscribe?.();
     for (const res of clients) res.end();
     clients.clear();

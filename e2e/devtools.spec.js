@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures.js';
+import { devtoolsFrame } from './data.js';
 
 // The fixture's two rows: one running, one stopped on its own profile.
 const RUNNING = 'b-3f9a2c7d';
@@ -142,5 +143,272 @@ test('remove drops a row and its profile', async ({ page, dashboard }) => {
     method: 'POST',
     path: '/api/devtools/browsers/remove',
     body: { id: STOPPED },
+  });
+});
+
+// -- the in-app viewer ----------------------------------------------------------------------------
+// The page's EventSource is a mock that records each live view, so a spec decides what the browser
+// "sent" and reads back what the viewer sent: the whole server side is these helpers.
+
+const emitScreencast = (page, type, payload) =>
+  page.evaluate(
+    ([name, value]) => window.__dashboardMock.screencasts.at(-1).emit(name, value),
+    [type, payload],
+  );
+const screencastState = (page) =>
+  page.evaluate(() =>
+    window.__dashboardMock.screencasts.map(({ url, readyState }) => ({ url, readyState })),
+  );
+const inputs = ({ data }) =>
+  data.devtools.calls.filter(({ path }) => path === '/api/devtools/browsers/input');
+const openViewer = async (page, id = RUNNING) => {
+  await openDevtools(page);
+  await page.getByTestId(`devtools-view-${id}`).click();
+  await expect(page.getByTestId('devtools-viewer')).toBeVisible();
+};
+const goLive = async (page, frame = devtoolsFrame()) => {
+  await emitScreencast(page, 'status', { status: 'live', reason: '' });
+  await emitScreencast(page, 'target', {
+    id: 'T1',
+    title: 'Home',
+    url: 'https://example.invalid/home',
+  });
+  await emitScreencast(page, 'frame', frame);
+  await expect(page.getByTestId('devtools-viewer-status')).toHaveText('Live');
+  await expect(page.getByTestId('devtools-viewer-image')).toBeVisible();
+};
+const takeControl = async (page) => {
+  await page.getByTestId('devtools-viewer-control').click();
+  await expect(page.getByTestId('devtools-viewer-control')).toHaveAttribute('aria-pressed', 'true');
+};
+const centreOfImage = async (page) => {
+  const box = await page.getByTestId('devtools-viewer-image').boundingBox();
+  return { box, x: box.x + box.width / 2, y: box.y + box.height / 2 };
+};
+const eventTypes = (dashboard) => inputs(dashboard).map(({ body }) => body.event.type);
+
+test.describe('devtools viewer', () => {
+  test('only a running row offers View', async ({ page }) => {
+    await openDevtools(page);
+    await expect(page.getByTestId(`devtools-view-${RUNNING}`)).toBeVisible();
+    await expect(page.getByTestId(`devtools-view-${STOPPED}`)).toHaveCount(0);
+    await expect(page.getByTestId('devtools-viewer')).toHaveCount(0);
+  });
+
+  test('opens a live view of that browser and shows its state', async ({ page, dashboard }) => {
+    await openViewer(page);
+    await expect(page.getByTestId('devtools-viewer-title')).toHaveText('Browser 3f9a');
+    await expect(page.getByTestId('devtools-viewer')).toHaveAttribute('aria-labelledby', /.+/);
+    // Nothing has arrived yet: connecting, no picture, and no way to take control.
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveText('Connecting…');
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveAttribute('role', 'status');
+    await expect(page.getByTestId('devtools-viewer-image')).toBeHidden();
+    await expect(page.getByTestId('devtools-viewer-control')).toBeDisabled();
+    const streams = await screencastState(page);
+    expect(streams).toHaveLength(1);
+    expect(streams[0].url).toContain(`/api/devtools/browsers/screencast?id=${RUNNING}`);
+
+    await goLive(page);
+    await expect(page.getByTestId('devtools-viewer-sub')).toHaveText(
+      'Port 9300 · https://example.invalid/home',
+    );
+    await expect(page.getByTestId('devtools-viewer-hint')).toHaveText('View only.');
+    await expect(page.getByTestId('devtools-viewer-control')).toBeEnabled();
+    await expect(page.getByTestId('devtools-viewer-control')).toHaveText('Take control');
+    await expect(page.getByTestId('devtools-viewer-image')).toHaveAttribute(
+      'alt',
+      'Live view of Browser 3f9a',
+    );
+    // Frames arrive on the stream: the dashboard never polls the server for them.
+    expect(devtoolsRequests(dashboard).filter(({ path }) => path.includes('screencast'))).toEqual(
+      [],
+    );
+  });
+
+  test('paints each new frame into the same picture', async ({ page }) => {
+    await openViewer(page);
+    const first = devtoolsFrame([40, 90, 160]);
+    const second = devtoolsFrame([160, 90, 40]);
+    await goLive(page, first);
+    const image = page.getByTestId('devtools-viewer-image');
+    await expect(image).toHaveAttribute('src', `data:image/jpeg;base64,${first.data}`);
+    await emitScreencast(page, 'frame', second);
+    await expect(image).toHaveAttribute('src', `data:image/jpeg;base64,${second.data}`);
+  });
+
+  test('is view-only: clicks and keys reach the browser only after Take control', async ({
+    page,
+    dashboard,
+  }) => {
+    await openViewer(page);
+    await goLive(page);
+    const { x, y } = await centreOfImage(page);
+    await page.mouse.click(x, y);
+    await page.mouse.wheel(0, 120);
+    await page.getByTestId('devtools-viewer-stage').focus();
+    await page.keyboard.type('hello');
+    expect(inputs(dashboard)).toEqual([]);
+  });
+
+  test('take control forwards a click as device coordinates through a letterboxed frame', async ({
+    page,
+    dashboard,
+  }) => {
+    // A short window caps the picture's height, so the 16:9 image is centred with bars at each side.
+    await page.setViewportSize({ width: 1200, height: 560 });
+    await openViewer(page);
+    await goLive(page);
+    await takeControl(page);
+    await expect(page.getByTestId('devtools-viewer-stage')).toHaveAttribute('data-control', 'true');
+    await expect(page.getByTestId('devtools-viewer-hint')).toContainText('Esc releases control');
+
+    const { box, x, y } = await centreOfImage(page);
+    expect(box.width / box.height).toBeGreaterThan(2);
+    // A click in a bar is on no point of the page; events go out in order, so if it had been sent
+    // it would be the first press below.
+    await page.mouse.click(box.x + 10, y);
+    await page.mouse.click(x, y);
+    await expect.poll(() => eventTypes(dashboard)).toContain('mouseReleased');
+    const events = inputs(dashboard).map(({ body }) => body.event);
+    const press = events.find(({ type }) => type === 'mousePressed');
+    expect(inputs(dashboard)[0].body.id).toBe(RUNNING);
+    expect(eventTypes(dashboard).filter((type) => type === 'mousePressed')).toHaveLength(1);
+    expect(press).toMatchObject({ button: 'left', clickCount: 1 });
+    // One screen pixel is about two page pixels here, so the middle is the middle to within that.
+    expect(Math.abs(press.x - 640)).toBeLessThan(4);
+    expect(Math.abs(press.y - 360)).toBeLessThan(4);
+    expect(events.find(({ type }) => type === 'mouseReleased')).toMatchObject({ button: 'left' });
+    expect(eventTypes(dashboard).indexOf('mousePressed')).toBeLessThan(
+      eventTypes(dashboard).indexOf('mouseReleased'),
+    );
+
+    // A quarter of the way into the drawn picture, not into the element, is a quarter of the page.
+    const drawnWidth = (box.height * 16) / 9;
+    const left = box.x + (box.width - drawnWidth) / 2;
+    await page.mouse.move(left + drawnWidth / 4, box.y + box.height / 4);
+    await expect.poll(() => Math.abs(inputs(dashboard).at(-1).body.event.x - 320)).toBeLessThan(4);
+    expect(inputs(dashboard).at(-1).body.event.type).toBe('mouseMoved');
+    expect(Math.abs(inputs(dashboard).at(-1).body.event.y - 180)).toBeLessThan(4);
+  });
+
+  test('take control forwards the wheel and typed keys', async ({ page, dashboard }) => {
+    await openViewer(page);
+    await goLive(page);
+    await takeControl(page);
+    const { x, y } = await centreOfImage(page);
+
+    await page.mouse.move(x, y);
+    await page.mouse.wheel(0, 120);
+    await expect.poll(() => eventTypes(dashboard)).toContain('wheel');
+    const wheel = inputs(dashboard)
+      .map(({ body }) => body.event)
+      .find(({ type }) => type === 'wheel');
+    expect(wheel.deltaY).toBe(120);
+
+    await page.keyboard.type('a');
+    await page.keyboard.press('ArrowLeft');
+    const keys = () =>
+      inputs(dashboard)
+        .map(({ body }) => body.event)
+        .filter((event) => event.key);
+    await expect.poll(() => keys().length).toBe(4);
+    expect(keys()).toMatchObject([
+      { type: 'keyDown', key: 'a', text: 'a' },
+      { type: 'keyUp', key: 'a' },
+      { type: 'keyDown', key: 'ArrowLeft' },
+      { type: 'keyUp', key: 'ArrowLeft' },
+    ]);
+    expect(keys()[2].text).toBeUndefined();
+  });
+
+  test('releasing control stops forwarding; Escape releases before it closes', async ({
+    page,
+    dashboard,
+  }) => {
+    await openViewer(page);
+    await goLive(page);
+    await takeControl(page);
+    await page.keyboard.press('Escape');
+    // The first Escape is the release: the viewer is still open, and view-only again.
+    await expect(page.getByTestId('devtools-viewer-control')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    await expect(page.getByTestId('devtools-viewer')).toBeVisible();
+    await expect(page.getByTestId('devtools-viewer-hint')).toHaveText('View only.');
+    // Escape was never forwarded as a key.
+    expect(inputs(dashboard).filter(({ body }) => body.event.key === 'Escape')).toEqual([]);
+
+    const before = inputs(dashboard).length;
+    const { x, y } = await centreOfImage(page);
+    await page.mouse.click(x, y);
+    await page.keyboard.type('x');
+    expect(inputs(dashboard).length).toBe(before);
+
+    // The same toggle, by button.
+    await takeControl(page);
+    await page.getByTestId('devtools-viewer-control').click();
+    await expect(page.getByTestId('devtools-viewer-control')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  });
+
+  test('shows a lost connection and gives control back', async ({ page }) => {
+    await openViewer(page);
+    await goLive(page);
+    await takeControl(page);
+
+    await emitScreencast(page, 'status', { status: 'connecting', reason: 'reconnecting' });
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveText('Reconnecting…');
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveAttribute(
+      'data-status',
+      'connecting',
+    );
+    await expect(page.getByTestId('devtools-viewer-control')).toBeDisabled();
+    await expect(page.getByTestId('devtools-viewer-stage')).toHaveAttribute(
+      'data-control',
+      'false',
+    );
+    // The last picture stays up behind the status, rather than the viewer going blank.
+    await expect(page.getByTestId('devtools-viewer-image')).toBeVisible();
+
+    await emitScreencast(page, 'status', { status: 'lost', reason: 'unreachable' });
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveText('Browser not reachable');
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveAttribute('data-status', 'lost');
+
+    await emitScreencast(page, 'status', { status: 'live', reason: '' });
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveText('Live');
+    await expect(page.getByTestId('devtools-viewer-control')).toBeEnabled();
+  });
+
+  test('a stopped browser ends the stream for good', async ({ page }) => {
+    await openViewer(page);
+    await goLive(page);
+    await emitScreencast(page, 'status', { status: 'lost', reason: 'stopped' });
+    await expect(page.getByTestId('devtools-viewer-status')).toHaveText('Browser stopped');
+    await expect.poll(async () => (await screencastState(page))[0].readyState).toBe(2);
+  });
+
+  test('closing the viewer closes the stream and returns focus to View', async ({ page }) => {
+    await openViewer(page);
+    await goLive(page);
+    await page.getByTestId('devtools-viewer-close').click();
+    await expect(page.getByTestId('devtools-viewer')).toHaveCount(0);
+    await expect.poll(async () => (await screencastState(page))[0].readyState).toBe(2);
+    await expect(page.getByTestId(`devtools-view-${RUNNING}`)).toBeFocused();
+
+    // Opening it again is a new stream, not a revived one.
+    await page.getByTestId(`devtools-view-${RUNNING}`).click();
+    await expect(page.getByTestId('devtools-viewer')).toBeVisible();
+    expect(await screencastState(page)).toHaveLength(2);
+  });
+
+  test('Escape closes a view-only viewer', async ({ page }) => {
+    await openViewer(page);
+    await goLive(page);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('devtools-viewer')).toHaveCount(0);
+    await expect.poll(async () => (await screencastState(page))[0].readyState).toBe(2);
   });
 });

@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { BoardPanel, BoardSection, BoardState, RefreshControl } from '../components/BoardShell.jsx';
 import { Button } from '../components/Primitives.jsx';
+import { DevtoolsViewer } from '../components/DevtoolsViewer.jsx';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { DEVTOOLS_POLL_MS } from '../../ui/polling.js';
 import { timeAgo } from '../../ui/dom.js';
@@ -23,6 +24,8 @@ export function DevtoolsPanel({ active }) {
   const [label, setLabel] = useState('');
   const [url, setUrl] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [viewing, setViewing] = useState(null);
+  const closeViewer = useCallback(() => setViewing(null), []);
 
   const load = useCallback(async () => {
     try {
@@ -100,6 +103,13 @@ export function DevtoolsPanel({ active }) {
       setBusy(null);
     }
   };
+
+  // The viewer follows the registry: a browser that stops or is removed takes its viewer with it.
+  const viewed = browsers.find((entry) => entry.id === viewing && entry.status === 'running');
+  useEffect(() => {
+    // Forget it, or a later restart of the same browser would reopen a viewer nobody asked for.
+    if (viewing && !viewed) setViewing(null);
+  }, [viewing, viewed]);
 
   const filters = (
     <form className="devtools-launch" onSubmit={launch}>
@@ -202,6 +212,14 @@ export function DevtoolsPanel({ active }) {
                         </span>
                       </td>
                       <td className="devtools-actions">
+                        {browser.status === 'running' && (
+                          <Button
+                            data-testid={`devtools-view-${browser.id}`}
+                            onClick={() => setViewing(browser.id)}
+                          >
+                            View
+                          </Button>
+                        )}
                         {browser.status === 'running' ? (
                           <Button
                             data-testid={`devtools-stop-${browser.id}`}
@@ -239,6 +257,15 @@ export function DevtoolsPanel({ active }) {
           </div>
         )}
       </BoardSection>
+      {viewed && (
+        <DevtoolsViewer
+          key={viewed.id}
+          id={viewed.id}
+          label={viewed.label}
+          port={viewed.port}
+          onClose={closeViewer}
+        />
+      )}
     </BoardPanel>
   );
 }
