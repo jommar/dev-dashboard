@@ -594,6 +594,47 @@ test('person velocity stays local with point-sorted same-window comparison and r
   ).not.toContain(alexA);
 });
 
+test('clicking the selected person resets to Everyone without fetching or changing the snapshot @regression', async ({
+  page,
+  dashboard,
+}) => {
+  await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
+  await page.goto('/#/home');
+  const rows = page.getByTestId('home-velocity-person-row');
+  const totals = page.getByTestId('home-velocity-total');
+  await expect(chart(page)).toBeVisible();
+  const saved = await stored(page);
+  const generated = await page.getByTestId('home-meta').textContent();
+  for (const window of ['', 'Sprint 2']) {
+    await sprint(page).selectOption(window);
+    const everyoneTotals = await totals.allTextContents();
+    await rows.nth(0).click();
+    await expect(person(page)).toHaveValue(alexA);
+    await expect(rows.nth(0)).toHaveAttribute('aria-pressed', 'true');
+    await expect(totals).toHaveText(window ? ['2.5'] : ['0', '2.5', '0', '3']);
+    await rows.nth(0).click();
+    await expect(person(page)).toHaveValue('');
+    await expect(rows.nth(0)).toHaveAttribute('aria-pressed', 'false');
+    await expect(chart(page)).toContainText('Nexus · Everyone');
+    await expect(totals).toHaveText(everyoneTotals);
+    await rows.nth(0).click();
+    await rows.nth(1).click();
+    await expect(person(page)).toHaveValue(alexB);
+    await expect(rows.nth(0)).toHaveAttribute('aria-pressed', 'false');
+    await expect(rows.nth(1)).toHaveAttribute('aria-pressed', 'true');
+    await expect(totals).toHaveText(window ? ['1.25'] : ['0', '1.25', '0', '3']);
+    await person(page).selectOption(alexA);
+    await rows.nth(0).click();
+    await expect(person(page)).toHaveValue('');
+    await expect(totals).toHaveText(everyoneTotals);
+    await expect(team(page)).toHaveValue('Nexus');
+    await expect(sprint(page)).toHaveValue(window);
+  }
+  await expect(page.getByTestId('home-meta')).toHaveText(generated);
+  expect(await stored(page)).toBe(saved);
+  expect(reads(dashboard)).toBe(0);
+});
+
 test('people sort by selected-window points with alphabetical ties without changing saved data @regression', async ({
   page,
   dashboard,

@@ -104,7 +104,7 @@ function PersonBreakdown({ people, personId, sprintCount, sprintName, onSelect }
               aria-pressed={personId === person.id}
               aria-label={`${person.label}: ${person.points} total points; ${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started`}
               title={`${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started points`}
-              onClick={() => onSelect(person.id)}
+              onClick={() => onSelect(personId === person.id ? '' : person.id)}
             >
               <span className="home-velocity-person-name">{person.label}</span>
               <strong>{person.points}</strong>
