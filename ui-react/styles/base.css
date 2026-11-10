@@ -191,6 +191,21 @@ input {
   opacity: 0.55;
   cursor: wait;
 }
+.btn.primary {
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
+  color: var(--bg);
+  font-weight: 600;
+}
+.btn.primary:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.btn.primary:disabled {
+  border-color: var(--border);
+  background: var(--panel2);
+  color: var(--text);
+}
 .btn.subtle {
   background: transparent;
   padding: 2px var(--s2);

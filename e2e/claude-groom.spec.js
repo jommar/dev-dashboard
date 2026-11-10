@@ -80,17 +80,14 @@ test('scenario 60: Groom ticket needs nothing, starts its own session and leaves
   expect(await iconOf(page).getAttribute('data-state')).toBe('none');
   const dialog = await openDialog(page);
 
-  // A third row, after Implement plan: the run button, its own Go to session button and the note.
-  const rows = dialog.locator('.claude-actions > li');
-  await expect(rows).toHaveCount(3);
-  const row = rows.nth(2);
+  // Groom ticket is not a step: it sits apart, below the workflow, with its note and (once it has
+  // one) its own Go to session chip. The workflow strip holds exactly the three steps.
+  await expect(dialog.locator('.claude-steps > li')).toHaveCount(3);
+  const section = dialog.locator('.claude-groom');
   const groom = dialog.getByTestId('claude-action-groom');
   const goTo = dialog.getByTestId('claude-action-goto-groom');
-  await expect(row.getByTestId('claude-action-groom')).toHaveText('Groom ticket');
-  await expect(row.getByTestId('claude-action-goto-groom')).toHaveText('Go to session');
-  await expect(
-    dialog.getByRole('button', { name: 'Go to groom ticket session', exact: true }),
-  ).toHaveAttribute('data-testid', 'claude-action-goto-groom');
+  await expect(section.getByTestId('claude-action-groom')).toHaveText('Groom ticket');
+  await expect(dialog.locator('.claude-steps').getByTestId('claude-action-groom')).toHaveCount(0);
   const implementBox = await dialog.getByTestId('claude-action-implement').boundingBox();
   const groomBox = await groom.boundingBox();
   expect(groomBox.y, 'Groom ticket is below Implement plan').toBeGreaterThan(
@@ -99,14 +96,13 @@ test('scenario 60: Groom ticket needs nothing, starts its own session and leaves
   await expect(dialog.getByTestId('claude-groom-note')).toHaveText(NOTE);
   await expect(dialog.getByTestId('claude-groom-path')).toHaveCount(0);
 
-  // No precondition: a ticket never started can be groomed while Implement plan is still blocked.
+  // No precondition: a ticket never started can be groomed while Implement plan is still blocked,
+  // and with no session there is nothing to join, so no chip and no hint about it.
   await expect(groom).toBeEnabled();
   await expect(dialog.getByTestId('claude-action-hint-groom')).toHaveCount(0);
   await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
-  await expect(goTo).toBeDisabled();
-  await expect(dialog.getByTestId('claude-action-hint-goto-groom')).toHaveText(
-    'No session to join',
-  );
+  await expect(goTo).toHaveCount(0);
+  await expect(dialog.getByTestId('claude-action-hint-goto-groom')).toHaveCount(0);
 
   // The launch names the phase, and only the key and the phase.
   await groom.click();
@@ -117,6 +113,10 @@ test('scenario 60: Groom ticket needs nothing, starts its own session and leaves
   await expect(groom).toBeDisabled();
   await expect(dialog.getByTestId('claude-action-hint-groom')).toHaveText(RUNNING);
   await expect(goTo).toBeEnabled();
+  await expect(section.getByTestId('claude-action-goto-groom')).toHaveText('Go to session');
+  await expect(
+    dialog.getByRole('button', { name: 'Go to groom ticket session', exact: true }),
+  ).toHaveAttribute('data-testid', 'claude-action-goto-groom');
   await expect(dialog.getByTestId('claude-action-investigate')).toBeEnabled();
   await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
   await expect(dialog.getByTestId('claude-dialog-state')).toHaveText('not started');
@@ -198,13 +198,15 @@ test('scenario 61: the groom row follows its own session, whatever the workflow 
   dialog = await openDialog(page, 'TAP-9004');
   await expect(dialog.getByTestId('claude-action-groom')).toBeDisabled();
   await expect(dialog.getByTestId('claude-action-hint-groom')).toHaveText(UNAVAILABLE);
-  await expect(dialog.getByTestId('claude-action-goto-groom')).toBeDisabled();
+  // No session to join: no chip at all.
+  await expect(dialog.getByTestId('claude-action-goto-groom')).toHaveCount(0);
   await closeDialog(page);
 
   dialog = await openDialog(page, 'TAP-9005');
   await expect(dialog.getByTestId('claude-action-groom')).toBeEnabled();
   await expect(dialog.getByTestId('claude-groom-path')).toHaveCount(0);
-  await expect(dialog.getByTestId('claude-action-goto-groom')).toBeDisabled();
+  // No session to join: no chip at all.
+  await expect(dialog.getByTestId('claude-action-goto-groom')).toHaveCount(0);
 });
 
 test('scenario 62: the card icon follows grooming only for a ticket with no workflow record', async ({

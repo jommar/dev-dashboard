@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
-import { claudePhrase } from './ClaudeIcon.jsx';
+import { DismissButton, StatePill, stampOf } from './ClaudeSteps.jsx';
 
 const REVIEW = 'pr-review-transact';
 const REASON_TEXT = {
@@ -48,6 +48,39 @@ export function ClaudePlaceholderDialog({
   const block = entry?.blocks.review;
   const rereviewBlock = entry?.blocks.rereview;
   const resentAt = entry?.reviewResentAt;
+  const reviewState = entry?.review?.state;
+  // Start code review is the one primary button until a review session exists (a ticket the server
+  // lists nothing for has none); after that the re-review is, and starting another review is the
+  // quiet choice. While a session works or the status is unknown neither is.
+  const startPrimary = !entry || (block === null && rereviewBlock === 'no_review_session');
+  const rereviewPrimary = rereviewBlock === null;
+  // Once a review session exists and can take a message, starting another review is the quiet choice.
+  const startQuiet = block === null && rereviewBlock === null;
+  const reasonId = useId();
+  const startReason = REASON_TEXT[block] ?? (block ? 'Code review cannot start right now.' : '');
+  const rereviewReason =
+    REASON_TEXT[rereviewBlock] ?? (rereviewBlock ? 'Re-review cannot be sent right now.' : '');
+  // "Start a code review first." only repeats the primary button beside it, so it is for assistive
+  // tech alone then.
+  const reasons = [];
+  if (startReason)
+    reasons.push({
+      key: 'start',
+      text: startReason,
+      names: ['Start'],
+      testId: 'prs-claude-review-hint',
+    });
+  if (rereviewReason) {
+    const lead = reasons.find((reason) => reason.text === rereviewReason);
+    if (lead) lead.names.push('Re-review');
+    reasons.push({
+      key: 'rereview',
+      text: rereviewReason,
+      names: ['Re-review'],
+      quiet: Boolean(lead) || startPrimary,
+      testId: 'prs-claude-rereview-hint',
+    });
+  }
   close.current = onClose;
   openerResolver.current = resolveOpener;
 
@@ -65,6 +98,14 @@ export function ClaudePlaceholderDialog({
       openerResolver.current?.(ticketKey)?.focus({ preventScroll: true });
     };
   }, [ticketKey]);
+
+  // A message about a review that was working is out of date once it stops (it can also be
+  // dismissed, and the next action replaces it).
+  const lastState = useRef(reviewState);
+  useEffect(() => {
+    if (lastState.current === 'working' && reviewState !== 'working') setResultText('');
+    lastState.current = reviewState;
+  }, [reviewState]);
 
   useEffect(() => {
     const focused = document.activeElement;
@@ -123,49 +164,60 @@ export function ClaudePlaceholderDialog({
         <h3 className="claude-dialog-title" id={titleId} data-testid="prs-claude-dialog-title">
           <span className="claude-dialog-key">{ticketKey}</span> {summary}
         </h3>
+        <StatePill
+          entry={entry?.review}
+          label="Code review"
+          data-testid="prs-claude-dialog-state"
+        />
       </header>
       <div className="claude-dialog-body" data-testid="prs-claude-dialog-body">
-        <p className="claude-dialog-state" role="status">
-          Code review: {claudePhrase(entry?.review)}
-        </p>
-        <ul className="claude-actions">
-          <li className="claude-action">
+        <ul className="claude-review-actions">
+          <li className="claude-review-action">
             <Button
+              className={startPrimary ? 'primary' : startQuiet ? 'subtle' : ''}
               data-testid="prs-claude-action-review"
               disabled={busy || Boolean(block)}
+              aria-describedby={startReason ? `${reasonId}-start` : undefined}
               onClick={startReview}
             >
-              Start code review
+              {startQuiet ? 'Start new review' : 'Start code review'}
             </Button>
-            {block && (
-              <span className="claude-action-hint">
-                {REASON_TEXT[block] ?? 'Code review cannot start right now.'}
-              </span>
-            )}
           </li>
-          <li className="claude-action">
+          <li className="claude-review-action">
             <Button
+              className={rereviewPrimary ? 'primary' : ''}
               data-testid="prs-claude-action-rereview"
               disabled={busy || Boolean(rereviewBlock)}
+              aria-describedby={rereviewReason ? `${reasonId}-rereview` : undefined}
               onClick={requestRereview}
             >
               Re-review
             </Button>
-            {rereviewBlock && (
-              <span className="claude-action-hint" data-testid="prs-claude-rereview-hint">
-                {REASON_TEXT[rereviewBlock] ?? 'Re-review cannot be sent right now.'}
-              </span>
-            )}
-            {resentAt && (
-              <span className="claude-action-hint" data-testid="prs-claude-rereview-at">
-                Last re-review requested {new Date(resentAt).toLocaleString()}.
-              </span>
-            )}
           </li>
         </ul>
-        <p className="claude-note" role="status">
-          {busy ? busyText : resultText}
-        </p>
+        {/* Why an action is off, one line (a reason both share is said once; the other stays for
+            assistive tech), then when the last re-review was asked for. */}
+        <ul className="claude-reasons">
+          {reasons.map(({ key, text, names, quiet, testId }) => (
+            <li key={key} className={quiet ? 'sr-only' : undefined}>
+              <span className="claude-reason-step">{names.join(' · ')}</span>
+              <span id={`${reasonId}-${key}`} data-testid={testId}>
+                {text}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {resentAt && (
+          <p className="claude-note" data-testid="prs-claude-rereview-at">
+            {`Last re-review requested ${stampOf(resentAt)}.`}
+          </p>
+        )}
+        <div className="claude-flash">
+          <p className="claude-note" role="status">
+            {busy ? busyText : resultText}
+          </p>
+          {resultText && !busy && <DismissButton onClick={() => setResultText('')} />}
+        </div>
         {error && (
           <p className="claude-error" role="alert" data-testid="prs-claude-error">
             {error}

@@ -230,7 +230,11 @@ test('ClaudePlaceholderDialog keeps the native shell and adds only review launch
   assert.match(dialog, /data-testid="prs-claude-dialog-body"/);
   assert.match(dialog, /Start code review/);
   assert.match(dialog, /pr-review-transact/);
-  assert.match(dialog, /claudePhrase/);
+  assert.match(
+    dialog,
+    /StatePill/,
+    'the state is the shared pill, which words it with claudePhrase',
+  );
   assert.match(dialog, /disabled=/);
   assert.equal(
     (dialog.match(/<(?:Button|button)\b/g) ?? []).length,

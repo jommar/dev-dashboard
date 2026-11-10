@@ -551,8 +551,14 @@ restarts the countdown. New PR/review evidence moves cards automatically in eith
 direction while preserving scroll and focus. A failed refresh labels the retained
 snapshot as the last successful update, not current progress.
 
-The card's **Claude** button opens a review dialog with **Start code review**,
-review-session status, launch/error feedback and **Close**. The PR icon has no
+The card's **Claude** button opens a review dialog that shares the My Tickets dialog's look: the
+key and summary with the review state as a pill in the header, then **Start code review** and
+**Re-review** side by side, launch/error feedback and **Close**. There is one filled button by
+state: **Start code review** while there is no review, **Re-review** once a review session exists
+and can take a message (then starting another review is a quiet button named **Start new review**,
+with the same behaviour); while the review works both are off and the reason is one line. A message
+about a send has a **×** and clears once the review stops working. After a re-review, `Last
+re-review requested <time>` shows as quiet text. The PR icon has no
 hover/focus tooltip but retains the accessible name `Claude code review for <KEY>`;
 My Tickets tooltips are unchanged. The same Start control handles first review and
 re-review through the existing [Claude launcher](#code-review), independently of
@@ -1087,13 +1093,25 @@ label and tooltip read `Claude: <state word>`.
 The icon shows the ticket's current phase, the one launched last. Grooming does not count: it
 shows only for a ticket with no workflow record, then with the same four looks, from the groom
 session's own state, and its label and tooltip read `Claude grooming: <phrase>`. The dialog opens
-from it as a native modal: the ticket key and summary, the state word (workflow only), then the
-two phase rows and the **Groom ticket** row, each with its run button and its own **Go to
-session** button side by side (they stack at 480px wide and
-below). A disabled button says why in a line under its row, for example
-`A Claude session is already running for this ticket.` or `No session to join`. When the state is
-`plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows under the
-Implement row, because starting it is your approval.
+from it as a native modal. The header holds the ticket key and summary and the state as a pill (a
+mark and a word, never colour alone; workflow state only). The body opens with the workflow as a
+strip of three steps in order, **Investigate and plan**, **Approve plan**, **Implement plan** (one
+above the other below 560px wide). Each step shows its state word (`Ready`, `Running`, `Waiting`,
+`Plan ready`, `Approved 7:39 AM`, ...) over a rail that takes the state's colour, and its one
+button. Only the step to act on now has the primary (filled) button, so there is never more than
+one; once a plan exists and is approved, **Investigate and plan** becomes a quiet outlined re-run
+and **Implement plan** is the primary. **Approve** is a done step (a check and the time) rather
+than a disabled button once approved. A step that has a session shows a small **Go to session**
+chip under its button; a step with none shows no chip and no text about it. Why a step is off is one
+line under the strip (`Approve the plan first.`), and a reason that two steps share is said once;
+while a session works or the status is unavailable the pill and the steps already say so, so those
+lines are only for screen readers (each button points at its reason with `aria-describedby`). When
+the state is `plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows
+in the Implement step, because starting it is your approval. **Groom ticket** sits apart under a
+hairline, labelled `Independent`, with its note and, once it has a session, its own chip. The
+outcome of an approval or a save is a short inline message beside what caused it, with a **×** to
+dismiss it; it also clears by itself once the ticket stops working, so it never outlives the state
+it described.
 
 When the planning session asked questions, the dialog also shows a reminder that nothing is sent
 to the session until every question has an answer, and the questions as a numbered list. Each has
@@ -1105,13 +1123,14 @@ have not saved does not count. The footer is pinned below the scrolling body, so
 is on screen without scrolling. At its left is **Prompts**, which opens the prompt editor (see
 [Custom prompts](#custom-prompts)); it is there whether or not the ticket has questions, so with
 none the footer holds **Prompts** and **Close**. With questions it also holds the count
-(`N of M answered`), the line saying what the last save did and **Save answers**.
-Under the questions, **Resend answers** sends the saved answers to the session again even when
-nothing changed (for a send that never arrived; see
+(`N of M answered`), the line saying what the last save did and **Save answers**, the one filled
+button there. The questions are cards under a heading with the count, a slim progress bar and
+**Resend answers**, which sends the saved answers to the session again even when nothing changed
+(for a send that never arrived; see
 [Saving and sending answers](#saving-and-sending-answers)); it is off while you have unsaved edits
-and while a session works. Between the phase rows and the questions, **Approve plan** is open only
-once the planning session has marked the plan `done` (see [Approving the plan](#approving-the-plan));
-it says why when it is off, and reads `Approved` with the time afterwards.
+and while a session works. **Approve plan** is open only once the planning session has marked the
+plan `done` (see [Approving the plan](#approving-the-plan)); it says why when it is off, and the
+step reads `Approved` with the time afterwards.
 **Save answers** saves only the answers you changed
 and, when every question has one, sends them to the session (see
 [Saving and sending answers](#saving-and-sending-answers)). It is enabled when you changed an
@@ -1129,7 +1148,7 @@ strings, built only from ids that pass a pattern check and never from listing te
 | ------------------------------------------------- | ----------------------------------------------- |
 | Has a process (live, busy or idle), or is blocked | `claude attach <id>` (the 8-character short id) |
 | Finished, with no process                         | `cd ~/pathwise && claude --resume <sessionId>`  |
-| Never launched, not listed, or its id fails check | Disabled, with `No session to join`             |
+| Never launched, not listed, or its id fails check | No chip is shown                                |
 
 The resume string starts with `cd ~/pathwise &&` because a resumed conversation is found from the
 directory it started in; `claude attach` needs no `cd`. When the browser refuses the clipboard

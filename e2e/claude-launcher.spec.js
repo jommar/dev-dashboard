@@ -170,12 +170,12 @@ test('scenario 22: the icon opens a dialog with its four items and Escape closes
   await expect(dialog.getByTestId('claude-action-hint-implement')).toContainText(
     'Run Investigate and plan first',
   );
+  // With no session there is nothing to join: no Go to session chip, and no line about its absence.
   for (const phase of ['investigate', 'implement']) {
-    await expect(dialog.getByTestId(`claude-action-goto-${phase}`)).toBeDisabled();
-    await expect(dialog.getByTestId(`claude-action-hint-goto-${phase}`)).toContainText(
-      'No session to join',
-    );
+    await expect(dialog.getByTestId(`claude-action-goto-${phase}`)).toHaveCount(0);
+    await expect(dialog.getByTestId(`claude-action-hint-goto-${phase}`)).toHaveCount(0);
   }
+  await expect(dialog.getByText('No session to join')).toHaveCount(0);
   // With no questions the footer holds Prompts, on the left, and Close, and nothing else.
   const foot = dialog.locator('.claude-dialog-foot');
   await expect(foot.getByRole('button')).toHaveCount(2);
@@ -386,7 +386,7 @@ test('scenario 26: Go to session falls back to a read-only field when the clipbo
   expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes)).toEqual([]);
 });
 
-test('scenario 26: Go to session is disabled when the ticket has no session to join', async ({
+test('scenario 26: Go to session is left out when the ticket has no session to join', async ({
   page,
   dashboard,
 }) => {
@@ -395,11 +395,10 @@ test('scenario 26: Go to session is disabled when the ticket has no session to j
   });
   const dialog = await openDialog(page);
   for (const phase of ['investigate', 'implement']) {
-    await expect(dialog.getByTestId(`claude-action-goto-${phase}`)).toBeDisabled();
-    await expect(dialog.getByTestId(`claude-action-hint-goto-${phase}`)).toContainText(
-      'No session to join',
-    );
+    await expect(dialog.getByTestId(`claude-action-goto-${phase}`)).toHaveCount(0);
+    await expect(dialog.getByTestId(`claude-action-hint-goto-${phase}`)).toHaveCount(0);
   }
+  await expect(dialog.getByText('No session to join')).toHaveCount(0);
 });
 
 test('scenario 27: the icon follows the session by polling, with no reload and the scroll kept', async ({
@@ -688,7 +687,7 @@ test('scenario 46: while Investigate and plan runs, Implement plan says so and G
     'Investigate and plan is still running.',
   );
   await expect(dialog.getByTestId('claude-action-goto-investigate')).toBeEnabled();
-  await expect(dialog.getByTestId('claude-action-goto-implement')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-goto-implement')).toHaveCount(0);
 });
 
 test('scenario 47: while Implement plan runs, Investigate and plan says so and Implement plan keeps the running hint', async ({
@@ -1005,53 +1004,26 @@ test('scenario 52: both Go to session items work at once and each copies its own
   ]);
 });
 
-// Each phase is one row: its run button and its own Go to session button, side by side on a wide
-// screen and stacked on a phone, with that row's hints on lines of their own under the buttons (the
-// run hint, then the plan path, then the Go to session hint).
+// The workflow is one strip of three steps in order (Investigate and plan, Approve plan, Implement
+// plan): side by side on a wide screen, one above the other on a phone. Each step holds its state
+// word, its one button and, only when it has a session, its Go to session chip under the button; the
+// reasons for what is off are lines under the whole strip, and the plan path stays in its step.
 for (const [width, stacked] of [
   [1440, false],
   [390, true],
 ]) {
-  test(`scenario 53: each phase row holds its run and Go to session buttons with the hints under them at ${width}px`, async ({
+  test(`scenario 53: the workflow strip holds each step's button, chip and note, with the reasons under it at ${width}px`, async ({
     page,
     dashboard,
   }) => {
     await page.setViewportSize({ width, height: 900 });
     await openBoard(page, dashboard, {
       [KEY]: claudeEntry('working', 'running', { goTo: sessions(ATTACH) }),
-      'TAP-9002': claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: sessions(RESUME) }),
+      'TAP-9002': claudeEntry('done', 'plan_ready', {
+        flags: PLAN_FINISHED,
+        goTo: sessions(RESUME),
+      }),
     });
-
-    // A row's buttons share a line when wide and sit one above the other when narrow; the lower edge
-    // of the two is where its hints may start.
-    const buttonsOf = async (row, run, goTo) => {
-      const runBox = await row.getByTestId(run).boundingBox();
-      const goBox = await row.getByTestId(goTo).boundingBox();
-      if (stacked) {
-        expect(goBox.y, `${goTo} is below ${run}`).toBeGreaterThanOrEqual(
-          runBox.y + runBox.height - 1,
-        );
-      } else {
-        const centre = ({ y, height }) => y + height / 2;
-        expect(
-          Math.abs(centre(goBox) - centre(runBox)),
-          `${goTo} is on the line of ${run}`,
-        ).toBeLessThanOrEqual(4);
-        expect(goBox.x, `${goTo} is right of ${run}`).toBeGreaterThanOrEqual(
-          runBox.x + runBox.width - 1,
-        );
-      }
-      return Math.max(runBox.y + runBox.height, goBox.y + goBox.height);
-    };
-    // Each hint, in the order given, is in the row, under the buttons and under the one before.
-    const hintsUnder = async (row, bottom, ids) => {
-      let edge = bottom;
-      for (const id of ids) {
-        const box = await row.getByTestId(id).boundingBox();
-        expect(box.y, `${id} is under what comes before it`).toBeGreaterThanOrEqual(edge - 1);
-        edge = box.y + box.height;
-      }
-    };
     const noOverflow = async (dialog) => {
       const body = dialog.locator('.claude-dialog-body');
       expect(await body.evaluate((box) => box.scrollWidth - box.clientWidth)).toBeLessThanOrEqual(
@@ -1059,53 +1031,81 @@ for (const [width, stacked] of [
       );
       const box = await dialog.boundingBox();
       expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+    };
+    // The three steps share a top edge side by side, or stack in workflow order on a phone.
+    const stepsInOrder = async (dialog) => {
+      const steps = dialog.locator('.claude-steps > li');
+      await expect(steps).toHaveCount(3);
+      const boxes = [];
+      for (let index = 0; index < 3; index += 1) boxes.push(await steps.nth(index).boundingBox());
+      for (const [before, after] of [
+        [boxes[0], boxes[1]],
+        [boxes[1], boxes[2]],
+      ]) {
+        if (stacked)
+          expect(after.y, 'the next step is below').toBeGreaterThanOrEqual(
+            before.y + before.height - 1,
+          );
+        else {
+          expect(Math.abs(after.y - before.y), 'the steps share a top edge').toBeLessThanOrEqual(1);
+          expect(after.x, 'the next step is to the right').toBeGreaterThanOrEqual(
+            before.x + before.width - 1,
+          );
+        }
+      }
+      return steps;
     };
 
+    // Investigate and plan runs: its step holds the run button and, under it, the join chip. The
+    // other two steps have no session, so no chip, and the reasons are for assistive tech only.
     let dialog = await openDialog(page);
-    const rows = dialog.locator('.claude-actions > li');
-    await expect(rows).toHaveCount(3);
-    const [investigate, implement] = [rows.nth(0), rows.nth(1)];
-    for (const [row, phase] of [
-      [investigate, 'investigate'],
-      [implement, 'implement'],
-    ]) {
-      await expect(row.getByTestId(`claude-action-${phase}`)).toBeVisible();
-      await expect(row.getByTestId(`claude-action-goto-${phase}`)).toBeVisible();
-    }
-    // Investigate and plan runs: Investigate has its run hint, Implement its run hint and no session.
-    const investigateBottom = await buttonsOf(
-      investigate,
-      'claude-action-investigate',
-      'claude-action-goto-investigate',
+    let steps = await stepsInOrder(dialog);
+    const [investigate, approve, implement] = [steps.nth(0), steps.nth(1), steps.nth(2)];
+    await expect(investigate).toHaveAttribute('data-status', 'running');
+    await expect(investigate.getByTestId('claude-action-investigate')).toBeVisible();
+    await expect(approve.getByTestId('claude-approve')).toBeVisible();
+    await expect(implement.getByTestId('claude-action-implement')).toBeVisible();
+    const run = await investigate.getByTestId('claude-action-investigate').boundingBox();
+    const chip = await investigate.getByTestId('claude-action-goto-investigate').boundingBox();
+    if (stacked)
+      expect(
+        chip.x + chip.width,
+        'on a phone the chip sits left of the run button',
+      ).toBeLessThanOrEqual(run.x + 1);
+    else
+      expect(chip.y, 'the chip is under the run button').toBeGreaterThanOrEqual(
+        run.y + run.height - 1,
+      );
+    await expect(approve.getByTestId('claude-action-goto-approve')).toHaveCount(0);
+    await expect(implement.getByTestId('claude-action-goto-implement')).toHaveCount(0);
+    // The reason is in the page for assistive tech, but takes no room while the pill says it all.
+    const quiet = await dialog
+      .getByTestId('claude-action-hint-implement')
+      .evaluate((hint) => hint.closest('li').getBoundingClientRect().width);
+    expect(quiet, 'visually hidden while a session works').toBeLessThanOrEqual(1);
+    await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(
+      'Investigate and plan is still running.',
     );
-    const implementBottom = await buttonsOf(
-      implement,
-      'claude-action-implement',
-      'claude-action-goto-implement',
-    );
-    await hintsUnder(investigate, investigateBottom, ['claude-action-hint-investigate']);
-    await expect(investigate.getByTestId('claude-action-hint-goto-investigate')).toHaveCount(0);
-    await hintsUnder(implement, implementBottom, [
-      'claude-action-hint-implement',
-      'claude-action-hint-goto-implement',
-    ]);
     await noOverflow(dialog);
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
 
-    // Plan ready: the plan path sits under the Implement row's buttons, above its Go to session hint.
+    // Plan ready: Approve is the step to act on and Implement waits for it. Its reason is one line
+    // under the strip; the plan path sits in the Implement step; the plan's own step has the chip.
     dialog = await openDialog(page, 'TAP-9002');
-    const planRow = dialog.locator('.claude-actions > li').nth(1);
-    const planBottom = await buttonsOf(
-      planRow,
-      'claude-action-implement',
-      'claude-action-goto-implement',
+    steps = await stepsInOrder(dialog);
+    await expect(steps.nth(1)).toHaveAttribute('aria-current', 'step');
+    await expect(steps.nth(1).getByTestId('claude-approve')).toHaveClass(/\bprimary\b/);
+    await expect(steps.nth(2).getByTestId('claude-plan-hint')).toBeVisible();
+    await expect(steps.nth(0).getByTestId('claude-action-goto-investigate')).toBeVisible();
+    const strip = await dialog.locator('.claude-steps').boundingBox();
+    const reason = await dialog.getByTestId('claude-action-hint-implement').boundingBox();
+    expect(reason.y, 'the reason is under the strip').toBeGreaterThanOrEqual(
+      strip.y + strip.height - 1,
     );
-    await hintsUnder(planRow, planBottom, [
-      'claude-plan-hint',
-      'claude-action-hint-goto-implement',
-    ]);
-    await expect(planRow.getByTestId('claude-action-hint-implement')).toHaveCount(0);
+    await expect(dialog.getByTestId('claude-action-hint-implement')).toHaveText(NOT_APPROVED);
+    await expect(steps.nth(2).getByTestId('claude-action-hint-implement')).toHaveCount(0);
     await noOverflow(dialog);
   });
 }
@@ -1205,10 +1205,14 @@ test('scenario 55: Approve is open only for a plan the session marked done, and 
   await expect(dialog.getByTestId('claude-approve-result')).toHaveText(
     'Approval sent. Claude is checking the plan.',
   );
-  await expect(approve).toHaveText('Approved');
-  await expect(approve).toBeDisabled();
+  // Approving is done: the step says so (a check and the time) instead of a disabled button, and
+  // Implement plan becomes the one primary button.
+  await expect(approve).toHaveCount(0);
+  const approvedStep = dialog.locator('.claude-step[data-step="approve"]');
+  await expect(approvedStep).toHaveAttribute('data-status', 'done');
   await expect(dialog.getByTestId('claude-approved-note')).toContainText('Approved');
   await expect(dialog.getByTestId('claude-action-implement')).toBeEnabled();
+  await expect(dialog.getByTestId('claude-action-implement')).toHaveClass(/\bprimary\b/);
   expect(bodiesTo(dashboard, '/api/claude/approve')).toEqual([{ key: KEY }]);
   expect(bodiesTo(dashboard, '/api/claude/launch')).toEqual([]);
 });
@@ -1289,4 +1293,129 @@ test('scenario 56: Resend answers is off while a session works', async ({ page, 
     'A Claude session is already running for this ticket.',
   );
   await expect(dialog.getByTestId('claude-approve')).toBeDisabled();
+});
+
+// ---- the redesigned dialog: one primary, a done Approve step, messages that clear ----
+
+const focusOrder = async (page, until) => {
+  const seen = [];
+  for (let step = 0; step < 20; step += 1) {
+    const id = await page.evaluate(() => document.activeElement?.dataset?.testid ?? null);
+    seen.push(id);
+    if (id === until) break;
+    await page.keyboard.press('Tab');
+  }
+  return seen;
+};
+
+test('scenario 57: an approved plan has one primary button, Implement plan, and a done Approve step', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('done', 'plan_ready', {
+      flags: PLAN_DONE,
+      approvedAt: '2026-11-10T07:39:13.000Z',
+      goTo: sessions(RESUME),
+      questions: [claudeQuestion('q1', Q1, 'Portage-backend')],
+    }),
+  });
+  const dialog = await openDialog(page);
+  const steps = dialog.locator('.claude-steps > li');
+
+  // Exactly one primary in the workflow, and it is the step to act on.
+  await expect(dialog.locator('.claude-steps .btn.primary')).toHaveCount(1);
+  await expect(dialog.getByTestId('claude-action-implement')).toHaveClass(/\bprimary\b/);
+  await expect(steps.nth(2)).toHaveAttribute('aria-current', 'step');
+  await expect(dialog.getByTestId('claude-plan-hint')).toHaveText(
+    '~/pathwise/.orchestrator/tap-9001/02-plan.md',
+  );
+  // Re-running Investigate and plan is a quiet secondary: still enabled, not primary.
+  const investigate = dialog.getByTestId('claude-action-investigate');
+  await expect(investigate).toBeEnabled();
+  await expect(investigate).not.toHaveClass(/\bprimary\b/);
+  await expect(investigate).toHaveClass(/subtle/);
+  // Approve is a done step with a check and the time, not a button, and nothing else is stranded.
+  await expect(steps.nth(1)).toHaveAttribute('data-status', 'done');
+  await expect(dialog.getByTestId('claude-approve')).toHaveCount(0);
+  await expect(dialog.getByTestId('claude-approved-note')).toContainText('Approved');
+  await expect(dialog.getByTestId('claude-approve-result')).toHaveText('');
+  // The header pill says the state in words, with a mark.
+  const pill = dialog.getByTestId('claude-dialog-state');
+  await expect(pill).toHaveText('plan ready');
+  await expect(pill).toHaveAttribute('role', 'status');
+  await expect(pill.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+});
+
+test('scenario 57: tab order follows the page: steps, session chip, Groom, answers, then the footer', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('done', 'plan_ready', {
+      flags: PLAN_DONE,
+      goTo: sessions(RESUME),
+      questions: [claudeQuestion('q1', Q1, 'Portage-backend')],
+    }),
+  });
+  await openDialog(page);
+
+  expect(await focusOrder(page, 'claude-dialog-close')).toEqual([
+    'claude-action-investigate',
+    'claude-action-goto-investigate',
+    'claude-action-implement',
+    'claude-action-groom',
+    'claude-questions-resend',
+    'claude-question-q1',
+    'claude-prompts-open',
+    'claude-dialog-close',
+  ]);
+  // Escape closes it and the icon gets focus back.
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
+  await expect(iconOf(page)).toBeFocused();
+});
+
+test('scenario 57: a send message can be dismissed, and clears once the ticket stops working', async ({
+  page,
+  dashboard,
+}) => {
+  const now = Date.now();
+  await page.clock.install({ time: now - 60_000 });
+  await page.clock.pauseAt(now);
+  const done = (extra = {}) =>
+    claudeEntry('done', 'plan_ready', {
+      flags: PLAN_DONE,
+      goTo: sessions(ATTACH),
+      questions: [claudeQuestion('q1', Q1, 'Portage-backend')],
+      ...extra,
+    });
+  await openBoard(page, dashboard, { [KEY]: done() });
+  const dialog = await openDialog(page);
+  const result = dialog.getByTestId('claude-send-result');
+  const dismiss = dialog.getByRole('button', { name: 'Dismiss message' });
+  await expect(dismiss).toHaveCount(0);
+
+  // A message has its own ×, and the region's text is exactly the message.
+  await dialog.getByTestId('claude-questions-resend').click();
+  await expect(result).toHaveText(SENT_LINE);
+  await dismiss.click();
+  await expect(result).toHaveText('');
+  await expect(dismiss).toHaveCount(0);
+
+  // Another message stays while the ticket works, and goes once it is ready again.
+  await dialog.getByTestId('claude-questions-resend').click();
+  await expect(result).toHaveText(SENT_LINE);
+  dashboard.data.claude.tickets[KEY] = claudeEntry('working', 'running', {
+    flags: PLAN_DONE,
+    goTo: sessions(ATTACH),
+    questions: [claudeQuestion('q1', Q1, 'Portage-backend')],
+  });
+  await page.clock.runFor(15_000);
+  await expect(dialog.getByTestId('claude-dialog-state')).toHaveText('working');
+  await expect(result).toHaveText(SENT_LINE);
+  dashboard.data.claude.tickets[KEY] = done();
+  await page.clock.runFor(15_000);
+  await expect(dialog.getByTestId('claude-dialog-state')).toHaveText('plan ready');
+  await expect(result).toHaveText('');
 });

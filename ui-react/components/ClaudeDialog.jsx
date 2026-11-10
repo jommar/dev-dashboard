@@ -1,21 +1,33 @@
 // ClaudeDialog.jsx — the one Claude menu for My Tickets, opened by a card's icon. A native modal
 // <dialog> rather than a popup in the card: cards and columns clip overflow, and a card that
 // remounts would lose its state. The panel mounts it only while a ticket is open (keyed by the
-// ticket), so its drafts, errors and copy status begin empty each time. The body holds one row per
-// phase (its run button and its Go to session button side by side, then what a disabled button
-// says, in words, under them) and, when the planning session asked any, the numbered questions as
-// auto-growing text boxes. The footer stays in view beside the body's scroll: it holds Prompts
-// (on the left), Save answers (linked to the questions form by its id), the progress, the result of
-// the last save, and Close. Between the phase rows and the questions sits Approve plan, open only
-// once the plan is marked done: it tells the planning session the plan is approved, and Implement
-// plan opens after it. Under the questions, Resend answers sends the saved answers again, even
-// unchanged. Prompts swaps the body for the prompt editor, still in this one dialog:
-// the footer then holds Back (the same button, so it keeps focus) and Close, and everything this
-// component holds (answer drafts, copy status, the last send result) is there when Back returns.
+// ticket), so its drafts, errors and copy status begin empty each time.
+// The header holds the key and summary and the state as a pill (a mark and a word). The body opens
+// with the workflow as three steps in order, Investigate and plan, Approve plan, Implement plan
+// (ClaudeSteps.jsx says where each stands): each step is its state word, its one button and, when it
+// has a session, a "Go to session" chip. Only the step to act on now has the primary button; a plan
+// that exists and is approved makes Investigate and plan a quiet re-run, and Approve becomes a done
+// step ("Approved 7:39 AM") rather than a disabled button. Why a step is off is one line under the
+// strip (a reason that two steps share is said once). A send's outcome is a short inline message
+// beside its action that can be dismissed and clears once the ticket stops working. Groom ticket sits
+// apart, as the independent action it is. When the planning session asked questions they follow as
+// cards, with the progress, the bar and Resend answers (sends the saved answers again, even
+// unchanged) above them. The footer stays in view beside the body's scroll: Prompts (on the left),
+// the progress and the last save's result, Save answers (linked to the questions form by its id) and
+// Close. Prompts swaps the body for the prompt editor, still in this one dialog: the footer then
+// holds Back (the same button, so it keeps focus) and Close, and everything this component holds
+// (answer drafts, copy status, the last send result) is there when Back returns.
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
-import { claudePhrase } from './ClaudeIcon.jsx';
 import { ClaudePromptsEditor } from './ClaudePromptsEditor.jsx';
+import {
+  BUTTON_CLASS,
+  DismissButton,
+  SessionChip,
+  StatePill,
+  StatusMark,
+  workflowSteps,
+} from './ClaudeSteps.jsx';
 import { copyText } from '../../ui/dom.js';
 
 const INVESTIGATE = 'investigate-and-plan';
@@ -76,13 +88,6 @@ function sendText({ send, ticket }) {
   return SKIPPED_TEXT[send?.reason];
 }
 
-// The full name of each Go to session button (its text is just "Go to session"), by `goTo` side.
-const GO_TO_LABEL = {
-  investigate: 'Go to investigate and plan session',
-  implement: 'Go to implement plan session',
-  groom: 'Go to groom ticket session',
-};
-
 // A ticket the server lists nothing for has not been started.
 const NOT_STARTED = {
   questions: [],
@@ -98,39 +103,25 @@ const NOT_STARTED = {
   },
 };
 
+// A path that may wrap, but only after a slash: a break inside a name reads as two names.
+const breakAtSlashes = (path) =>
+  path.split('/').flatMap((part, index) => (index ? ['/', <wbr key={index} />, part] : [part]));
+
 const failureText = ({ errors, error }) =>
   REASON_TEXT[errors?.[0]] ?? error ?? 'The Claude request failed.';
 
-// One phase: its run button and its Go to session button side by side, then the hints under both
-// (why the run button is off, then whatever the row's `children` add, then why there is no session).
-function ClaudeRow({ phase, label, disabled, hint, onRun, noSession, onGoTo, children }) {
-  return (
-    <li className="claude-action">
-      <Button data-testid={`claude-action-${phase}`} disabled={disabled} onClick={onRun}>
-        {label}
-      </Button>
-      <Button
-        data-testid={`claude-action-goto-${phase}`}
-        aria-label={GO_TO_LABEL[phase]}
-        disabled={noSession}
-        onClick={onGoTo}
-      >
-        Go to session
-      </Button>
-      {hint && (
-        <span className="claude-action-hint" data-testid={`claude-action-hint-${phase}`}>
-          {hint}
-        </span>
-      )}
-      {children}
-      {noSession && (
-        <span className="claude-action-hint" data-testid={`claude-action-hint-goto-${phase}`}>
-          No session to join
-        </span>
-      )}
-    </li>
-  );
-}
+const STEP_LABEL = {
+  investigate: 'Investigate and plan',
+  approve: 'Approve plan',
+  implement: 'Implement plan',
+};
+// The shorter name a reason line leads with.
+const STEP_SHORT = { investigate: 'Investigate', approve: 'Approve', implement: 'Implement' };
+const HINT_TESTID = {
+  investigate: 'claude-action-hint-investigate',
+  approve: 'claude-approve-hint',
+  implement: 'claude-action-hint-implement',
+};
 
 export function ClaudeDialog({
   ticketKey,
@@ -154,6 +145,7 @@ export function ClaudeDialog({
   const pressedBackdrop = useRef(false);
   const titleId = useId();
   const formId = useId();
+  const hintId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [drafts, setDrafts] = useState({});
@@ -188,6 +180,18 @@ export function ClaudeDialog({
     const focused = document.activeElement;
     if (!focused || focused === document.body || focused.disabled) closeButton.current?.focus();
   }, [busy, blocks.investigate, blocks.implement, blocks.answer, blocks.approve, blocks.groom]);
+
+  // A send's message is about the session that was working on it: once the ticket stops working it
+  // is out of date ("Approval sent. Claude is checking the plan." under a plan that is ready), so it
+  // goes. It can also be dismissed, and the next action replaces it.
+  const lastState = useRef(entry.state);
+  useEffect(() => {
+    if (lastState.current === 'working' && entry.state !== 'working') {
+      setSendResult('');
+      setApproveResult('');
+    }
+    lastState.current = entry.state;
+  }, [entry.state]);
 
   const run = async (action) => {
     setBusy(true);
@@ -239,6 +243,42 @@ export function ClaudeDialog({
   // A status for a command the poll has since replaced is not shown.
   const copied = copy?.command === goTo[copy?.side]?.command ? copy : null;
 
+  const steps = workflowSteps(entry);
+  const runs = {
+    investigate: () => run(() => launch(ticketKey, INVESTIGATE)),
+    approve: approvePlan,
+    implement: () => run(() => launch(ticketKey, IMPLEMENT)),
+  };
+  const blockOf = {
+    investigate: blocks.investigate,
+    approve: entry.flags?.approved ? null : blocks.approve,
+    implement: blocks.implement,
+  };
+
+  // Why each off step is off, one line each under the strip. A reason two steps share is said once
+  // (the later one stays for assistive tech), and while a session works or the status is unavailable
+  // the pill and the steps already say so, so the lines are for assistive tech only.
+  const held = entry.state === 'working' || entry.state === 'unknown';
+  const reasons = [];
+  for (const { phase } of steps) {
+    const text = REASON_TEXT[blockOf[phase]];
+    if (!text) continue;
+    const lead = reasons.find((reason) => reason.text === text);
+    if (lead) lead.names.push(STEP_SHORT[phase]);
+    reasons.push({ phase, text, names: [STEP_SHORT[phase]], quiet: held || Boolean(lead) });
+  }
+  const describedBy = (phase) => (REASON_TEXT[blockOf[phase]] ? `${hintId}-${phase}` : undefined);
+
+  // The Resend hint is for what the lines under the strip do not already say.
+  const resendText = REASON_TEXT[blocks.resend];
+  const resendShown =
+    dirty ||
+    (Boolean(resendText) &&
+      !held &&
+      !reasons.some((reason) => !reason.quiet && reason.text === resendText));
+  const answered = questions.filter(({ answer: saved }) => saved?.trim()).length;
+  const liveText = Boolean(approveResult) || Boolean(copied);
+
   return (
     <dialog
       ref={dialogRef}
@@ -257,9 +297,7 @@ export function ClaudeDialog({
         <h3 className="claude-dialog-title" id={titleId} data-testid="claude-dialog-title">
           <span className="claude-dialog-key">{ticketKey}</span> {summary}
         </h3>
-        <p className="claude-dialog-state" role="status" data-testid="claude-dialog-state">
-          {claudePhrase(listed)}
-        </p>
+        <StatePill entry={listed} data-testid="claude-dialog-state" />
       </header>
 
       <div className="claude-dialog-body">
@@ -267,83 +305,96 @@ export function ClaudeDialog({
           <ClaudePromptsEditor />
         ) : (
           <>
-            <ul className="claude-actions">
-              <ClaudeRow
-                phase="investigate"
-                label="Investigate and plan"
-                disabled={busy || Boolean(blocks.investigate)}
-                hint={REASON_TEXT[blocks.investigate]}
-                onRun={() => run(() => launch(ticketKey, INVESTIGATE))}
-                noSession={!goTo.investigate}
-                onGoTo={() => copyCommand('investigate')}
-              />
-              <ClaudeRow
-                phase="implement"
-                label="Implement plan"
-                disabled={busy || Boolean(blocks.implement)}
-                hint={REASON_TEXT[blocks.implement]}
-                onRun={() => run(() => launch(ticketKey, IMPLEMENT))}
-                noSession={!goTo.implement}
-                onGoTo={() => copyCommand('implement')}
-              >
-                {/* Approving the plan unlocks this, so where the plan is stays in view. */}
-                {entry.reason === 'plan_ready' && (
-                  <span className="claude-action-hint" data-testid="claude-plan-hint">
-                    {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`}
+            <ol className="claude-steps" aria-label="Workflow">
+              {steps.map((step) => (
+                <li
+                  key={step.phase}
+                  className="claude-step"
+                  data-step={step.phase}
+                  data-status={step.status}
+                  aria-current={step.current ? 'step' : undefined}
+                >
+                  <p className="claude-step-state">
+                    <StatusMark status={step.status} />
+                    <span
+                      data-testid={
+                        step.phase === 'approve' && entry.flags?.approved
+                          ? 'claude-approved-note'
+                          : `claude-step-state-${step.phase}`
+                      }
+                    >
+                      {step.caption}
+                    </span>
+                  </p>
+                  {/* Approving is done once approved: the step says so instead of a dead button. */}
+                  {!(step.phase === 'approve' && entry.flags?.approved) && (
+                    <Button
+                      className={BUTTON_CLASS[step.variant]}
+                      data-testid={
+                        step.phase === 'approve' ? 'claude-approve' : `claude-action-${step.phase}`
+                      }
+                      disabled={busy || Boolean(blockOf[step.phase])}
+                      aria-describedby={describedBy(step.phase)}
+                      onClick={runs[step.phase]}
+                    >
+                      {STEP_LABEL[step.phase]}
+                    </Button>
+                  )}
+                  {goTo[step.phase] && (
+                    <SessionChip phase={step.phase} onGoTo={() => copyCommand(step.phase)} />
+                  )}
+                  {/* Approving the plan unlocks this, so where the plan is stays in view. */}
+                  {step.phase === 'implement' && entry.reason === 'plan_ready' && (
+                    <span className="claude-step-note" data-testid="claude-plan-hint">
+                      {breakAtSlashes(
+                        `~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/02-plan.md`,
+                      )}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+
+            <ul className="claude-reasons">
+              {reasons.map(({ phase, text, names, quiet }) => (
+                <li key={phase} className={quiet ? 'sr-only' : undefined}>
+                  <span className="claude-reason-step">{names.join(' · ')}</span>
+                  <span id={`${hintId}-${phase}`} data-testid={HINT_TESTID[phase]}>
+                    {text}
                   </span>
-                )}
-              </ClaudeRow>
-              <ClaudeRow
-                phase="groom"
-                label="Groom ticket"
-                disabled={busy || Boolean(blocks.groom)}
-                hint={REASON_TEXT[blocks.groom]}
-                onRun={() => run(() => launch(ticketKey, GROOM))}
-                noSession={!goTo.groom}
-                onGoTo={() => copyCommand('groom')}
-              >
-                <span className="claude-action-hint" data-testid="claude-groom-note">
-                  Works on any ticket, on its own. Needs no plan and changes nothing in Jira until
-                  you say so.
-                </span>
-                {/* Where the result is, once the session has finished. */}
-                {entry.groom?.state === 'done' && (
-                  <span className="claude-action-hint" data-testid="claude-groom-path">
-                    {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/groom.md`}
-                  </span>
-                )}
-              </ClaudeRow>
+                </li>
+              ))}
             </ul>
 
-            {/* The plan session is told the plan is approved; Implement plan opens only after that. */}
-            <div className="claude-action" data-testid="claude-approve-row">
-              <Button
-                data-testid="claude-approve"
-                disabled={busy || Boolean(blocks.approve)}
-                onClick={approvePlan}
-              >
-                {entry.flags?.approved ? 'Approved' : 'Approve plan'}
-              </Button>
-              {blocks.approve && blocks.approve !== 'already_approved' && (
-                <span className="claude-action-hint" data-testid="claude-approve-hint">
-                  {REASON_TEXT[blocks.approve]}
-                </span>
+            {/* The live regions are always rendered, so a screen reader hears their text change
+                rather than appear; with no text they take no room. */}
+            <div className={`claude-live${liveText ? ' has-text' : ''}`}>
+              <div className="claude-flash">
+                <p
+                  className="claude-note claude-send-result"
+                  role="status"
+                  data-testid="claude-approve-result"
+                >
+                  {approveResult}
+                </p>
+                {approveResult && <DismissButton onClick={() => setApproveResult('')} />}
+              </div>
+              <div className="claude-goto" role="status">
+                {copied?.copied && (
+                  <span data-testid={`claude-goto-copied-${copied.side}`}>Copied</span>
+                )}
+                {copied?.copied === false && "Couldn't copy — copy the command manually"}
+              </div>
+              {copied?.copied === false && (
+                <input
+                  className="claude-goto-fallback"
+                  data-testid={`claude-goto-fallback-${copied.side}`}
+                  readOnly
+                  value={copied.command}
+                  aria-label="Session command"
+                  onFocus={(event) => event.currentTarget.select()}
+                />
               )}
-              {entry.flags?.approved && (
-                <span className="claude-action-hint" data-testid="claude-approved-note">
-                  {entry.approvedAt
-                    ? `Approved ${new Date(entry.approvedAt).toLocaleString()}.`
-                    : 'Approved.'}
-                </span>
-              )}
-              {/* Always rendered, so a screen reader hears its text change rather than appear. */}
-              <p
-                className="claude-note claude-send-result"
-                role="status"
-                data-testid="claude-approve-result"
-              >
-                {approveResult}
-              </p>
             </div>
 
             {error && (
@@ -352,23 +403,38 @@ export function ClaudeDialog({
               </p>
             )}
 
-            {/* Always rendered, so a screen reader hears its text change rather than appear. */}
-            <div className="claude-goto" role="status">
-              {copied?.copied && (
-                <span data-testid={`claude-goto-copied-${copied.side}`}>Copied</span>
+            {/* Grooming is not a step: it works on any ticket, on its own. */}
+            <section className="claude-groom" aria-labelledby={`${hintId}-groom`}>
+              <div className="claude-groom-main">
+                <span className="claude-groom-title" id={`${hintId}-groom`}>
+                  Independent
+                </span>
+                <Button
+                  className="subtle claude-groom-run"
+                  data-testid="claude-action-groom"
+                  disabled={busy || Boolean(blocks.groom)}
+                  onClick={() => run(() => launch(ticketKey, GROOM))}
+                >
+                  Groom ticket
+                </Button>
+                {goTo.groom && <SessionChip phase="groom" onGoTo={() => copyCommand('groom')} />}
+              </div>
+              {REASON_TEXT[blocks.groom] && (
+                <span className="claude-action-hint" data-testid="claude-action-hint-groom">
+                  {REASON_TEXT[blocks.groom]}
+                </span>
               )}
-              {copied?.copied === false && "Couldn't copy — copy the command manually"}
-            </div>
-            {copied?.copied === false && (
-              <input
-                className="claude-goto-fallback"
-                data-testid={`claude-goto-fallback-${copied.side}`}
-                readOnly
-                value={copied.command}
-                aria-label="Session command"
-                onFocus={(event) => event.currentTarget.select()}
-              />
-            )}
+              <span className="claude-action-hint" data-testid="claude-groom-note">
+                Works on any ticket, on its own. Needs no plan and changes nothing in Jira until you
+                say so.
+              </span>
+              {/* Where the result is, once the session has finished. */}
+              {entry.groom?.state === 'done' && (
+                <span className="claude-action-hint" data-testid="claude-groom-path">
+                  {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/groom.md`}
+                </span>
+              )}
+            </section>
 
             {entry.reason === 'answers_not_sent' && (
               <p className="claude-note" data-testid="claude-answers-hint">
@@ -383,6 +449,36 @@ export function ClaudeDialog({
                 data-testid="claude-questions"
                 onSubmit={save}
               >
+                <div className="claude-questions-head">
+                  <h4 className="claude-section-title">Questions</h4>
+                  <span className="claude-progress-count" aria-hidden="true">
+                    {answered}/{questions.length}
+                  </span>
+                  <span className="claude-progress" aria-hidden="true">
+                    <span style={{ width: `${(answered / questions.length) * 100}%` }} />
+                  </span>
+                  {/* The saved answers again, even unchanged, for a send that never arrived. */}
+                  <Button
+                    type="button"
+                    className="subtle claude-resend"
+                    data-testid="claude-questions-resend"
+                    disabled={busy || Boolean(blocks.resend) || dirty}
+                    aria-describedby={`${hintId}-resend`}
+                    onClick={resend}
+                  >
+                    Resend answers
+                  </Button>
+                </div>
+                <p
+                  id={`${hintId}-resend`}
+                  className={`claude-note${resendShown ? '' : ' sr-only'}`}
+                  data-testid="claude-resend-hint"
+                >
+                  {dirty
+                    ? 'Save your changes first.'
+                    : (REASON_TEXT[blocks.resend] ??
+                      'Sends the saved answers to the session again, even if unchanged.')}
+                </p>
                 <p className="claude-note">
                   Save as you go. Nothing is sent to the session until every question has an answer.
                 </p>
@@ -439,23 +535,6 @@ export function ClaudeDialog({
                     </li>
                   ))}
                 </ol>
-                {/* The saved answers again, even unchanged, for a send that never arrived. */}
-                <div className="claude-action">
-                  <Button
-                    type="button"
-                    data-testid="claude-questions-resend"
-                    disabled={busy || Boolean(blocks.resend) || dirty}
-                    onClick={resend}
-                  >
-                    Resend answers
-                  </Button>
-                  <span className="claude-action-hint" data-testid="claude-resend-hint">
-                    {dirty
-                      ? 'Save your changes first.'
-                      : (REASON_TEXT[blocks.resend] ??
-                        'Sends the saved answers to the session again, even if unchanged.')}
-                  </span>
-                </div>
               </form>
             )}
           </>
@@ -465,7 +544,7 @@ export function ClaudeDialog({
       <footer className="claude-dialog-foot">
         {/* One button for both views, so the keyboard focus it holds survives the swap. */}
         <Button
-          className="claude-dialog-foot-start"
+          className="subtle claude-dialog-foot-start"
           data-testid={editingPrompts ? 'claude-prompts-back' : 'claude-prompts-open'}
           onClick={() => setEditingPrompts(!editingPrompts)}
         >
@@ -475,20 +554,24 @@ export function ClaudeDialog({
           <>
             <div className="claude-dialog-foot-status">
               <p className="claude-note" data-testid="claude-questions-progress">
-                {`${questions.filter(({ answer: saved }) => saved?.trim()).length} of ${questions.length} answered`}
+                {`${answered} of ${questions.length} answered`}
               </p>
               {/* Always rendered, so a screen reader hears its text change rather than appear. */}
-              <p
-                className="claude-note claude-send-result"
-                role="status"
-                data-testid="claude-send-result"
-              >
-                {sendResult}
-              </p>
+              <div className="claude-flash">
+                <p
+                  className="claude-note claude-send-result"
+                  role="status"
+                  data-testid="claude-send-result"
+                >
+                  {sendResult}
+                </p>
+                {sendResult && <DismissButton onClick={() => setSendResult('')} />}
+              </div>
             </div>
             <Button
               type="submit"
               form={formId}
+              className="primary"
               data-testid="claude-questions-save"
               disabled={busy || Boolean(blocks.answer) || !(dirty || entry.unsent)}
             >

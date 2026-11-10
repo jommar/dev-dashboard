@@ -58,11 +58,14 @@
 }
 
 /* ---- Dialog ---------------------------------------------------------------
-   A flex column so the header and footer stay put while only the body scrolls. Width is
-   vw-capped so it fits a 600px window. */
+   A flex column so the header and footer stay put while only the body scrolls; it never grows past
+   the viewport. Width is capped to the viewport so it fits a phone. Top to bottom: the header (key,
+   summary, state pill), the workflow strip, the reasons for anything that is off, the independent
+   Groom action, then the questions. */
 .claude-dialog {
-  width: min(560px, 92vw);
-  max-height: 85vh;
+  width: min(640px, 94vw);
+  max-height: 90vh;
+  max-height: 90dvh;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -80,36 +83,88 @@
   backdrop-filter: blur(2px);
 }
 .claude-dialog-head {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s2) var(--s3);
   padding: var(--s4) var(--s5);
   border-bottom: 1px solid var(--border);
   background: var(--panel2);
 }
 .claude-dialog-title {
+  flex: 1 1 16rem;
+  min-width: 0;
   margin: 0;
   color: var(--strong);
   font-size: var(--fs-xl);
+  line-height: 1.35;
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 .claude-dialog-key {
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-}
-.claude-dialog-state {
-  margin: var(--s1) 0 0;
+  margin-right: var(--s1);
+  padding: 1px var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
+
+/* The state as a pill: a mark and a word, tinted by tone, so colour is never the only cue. */
+.claude-dialog-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+  margin: 0;
+  padding: 2px var(--s3) 2px var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.claude-dialog-state[data-tone='working'] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+.claude-dialog-state[data-tone='attention'] {
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--border));
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  color: var(--amber);
+}
+.claude-dialog-state[data-tone='done'] {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+  color: var(--green);
+}
+.claude-dialog-state[data-tone='failed'] {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--red);
+}
+.claude-mark {
+  flex: none;
+}
+
 .claude-dialog-body {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--s3);
+  gap: var(--s4);
   min-height: 0;
   padding: var(--s4) var(--s5);
   overflow-y: auto;
 }
-/* Always in view: only the body scrolls. Progress and the last result sit on the left and may wrap;
-   the buttons sit on the right, except the first (Prompts, or Back), which sits on the left. */
+/* Always in view: only the body scrolls. The first button (Prompts, or Back) sits on the left, the
+   progress and the last result after it (they may wrap), then Save answers and Close on the right. */
 .claude-dialog-foot {
   display: flex;
   flex: none;
@@ -130,30 +185,247 @@
   min-width: 0;
 }
 
-/* One row per phase: the run button and its Go to session button side by side (stacked on a phone),
-   then each hint on a line of its own under both. */
-.claude-actions {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
+/* ---- Workflow strip -------------------------------------------------------
+   Three steps in workflow order, each a rail segment (its colour is the step's state, and the word
+   under it says the same), the step's state word, its one button and, when it has a session, the
+   Go to session chip. On a phone the strip is a list of rows: word on the left, button on the right. */
+.claude-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.claude-action {
+.claude-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s2);
+  min-width: 0;
+  padding-top: var(--s3);
+  color: var(--muted);
+}
+.claude-step::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border-strong);
+}
+.claude-step[data-status='done']::before {
+  background: var(--green);
+}
+.claude-step[data-status='ready']::before,
+.claude-step[data-status='running']::before {
+  background: var(--accent);
+}
+.claude-step[data-status='attention']::before {
+  background: var(--amber);
+}
+.claude-step[data-status='done'] {
+  color: var(--green);
+}
+.claude-step[data-status='ready'],
+.claude-step[data-status='running'] {
+  color: var(--accent);
+}
+.claude-step[data-status='attention'] {
+  color: var(--amber);
+}
+.claude-step-state {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.claude-step > .btn {
+  width: 100%;
+  line-height: 1.25;
+}
+.claude-step > .btn:disabled {
+  cursor: not-allowed;
+}
+/* A step that cannot be acted on yet: a dashed outline, so "off" reads as waiting rather than as a
+   broken control. */
+.claude-step[data-status='blocked'] > .btn:disabled {
+  border-style: dashed;
+  background: transparent;
+}
+.claude-step-note {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+/* A quiet button that is still a button: muted text inside a hairline. */
+.claude-step > .btn.subtle:not(.claude-chip),
+.claude-review-action > .btn.subtle,
+.btn.subtle.claude-resend {
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.claude-step > .btn.subtle:not(.claude-chip):hover,
+.claude-review-action > .btn.subtle:hover,
+.btn.subtle.claude-resend:hover {
+  border-color: var(--accent);
+}
+.claude-step > .btn.subtle:not(.claude-chip):disabled,
+.claude-review-action > .btn.subtle:disabled,
+.btn.subtle.claude-resend:disabled {
+  color: var(--muted);
+}
+/* The session chip reads as a link under its step's button, not as another button. */
+.btn.subtle.claude-chip {
+  align-self: flex-start;
+  gap: var(--s1);
+  min-height: 28px;
+  padding: 2px 0;
+  font-size: var(--fs-xs);
+}
+.btn.subtle.claude-chip:hover {
+  color: var(--accent);
+}
+.claude-chip svg {
+  flex: none;
+}
+@media (hover: none) {
+  .btn.subtle.claude-chip {
+    min-height: 44px;
+  }
+}
+
+/* Why a step is off, one line each. */
+.claude-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: calc(var(--s2) * -1) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.claude-reasons:not(:has(li:not(.sr-only))) {
+  margin-top: calc(var(--s4) * -1);
+}
+.claude-reasons li {
+  display: flex;
+  gap: var(--s2);
+}
+.claude-reason-step {
+  flex: none;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* A message about a send: the text and the × beside it. The live regions are always in the body, so
+   with no text they take no room (the negative margin takes back the body's gap). */
+.claude-live {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.claude-live:not(.has-text) {
+  margin-top: calc(var(--s4) * -1);
+}
+.claude-flash {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+.claude-flash .claude-send-result {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-top: 0;
+}
+.claude-dismiss {
+  flex: none;
+  min-height: 24px;
+  padding: 2px var(--s1);
+}
+@media (hover: none) {
+  .claude-dismiss {
+    min-height: 44px;
+    padding: 2px var(--s3);
+  }
+}
+
+/* Groom ticket: independent of the workflow, so it is set apart under a hairline. */
+.claude-groom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--border);
+}
+.claude-groom-main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s1) var(--s3);
 }
+.claude-groom-title {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.claude-groom .btn.subtle.claude-groom-run {
+  border: 1px solid var(--border);
+  padding: 2px var(--s3);
+  color: var(--text);
+}
+.claude-groom .btn.subtle.claude-groom-run:hover {
+  border-color: var(--accent);
+}
 .claude-action-hint {
-  flex: 1 1 100%;
   color: var(--muted);
   font-size: var(--fs-sm);
 }
-@media (max-width: 480px) {
-  .claude-action > button {
-    flex: 1 1 100%;
+@media (max-width: 559px) {
+  .claude-dialog-head,
+  .claude-dialog-body {
+    padding-inline: var(--s4);
+  }
+  .claude-dialog-foot {
+    padding-inline: var(--s4);
+  }
+  .claude-steps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s3);
+  }
+  .claude-step {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    align-items: center;
+    gap: var(--s1) var(--s3);
+  }
+  .claude-step-state {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .claude-step-state:only-child {
+    grid-column: 1 / -1;
+  }
+  .claude-step > .btn:not(.claude-chip) {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+  .claude-step > .claude-chip {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .claude-step > .claude-step-note {
+    grid-column: 1 / -1;
   }
   .claude-dialog-foot-status {
     flex-basis: 100%;
@@ -161,15 +433,43 @@
   }
 }
 
-/* Go to session: the copy status (a live region, so it is always in the body and takes no room
-   while empty), then the command in a field to copy by hand if the copy failed. */
+/* The Pull Requests review dialog: its two actions side by side (stacked on a phone), then the
+   reason one is off or the last re-review under them. */
+.claude-review-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.claude-review-action {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+}
+.claude-review-action > .btn {
+  width: 100%;
+}
+.claude-review-action > .btn:disabled {
+  cursor: not-allowed;
+}
+@media (max-width: 559px) {
+  .claude-review-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Go to session: the copy status (a live region), then the command in a field to copy by hand if
+   the copy failed. */
 .claude-goto {
   margin: 0;
   color: var(--muted);
   font-size: var(--fs-sm);
 }
 .claude-goto:empty {
-  margin-top: calc(var(--s3) * -1);
+  display: none;
 }
 .claude-goto-fallback {
   min-width: 0;
@@ -182,13 +482,44 @@
   font-size: var(--fs-xs);
 }
 
-/* The planning session's questions: a numbered list, one labelled box each. */
+/* The planning session's questions: a heading with the progress and Resend, then a numbered list of
+   cards, one labelled box each. */
 .claude-questions {
   display: flex;
   flex-direction: column;
   gap: var(--s3);
   padding-top: var(--s3);
   border-top: 1px solid var(--border);
+}
+.claude-questions-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s3);
+}
+.claude-section-title {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-md);
+}
+.claude-progress-count {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.claude-progress {
+  flex: 1 1 4rem;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.claude-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--green);
+  transition: width 150ms var(--ease-out);
 }
 .claude-note {
   margin: 0;
@@ -202,7 +533,7 @@
 .claude-question-list {
   display: flex;
   flex-direction: column;
-  gap: var(--s4);
+  gap: var(--s3);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -210,7 +541,11 @@
 .claude-question {
   display: flex;
   flex-direction: column;
-  gap: var(--s1);
+  gap: var(--s2);
+  padding: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
   color: var(--strong);
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
@@ -229,6 +564,8 @@
 }
 .claude-question-head label {
   flex: 1 1 auto;
+  line-height: 1.4;
+  text-wrap: pretty;
 }
 .claude-question-answered {
   display: inline-flex;
@@ -354,7 +691,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .claude-icon {
+  .claude-icon,
+  .claude-progress > span {
     transition: none;
   }
   .claude-icon-ring {

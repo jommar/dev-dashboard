@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Redesigned both Claude dialogs on one visual language (frontend only: no API, route, prompt,
+  state-machine or block-reason change, and every `data-testid` is kept). The My Tickets dialog now
+  has a header with the key and a state pill (mark and word), a three-step workflow strip
+  (Investigate and plan, Approve plan, Implement plan) with one primary button for the step to act
+  on, Approve as a done step (`Approved 7:39 AM`) instead of a disabled button, a quiet re-run for
+  Investigate and plan once a plan is approved, reasons for off steps as one line under the strip
+  (shared reasons said once), a Go to session chip only for a step that has a session (no
+  `No session to join`), Groom ticket set apart as independent, question cards with a progress bar and
+  Resend answers beside it, and send messages that can be dismissed and clear once the ticket stops
+  working. The Pull Requests review dialog gets the same header pill, a single primary (Start code
+  review, or Re-review once a review session exists, when Start becomes `Start new review`), one
+  reason line, no unstyled list, and the same dismissible messages. Shared pieces live in
+  `ClaudeSteps.jsx` (status pill and mark, session chip, dismiss button) and `.btn.primary` in
+  `base.css`. The dialog is 640px wide at most and 90dvh tall, scrolling inside.
+
 - Fixed a ticket reading `unknown / unrecognised_state` (dialog: "Claude status is unavailable", with
   Approve, Resend and Implement all off) after its session was ended with `claude stop`. The CLI lists
   such a session as `state: "stopped"` with `pid: null`; the dashboard now treats `stopped` as a

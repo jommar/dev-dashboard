@@ -348,7 +348,7 @@ test('review launch sends only key/action, disables repeat submission and keeps 
     expect(bodies).toEqual([{ key: 'DEMO-1', phase: 'pr-review-transact' }]);
     release();
     await expect.poll(() => reviewLaunches(dashboard).length).toBe(1);
-    await expect(reviewBody(page)).toContainText(/starting|working|started/i);
+    await expect(page.getByTestId('prs-claude-dialog-state')).toContainText(/starting|working/i);
     await expect(reviewStart(page)).toBeDisabled();
     await expect(page.getByTestId('prs-claude-dialog')).toBeVisible();
     expect(dashboard.data.claude.tickets['DEMO-1']).toMatchObject({
@@ -414,7 +414,8 @@ for (const [state, reason, phrase] of [
     await openReview(page);
     await expect(reviewStart(page)).toBeVisible();
     await expect(reviewStart(page)).toBeDisabled();
-    await expect(reviewBody(page)).toContainText(phrase);
+    await expect(page.getByTestId('prs-claude-dialog-state')).toContainText(phrase);
+    await expect(page.getByTestId('prs-claude-dialog-state')).toHaveAttribute('role', 'status');
     await expect(page.getByTestId('prs-claude-dialog-close')).toBeEnabled();
     expect(reviewLaunches(dashboard)).toEqual([]);
   });
@@ -442,15 +443,15 @@ test('review polling runs only for an open active dialog and reopening refreshes
   await page.clock.fastForward(16_000);
   await expect.poll(() => claudeReads(dashboard).length).toBeGreaterThan(beforePoll);
   await expect(reviewStart(page)).toBeEnabled();
-  await expect(reviewBody(page)).toContainText('finished');
-  await expect(reviewBody(page)).not.toContainText(
+  await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('finished');
+  await expect(page.getByTestId('prs-claude-dialog')).not.toContainText(
     /review passed|all PRs approved|review approved/i,
   );
   await reviewStart(page).click();
   await expect.poll(() => reviewLaunches(dashboard).length).toBe(1);
   expect(reviewLaunches(dashboard)[0].body).toEqual({ key: 'DEMO-1', phase: 'pr-review-transact' });
   await expect(reviewStart(page)).toBeDisabled();
-  await expect(reviewBody(page)).toContainText(/starting|working|started/i);
+  await expect(page.getByTestId('prs-claude-dialog-state')).toContainText(/starting|working/i);
   await page.getByTestId('prs-claude-dialog-close').click();
   const afterClose = claudeReads(dashboard).length;
   await page.clock.fastForward(31_000);
@@ -461,7 +462,7 @@ test('review polling runs only for an open active dialog and reopening refreshes
   await openReview(page);
   await expect.poll(() => claudeReads(dashboard).length).toBeGreaterThan(afterClose);
   await expect(reviewStart(page)).toBeDisabled();
-  await expect(reviewBody(page)).toContainText('status unavailable');
+  await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('status unavailable');
   await page.evaluate(() => {
     location.hash = '#/services';
   });
@@ -1031,4 +1032,51 @@ test('re-review is off while the review session works', async ({ page, dashboard
   await expect(page.getByTestId('prs-claude-rereview-hint')).toHaveText(
     'A Claude review session is already running for this ticket.',
   );
+});
+
+test('review dialog has one primary: Start while there is no review, Re-review once there is one', async ({
+  page,
+  dashboard,
+}) => {
+  await page.goto('/#/prs');
+  await openReview(page);
+  await expect(reviewStart(page)).toHaveClass(/\bprimary\b/);
+  await expect(reviewStart(page)).toHaveText('Start code review');
+  await expect(rereviewButton(page)).not.toHaveClass(/\bprimary\b/);
+  await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('not started');
+  await page.keyboard.press('Escape');
+
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+    phase: null,
+    review: { state: 'done', reason: 'finished' },
+  });
+  await openReview(page);
+  await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('finished');
+  await expect(rereviewButton(page)).toHaveClass(/\bprimary\b/);
+  // Starting another review is still there, quieter and named for what it does.
+  await expect(reviewStart(page)).not.toHaveClass(/\bprimary\b/);
+  await expect(reviewStart(page)).toBeEnabled();
+  await expect(reviewStart(page)).toHaveText('Start new review');
+  await expect(
+    page.locator('.claude-dialog ul:not(.claude-review-actions):not(.claude-reasons)'),
+  ).toHaveCount(0);
+});
+
+test('while the review works both buttons are off and the reason is said once', async ({
+  page,
+  dashboard,
+}) => {
+  dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
+    phase: null,
+    review: { state: 'working', reason: 'running' },
+  });
+  await page.goto('/#/prs');
+  await openReview(page);
+  await expect(reviewStart(page)).toBeDisabled();
+  await expect(rereviewButton(page)).toBeDisabled();
+  await expect(page.locator('.claude-reasons > li:not(.sr-only)')).toHaveCount(1);
+  await expect(page.getByTestId('prs-claude-rereview-hint')).toHaveText(
+    'A Claude review session is already running for this ticket.',
+  );
+  await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('working');
 });
