@@ -219,8 +219,9 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
 
   // The panel fetches once per ticket load and groups with the shared module.
   const panel = read('panels/MyTicketsPanel.jsx');
-  assert.match(panel, /getSlackThreads\(\)/);
-  assert.match(panel, /threadsByTicket\([\s\S]*?eligibleSlackRoot\(row\.ts, slackNow\)/);
+  const slackHook = read('hooks/useTicketSlackThreads.jsx');
+  assert.match(slackHook, /getSlackThreads\(\)/);
+  assert.match(slackHook, /threadsByTicket\([\s\S]*?eligibleSlackRoot\(row\.ts, now\)/);
   assert.match(panel, /linksByTicket=\{linksByTicket\}/);
   // Slack must never sit on the ticket path: its call starts before the ticket
   // request is awaited, and is never awaited itself.
@@ -239,22 +240,20 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
   assert.match(panel, /api\.getTicketPrs\(/);
   // A failed Slack call must leave the ticket list alone rather than reject the
   // unawaited promise.
-  assert.match(
-    panel,
-    /catch \{\s*if \(request === slackRequest\.current\) setSlackSnapshot\(null\);/,
-  );
+  assert.match(slackHook, /catch \{\s*if \(id === request\.current\) setSnapshot\(null\);/);
 
   // The card renders the links on its first line, so it stays one account of
   // the ticket; the board resolves the same normalised key the matcher produced
   // and forwards the thread with the selected card's key to the dialog opener.
   const row = read('components/TicketBoard.jsx');
-  assert.match(row, /from '\.\/SlackThreadLink\.jsx'/);
+  assert.match(row, /from '\.\/TicketLaunchers\.jsx'/);
   assert.match(row, /normalizeTicketKey/);
   assert.match(row, /slackLinks = \[\]/);
   assert.match(row, /onOpenThread/);
+  assert.match(row, /<TicketLaunchers\s[^>]*ticketKey=\{ticket\.key\}/);
   assert.match(
-    row,
-    /<SlackThreadLinks\s+links=\{slackLinks\}\s+onOpen=\{\(thread\) =>\s*onOpenThread\?\.\(\{\s*\.\.\.thread,\s*selectedTicketKey:\s*ticket\.key\s*\}\)\s*\}\s*\/>/,
+    read('components/TicketLaunchers.jsx'),
+    /<SlackThreadLinks\s+links=\{slackLinks\}\s+onOpen=\{\(thread\) =>\s*onOpenThread\?\.\(\{\s*\.\.\.thread,\s*selectedTicketKey:\s*ticketKey\s*\}\)\s*\}\s*\/>/,
     'the clicked card forwards its displayed key without normalising it',
   );
   assert.match(
@@ -323,9 +322,12 @@ test('the Slack thread dialog renders the conversation without leaving the app',
   // The panel owns the open thread; the shared hook wires the dialog and the panel renders it
   // inside its section (see the hook test below).
   const panel = read('panels/MyTicketsPanel.jsx');
-  assert.match(panel, /const \[openThread, setOpenThread\] = useState\(null\);/);
-  assert.match(panel, /onOpenThread=\{setOpenThread\}/);
-  assert.match(panel, /useSlackThreadDialog\(\{[^}]*\bsource: 'my-tickets'/);
+  assert.match(
+    read('hooks/useTicketSlackThreads.jsx'),
+    /const \[openThread, setOpenThread\] = useState\(null\);/,
+  );
+  assert.match(panel, /onOpenThread=\{openThread\}/);
+  assert.match(panel, /useTicketSlackThreads\(\{[^}]*\bsource: 'my-tickets'/);
   assert.ok(
     panel.indexOf('{dialog}') > panel.lastIndexOf('</BoardSection>') &&
       panel.indexOf('{dialog}') < panel.indexOf('</BoardPanel>'),
@@ -447,9 +449,18 @@ test('Slack and My Tickets wire the thread dialog through one hook, not two copi
   assert.match(hook, /notifySlackSessionChanged\(/);
 
   // Each panel only passes what is its own; none keeps a copy of the wiring.
-  for (const file of ['panels/SlackPanel.jsx', 'panels/MyTicketsPanel.jsx']) {
+  // (My Tickets and Pull Requests reach it through useTicketSlackThreads, which is itself a user.)
+  assert.match(read('hooks/useTicketSlackThreads.jsx'), /from '\.\/useSlackThreadDialog\.jsx'/);
+  for (const file of ['panels/MyTicketsPanel.jsx', 'panels/PrsPanel.jsx'])
+    assert.match(read(file), /from '\.\.\/hooks\/useTicketSlackThreads\.jsx'/, `${file} uses it`);
+  for (const file of [
+    'panels/SlackPanel.jsx',
+    'panels/MyTicketsPanel.jsx',
+    'panels/PrsPanel.jsx',
+  ]) {
     const panel = read(file);
-    assert.match(panel, /from '\.\.\/hooks\/useSlackThreadDialog\.jsx'/, `${file} uses the hook`);
+    if (file === 'panels/SlackPanel.jsx')
+      assert.match(panel, /from '\.\.\/hooks\/useSlackThreadDialog\.jsx'/, `${file} uses the hook`);
     assert.doesNotMatch(
       panel,
       /<SlackThreadDialog\b|useSlackActivityClock|slack-session-changed/,

@@ -14,8 +14,10 @@ import { ClaudePlaceholderDialog } from '../components/ClaudePlaceholderDialog.j
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
+import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
 import { hasCompletePrCoverage, reviewColumns } from '../../ui/review-board.js';
 import { ticketPrefix } from '../../ui/work-filters.js';
+import { normalizeTicketKey } from '../../ui/slack-ticket-links.js';
 import { PR_POLL_MS } from '../../ui/polling.js';
 
 const NO_TICKETS = Object.freeze([]);
@@ -37,10 +39,27 @@ export function PrsPanel({ config, active }) {
   const [filters, setFilters] = useState({ search: '', prefix: '', repo: '', review: '' });
   const [openClaudeKey, setOpenClaudeKey] = useState(null);
   const boardRef = useRef(null);
+  const resolveThreadOpener = useCallback((ts) => {
+    const panel = document.getElementById('panel-prs');
+    if (!panel || panel.hidden) return null;
+    return (
+      boardRef.current?.querySelector(`[data-testid="slack-thread-link-${CSS.escape(ts)}"]`) ||
+      panel.querySelector('[data-testid="prs-board"]') ||
+      panel.querySelector('[data-testid="prs-refresh"]')
+    );
+  }, []);
+  const {
+    loadSlack,
+    openThread,
+    linksByTicket,
+    dialog: slackDialog,
+  } = useTicketSlackThreads({ source: 'prs', active, resolveOpener: resolveThreadOpener });
   const dataRef = useRef(data);
   dataRef.current = data;
   const load = useCallback(
     async ({ silent = false } = {}) => {
+      // Fired, never awaited: Slack is optional and slow, and its outage is not a failed refresh.
+      loadSlack();
       setLoading(true);
       if (!silent) setMeta(dataRef.current ? 'Refreshing…' : 'loading…');
       try {
@@ -57,7 +76,7 @@ export function PrsPanel({ config, active }) {
         setLoading(false);
       }
     },
-    [api],
+    [api, loadSlack],
   );
   const { load: refresh, countdown } = useActivePolling({
     active,
@@ -116,6 +135,8 @@ export function PrsPanel({ config, active }) {
                   ticket={ticket}
                   jiraBase={config.jiraBase}
                   prCoverage={data?.prCoverage}
+                  slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
+                  onOpenThread={openThread}
                   onOpenClaude={setOpenClaudeKey}
                 />
               </li>
@@ -124,7 +145,7 @@ export function PrsPanel({ config, active }) {
         ))}
       </Board>
     ),
-    [columns, config.jiraBase, data?.prCoverage],
+    [columns, config.jiraBase, data?.prCoverage, linksByTicket, openThread],
   );
   const coverageIncomplete = data && !hasCompletePrCoverage(data.prCoverage);
   return (
@@ -192,6 +213,7 @@ export function PrsPanel({ config, active }) {
           </>
         )}
       </BoardSection>
+      {slackDialog}
       {active && openClaudeTicket && (
         <ClaudePlaceholderDialog
           key={openClaudeTicket.key}

@@ -161,11 +161,25 @@ test('slackCoverage ignores a partialReasons value that is not a list', () => {
 
 // Both screens that list Slack threads take their warnings and the flag from this one helper, and
 // each puts the warnings into its own note (the rendered text is asserted by the e2e specs).
+// My Tickets and Pull Requests get them through useTicketSlackThreads, which spreads the helper's
+// result; My Tickets then puts the warnings into its own note.
+test('useTicketSlackThreads takes the coverage from the shared helper', () => {
+  const source = readFileSync(
+    new URL('../ui-react/hooks/useTicketSlackThreads.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /from '\.\.\/\.\.\/ui\/slack-coverage\.js'/);
+  assert.match(source, /\.\.\.slackCoverage\(snapshot\)/);
+  assert.doesNotMatch(source, /slackStaleReplyWarning|slackStandaloneMentionWarning/);
+});
+
 for (const file of ['SlackPanel.jsx', 'MyTicketsPanel.jsx']) {
-  test(`${file} gets the coverage warnings from the shared helper`, () => {
+  test(`${file} uses the coverage warnings from the shared helper`, () => {
     const source = readFileSync(new URL(`../ui-react/panels/${file}`, import.meta.url), 'utf8');
-    assert.match(source, /from '\.\.\/\.\.\/ui\/slack-coverage\.js'/);
-    assert.match(source, /\bslackCoverage\(/);
+    if (file === 'SlackPanel.jsx') {
+      assert.match(source, /from '\.\.\/\.\.\/ui\/slack-coverage\.js'/);
+      assert.match(source, /\bslackCoverage\(/);
+    }
     assert.doesNotMatch(source, /slackStaleReplyWarning|slackStandaloneMentionWarning/);
     for (const name of ['staleReplyWarning', 'standaloneWarning', 'incomplete'])
       assert.ok(source.split(new RegExp(`\\b${name}\\b`)).length - 1 >= 2, `${name} is used`);

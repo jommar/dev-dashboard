@@ -210,13 +210,17 @@ test('the PR Claude entry opts out of shared tooltips but retains code-review na
   assert.match(props, /\btooltip\s*=\s*true/, 'tooltips remain the shared default');
   assert.match(icon, /claude-icon-\$\{ticketKey\}/, 'the My Tickets default id is retained');
   const card = read('components/ReviewTicketCard.jsx');
-  const control = card.match(/<ClaudeIcon\b[\s\S]*?\/>/)?.[0] ?? '';
-  assert.match(control, /testId=/);
-  assert.match(control, /label=/);
-  assert.match(control, /tooltip=\{false\}/);
+  const control = card.match(/<TicketLaunchers\b[\s\S]*?\/>/)?.[0] ?? '';
+  assert.match(control, /\btestId:/);
+  assert.match(control, /\blabel:/);
+  assert.match(control, /\btooltip: false/);
   assert.match(control, /Claude code review for \$\{ticket\.key\}/);
   assert.doesNotMatch(control, /placeholder/i);
-  assert.doesNotMatch(control, /\bentry=/, 'no invented workflow state is passed to the icon');
+  assert.doesNotMatch(
+    control,
+    /\bclaudeEntry=/,
+    'no invented workflow state is passed to the icon',
+  );
 });
 
 test('ClaudePlaceholderDialog keeps the native shell and adds only review launch, re-review and feedback beside Close', () => {

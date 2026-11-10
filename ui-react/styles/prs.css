@@ -338,18 +338,64 @@
 .review-ticket-key {
   color: var(--accent);
   font-family: var(--mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-decoration: none;
+}
+/* The launchers share one row at the card's right edge: Slack threads that name the ticket, then
+   Claude, joined by a hairline into one segmented control. A ticket with no thread shows Claude
+   alone. */
+.review-ticket-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.review-ticket-actions .my-ticket-slack {
+  margin: 0;
+  gap: 1px;
+}
+.review-ticket-actions .my-ticket-slack:not(:empty) + .claude-icon {
+  margin-left: var(--s1);
+  position: relative;
+}
+.review-ticket-actions .my-ticket-slack:not(:empty) + .claude-icon::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: calc(-1 * var(--s1) / 2 - 1px);
+  width: 1px;
+  background: var(--border-strong);
+}
+.review-ticket-actions .slack-thread-link:hover,
+.review-ticket-actions .slack-thread-link:focus-visible,
+.review-ticket-actions .claude-icon:hover,
+.review-ticket-actions .claude-icon:focus-visible {
+  background: var(--panel2);
+}
+.review-ticket-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 .review-ticket-assignee,
 .review-ticket-sprint,
 .review-ticket-empty,
 .review-ticket-warning {
-  margin: var(--s1) 0 0;
+  margin: 0;
   color: var(--muted);
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
+}
+.review-ticket-empty,
+.review-ticket-warning {
+  margin-top: var(--s1);
 }
 .review-ticket-warning {
   color: var(--amber);
@@ -360,21 +406,37 @@
 .review-ticket-prs {
   display: flex;
   flex-direction: column;
-  gap: var(--s2);
+  gap: var(--s1);
   margin: var(--s1) 0 0;
   padding: 0;
   list-style: none;
 }
+/* One PR per row: name over review state at the left, the diff button at the right, and a bar
+   at the edge in the review state's colour (the state is always also spelled out as a word). */
 .review-ticket-pr {
+  --pr-bar: var(--border-strong);
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: var(--s1) var(--s2);
+  gap: var(--s2);
   min-width: 0;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: inset 2px 0 0 var(--pr-bar);
+}
+.review-ticket-pr[data-review-state='approved'] {
+  --pr-bar: var(--green);
+}
+.review-ticket-pr[data-review-state='changes_requested'] {
+  --pr-bar: var(--red);
+}
+.review-ticket-pr[data-review-state='unknown'] {
+  --pr-bar: var(--amber);
 }
 .review-ticket-pr-link {
   display: flex;
-  flex: 1 1 100%;
+  flex: 1 1 auto;
   flex-direction: column;
   min-width: 0;
   color: var(--text);
@@ -405,7 +467,11 @@
 .review-ticket-pr-state[data-review-state='unknown'] {
   color: var(--amber);
 }
+.review-ticket-pr .board-chip {
+  flex: none;
+}
 .review-ticket-pr .view-diff {
+  flex: none;
   min-height: 24px;
   margin: 0;
   padding: 0 var(--s2);

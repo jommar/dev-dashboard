@@ -2,10 +2,17 @@ import { useLayoutEffect, useRef } from 'react';
 import { slug } from '../../ui/dom.js';
 import { hasCompletePrCoverage, queueReviewState } from '../../ui/review-board.js';
 import { reviewText } from '../../ui/ticket-board.js';
-import { ClaudeIcon } from './ClaudeIcon.jsx';
+import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { DiffViewer } from './DiffViewer.jsx';
 
-export function ReviewTicketCard({ ticket, jiraBase, prCoverage, onOpenClaude }) {
+export function ReviewTicketCard({
+  ticket,
+  jiraBase,
+  prCoverage,
+  slackLinks = [],
+  onOpenThread,
+  onOpenClaude,
+}) {
   const cardRef = useRef(null);
   const prs = ticket.prs || [];
   const discoveryComplete = hasCompletePrCoverage(prCoverage);
@@ -49,24 +56,32 @@ export function ReviewTicketCard({ ticket, jiraBase, prCoverage, onOpenClaude })
         <span className="board-card-stat">
           {prs.length} {discoveryComplete ? '' : 'known '}PR{prs.length === 1 ? '' : 's'}
         </span>
-        <ClaudeIcon
+        <TicketLaunchers
           ticketKey={ticket.key}
-          testId={`prs-claude-icon-${ticket.key}`}
-          label={`Claude code review for ${ticket.key}`}
-          tooltip={false}
-          onOpen={onOpenClaude}
+          className="review-ticket-actions"
+          testId={`prs-ticket-actions-${ticket.key}`}
+          slackLinks={slackLinks}
+          onOpenThread={onOpenThread}
+          claudeProps={{
+            testId: `prs-claude-icon-${ticket.key}`,
+            label: `Claude code review for ${ticket.key}`,
+            tooltip: false,
+          }}
+          onOpenClaude={onOpenClaude}
         />
       </div>
       <p className="board-card-summary" title={ticket.summary}>
         {ticket.summary}
       </p>
-      <p className="review-ticket-assignee" data-testid={`prs-ticket-assignee-${ticket.key}`}>
-        Assignee:{' '}
-        <span className={ticket.assignee ? 'review-ticket-assignee-name' : undefined}>
-          {ticket.assignee || 'Unassigned'}
-        </span>
-      </p>
-      {ticket.sprint?.name && <p className="review-ticket-sprint">{ticket.sprint.name}</p>}
+      <div className="review-ticket-meta">
+        <p className="review-ticket-assignee" data-testid={`prs-ticket-assignee-${ticket.key}`}>
+          Assignee:{' '}
+          <span className={ticket.assignee ? 'review-ticket-assignee-name' : undefined}>
+            {ticket.assignee || 'Unassigned'}
+          </span>
+        </p>
+        {ticket.sprint?.name && <p className="review-ticket-sprint">{ticket.sprint.name}</p>}
+      </div>
       {!discoveryComplete || reviewIncomplete ? (
         <p className="review-ticket-warning" data-testid={`prs-ticket-warning-${ticket.key}`}>
           {!discoveryComplete
@@ -81,7 +96,11 @@ export function ReviewTicketCard({ ticket, jiraBase, prCoverage, onOpenClaude })
             const label = `${pr.repo} #${pr.number}`;
             const id = `${ticket.key}-${slug(pr.repo)}-${pr.number}`;
             return (
-              <li key={`${pr.repo}#${pr.number}`} className="review-ticket-pr">
+              <li
+                key={`${pr.repo}#${pr.number}`}
+                className="review-ticket-pr"
+                data-review-state={state}
+              >
                 <a
                   className="review-ticket-pr-link"
                   href={pr.url}

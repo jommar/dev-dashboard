@@ -16,8 +16,7 @@ import {
   reviewText,
 } from '../../ui/ticket-board.js';
 import { canonicalTicketKey, normalizeTicketKey } from '../../ui/slack-ticket-links.js';
-import { SlackThreadLinks } from './SlackThreadLink.jsx';
-import { ClaudeIcon } from './ClaudeIcon.jsx';
+import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { Board, BoardColumn } from './BoardShell.jsx';
 
 // Jira priority names mapped to a chevron step: two up, one up, bars, one down,
@@ -258,13 +257,15 @@ function TicketCard({
           </span>
         )}
       </div>
-      <div className="my-tickets-card-links" data-testid={testId('links')}>
-        <SlackThreadLinks
-          links={slackLinks}
-          onOpen={(thread) => onOpenThread?.({ ...thread, selectedTicketKey: ticket.key })}
-        />
-        <ClaudeIcon ticketKey={ticket.key} entry={claude} onOpen={onOpenClaude} />
-      </div>
+      <TicketLaunchers
+        ticketKey={ticket.key}
+        className="my-tickets-card-links"
+        testId={testId('links')}
+        slackLinks={slackLinks}
+        onOpenThread={onOpenThread}
+        claudeEntry={claude}
+        onOpenClaude={onOpenClaude}
+      />
       <p className="board-card-summary" title={ticket.summary} data-testid={testId('summary')}>
         {ticket.summary || ''}
       </p>
