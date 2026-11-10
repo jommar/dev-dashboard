@@ -111,7 +111,7 @@ test('allocates the first free port and spawns the required browser', async () =
 test('defaults the label and URL, and refuses without spawning', async () => {
   const h = harness();
   const browser = await h.devtools.launch({});
-  assert.equal(DEFAULT_DEVTOOLS_URL, 'http://traveltrackertrips.transact.com:8081/admin#/');
+  assert.equal(DEFAULT_DEVTOOLS_URL, 'https://traveltrackertrips.transact.com:8443/admin#/');
   assert.equal(browser.url, DEFAULT_DEVTOOLS_URL);
   assert.equal(h.spawns[0].args.at(-1), DEFAULT_DEVTOOLS_URL);
   assert.equal(browser.label, 'Browser 0000');
