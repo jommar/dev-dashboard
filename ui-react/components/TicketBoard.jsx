@@ -15,7 +15,7 @@ import {
   commentSummaryText,
   reviewText,
 } from '../../ui/ticket-board.js';
-import { canonicalTicketKey, normalizeTicketKey } from '../../ui/slack-ticket-links.js';
+import { canonicalTicketKey } from '../../ui/slack-ticket-links.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { Board, BoardColumn } from './BoardShell.jsx';
 
@@ -217,8 +217,8 @@ function TicketCard({
   jiraBase,
   currentSprints,
   prs = [],
-  slackLinks = [],
-  claude,
+  linksByTicket,
+  claudeByTicket,
   onOpenThread,
   onOpenClaude,
 }) {
@@ -260,9 +260,9 @@ function TicketCard({
       <TicketLaunchers
         ticketKey={ticket.key}
         testId={testId('links')}
-        slackLinks={slackLinks}
+        linksByTicket={linksByTicket}
         onOpenThread={onOpenThread}
-        claudeEntry={claude}
+        claudeByTicket={claudeByTicket}
         onOpenClaude={onOpenClaude}
       />
       <p className="board-card-summary" title={ticket.summary} data-testid={testId('summary')}>
@@ -322,8 +322,8 @@ export function TicketBoard({
                   jiraBase={jiraBase}
                   currentSprints={currentSprints}
                   prs={prsByTicket[canonicalTicketKey(ticket.key)] || []}
-                  slackLinks={linksByTicket.get(normalizeTicketKey(ticket.key)) || []}
-                  claude={claudeByTicket[ticket.key]}
+                  linksByTicket={linksByTicket}
+                  claudeByTicket={claudeByTicket}
                   onOpenThread={onOpenThread}
                   onOpenClaude={onOpenClaude}
                 />

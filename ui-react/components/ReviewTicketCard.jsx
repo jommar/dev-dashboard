@@ -9,7 +9,7 @@ export function ReviewTicketCard({
   ticket,
   jiraBase,
   prCoverage,
-  slackLinks = [],
+  linksByTicket,
   onOpenThread,
   onOpenClaude,
 }) {
@@ -60,7 +60,7 @@ export function ReviewTicketCard({
       <TicketLaunchers
         ticketKey={ticket.key}
         testId={`prs-ticket-actions-${ticket.key}`}
-        slackLinks={slackLinks}
+        linksByTicket={linksByTicket}
         onOpenThread={onOpenThread}
         claudeProps={{
           testId: `prs-claude-icon-${ticket.key}`,

@@ -247,20 +247,21 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
   // and forwards the thread with the selected card's key to the dialog opener.
   const row = read('components/TicketBoard.jsx');
   assert.match(row, /from '\.\/TicketLaunchers\.jsx'/);
-  assert.match(row, /normalizeTicketKey/);
-  assert.match(row, /slackLinks = \[\]/);
-  assert.match(row, /onOpenThread/);
+  // The board hands the row the whole maps and its card's key; finding the ticket's threads (by the
+  // normalised key the matcher produced) and its Claude entry is the row component's own job, and
+  // the clicked card forwards its displayed key without normalising it.
+  const launchers = read('components/TicketLaunchers.jsx');
+  assert.doesNotMatch(row, /normalizeTicketKey/);
   assert.match(row, /<TicketLaunchers\s[^>]*ticketKey=\{ticket\.key\}/);
-  assert.match(
-    read('components/TicketLaunchers.jsx'),
-    /<SlackThreadLinks\s+links=\{slackLinks\}\s+onOpen=\{\(thread\) =>\s*onOpenThread\?\.\(\{\s*\.\.\.thread,\s*selectedTicketKey:\s*ticketKey\s*\}\)\s*\}\s*\/>/,
-    'the clicked card forwards its displayed key without normalising it',
-  );
-  assert.match(
-    row,
-    /slackLinks=\{linksByTicket\.get\(normalizeTicketKey\(ticket\.key\)\) \|\| \[\]\}/,
-  );
+  assert.match(row, /linksByTicket=\{linksByTicket\}/);
+  assert.match(row, /claudeByTicket=\{claudeByTicket\}/);
   assert.match(row, /onOpenThread=\{onOpenThread\}/);
+  assert.match(launchers, /linksByTicket\?\.get\(normalizeTicketKey\(ticketKey\)\)/);
+  assert.match(launchers, /claudeByTicket\?\.\[ticketKey\]/);
+  assert.match(
+    launchers,
+    /<SlackThreadLinks\s+links=\{links\}\s+onOpen=\{\(thread\) =>\s*onOpenThread\?\.\(\{\s*\.\.\.thread,\s*selectedTicketKey:\s*ticketKey\s*\}\)\s*\}\s*\/>/,
+  );
 
   const css = read('styles/my-tickets.css');
   assert.match(css, /\.my-ticket-slack\s*\{/);
