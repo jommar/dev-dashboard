@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createBrowserDevtools } from '../backend/browser-devtools.mjs';
+import { createBrowserDevtools, DEFAULT_DEVTOOLS_URL } from '../backend/browser-devtools.mjs';
 
 const NOW = new Date('2026-11-11T09:12:31.004Z');
 
@@ -104,7 +104,9 @@ test('allocates the first free port and spawns the required browser', async () =
 test('defaults the label and URL, and refuses without spawning', async () => {
   const h = harness();
   const browser = await h.devtools.launch({});
-  assert.equal(browser.url, 'about:blank');
+  assert.equal(DEFAULT_DEVTOOLS_URL, 'http://traveltrackertrips.transact.com:8081/admin#/');
+  assert.equal(browser.url, DEFAULT_DEVTOOLS_URL);
+  assert.equal(h.spawns[0].args.at(-1), DEFAULT_DEVTOOLS_URL);
   assert.equal(browser.label, 'Browser 0000');
 
   await assert.rejects(h.devtools.launch({ url: '--remote-debugging-port=1' }), {
@@ -112,6 +114,13 @@ test('defaults the label and URL, and refuses without spawning', async () => {
     status: 400,
   });
   assert.equal(h.spawns.length, 1, 'a refused launch never spawns');
+});
+
+test('an explicit about:blank still launches about:blank', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ url: 'about:blank' });
+  assert.equal(browser.url, 'about:blank');
+  assert.equal(h.spawns[0].args.at(-1), 'about:blank');
 });
 
 test('refuses NO_FREE_PORT and BROWSER_NOT_FOUND without spawning', async () => {

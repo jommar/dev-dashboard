@@ -1,3 +1,5 @@
+import { DEFAULT_DEVTOOLS_URL } from '../ui/devtools-defaults.js';
+
 function releasePr(repo, number, overrides = {}) {
   return {
     repo,
@@ -1846,7 +1848,7 @@ function devtoolsResponse(url, method, { devtools }, body) {
       port,
       pid: 41002,
       profileDir: `/home/example/.config/dev-dashboard/browsers/${id}/profile`,
-      url: body?.url || 'about:blank',
+      url: body?.url || DEFAULT_DEVTOOLS_URL,
       startedAt: '2026-11-11T09:30:00.000Z',
       status: 'running',
     };
