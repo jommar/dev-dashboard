@@ -15,6 +15,7 @@
 @import './styles/listbox.css';
 @import './styles/home.css';
 @import './styles/settings.css';
+@import './styles/devtools.css';
 
 :root {
   --bg: #111113;

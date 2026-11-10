@@ -9,6 +9,7 @@ import { ServicesPanel } from './panels/ServicesPanel.jsx';
 import { PrsPanel } from './panels/PrsPanel.jsx';
 import { MyTicketsPanel } from './panels/MyTicketsPanel.jsx';
 import { ReleasesPanel } from './panels/ReleasesPanel.jsx';
+import { DevtoolsPanel } from './panels/DevtoolsPanel.jsx';
 import { SlackPanel } from './panels/SlackPanel.jsx';
 import { SlackTabBadge } from './components/SlackTabBadge.jsx';
 import { SettingsPanel } from './panels/SettingsPanel.jsx';
@@ -24,6 +25,7 @@ const READY_TABS = [
   { id: 'prs', label: 'Pull Requests' },
   { id: 'releases', label: 'Releases' },
   { id: 'services', label: 'Services' },
+  { id: 'devtools', label: 'DevTools' },
   { id: 'settings', label: 'Settings' },
 ];
 const SETTINGS_TAB = [{ id: 'settings', label: 'Settings' }];
@@ -136,6 +138,7 @@ export function App() {
                 onViewChange={changeReleaseView}
               />
               <SlackPanel active={active === 'slack'} />
+              <DevtoolsPanel active={active === 'devtools'} />
             </>
           )}
           <SettingsPanel config={config} active={active === 'settings'} />

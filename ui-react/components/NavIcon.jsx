@@ -5,6 +5,7 @@ const paths = {
   prs: 'M6 6v12M18 18v-5a5 5 0 0 0-5-5h-2m3-3-3 3 3 3',
   releases: 'M4 5h8l8 8-7 7-9-9V5zM8 9h.01',
   services: 'M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01M12 10v4',
+  devtools: 'M4 5h16v11H4zM9 20h6M12 16v4M8 9l2 2-2 2M13 13h3',
   settings:
     'm9 3-.5 3-2 1-2.5-1-2 3 2 2.5v2L2 16l2 3 2.5-1 2 1L9 22h4l.5-3 2-1 2.5 1 2-3-2-2.5v-2L20 9l-2-3-2.5 1-2-1L13 3z',
   tools: 'M5 6h14M5 12h14M5 18h14',

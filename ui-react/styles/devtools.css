@@ -1,0 +1,83 @@
+/* DevTools: the debug-browser table. The board pane owns the scroll and the
+   fill; this sheet only styles the launch form, the table and the status text. */
+.devtools-launch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--s2);
+}
+.devtools-launch label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.devtools-launch input {
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+  color: var(--fg);
+  font: inherit;
+  transition: border-color 120ms var(--ease-out);
+}
+.devtools-launch input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.devtools-table-wrap {
+  overflow-x: auto;
+}
+.devtools-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.devtools-table th,
+.devtools-table td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.devtools-table th {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.devtools-port,
+.devtools-pid {
+  color: var(--strong);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.devtools-url {
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+.devtools-status[data-status='running'] {
+  color: var(--ok);
+}
+.devtools-status[data-status='stopped'] {
+  color: var(--muted);
+}
+.devtools-feedback {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.devtools-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .devtools-launch input {
+    transition: none;
+  }
+}

@@ -1,0 +1,259 @@
+// browser-devtools.test.mjs — the launch/stop/reconcile contract for the DevTools tab.
+// Every collaborator that could touch the machine is injected: nothing here spawns a
+// process, binds a real port or signals a real pid.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createBrowserDevtools } from '../backend/browser-devtools.mjs';
+
+const NOW = new Date('2026-11-11T09:12:31.004Z');
+
+function harness({ taken = [], ps = '', env } = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devtools-'));
+  const bin = path.join(home, 'bin');
+  fs.mkdirSync(bin);
+  for (const name of [
+    'brave-browser',
+    'google-chrome',
+    'google-chrome-stable',
+    'chromium',
+    'chromium-browser',
+  ])
+    fs.writeFileSync(path.join(bin, name), '');
+  const reserved = new Set(taken);
+  const bound = new Set();
+  let held = null;
+  const spawns = [];
+  const signals = [];
+  let psOutput = ps;
+  let n = 0;
+  const devtools = createBrowserDevtools({
+    home,
+    fs,
+    env: env ?? { PATH: bin },
+    net: {
+      createServer() {
+        const handlers = {};
+        return {
+          once(event, fn) {
+            handlers[event] = fn;
+          },
+          listen({ port }, ready) {
+            setImmediate(() => {
+              if (reserved.has(port) || bound.has(port))
+                return handlers.error?.(new Error('EADDRINUSE'));
+              held = port;
+              bound.add(port);
+              ready();
+            });
+          },
+          close(done) {
+            if (held !== null) bound.delete(held);
+            held = null;
+            done?.();
+          },
+        };
+      },
+    },
+    spawn(binary, args) {
+      spawns.push({ binary, args });
+      const child = { pid: 4000 + spawns.length, once() {}, unref() {} };
+      return child;
+    },
+    kill(pid, signal) {
+      signals.push({ pid, signal });
+    },
+    run: async () => psOutput,
+    now: () => NOW,
+    randomId: () => `b-0000${++n}`,
+  });
+  return {
+    devtools,
+    home,
+    root: path.join(home, '.config', 'dev-dashboard', 'browsers'),
+    spawns,
+    signals,
+    setPs(value) {
+      psOutput = value;
+    },
+  };
+}
+
+test('allocates the first free port and spawns the required browser', async () => {
+  const h = harness({ taken: [9300, 9301] });
+  const browser = await h.devtools.launch({ label: 'QA', url: 'https://example.invalid/login' });
+  assert.equal(browser.port, 9302);
+  assert.equal(browser.status, 'running');
+  assert.equal(browser.label, 'QA');
+  assert.equal(browser.profileDir, path.join(h.root, 'b-00001', 'profile'));
+  assert.equal(h.spawns.length, 1);
+  assert.equal(h.spawns[0].binary, path.join(h.home, 'bin', 'brave-browser'));
+  assert.deepEqual(h.spawns[0].args, [
+    '--remote-debugging-port=9302',
+    `--user-data-dir=${browser.profileDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    'https://example.invalid/login',
+  ]);
+  assert.ok(fs.statSync(browser.profileDir).isDirectory());
+  assert.deepEqual(await h.devtools.list(), [browser]);
+});
+
+test('defaults the label and URL, and refuses without spawning', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({});
+  assert.equal(browser.url, 'about:blank');
+  assert.equal(browser.label, 'Browser 0000');
+
+  await assert.rejects(h.devtools.launch({ url: '--remote-debugging-port=1' }), {
+    code: 'INVALID_URL',
+    status: 400,
+  });
+  assert.equal(h.spawns.length, 1, 'a refused launch never spawns');
+});
+
+test('refuses NO_FREE_PORT and BROWSER_NOT_FOUND without spawning', async () => {
+  const taken = [];
+  for (let port = 9300; port <= 9399; port += 1) taken.push(port);
+  const full = harness({ taken });
+  await assert.rejects(full.devtools.launch({}), { code: 'NO_FREE_PORT', status: 409 });
+  assert.deepEqual(full.spawns, []);
+
+  const bare = harness({ env: { PATH: path.join(os.tmpdir(), 'devtools-empty-path') } });
+  await assert.rejects(bare.devtools.launch({}), { code: 'BROWSER_NOT_FOUND', status: 409 });
+  assert.deepEqual(bare.spawns, []);
+});
+
+test('stops then starts on the same profile, signalling the group', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Keep', url: 'https://example.invalid/' });
+  h.setPs(
+    `  ${browser.pid} /bin/brave-browser --remote-debugging-port=9300 --user-data-dir=${browser.profileDir}`,
+  );
+
+  const stopped = await h.devtools.stop(browser.id);
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.pid, null);
+  assert.deepEqual(
+    h.signals.map((entry) => entry.signal),
+    ['SIGTERM', 'SIGKILL'],
+    'a pid that survives the grace period is killed',
+  );
+  assert.equal(h.signals[0].pid, -browser.pid, 'the process group is signalled');
+  assert.ok(fs.statSync(browser.profileDir).isDirectory(), 'stop keeps the profile');
+
+  h.setPs('');
+  const restarted = await h.devtools.start(browser.id);
+  assert.equal(restarted.status, 'running');
+  assert.equal(restarted.port, 9300);
+  assert.equal(restarted.profileDir, browser.profileDir);
+});
+
+test('reconciles a surviving browser, a dead record and an unknown profile dir', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Survivor' });
+  const stateFile = path.join(h.root, 'instances.json');
+  const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  saved.browsers[0].status = 'stopped';
+  saved.browsers[0].pid = null;
+  fs.writeFileSync(stateFile, JSON.stringify(saved));
+
+  // A fresh factory over the same home, so reconcile actually runs again.
+  const revive = (stdout) =>
+    createBrowserDevtools({
+      home: h.home,
+      fs,
+      env: { PATH: path.join(h.home, 'bin') },
+      run: async () => stdout,
+      now: () => NOW,
+    });
+
+  const adopted = await revive(
+    `  7777 /bin/brave-browser --remote-debugging-port=9300 --user-data-dir=${browser.profileDir}`,
+  ).list();
+  assert.equal(adopted[0].status, 'running');
+  assert.equal(adopted[0].pid, 7777);
+
+  const dead = await revive('').list();
+  assert.equal(dead[0].status, 'stopped');
+  assert.equal(dead[0].pid, null);
+
+  const unknownDir = path.join(h.root, 'b-9', 'profile');
+  const unknown = await revive(
+    `  8888 /bin/brave-browser --remote-debugging-port=9311 --user-data-dir=${unknownDir}`,
+  ).list();
+  const record = unknown.find((entry) => entry.id === 'b-9');
+  assert.ok(record, 'an unknown profile dir is adopted');
+  assert.equal(record.port, 9311);
+  assert.equal(record.status, 'running');
+  assert.equal(record.pid, 8888);
+});
+
+test('never signals a recycled pid and never deletes a profile', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Recycled' });
+  h.setPs(`  ${browser.pid} /usr/bin/something-else --unrelated`);
+
+  const stopped = await h.devtools.stop(browser.id);
+  assert.deepEqual(h.signals, [], 'a pid that no longer owns the profile is left alone');
+  assert.equal(stopped.status, 'stopped');
+  assert.ok(fs.statSync(browser.profileDir).isDirectory(), 'the profile survives the stop');
+});
+
+test('reconcile ignores a renderer that only inherits the profile dir', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Root only' });
+  const root = harness({ ps: '' });
+  const file = path.join(root.root, 'instances.json');
+  fs.mkdirSync(root.root, { recursive: true });
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ version: 1, browsers: [{ ...browser, status: 'stopped', pid: null }] }),
+  );
+  fs.mkdirSync(browser.profileDir, { recursive: true });
+
+  const rendererOnly = createBrowserDevtools({
+    home: h.home,
+    fs,
+    env: { PATH: path.join(h.home, 'bin') },
+    run: async () =>
+      `  5150 /bin/brave-browser --type=renderer --user-data-dir=${browser.profileDir}`,
+    now: () => NOW,
+  });
+  const listed = await rendererOnly.list();
+  assert.equal(listed[0].status, 'stopped', 'a renderer is not the browser');
+  assert.equal(listed[0].pid, null);
+});
+
+test('removes a record and its profile, but refuses an unknown id', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Tidy' });
+  h.setPs('');
+
+  await assert.rejects(h.devtools.remove('b-nope'), { code: 'UNKNOWN_BROWSER', status: 404 });
+
+  await h.devtools.remove(browser.id);
+  assert.deepEqual(await h.devtools.list(), []);
+  assert.equal(
+    fs.existsSync(path.dirname(browser.profileDir)),
+    false,
+    'removing a row reclaims its profile',
+  );
+});
+
+test('removing a running browser stops it first', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Running' });
+  h.setPs(
+    `  ${browser.pid} /bin/brave-browser --remote-debugging-port=9300 --user-data-dir=${browser.profileDir}`,
+  );
+
+  await h.devtools.remove(browser.id);
+  assert.ok(
+    h.signals.some((entry) => entry.signal === 'SIGTERM'),
+    'an attached browser is not left running',
+  );
+  assert.deepEqual(await h.devtools.list(), []);
+});

@@ -497,7 +497,7 @@ test('layout: ticket groups pack into 1, 2 and 3 columns with at least 20px betw
   }
 });
 
-test('overflow: the seven-tab nav and the releases panel fit a 390px viewport', async ({
+test('overflow: the eight-tab nav and the releases panel fit a 390px viewport', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -516,7 +516,7 @@ test('overflow: the seven-tab nav and the releases panel fit a 390px viewport', 
       width: document.documentElement.clientWidth,
     };
   });
-  expect(fit.tabCount).toBe(7);
+  expect(fit.tabCount).toBe(8);
   expect(fit.tabsOutsideViewport).toEqual([]);
   expect(fit.content, 'the page must not scroll horizontally').toBeLessThanOrEqual(fit.width);
 });

@@ -21,6 +21,7 @@ import { createClaudeLauncher, failed } from './claude-launcher.mjs';
 import { createClaudeArtifacts } from './claude-artifacts.mjs';
 import { PROMPT_NAMES, createPromptStore } from './claude-prompts.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
+import { createBrowserDevtools } from './browser-devtools.mjs';
 
 const MAX_LINKS_PER_REQUEST = 50;
 // The `Sec-Fetch-Site` values of a request that another site's page made. A client that sends none
@@ -138,6 +139,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const claudeLauncher = integrations.claudeLauncher || createClaudeLauncher({ claudeSessions });
   const claudePrompts = integrations.claudePrompts || createPromptStore();
   const claudeArtifacts = integrations.claudeArtifacts || createClaudeArtifacts();
+  const browserDevtools = integrations.browserDevtools || createBrowserDevtools();
   const slackWatcher =
     integrations.slackWatcher ||
     createSlackWatcher({ slack, store: slackWatchStore, settings, sessions: claudeSessions });
@@ -418,8 +420,31 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       // The watch routes need Slack and the host only, never GitHub or Jira setup; the Claude
       // routes need the claude CLI and this directory only.
       const routeKey = `${req.method} ${pathname}`;
+      const devtoolsRoutes = {
+        'GET /api/devtools/browsers': () =>
+          browserDevtools.list().then((browsers) => ({ browsers })),
+        'POST /api/devtools/browsers': async (request) => {
+          const { label, url } = await readJson(request);
+          return { ok: true, browser: await browserDevtools.launch({ label, url }) };
+        },
+        'POST /api/devtools/browsers/start': async (request) => {
+          const { id } = await readJson(request);
+          return { ok: true, browser: await browserDevtools.start(id) };
+        },
+        'POST /api/devtools/browsers/stop': async (request) => {
+          const { id } = await readJson(request);
+          return { ok: true, browser: await browserDevtools.stop(id) };
+        },
+        'POST /api/devtools/browsers/remove': async (request) => {
+          const { id } = await readJson(request);
+          return { ok: true, ...(await browserDevtools.remove(id)) };
+        },
+      };
       const tableRoute =
-        slackWatchRoutes[routeKey] || claudeRoutes[routeKey] || promptRoutes[routeKey];
+        devtoolsRoutes[routeKey] ||
+        slackWatchRoutes[routeKey] ||
+        claudeRoutes[routeKey] ||
+        promptRoutes[routeKey];
       if (tableRoute) {
         json(res, 200, await tableRoute(req));
         return;
@@ -562,6 +587,11 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'ARTIFACT_TOO_LARGE',
         'CLAUDE_REFUSED',
         'CLAUDE_FAILED',
+        'UNKNOWN_BROWSER',
+        'NO_FREE_PORT',
+        'BROWSER_NOT_FOUND',
+        'LAUNCH_FAILED',
+        'INVALID_URL',
       ];
       const code = allowed.includes(error.code) ? error.code : 'OPERATION_FAILED';
       const conflict = ['SETUP_REQUIRED', 'REVISION_CONFLICT', 'SERVICE_IN_USE'].includes(code);

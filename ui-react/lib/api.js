@@ -222,8 +222,21 @@ async function watchRequest(url, { method = 'GET', body } = {}) {
   }
 }
 
-export const getSlackWatch = () => watchRequest('/api/slack/watch');
+// The DevTools tab: the debug browsers this machine can hand to an agent over CDP.
+export const getDevtoolsBrowsers = () => watchRequest('/api/devtools/browsers');
+export const launchDevtoolsBrowser = ({ label, url } = {}) =>
+  watchRequest('/api/devtools/browsers', {
+    method: 'POST',
+    body: url ? { label, url } : { label },
+  });
+export const startDevtoolsBrowser = (id) =>
+  watchRequest('/api/devtools/browsers/start', { method: 'POST', body: { id } });
+export const stopDevtoolsBrowser = (id) =>
+  watchRequest('/api/devtools/browsers/stop', { method: 'POST', body: { id } });
+export const removeDevtoolsBrowser = (id) =>
+  watchRequest('/api/devtools/browsers/remove', { method: 'POST', body: { id } });
 
+export const getSlackWatch = () => watchRequest('/api/slack/watch');
 export const getSlackWatchSessions = () => watchRequest('/api/slack/watch/sessions');
 
 export const addSlackWatchLinks = (links) =>

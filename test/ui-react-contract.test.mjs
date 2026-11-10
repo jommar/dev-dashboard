@@ -150,6 +150,7 @@ test('React panels own structural rendering and compose shared React components'
     'MyTicketsPanel.jsx',
     'ReleasesPanel.jsx',
     'SlackPanel.jsx',
+    'DevtoolsPanel.jsx',
     'SettingsPanel.jsx',
   ];
   for (const name of panels) {
@@ -889,6 +890,46 @@ test('the board stylesheets use tokens only, short transitions and honour reduce
   const tokens = read('styles/tokens.css');
   const radius = Number(tokens.match(/--radius:\s*(\d+)px/)?.[1]);
   assert.ok(radius <= 12, 'the shared card radius token is at most 12 px');
+});
+
+test('the DevTools sheet stays token-only, short and DevTools-scoped', () => {
+  const css = read('styles/devtools.css');
+  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, 'colours come from tokens, never a hex literal');
+  assert.doesNotMatch(css, /(?<![\w-])columns:\s*\d/, 'a table is not a masonry card list');
+  const declarations = [...css.matchAll(/transition(?:-duration|-property)?\s*:\s*([^;}]+)/g)];
+  for (const [, value] of declarations) {
+    for (const [, amount, unit] of value.matchAll(/(\d*\.?\d+)\s*(ms|s)\b/g)) {
+      const ms = unit === 's' ? Number(amount) * 1000 : Number(amount);
+      assert.ok(ms <= 200, `transition "${value.trim()}" stays within 200 ms`);
+    }
+    assert.doesNotMatch(value, /\ball\b/, 'transition names its properties');
+  }
+  for (const [, value] of css.matchAll(/border-radius\s*:\s*([^;}]+)/g)) {
+    for (const [, px] of value.matchAll(/(\d*\.?\d+)px/g)) {
+      assert.ok(Number(px) <= 12, `border-radius "${value.trim()}" is at most 12 px`);
+    }
+  }
+  assert.match(
+    css,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)/,
+    'the sheet carries its own block',
+  );
+  assert.match(css, /tabular-nums/, 'the port does not jiggle');
+  // The sheet carries only its own domain rules; nothing here reaches another screen.
+  const selectors = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)]
+    .map(([, selector]) => selector.trim())
+    .filter((selector) => !selector.startsWith('@'))
+    .flatMap((selector) => selector.split(','));
+  for (const selector of selectors)
+    assert.match(selector.trim(), /^\.devtools\b/, `${selector.trim()} stays DevTools-scoped`);
+});
+
+test('the primary routes are unchanged', () => {
+  assert.match(
+    read('components/AppTabs.jsx'),
+    /const PRIMARY_ROUTES = new Set\(\['home', 'my-tickets', 'slack'\]\);/,
+    'DevTools joins the tools row, never the primary one',
+  );
 });
 
 // -- comment chips, the attached Slack chip and the all-approved card -------------------------------

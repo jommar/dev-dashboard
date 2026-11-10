@@ -335,6 +335,39 @@ export function homeVelocityData() {
   return snapshot;
 }
 
+// The debug browsers the DevTools panel lists: one running, one stopped, each on its own profile.
+// `calls` records every POST so a spec can assert exactly what the panel sent, and `nextLaunch` is
+// the record a launch creates, so a spec can name the row it expects without reading the render.
+export function devtoolsData(overrides = {}) {
+  return {
+    browsers: [
+      {
+        id: 'b-3f9a2c7d',
+        label: 'Browser 3f9a',
+        port: 9300,
+        pid: 41001,
+        profileDir: '/home/example/.config/dev-dashboard/browsers/b-3f9a2c7d/profile',
+        url: 'about:blank',
+        startedAt: '2026-11-11T09:00:00.000Z',
+        status: 'running',
+      },
+      {
+        id: 'b-7c1d4e20',
+        label: 'QA login',
+        port: 9301,
+        pid: null,
+        profileDir: '/home/example/.config/dev-dashboard/browsers/b-7c1d4e20/profile',
+        url: 'https://example.invalid/login',
+        startedAt: '2026-11-11T08:30:00.000Z',
+        status: 'stopped',
+      },
+    ],
+    nextLaunch: { id: 'b-5e0f6a1b', port: 9302 },
+    calls: [],
+    ...overrides,
+  };
+}
+
 export function dashboardData() {
   const sprint = {
     id: 1,
@@ -560,6 +593,7 @@ export function dashboardData() {
     teamVelocity: homeVelocityData(),
     slack: slackData(),
     claude: claudeData(),
+    devtools: devtoolsData(),
   };
 }
 
@@ -1795,6 +1829,55 @@ function claudeResponse(url, method, { claude }, body) {
   return null;
 }
 
+// Mirrors the server's contract for the DevTools routes. A launch appends `nextLaunch` under the
+// posted label and URL, and Stop/Start flip the record's status, so the panel's own re-read is what
+// turns a row. Every POST is recorded in `calls`, in order.
+function devtoolsResponse(url, method, { devtools }, body) {
+  const { pathname } = url;
+  if (method === 'GET' && pathname === '/api/devtools/browsers')
+    return { json: { browsers: structuredClone(devtools.browsers) } };
+  if (method !== 'POST') return null;
+  devtools.calls.push({ method, path: pathname, body: structuredClone(body) });
+  if (pathname === '/api/devtools/browsers') {
+    const { id, port } = devtools.nextLaunch;
+    const browser = {
+      id,
+      label: body?.label?.trim() || `Browser ${id.slice(2, 6)}`,
+      port,
+      pid: 41002,
+      profileDir: `/home/example/.config/dev-dashboard/browsers/${id}/profile`,
+      url: body?.url || 'about:blank',
+      startedAt: '2026-11-11T09:30:00.000Z',
+      status: 'running',
+    };
+    devtools.browsers.push(browser);
+    return { json: { ok: true, browser: structuredClone(browser) } };
+  }
+  if (pathname === '/api/devtools/browsers/start' || pathname === '/api/devtools/browsers/stop') {
+    const browser = devtools.browsers.find((entry) => entry.id === body?.id);
+    if (!browser)
+      return {
+        status: 404,
+        json: { code: 'UNKNOWN_BROWSER', error: 'UNKNOWN BROWSER', errors: [] },
+      };
+    const starting = pathname.endsWith('/start');
+    browser.status = starting ? 'running' : 'stopped';
+    browser.pid = starting ? 41003 : null;
+    return { json: { ok: true, browser: structuredClone(browser) } };
+  }
+  if (pathname === '/api/devtools/browsers/remove') {
+    const before = devtools.browsers.length;
+    devtools.browsers = devtools.browsers.filter((entry) => entry.id !== body?.id);
+    if (devtools.browsers.length === before)
+      return {
+        status: 404,
+        json: { code: 'UNKNOWN_BROWSER', error: 'UNKNOWN BROWSER', errors: [] },
+      };
+    return { json: { ok: true, id: body?.id } };
+  }
+  return null;
+}
+
 export function apiResponse(url, method, data, body) {
   if (
     data.statefulSettings &&
@@ -1825,6 +1908,8 @@ export function apiResponse(url, method, data, body) {
     return slackResponse(url, method, data, body);
   if (url.pathname.startsWith('/api/claude/') && data.claude)
     return claudeResponse(url, method, data, body);
+  if (url.pathname.startsWith('/api/devtools/') && data.devtools)
+    return devtoolsResponse(url, method, data, body);
   if (method === 'GET') {
     if (url.pathname === '/api/config') return { json: data.config };
     if (url.pathname === '/api/settings') return { json: data.settings };
