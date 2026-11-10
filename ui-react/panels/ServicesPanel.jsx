@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, LoadingState } from '../components/Primitives.jsx';
+import { BoardPanel, BoardSection, BoardState } from '../components/BoardShell.jsx';
+import { Button, Card } from '../components/Primitives.jsx';
 import { Terminal } from '../components/Terminal.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 
@@ -42,21 +43,26 @@ function ServiceCard({
   };
   return (
     <Card className="service-card" id={`card-${service.id}`} data-testid={`card-${service.id}`}>
-      <header>
-        <div className="title">
+      <header className="service-header">
+        <div className="service-title">
           <h2 data-testid={`card-title-${service.id}`}>{service.label}</h2>
-          {service.port && service.id !== 'legacy-ui' && (
-            <a
-              className="port"
-              href={`http://127.0.0.1:${service.port}`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              :{service.port}
-            </a>
-          )}
+          <div className="service-meta">
+            <code data-testid={`card-dir-${service.id}`}>{service.dir}</code>
+            {service.port && service.id !== 'legacy-ui' && (
+              <a
+                className="service-port"
+                href={`http://127.0.0.1:${service.port}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                :{service.port}
+              </a>
+            )}
+          </div>
+        </div>
+        <div className="service-actions">
           <span
-            className="pill status"
+            className="board-chip service-status"
             data-status={service.status}
             data-testid={`status-${service.id}`}
           >
@@ -65,21 +71,21 @@ function ServiceCard({
               ? ` (${service.exitCode})`
               : ''}
           </span>
-        </div>
-        <div className="controls">
-          {['start', 'stop', 'restart'].map((action) => (
-            <Button
-              key={action}
-              className={action}
-              disabled={locked}
-              data-testid={`${action}-${service.id}`}
-              data-service={service.id}
-              data-action={action}
-              onClick={() => command(action)}
-            >
-              {action[0].toUpperCase() + action.slice(1)}
-            </Button>
-          ))}
+          <div className="service-controls" role="group" aria-label={`${service.label} controls`}>
+            {['start', 'stop', 'restart'].map((action) => (
+              <Button
+                key={action}
+                className={action}
+                disabled={locked}
+                data-testid={`${action}-${service.id}`}
+                data-service={service.id}
+                data-action={action}
+                onClick={() => command(action)}
+              >
+                {action[0].toUpperCase() + action.slice(1)}
+              </Button>
+            ))}
+          </div>
         </div>
       </header>
       <p
@@ -90,9 +96,6 @@ function ServiceCard({
       >
         {controlState.message}
       </p>
-      <div className="meta">
-        <code data-testid={`card-dir-${service.id}`}>{service.dir}</code>
-      </div>
       <div className="log-tools">
         <span className="log-label">Output</span>
         <Button
@@ -125,14 +128,6 @@ function ServiceCard({
           Refresh log
         </Button>
       </div>
-      <p
-        className="feedback log-feedback"
-        data-testid={`log-feedback-${service.id}`}
-        role="status"
-        data-state={logState.state}
-      >
-        {logState.message}
-      </p>
       <Terminal
         id={service.id}
         getLog={api.getLog}
@@ -142,6 +137,14 @@ function ServiceCard({
         onState={setLogState}
         expose={setTerminal}
       />
+      <p
+        className="feedback log-feedback"
+        data-testid={`log-feedback-${service.id}`}
+        role="status"
+        data-state={logState.state}
+      >
+        {logState.message}
+      </p>
     </Card>
   );
 }
@@ -224,97 +227,108 @@ export function ServicesPanel({ config, active, services: snapshots = [] }) {
   };
   const currentFollow = current.map((service) => followStates[service.id] ?? true);
   const followMixed = currentFollow.some(Boolean) && !currentFollow.every(Boolean);
+  const statusCounts = current.reduce((counts, service) => {
+    counts[service.status] = (counts[service.status] || 0) + 1;
+    return counts;
+  }, {});
+  const statusSummary = Object.entries(statusCounts)
+    .map(([status, count]) => `${count} ${status}`)
+    .join(' · ');
   return (
-    <section
-      id="panel-services"
-      className="panel"
-      data-testid="panel-services"
-      hidden={!active}
-      onClick={(event) => {
-        const button = event.target.closest('[data-testid^="follow-"]');
-        if (!button) return;
-        const id = button.dataset.testid.slice('follow-'.length);
-        const prior = followStates[id] ?? true;
-        setFollowStates((states) => ({ ...states, [id]: !prior }));
-        setFollowVersion((version) => version + 1);
-      }}
-    >
-      <header className="page-intro">
-        <p className="eyebrow">Local runtime</p>
-        <h2>Services & logs</h2>
-      </header>
-      <div className="service-toolbar">
-        <div className="bulk-controls">
-          {['start', 'stop', 'restart'].map((action) => (
+    <BoardPanel id="services" active={active} busy={loading}>
+      <BoardSection
+        name="services"
+        title="Services"
+        sub={`Local runtime · Last ${Number(config.defaultTailLines)} lines · full retained log available`}
+        meta={statusSummary}
+        controls={
+          <>
+            <div className="service-bulk-controls">
+              {['start', 'stop', 'restart'].map((action) => (
+                <Button
+                  key={action}
+                  className={action}
+                  data-testid={`${action}-all`}
+                  disabled={loading || !services.length || bulkPending || pending.size > 0}
+                  onClick={() => controlAll(action)}
+                >
+                  {action[0].toUpperCase() + action.slice(1)} all
+                </Button>
+              ))}
+            </div>
             <Button
-              key={action}
-              className={action}
-              data-testid={`${action}-all`}
-              disabled={loading || !services.length || bulkPending || pending.size > 0}
-              onClick={() => controlAll(action)}
+              className="subtle service-autoscroll"
+              data-testid="autoscroll-toggle"
+              aria-pressed={followMixed ? 'mixed' : currentFollow.every(Boolean)}
+              onClick={() => {
+                const next = !currentFollow.every(Boolean);
+                setFollowStates(Object.fromEntries(current.map((service) => [service.id, next])));
+                setFollowVersion((version) => version + 1);
+              }}
             >
-              {action[0].toUpperCase() + action.slice(1)} all
+              Auto-scroll: {followMixed ? 'Mixed' : currentFollow.every(Boolean) ? 'On' : 'Off'}
             </Button>
-          ))}
-        </div>
-        <span className="tail-hint">
-          Last {Number(config.defaultTailLines)} lines · full retained log available
-        </span>
-        <Button
-          className="subtle"
-          data-testid="autoscroll-toggle"
-          aria-pressed={followMixed ? 'mixed' : currentFollow.every(Boolean)}
-          onClick={() => {
-            const next = !currentFollow.every(Boolean);
-            setFollowStates(Object.fromEntries(current.map((service) => [service.id, next])));
-            setFollowVersion((version) => version + 1);
-          }}
-        >
-          Auto-scroll: {followMixed ? 'Mixed' : currentFollow.every(Boolean) ? 'On' : 'Off'}
-        </Button>
-      </div>
-      <p
-        className="feedback"
-        data-testid="bulk-feedback"
-        role="status"
-        data-state={bulkFeedback.state}
+          </>
+        }
+        notes={
+          <>
+            <p
+              className="feedback"
+              data-testid="bulk-feedback"
+              role="status"
+              data-state={bulkFeedback.state}
+            >
+              {bulkFeedback.message}
+            </p>
+            <p
+              className="feedback"
+              data-testid="services-feedback"
+              role="status"
+              data-state={error ? 'error' : ''}
+            >
+              {error}
+            </p>
+            <Button data-testid="services-retry" hidden={!error} onClick={load}>
+              Retry services
+            </Button>
+          </>
+        }
       >
-        {bulkFeedback.message}
-      </p>
-      <p
-        className="feedback"
-        data-testid="services-feedback"
-        role="status"
-        data-state={error ? 'error' : ''}
-      >
-        {error}
-      </p>
-      <Button data-testid="services-retry" hidden={!error} onClick={load}>
-        Retry services
-      </Button>
-      <div className="grid" data-testid="service-grid" data-follow-version={followVersion}>
         {loading && !services.length ? (
-          <LoadingState label="Loading services…" />
-        ) : error ? null : current.length ? (
-          current.map((service) => (
-            <ServiceCard
-              key={service.id}
-              service={service}
-              config={config}
-              active={active}
-              snapshot={snapshots}
-              followAll={followStates[service.id] ?? true}
-              locked={bulkPending || pending.has(service.id)}
-              onControl={control}
-              onFollowChange={(id, value) =>
-                setFollowStates((states) => ({ ...states, [id]: value }))
-              }
-            />
-          ))
+          <BoardState kind="loading" label="Loading services…" />
+        ) : error ? (
+          <BoardState kind="error">
+            Service discovery failed. Retry services to reconnect.
+          </BoardState>
+        ) : current.length ? (
+          <div className="board-pane services-pane">
+            <div
+              className="grid service-grid"
+              data-testid="service-grid"
+              data-follow-version={followVersion}
+            >
+              {current.map((service) => (
+                <ServiceCard
+                  key={service.id}
+                  service={service}
+                  config={config}
+                  active={active}
+                  snapshot={snapshots}
+                  followAll={followStates[service.id] ?? true}
+                  locked={bulkPending || pending.has(service.id)}
+                  onControl={control}
+                  onFollowChange={(id, value) => {
+                    setFollowStates((states) => ({ ...states, [id]: value }));
+                    setFollowVersion((version) => version + 1);
+                  }}
+                />
+              ))}
+            </div>
+          </div>
         ) : (
-          <p>{services.length === 0 && !loading ? 'No services configured.' : ''}</p>
+          <BoardState>No services configured.</BoardState>
         )}
-      </div>
-    </section>
+      </BoardSection>
+    </BoardPanel>
   );
 }

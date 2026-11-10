@@ -77,6 +77,56 @@ test('shared visual tokens preserve the Cold Room surface and compact type contr
   assert.match(css, /\.ticket-card\s*\+\s*\.ticket-card[\s\S]*?margin-top:\s*20px;/);
 });
 
+test('Services composes the shared console shell and states without a second polling owner', () => {
+  const panel = read('panels/ServicesPanel.jsx');
+  for (const name of ['BoardPanel', 'BoardSection', 'BoardState']) {
+    assert.match(panel, new RegExp(`<${name}\\b`), `Services renders ${name}`);
+  }
+  assert.match(panel, /<BoardPanel\b[^>]*\bid="services"/);
+  assert.match(panel, /<BoardSection\b[^>]*\bname="services"/);
+  assert.match(panel, /className="board-pane services-pane"/);
+  assert.match(panel, /className="grid service-grid"/);
+  assert.match(panel, /data-testid="service-grid"/);
+  assert.match(panel, /data-follow-version=/);
+  assert.doesNotMatch(panel, /useActivePolling|new EventSource|setInterval/);
+  assert.doesNotMatch(panel, /<BoardPanel\b[^>]*\bonClick=/);
+});
+
+test('Services styles are scoped token rules with explicit responsive grid columns', () => {
+  const css = read('styles/services.css');
+  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, 'Services colours come from tokens');
+  assert.match(
+    css,
+    /\.services-pane\s+\.service-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+  );
+  for (const [width, columns] of [
+    [760, 2],
+    [1700, 3],
+  ]) {
+    assert.match(
+      css,
+      new RegExp(
+        `@media\\s*\\(min-width:\\s*${width}px\\)[\\s\\S]*?\\.services-pane\\s+\\.service-grid\\s*\\{[^}]*grid-template-columns:\\s*repeat\\(${columns}, minmax\\(0, 1fr\\)\\)`,
+      ),
+    );
+  }
+  const selectors = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)]
+    .map(([, selector]) => selector.trim())
+    .filter((selector) => !selector.startsWith('@'))
+    .flatMap((selector) => selector.split(','));
+  for (const selector of selectors)
+    assert.match(
+      selector.trim(),
+      /^(?:\.services?[-\w]*|#panel-services)\b/,
+      `${selector.trim()} stays Services-scoped`,
+    );
+  assert.doesNotMatch(
+    css,
+    /(?:height|min-height):\s*calc\([^;]*100(?:d?vh)/,
+    'viewport fill belongs to the shared shell',
+  );
+});
+
 test('React panels own structural rendering and compose shared React components', () => {
   const components = [
     'Primitives.jsx',
