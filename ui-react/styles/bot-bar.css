@@ -36,6 +36,13 @@
 .bot-bar-lane {
   /* The room a bot's left edge has, in the unit it is used in (a percentage of the bar's width). */
   --bot-room: calc(100% - var(--bot-bar-size) - 2 * var(--bot-bar-edge, 0px));
+  /* The done zone: the left of the bar, a share of its width but never less than a minimum, and
+     never past the right edge margin. A done bot's left edge has this much room inside it. */
+  --bot-zone: min(
+    max(calc(var(--bot-zone-min, 240) * 1px), calc(var(--bot-zone-share, 30) * 1%)),
+    calc(100% - var(--bot-bar-edge, 0px))
+  );
+  --bot-done-room: max(0px, calc(var(--bot-zone) - var(--bot-bar-edge, 0px) - var(--bot-bar-size)));
   position: absolute;
   bottom: calc(var(--s1) + env(safe-area-inset-bottom, 0px));
   left: calc(
@@ -43,7 +50,19 @@
   );
   width: var(--bot-bar-size);
   height: var(--bot-bar-size);
+  z-index: var(--bot-layer, auto);
   pointer-events: none;
+}
+/* A done bot stands in the zone. Bots can overlap there when there are many: the one you point at or
+   focus comes to the front, so its dismiss button stays reachable. */
+.bot-bar-lane[data-state='done'] {
+  left: calc(
+    var(--bot-bar-edge, 0px) + var(--bot-rest-still, var(--bot-rest, 0)) / 100 *
+      var(--bot-done-room)
+  );
+}
+.bot-bar-lane:is(:hover, :focus-within) {
+  z-index: 100;
 }
 .bot-bar-face {
   width: var(--bot-bar-size);
@@ -194,10 +213,14 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .bot-bar-lane[data-state='working'],
-  .bot-bar-lane[data-state='waiting'],
-  .bot-bar-lane[data-state='done'] {
+  .bot-bar-lane[data-state='waiting'] {
     left: calc(var(--bot-bar-edge, 0px) + var(--bot-from) / 100 * var(--bot-room));
     width: calc(var(--bot-range) / 100 * var(--bot-room));
+  }
+  /* A done bot's stroll is inside the done zone. */
+  .bot-bar-lane[data-state='done'] {
+    left: calc(var(--bot-bar-edge, 0px) + var(--bot-zone-from) / 100 * var(--bot-done-room));
+    width: calc(var(--bot-zone-range) / 100 * var(--bot-done-room));
   }
   /* A failed bot stands where it was put among the failed ones, not among the walkers. */
   .bot-bar-lane[data-state='failed'] {

@@ -40,11 +40,12 @@ import {
   rememberBots,
   restingSpots,
   roamFor,
-  walks,
 } from '../../ui/bot-bar.js';
 
 // The longest a timer may wait (setTimeout overflows past 2^31 ms).
 const LONGEST_WAIT_MS = 2 ** 30;
+// Done bots stand this far apart (percent of the zone) at least, then closer when there are many.
+const DONE_SPOT_GAP = 35;
 
 const isFinished = (state) => state === 'done' || state === 'failed';
 
@@ -57,6 +58,7 @@ const Bot = memo(function Bot({
   fading,
   rest,
   restStill,
+  layer,
   calloutState,
   calloutLeaving,
   onOpen,
@@ -73,7 +75,7 @@ const Bot = memo(function Bot({
       className="bot-bar-lane"
       data-state={state}
       data-fading={fading ? 'true' : undefined}
-      style={laneStyle(roam, rest, restStill)}
+      style={{ ...laneStyle(roam, rest, restStill), '--bot-layer': layer }}
     >
       <div className="bot-bar-face">
         {/* The app's own popup (the board's DashboardTooltip: it shows on keyboard focus too), never a
@@ -171,13 +173,32 @@ export function BotBar() {
 
   // `clock` is not read: it is what makes the list be worked out again when a done bot's time comes.
   const visible = useMemo(() => liveBots(bots, memory, Date.now()), [bots, memory, clock]);
-  // Where bots stand: a failed one stands among the failed ones; under reduced motion every bot
-  // stands, so each also has a place among all of them.
+  // Where bots stand: a failed one stands among the failed ones. Under reduced motion every bot
+  // stands: a done one among the done ones inside the zone (a place in the zone, so up to a stride
+  // apart and overlapping when there are many), any other among the others on the whole bar.
   const standing = useMemo(
-    () => restingSpots(visible.filter(({ state }) => !walks(state))),
+    () => restingSpots(visible.filter(({ state }) => state === 'failed')),
     [visible],
   );
-  const still = useMemo(() => restingSpots(visible), [visible]);
+  const stillDone = useMemo(
+    () =>
+      restingSpots(
+        visible.filter(({ state }) => state === 'done'),
+        DONE_SPOT_GAP,
+      ),
+    [visible],
+  );
+  const stillOthers = useMemo(
+    () => restingSpots(visible.filter(({ state }) => state !== 'done')),
+    [visible],
+  );
+  // The most recently done bot is in front of the other done ones.
+  const layers = useMemo(() => {
+    const done = visible
+      .filter(({ state }) => state === 'done')
+      .sort((a, b) => (memory.seenDoneAt.get(a.key) ?? 0) - (memory.seenDoneAt.get(b.key) ?? 0));
+    return new Map(done.map(({ key }, index) => [key, index + 1]));
+  }, [visible, memory]);
   const { callouts, announcements, attend } = useBotCallouts(
     claude.byTicket,
     claude.loaded,
@@ -213,7 +234,8 @@ export function BotBar() {
               reason={bot.reason}
               fading={bot.fading}
               rest={standing.get(bot.key)}
-              restStill={still.get(bot.key)}
+              restStill={(bot.state === 'done' ? stillDone : stillOthers).get(bot.key)}
+              layer={layers.get(bot.key)}
               calloutState={calloutOf.get(bot.key)?.state}
               calloutLeaving={calloutOf.get(bot.key)?.leaving}
               onOpen={openBot}

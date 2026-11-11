@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures.js';
 import { claudeEntry, settingsData } from './data.js';
+import { roamFor, walkStretch } from '../ui/bot-bar.js';
 
 // The bot bar: one mascot per implement or review Claude session of a ticket in the active Jira
 // sprint, on every screen, polling /api/claude/tickets itself and asking /api/active-sprint-tickets
@@ -321,8 +322,10 @@ test('a done bot strolls with rests at each end and halfway, turning at the ends
   ]);
   // The dismiss button stays on its bot all the way.
   for (const spot of [out, halfA, far, back]) expect(spot.gap).toBeCloseTo(home.gap, 0);
-  // A done lane walks the same stretch as any other walker, inside the bar.
-  expect(far.x).toBeLessThanOrEqual(1440 - 56 + 1);
+  // A done bot's stroll is the stretch of the done zone that its key says, nowhere else.
+  const stretch = walkStretch(roamFor('BOT-3:review'), 'done', 1440);
+  expect(Math.abs(home.x - stretch.min)).toBeLessThan(1.5);
+  expect(Math.abs(far.x - stretch.max)).toBeLessThan(1.5);
   // A failed bot has no walk at all.
   const failed = page.getByTestId('bot-bar-bot-BOT-4-implement');
   expect(await failed.evaluate((el) => el.closest('.bot-bar-lane').getAnimations().length)).toBe(0);
@@ -376,7 +379,18 @@ test('with reduced motion no bot moves: done and failed stand at spread-out plac
       })),
     );
   expect(lanes.every(({ walks }) => walks === 0)).toBe(true);
-  const xs = lanes.map(({ x }) => x).sort((a, b) => a - b);
+  // The done bot stands inside the zone; the others are spread over the whole bar, apart from each other.
+  const done = await page.getByTestId('bot-bar-bot-BOT-3-review').boundingBox();
+  expect(done.x).toBeGreaterThanOrEqual(ZONE.start - 1);
+  expect(done.x + done.width).toBeLessThanOrEqual(ZONE.end + 1);
+  const others = await ['BOT-1-implement', 'BOT-2-review', 'BOT-4-implement'].reduce(
+    async (list, key) => [
+      ...(await list),
+      (await page.getByTestId(`bot-bar-bot-${key}`).boundingBox()).x,
+    ],
+    Promise.resolve([]),
+  );
+  const xs = others.sort((a, b) => a - b);
   for (let i = 1; i < xs.length; i += 1) expect(xs[i] - xs[i - 1]).toBeGreaterThanOrEqual(56);
   const before = await bots(page).evaluateAll((all) =>
     all.map((el) => el.getBoundingClientRect().x),
@@ -523,4 +537,92 @@ test('at most three callouts show at once, and a session that starts working get
   await page.clock.runFor(POLL);
   await expect(callout(page, 'BOT-9-implement')).toHaveText('BOT-9 · Working on it…');
   await expect(page.locator('[data-testid^="bot-bar-callout-"]')).toHaveCount(3);
+});
+
+// The done zone: the left 30 % (at least 240 px) of the bar. Done bots never leave it; others do.
+const ZONE = { start: 88, end: 1440 * 0.3 };
+const heldX = (page, key, name, fraction) =>
+  page.evaluate(
+    ({ key, name, fraction }) => {
+      const lane = document
+        .querySelector(`[data-testid="bot-bar-bot-${key}"]`)
+        .closest('.bot-bar-lane');
+      const animation = lane.getAnimations().find((a) => a.animationName === name);
+      animation.pause();
+      const { duration, delay } = animation.effect.getComputedTiming();
+      animation.currentTime = duration * fraction + delay;
+      const box = lane.querySelector('.bot-bar-bot').getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    },
+    { key, name, fraction },
+  );
+
+test('a done bot strolls only inside the left zone; working and failed bots are not kept out of it or in it', async ({
+  page,
+  dashboard,
+}) => {
+  seed(dashboard);
+  await page.goto('/#/home');
+  await expect(bots(page)).toHaveCount(4);
+  for (const fraction of [0, 0.1, 0.2, 0.3, 0.37, 0.5, 0.64, 0.8, 0.95]) {
+    const { left, right } = await heldX(page, 'BOT-3-review', 'bot-bar-stroll', fraction);
+    expect(left).toBeGreaterThanOrEqual(ZONE.start - 1);
+    expect(right).toBeLessThanOrEqual(ZONE.end + 1);
+  }
+  // A working bot walks the whole bar: this one's patrol reaches far past the zone.
+  const far = await heldX(page, 'BOT-1-implement', 'bot-bar-patrol', 0.5);
+  expect(far.left).toBeGreaterThan(ZONE.end + 100);
+  const near = await heldX(page, 'BOT-1-implement', 'bot-bar-patrol', 0);
+  expect(
+    Math.abs(far.left - walkStretch(roamFor('BOT-1:implement'), 'working', 1440).max),
+  ).toBeLessThan(1.5);
+  expect(near.left).toBeLessThan(far.left);
+  // A failed bot stands where its key puts it, not in the zone's walls.
+  const failed = await page.getByTestId('bot-bar-bot-BOT-4-implement').boundingBox();
+  expect(failed.x).toBeGreaterThan(ZONE.end);
+});
+
+test('a bot that turns done lands inside the zone', async ({ page, dashboard }) => {
+  await page.clock.install();
+  seed(dashboard, { sessions: { 'BOT-1': WORKING_IMPLEMENT } });
+  await page.goto('/#/home');
+  await expect(bots(page)).toHaveCount(1);
+  const bot = page.getByTestId('bot-bar-bot-BOT-1-implement');
+  dashboard.data.claude.tickets['BOT-1'] = DONE_IMPLEMENT;
+  await page.clock.runFor(POLL);
+  await expect(bot).toHaveAttribute('data-state', 'done');
+  const { left, right } = await heldX(page, 'BOT-1-implement', 'bot-bar-stroll', 0.5);
+  expect(left).toBeGreaterThanOrEqual(ZONE.start - 1);
+  expect(right).toBeLessThanOrEqual(ZONE.end + 1);
+});
+
+test('many done bots overlap inside the zone, and the one you point at comes to the front with its x reachable', async ({
+  page,
+  dashboard,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const keys = Array.from({ length: 8 }, (_, i) => `BOT-${20 + i}`);
+  const sessions = Object.fromEntries(keys.map((key) => [key, review('done', 'finished')]));
+  seed(dashboard, { sessions, sprint: keys });
+  await page.goto('/#/home');
+  await expect(bots(page)).toHaveCount(8);
+  const boxes = await bots(page).evaluateAll((all) =>
+    all.map((el) => el.getBoundingClientRect()).map(({ left, right }) => ({ left, right })),
+  );
+  for (const { left, right } of boxes) {
+    expect(left).toBeGreaterThanOrEqual(ZONE.start - 1);
+    expect(right).toBeLessThanOrEqual(ZONE.end + 1);
+  }
+  // Pointing at a bot raises it above its neighbours, so its dismiss button takes the click.
+  const target = page.getByTestId('bot-bar-bot-BOT-23-review');
+  await target.hover();
+  const dismiss = page.getByTestId('bot-bar-dismiss-BOT-23-review');
+  const box = await dismiss.boundingBox();
+  const top = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest('[data-testid]')?.dataset.testid,
+    { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+  );
+  expect(top).toBe('bot-bar-dismiss-BOT-23-review');
+  await dismiss.click();
+  await expect(bots(page)).toHaveCount(7);
 });

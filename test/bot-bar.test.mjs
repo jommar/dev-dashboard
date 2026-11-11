@@ -7,6 +7,9 @@ import {
   FADE_MS,
   NO_MEMORY,
   CALLOUT_AUTO_HIDE_MS,
+  DONE_ZONE_MIN_PX,
+  DONE_ZONE_SHARE,
+  walkStretch,
   CALLOUT_EXIT_MS,
   CALLOUT_PENDING_MS,
   CALLOUT_TEXT,
@@ -518,6 +521,10 @@ test('a lane is styled with the custom properties bot-bar.css reads', () => {
   assert.deepEqual(style, {
     '--bot-from': roam.from,
     '--bot-range': roam.range,
+    '--bot-zone-from': roam.zoneFrom,
+    '--bot-zone-range': roam.zoneRange,
+    '--bot-zone-share': DONE_ZONE_SHARE,
+    '--bot-zone-min': DONE_ZONE_MIN_PX,
     '--bot-dur': roam.seconds,
     '--bot-dur-idle': roam.idleSeconds,
     '--bot-dur-stroll': roam.strollSeconds,
@@ -526,6 +533,45 @@ test('a lane is styled with the custom properties bot-bar.css reads', () => {
     '--bot-rest-still': 60,
   });
   assert.equal(laneStyle(roam, 42.5)['--bot-rest-still'], 42.5, 'one place when no other is given');
+});
+
+test('a done bot walks inside the left zone, any other bot the whole bar, each by its own key', () => {
+  assert.equal(DONE_ZONE_SHARE, 30);
+  assert.equal(DONE_ZONE_MIN_PX, 240);
+  for (const width of [320, 600, 1024, 1440, 2560]) {
+    const edge = width < 600 ? 40 : 88;
+    const zoneEnd = Math.min(Math.max(240, width * 0.3), width - edge);
+    for (const key of keys(200)) {
+      const roam = roamFor(key);
+      assert.ok(roam.zoneRange >= 55 && roam.zoneRange <= 100);
+      assert.ok(roam.zoneFrom >= 0 && roam.zoneFrom + roam.zoneRange <= 100);
+      const done = walkStretch(roam, 'done', width, { edge });
+      assert.ok(done.min >= edge - 1e-9, `${width}: starts at or after the left margin`);
+      assert.ok(done.max + 56 <= zoneEnd + 1e-9, `${width}: ends inside the zone (${zoneEnd})`);
+      assert.deepEqual(done, walkStretch(roamFor(key), 'done', width, { edge }), 'deterministic');
+      for (const state of ['working', 'waiting']) {
+        const walk = walkStretch(roam, state, width, { edge });
+        assert.ok(walk.min >= edge - 1e-9 && walk.max + 56 <= width - edge + 1e-9);
+      }
+    }
+  }
+  // Other bots are not kept out of the zone, and their walk does not depend on it: some reach far past it.
+  const wide = keys(200).map((key) => walkStretch(roamFor(key), 'working', 1440).max);
+  assert.ok(
+    wide.some((max) => max > 432),
+    'a working bot can walk beyond the zone',
+  );
+  assert.equal(walkStretch(roamFor('TAP-1:review'), 'failed', 1440).room, 1440 - 56 - 176);
+});
+
+test('done bots get places spread inside the zone, and failed bots stay in range', () => {
+  const done = keys(6).map((key) => ({ key, state: 'done' }));
+  const spots = restingSpots(done, 35);
+  const row = [...spots.values()].sort((a, b) => a - b);
+  assert.ok(row[0] >= 0 && row.at(-1) <= 100);
+  for (let i = 1; i < row.length; i += 1) assert.ok(row[i] > row[i - 1], 'no two on one spot');
+  const failed = restingSpots(keys(12).map((key) => ({ key, state: 'failed' })));
+  assert.ok([...failed.values()].every((at) => at >= 0 && at <= 100));
 });
 
 test('only bots that stand are spread: failed bots among themselves, every bot when motion is reduced', () => {

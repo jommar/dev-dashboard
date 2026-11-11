@@ -310,22 +310,33 @@ const between = (low, high, amount) => low + (high - low) * amount;
 // times as long, and a done bot's stroll the second. A stroll is the calmest: a relaxed amble with
 // a rest at each end and one on the way out, where idle is a slow wander that goes straight back.
 export const IDLE_CYCLE_FACTOR = 2.2;
-export const STROLL_CYCLE_FACTOR = 4.5;
+export const STROLL_CYCLE_FACTOR = 3;
+
+// Done bots live in a zone on the left of the bar and never leave it; every other bot roams the whole
+// bar, the zone included. The zone is this share of the bar's width (percent), but at least this many
+// pixels so a few done bots fit on a narrow screen (it never passes the right edge margin).
+export const DONE_ZONE_SHARE = 30;
+export const DONE_ZONE_MIN_PX = 240;
 
 const tenths = (number) => Math.round(number * 10) / 10;
 
 // How one session moves, from its key alone. Percentages are of the room the bar leaves a bot
 // (the bar's width less one bot): `from` and `range` are the stretch a working, waiting or done
 // bot walks, `rest` is the place a bot stands when it is failed, or when motion is reduced.
+// `zoneFrom` and `zoneRange` are the same for a done bot, as percentages of the room the done zone
+// leaves it (see DONE_ZONE_SHARE), so its stroll stays inside the zone.
 // `seconds` is the length of one working walk there and back (`idleSeconds` and `strollSeconds`
 // are the idle wander's and the done stroll's), `phase` (0 to 1) how far into it the bot starts so
 // no two begin together, and `facing` which way a standing bot looks.
 export function roamFor(sessionKey) {
   const range = Math.round(between(25, 70, unit(sessionKey, 'range')));
   const seconds = Math.round(between(14, 28, unit(sessionKey, 'seconds')));
+  const zoneRange = Math.round(between(55, 100, unit(sessionKey, 'zoneRange')));
   return {
     range,
     from: Math.round(unit(sessionKey, 'from') * (100 - range)),
+    zoneRange,
+    zoneFrom: Math.round(unit(sessionKey, 'zoneFrom') * (100 - zoneRange)),
     seconds,
     idleSeconds: tenths(seconds * IDLE_CYCLE_FACTOR),
     strollSeconds: tenths(seconds * STROLL_CYCLE_FACTOR),
@@ -338,6 +349,21 @@ export function roamFor(sessionKey) {
 // Whether a bot of this state walks the bar (working, waiting and done do; only failed stands).
 export const walks = (state) => state === 'working' || state === 'waiting' || state === 'done';
 
+// The stretch, in pixels, a bot's left edge walks along a bar `barWidth` wide: what bot-bar.css works
+// out from the same numbers. A done bot walks inside the done zone (from `edge` to the zone's end less
+// one bot); any other bot walks the whole bar between its two edge margins. A done bot rests inside
+// the same zone, a failed one anywhere in the other.
+export function walkStretch(roam, state, barWidth, { edge = 88, size = 56 } = {}) {
+  const done = state === 'done';
+  const zoneEnd = Math.min(
+    Math.max(DONE_ZONE_MIN_PX, (barWidth * DONE_ZONE_SHARE) / 100),
+    barWidth - edge,
+  );
+  const room = Math.max(0, done ? zoneEnd - edge - size : barWidth - size - 2 * edge);
+  const min = edge + ((done ? roam.zoneFrom : roam.from) / 100) * room;
+  return { min, max: min + ((done ? roam.zoneRange : roam.range) / 100) * room, room };
+}
+
 // What a bot is told about its pose: a bot that walks is turned by its lane's keyframes, so it is
 // always handed `right`; a failed one stands and looks the way its key says. Only a working bot's
 // feet step (`stepping`): a waiting one drifts and pauses, and the mascots' stepping feet exist only
@@ -347,11 +373,16 @@ export function botPose(state, roam) {
 }
 
 // The custom properties ui-react/styles/bot-bar.css reads to place and move one bot's lane: where it
-// walks and how long (`roam`, from roamFor), where a failed bot stands (`rest`) and where every
-// bot stands when motion is reduced (`still`, from restingSpots; `rest` when not given).
+// walks and how long (`roam`, from roamFor; a done bot's walk is in the done zone), where a failed
+// bot stands (`rest`) and where a bot stands when motion is reduced (`still`, from restingSpots; for a
+// done bot a place in the zone; `rest` when not given).
 export const laneStyle = (roam, rest, still = rest) => ({
   '--bot-from': roam.from,
   '--bot-range': roam.range,
+  '--bot-zone-from': roam.zoneFrom,
+  '--bot-zone-range': roam.zoneRange,
+  '--bot-zone-share': DONE_ZONE_SHARE,
+  '--bot-zone-min': DONE_ZONE_MIN_PX,
   '--bot-dur': roam.seconds,
   '--bot-dur-idle': roam.idleSeconds,
   '--bot-dur-stroll': roam.strollSeconds,

@@ -26,7 +26,8 @@
   configured, gets no bot, and the last good set is kept when a refresh fails). Phases (`BOT_PHASES` in
   `ui/bot-bar.js`; investigate and groom are left out, as are sessions that are `none` or
   `unknown`). A working bot patrols back and forth, a waiting one is shown as idle and wanders with
-  pauses, a done one strolls (a slow amble with rests at each end and halfway) and a failed one
+  pauses, a done one strolls (a slow amble with rests at each end and halfway) only inside a done zone on
+  the left of the bar (30% of its width, at least 240px; it keeps no one else out) and a failed one
   stands slumped; with reduced motion every bot stands still. Hovering or focusing a bot shows the
   dashboard's own popup (`TAP-1451 review: done · finished`), never a native `title`. When a bot's state
   changes while the page is open, a small speech bubble above it says so (`TAP-1451 · Done ✓`; working

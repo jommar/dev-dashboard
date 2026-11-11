@@ -123,7 +123,19 @@ rule; keep it that way, and never put a dialog inside the strip (it would inheri
 `GET /api/active-sprint-tickets` (`fetchActiveSprintKeys` in `backend/jira.mjs`; per-ticket answers
 cached 5 minutes server side, asked again by the browser every `SPRINT_POLL_MS`, 5 minutes). A ticket
 whose sprint is unknown gets no bot, and on a failed or `available: false` answer the last good key set
-stays; do not show a bot for a ticket the sprint filter has not placed. The mascot is deterministic per session (rendezvous hashing of the session key
+stays; do not show a bot for a ticket the sprint filter has not placed.
+
+Motion: working patrols, waiting (idle) wanders, done strolls (cycle factors `IDLE_CYCLE_FACTOR` and
+`STROLL_CYCLE_FACTOR` in `ui/bot-bar.js`) and only inside the done zone on the left of the bar
+(`DONE_ZONE_SHARE`, 30% of the bar, at least `DONE_ZONE_MIN_PX`, 240px; `walkStretch` mirrors the CSS
+math), failed stands. The zone restricts done bots only: every other state roams or rests anywhere, the
+zone included. Reduced motion stands everyone still. Hover detail is the app's own `DashboardTooltip`
+(keyboard focus works), never a native `title`, `data-tooltip` or SVG `<title>`. A state change between
+polls raises a callout bubble (`CALLOUT_TEXT`, detection in the pure `stateChanges`, state in
+`useBotCallouts`; never on first load; at most three; the bubble sits outside the mirrored face and only
+fades under reduced motion) plus one polite live-region message per change.
+
+The mascot is deterministic per session (rendezvous hashing of the session key
 over the registry ids), so a session keeps it for life; the mascot list lives only in
 `ui-react/components/mascots/index.js` (see `ui-react/components/mascots/README.md`, "Adding a
 mascot"), so do not hard-code a mascot count or order. The bar polls `GET /api/claude/tickets`

@@ -1797,10 +1797,16 @@ while there is no session to show.
   keeps the last good set of keys and adds none, so it never shows a bot it cannot place.
 - **States.** `working` patrols back and forth along the bar, turning at each end. `waiting` is
   shown as **idle** (it needs you) and wanders slowly, resting at each end. `done` **strolls**: the
-  slowest walk, a relaxed amble that rests at each end and once halfway out (about 4.5 times a working
+  slowest walk, a relaxed amble that rests at each end and once halfway out (three times a working
   patrol's length of cycle, `STROLL_CYCLE_FACTOR` in `ui/bot-bar.js`, beside the idle wander's
-  `IDLE_CYCLE_FACTOR`). `failed` stands slumped where it was put. Walkers keep clear of the screen's
-  edges. With reduced motion every bot stands still, spread out along the bar.
+  `IDLE_CYCLE_FACTOR`), and only inside the **done zone** on the left of the bar: the zone is 30% of the
+  bar's width, at least 240px (`DONE_ZONE_SHARE` and `DONE_ZONE_MIN_PX`), and a done bot never leaves
+  it. Nothing marks the zone, and it does not keep anyone out: working, idle and failed bots roam or
+  stand anywhere on the bar, the zone included. A bot that turns done jumps into the zone (no tween);
+  many done bots overlap there rather than widen it, and the one you point at or focus comes to the
+  front so its dismiss button stays reachable. `failed` stands slumped where it was put. Walkers keep
+  clear of the screen's edges. With reduced motion every bot stands still, a done one at a spread-out
+  place inside the zone and the others spread over the whole bar.
 - **Mascot.** Each session is one of the mascots for life: the pick is a hash of the session key
   (`<TICKET>:<phase>`), with nothing stored, so it never changes between renders or reloads, and
   where it walks or stands comes from the same hash. The mascot list lives only in
