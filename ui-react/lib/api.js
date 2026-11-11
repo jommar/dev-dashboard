@@ -279,7 +279,15 @@ export const checkSlackWatchNow = () => watchRequest('/api/slack/watch/check', {
 
 // The Claude launcher wrappers resolve the same way, through the same helper: a refusal keeps its
 // code and reasons for the dialog to word, and an unreachable server is `ok: false, status: 0`.
-export const getClaudeTickets = () => watchRequest('/api/claude/tickets');
+// `surface` names the reader in the query string (`?surface=bot-bar`), which the server ignores; it
+// lets a request log, and a spec counting the board's own reads, tell the bot bar's poll apart.
+export const getClaudeTickets = (surface) =>
+  watchRequest(`/api/claude/tickets${surface ? `?surface=${encodeURIComponent(surface)}` : ''}`);
+
+// Which of `keys` are in a sprint Jira calls active (the bot bar's filter). Resolves like the other
+// watch calls: `ok`, `available` (false when Jira could not say) and `keys`.
+export const getActiveSprintTickets = (keys) =>
+  watchRequest(`/api/active-sprint-tickets?keys=${encodeURIComponent(keys.join(','))}`);
 
 export const launchClaude = (key, phase) =>
   watchRequest('/api/claude/launch', { method: 'POST', body: { key, phase } });

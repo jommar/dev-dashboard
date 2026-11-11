@@ -1687,6 +1687,9 @@ function claudeData() {
   return {
     listing: 'ok',
     tickets: {},
+    // What GET /api/active-sprint-tickets knows: the tickets Jira puts in an active sprint, and whether
+    // Jira can say (`available: false` is an unreachable or unconfigured Jira). `asks` logs each key list.
+    activeSprint: { available: true, keys: [], asks: [] },
     calls: [],
     sends: [],
     // The Markdown each ticket's sessions left, by ticket key then file name: `{ [key]: { [name]: text } }`.
@@ -1780,6 +1783,16 @@ function claudeResponse(url, method, { claude }, body) {
         updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
         text,
       },
+    };
+  }
+  if (method === 'GET' && pathname === '/api/active-sprint-tickets') {
+    const asked = (url.searchParams.get('keys') || '').split(',').filter(Boolean);
+    const sprint = claude.activeSprint;
+    sprint.asks.push(asked);
+    return {
+      json: sprint.available
+        ? { available: true, keys: asked.filter((key) => sprint.keys.includes(key)) }
+        : { available: false, reason: 'jira_unavailable', keys: [] },
     };
   }
   if (method === 'GET' && pathname === '/api/claude/tickets')
@@ -2039,7 +2052,10 @@ export function apiResponse(url, method, data, body) {
   }
   if (url.pathname.startsWith('/api/slack/') && data.slack)
     return slackResponse(url, method, data, body);
-  if (url.pathname.startsWith('/api/claude/') && data.claude)
+  if (
+    (url.pathname.startsWith('/api/claude/') || url.pathname === '/api/active-sprint-tickets') &&
+    data.claude
+  )
     return claudeResponse(url, method, data, body);
   if (url.pathname.startsWith('/api/devtools/') && data.devtools)
     return devtoolsResponse(url, method, data, body);

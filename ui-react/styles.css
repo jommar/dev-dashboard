@@ -6,6 +6,7 @@
 @import './styles/services.css';
 @import './styles/terminal.css';
 @import './styles/board.css';
+@import './styles/mascots.css';
 @import './styles/prs.css';
 @import './styles/diff-viewer.css';
 @import './styles/my-tickets.css';
@@ -17,6 +18,8 @@
 @import './styles/home.css';
 @import './styles/settings.css';
 @import './styles/devtools.css';
+@import './styles/bot-bar.css';
+@import './styles/mascots-page.css';
 
 :root {
   --bg: #111113;

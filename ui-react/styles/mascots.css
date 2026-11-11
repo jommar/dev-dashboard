@@ -1,0 +1,2230 @@
+/* Mascot sheet: one block per mascot, each opened by a "mascot: <slug>" marker. See components/mascots/README.md. */
+
+/* mascot: dux (Dux, the rubber-debugging duck). Selectors, keyframes and custom properties are all bot-dux-*; palette hex lives only in the :root block (one dark set, the dashboard is dark-only), which reuses dashboard state tokens. */
+:root {
+  --bot-dux-body: #ffd84d;
+  --bot-dux-body-shade: #d9a000;
+  --bot-dux-accent: #ff9a52;
+  --bot-dux-ink: #1d1726;
+  --bot-dux-shine: #ffffff;
+  --bot-dux-blush: #ff8fa0;
+  --bot-dux-drop: #7cc4ff;
+  --bot-dux-badge-ink: #14111c;
+  --bot-dux-working: #8f9aff;
+  --bot-dux-idle: var(--amber, #ffb53d);
+  --bot-dux-done: var(--green, #3fd283);
+  --bot-dux-failed: var(--red, #ff6a5c);
+}
+
+.bot-dux {
+  display: block;
+  height: 56px;
+  width: auto;
+  aspect-ratio: 64/66;
+  overflow: visible;
+  --bot-dux-state: var(--bot-dux-working);
+}
+.bot-dux--idle {
+  --bot-dux-state: var(--bot-dux-idle);
+}
+.bot-dux--done {
+  --bot-dux-state: var(--bot-dux-done);
+}
+.bot-dux--failed {
+  --bot-dux-state: var(--bot-dux-failed);
+}
+.bot-dux * {
+  transform-box: view-box;
+}
+.bot-dux .bot-dux-st {
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.bot-dux--working .bot-dux-st-w,
+.bot-dux--idle .bot-dux-st-i,
+.bot-dux--done .bot-dux-st-d,
+.bot-dux--failed .bot-dux-st-f {
+  opacity: 1;
+}
+.bot-dux-skin {
+  fill: var(--bot-dux-body);
+}
+.bot-dux-wing {
+  fill: var(--bot-dux-body-shade);
+  transform-origin: 21px 43px;
+}
+.bot-dux-beak,
+.bot-dux-foot,
+.bot-dux-foot-s {
+  fill: var(--bot-dux-accent);
+}
+.bot-dux-pupil {
+  fill: var(--bot-dux-ink);
+}
+.bot-dux-shine {
+  fill: var(--bot-dux-shine);
+}
+.bot-dux-blush {
+  fill: var(--bot-dux-blush);
+}
+.bot-dux-drop {
+  fill: var(--bot-dux-drop);
+}
+.bot-dux-brow {
+  fill: none;
+  stroke: var(--bot-dux-ink);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.bot-dux-star {
+  fill: var(--bot-dux-state);
+}
+.bot-dux-ripple ellipse {
+  fill: none;
+  stroke: var(--bot-dux-idle);
+  stroke-width: 1.5;
+  opacity: 0.5;
+  transform-origin: 31px 62px;
+}
+.bot-dux-badge {
+  transform-origin: 55px 9px;
+}
+.bot-dux-badge circle {
+  fill: var(--bot-dux-state);
+  transition: fill 0.4s;
+}
+.bot-dux-badge path {
+  fill: none;
+  stroke: var(--bot-dux-badge-ink);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bot-dux-badge .bot-dux-dot {
+  fill: var(--bot-dux-badge-ink);
+}
+.bot-dux-char {
+  transform-origin: 32px 0;
+}
+.bot-dux--left .bot-dux-char {
+  transform: scaleX(-1);
+}
+.bot-dux-gait,
+.bot-dux-duck {
+  transform-origin: 31px 62px;
+}
+.bot-dux-head {
+  transform-origin: 36px 32px;
+}
+.bot-dux-jaw {
+  transform-origin: 48px 25px;
+}
+.bot-dux-eye,
+.bot-dux-star {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.bot-dux-eye {
+  animation: bot-dux-blink 5.2s infinite;
+}
+.bot-dux-spin {
+  transform-origin: 55px 9px;
+}
+
+/* locomotion: feet paddle in turn, body rocks side to side */
+.bot-dux-feet-walk {
+  opacity: 0;
+}
+.bot-dux--moving:is(.bot-dux--working, .bot-dux--idle) .bot-dux-feet-walk {
+  opacity: 1;
+}
+.bot-dux--moving:is(.bot-dux--working, .bot-dux--idle) .bot-dux-feet-stand {
+  opacity: 0;
+}
+.bot-dux--moving:is(.bot-dux--working, .bot-dux--idle) .bot-dux-foot {
+  animation: bot-dux-step 0.56s linear infinite;
+}
+.bot-dux--moving:is(.bot-dux--working, .bot-dux--idle) .bot-dux-foot + .bot-dux-foot {
+  animation-delay: -0.28s;
+}
+.bot-dux--moving:is(.bot-dux--working, .bot-dux--idle) .bot-dux-gait {
+  animation: bot-dux-waddle 0.56s ease-in-out infinite;
+}
+
+/* working: pecks at the code, eye scans, wing taps, spinner badge */
+.bot-dux--working .bot-dux-head {
+  animation: bot-dux-peck 1.1s ease-in-out infinite;
+}
+.bot-dux--working .bot-dux-eyes {
+  animation: bot-dux-read 2.2s ease-in-out infinite;
+}
+.bot-dux--working .bot-dux-wing {
+  animation: bot-dux-tap 0.55s ease-in-out infinite;
+}
+.bot-dux--working .bot-dux-spin {
+  animation: bot-dux-spin 1s linear infinite;
+}
+/* idle: floats, tilts its head up at you, amber ripple, "?" badge nudges */
+.bot-dux--idle .bot-dux-duck {
+  animation: bot-dux-float 3s ease-in-out infinite;
+}
+.bot-dux--idle .bot-dux-head {
+  transform: rotate(-9deg);
+}
+.bot-dux--idle .bot-dux-ripple ellipse {
+  animation: bot-dux-pulse 2.4s ease-out infinite;
+}
+.bot-dux--idle .bot-dux-badge {
+  animation: bot-dux-nudge 2.4s ease-in-out infinite;
+}
+/* done: hop, double quack, wing flap that ends raised, stars, check */
+.bot-dux--done .bot-dux-duck {
+  animation: bot-dux-hop 0.9s ease-out both;
+}
+.bot-dux--done .bot-dux-jaw {
+  animation: bot-dux-quack 0.9s ease-in-out both;
+}
+.bot-dux--done .bot-dux-wing {
+  transform: rotate(-30deg);
+  animation: bot-dux-flap 0.9s ease-in-out both;
+}
+.bot-dux--done .bot-dux-star {
+  transform: scale(0.7);
+  animation: bot-dux-burst 1.1s ease-out both;
+}
+.bot-dux--done .bot-dux-stars g:nth-child(2) .bot-dux-star {
+  animation-delay: 0.12s;
+}
+.bot-dux--done .bot-dux-stars g:nth-child(3) .bot-dux-star {
+  animation-delay: 0.24s;
+}
+.bot-dux--done .bot-dux-badge {
+  animation: bot-dux-pop 0.5s 0.3s both;
+}
+/* failed: shakes, deflates, head droops, sweat drop, X */
+.bot-dux--failed .bot-dux-duck {
+  transform: scale(1.05, 0.9);
+  animation: bot-dux-fail 1.3s ease-in-out both;
+}
+.bot-dux--failed .bot-dux-head {
+  transform: rotate(22deg);
+  animation: bot-dux-droop 0.6s 0.6s ease-in both;
+}
+.bot-dux--failed .bot-dux-drop {
+  animation: bot-dux-fade 0.6s 1s both;
+}
+.bot-dux--failed .bot-dux-badge {
+  animation: bot-dux-pop 0.5s 0.6s both;
+}
+
+@keyframes bot-dux-blink {
+  0%,
+  93%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes bot-dux-peck {
+  0%,
+  40%,
+  100% {
+    transform: none;
+  }
+  20% {
+    transform: rotate(7deg);
+  }
+}
+@keyframes bot-dux-read {
+  0%,
+  100% {
+    transform: translateX(-0.9px);
+  }
+  50% {
+    transform: translateX(0.9px);
+  }
+}
+@keyframes bot-dux-tap {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: rotate(-8deg);
+  }
+}
+@keyframes bot-dux-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes bot-dux-float {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: translateY(-1.6px);
+  }
+}
+@keyframes bot-dux-pulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+@keyframes bot-dux-nudge {
+  0%,
+  55%,
+  85%,
+  100% {
+    transform: none;
+  }
+  65% {
+    transform: scale(1.2) rotate(-8deg);
+  }
+  75% {
+    transform: scale(0.95) rotate(6deg);
+  }
+}
+@keyframes bot-dux-hop {
+  0%,
+  100% {
+    transform: none;
+  }
+  35% {
+    transform: translateY(-8px) scale(0.94, 1.08);
+  }
+  60% {
+    transform: scale(1.08, 0.92);
+  }
+  80% {
+    transform: scale(0.98, 1.02);
+  }
+}
+@keyframes bot-dux-quack {
+  0%,
+  50%,
+  100% {
+    transform: none;
+  }
+  25% {
+    transform: rotate(22deg);
+  }
+  70% {
+    transform: rotate(16deg);
+  }
+}
+@keyframes bot-dux-flap {
+  0% {
+    transform: none;
+  }
+  20%,
+  60% {
+    transform: rotate(-50deg);
+  }
+  40% {
+    transform: rotate(-10deg);
+  }
+  100% {
+    transform: rotate(-30deg);
+  }
+}
+@keyframes bot-dux-burst {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  40% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.7) rotate(90deg);
+    opacity: 1;
+  }
+}
+@keyframes bot-dux-pop {
+  0% {
+    transform: scale(0);
+  }
+  60% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: none;
+  }
+}
+@keyframes bot-dux-fail {
+  0%,
+  45% {
+    transform: none;
+  }
+  9% {
+    transform: translateX(-3px) rotate(-4deg);
+  }
+  18% {
+    transform: translateX(3px) rotate(4deg);
+  }
+  27% {
+    transform: translateX(-3px) rotate(-3deg);
+  }
+  36% {
+    transform: translateX(2px) rotate(2deg);
+  }
+  100% {
+    transform: scale(1.05, 0.9);
+  }
+}
+@keyframes bot-dux-droop {
+  from {
+    transform: none;
+  }
+  to {
+    transform: rotate(22deg);
+  }
+}
+@keyframes bot-dux-fade {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes bot-dux-step {
+  0%,
+  100% {
+    transform: translate(-1.8px, 0);
+  }
+  25% {
+    transform: translate(0, -2.4px);
+  }
+  50% {
+    transform: translate(1.8px, 0);
+  }
+}
+@keyframes bot-dux-waddle {
+  0%,
+  100% {
+    transform: rotate(-4deg);
+  }
+  25%,
+  75% {
+    transform: translateY(-1.2px);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-dux,
+  .bot-dux * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* hover (dux): a squeeze-toy squeak. Needs .bot-dux-react and .bot-dux-squeak. */
+.bot-dux-react {
+  transform-origin: 31px 62px;
+}
+.bot-dux-squeak {
+  fill: none;
+  stroke: var(--bot-dux-state);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  :is(.bot-dux:hover, :focus-visible > .bot-dux) .bot-dux-react {
+    animation: bot-dux-squeeze 0.7s ease-out;
+  }
+  :is(.bot-dux:hover, :focus-visible > .bot-dux):is(.bot-dux--done, .bot-dux--failed)
+    .bot-dux-react {
+    animation: bot-dux-wobble 0.6s ease-in-out;
+  }
+  :is(.bot-dux:hover, :focus-visible > .bot-dux) .bot-dux-squeak {
+    animation: bot-dux-squeak 0.7s ease-out;
+  }
+  :is(.bot-dux:hover, :focus-visible > .bot-dux):is(.bot-dux--working, .bot-dux--idle)
+    .bot-dux-jaw {
+    animation: bot-dux-quack 0.7s ease-in-out;
+  }
+  :is(.bot-dux:hover, :focus-visible > .bot-dux) :is(.bot-dux-foot, .bot-dux-gait) {
+    animation-play-state: paused;
+  }
+  @keyframes bot-dux-squeeze {
+    0%,
+    100% {
+      transform: none;
+    }
+    25% {
+      transform: scale(1.1, 0.86);
+    }
+    60% {
+      transform: scale(0.97, 1.05);
+    }
+  }
+  @keyframes bot-dux-wobble {
+    0%,
+    100% {
+      transform: none;
+    }
+    30% {
+      transform: rotate(-3deg);
+    }
+    65% {
+      transform: rotate(2deg);
+    }
+  }
+  @keyframes bot-dux-squeak {
+    25% {
+      opacity: 1;
+    }
+    100% {
+      transform: translateX(2.5px);
+    }
+  }
+}
+/* reduced motion: nothing moves; the squeak marks just show while hovered or focused */
+@media (prefers-reduced-motion: reduce) {
+  :is(.bot-dux:hover, :focus-visible > .bot-dux) .bot-dux-squeak {
+    opacity: 0.8;
+  }
+}
+
+/* mascot: wick (Wick, the candle-flame sprite). Selectors, keyframes and custom properties are all bot-wick-*; palette hex lives only in the :root block (one dark set, the dashboard is dark-only), which reuses dashboard state tokens. */
+:root {
+  --bot-wick-body: #e4d6bf;
+  --bot-wick-body-shade: #b9a382;
+  --bot-wick-accent: #fff1bd;
+  --bot-wick-ink: #2b2236;
+  --bot-wick-feet: #c9b490;
+  --bot-wick-paper: #1f1c29;
+  --bot-wick-smoke: #a29cae;
+  --bot-wick-working: #6fa0ff;
+  --bot-wick-idle: var(--amber, #ffbf3d);
+  --bot-wick-done: var(--green, #45cf85);
+  --bot-wick-failed: var(--red, #ff6472);
+}
+.bot-wick {
+  display: block;
+  height: var(--bot-wick-size, 56px);
+  width: auto;
+  aspect-ratio: 64/84;
+  overflow: visible;
+}
+.bot-wick * {
+  transform-box: view-box;
+}
+.bot-wick--working {
+  --bot-wick-state: var(--bot-wick-working);
+}
+.bot-wick--idle {
+  --bot-wick-state: var(--bot-wick-idle);
+}
+.bot-wick--done {
+  --bot-wick-state: var(--bot-wick-done);
+}
+.bot-wick--failed {
+  --bot-wick-state: var(--bot-wick-failed);
+}
+.bot-wick-glow {
+  fill: var(--bot-wick-state);
+  opacity: 0.16;
+}
+.bot-wick-wax {
+  fill: var(--bot-wick-body);
+  stroke: var(--bot-wick-body-shade);
+  stroke-width: 1.5;
+}
+.bot-wick-drip {
+  fill: var(--bot-wick-body-shade);
+}
+.bot-wick-feet {
+  fill: var(--bot-wick-feet);
+}
+.bot-wick-fire {
+  fill: var(--bot-wick-state);
+  transition: fill 0.4s;
+}
+.bot-wick-core {
+  fill: var(--bot-wick-accent);
+}
+.bot-wick-eyes {
+  fill: var(--bot-wick-ink);
+}
+.bot-wick-m {
+  fill: none;
+  stroke: var(--bot-wick-ink);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+}
+.bot-wick-m--done {
+  fill: var(--bot-wick-ink);
+}
+.bot-wick-b,
+.bot-wick-sparks,
+.bot-wick-feet--walk {
+  opacity: 0;
+}
+.bot-wick-ember,
+.bot-wick-dot,
+.bot-wick-seal,
+.bot-wick-spark {
+  fill: var(--bot-wick-state);
+}
+.bot-wick-bubble {
+  fill: var(--bot-wick-paper);
+  stroke: var(--bot-wick-state);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.bot-wick-tick {
+  fill: none;
+  stroke: var(--bot-wick-paper);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bot-wick-smoke {
+  fill: none;
+  stroke: var(--bot-wick-smoke);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+.bot-wick-flame,
+.bot-wick-lean {
+  transform-origin: 32px 60px;
+}
+.bot-wick-eyes,
+.bot-wick-blink {
+  transform-origin: 32px 43px;
+}
+.bot-wick-turn {
+  transform-origin: 32px 42px;
+}
+.bot-wick-x {
+  transform-origin: 53px 10px;
+}
+.bot-wick-sparks {
+  transform-origin: 32px 34px;
+}
+.bot-wick-blink {
+  animation: bot-wick-blink 4.8s infinite;
+}
+.bot-wick--left .bot-wick-turn {
+  transform: scaleX(-1);
+}
+.bot-wick--working .bot-wick-b--working,
+.bot-wick--idle .bot-wick-b--idle,
+.bot-wick--done .bot-wick-b--done,
+.bot-wick--failed .bot-wick-b--failed,
+.bot-wick--working .bot-wick-m--working,
+.bot-wick--idle .bot-wick-m--idle,
+.bot-wick--done .bot-wick-m--done,
+.bot-wick--failed .bot-wick-m--failed {
+  opacity: 1;
+}
+/* working: flickering flame, scanning eyes, rising embers */
+.bot-wick--working .bot-wick-flame {
+  animation: bot-wick-flick 1.6s ease-in-out infinite;
+}
+.bot-wick--working .bot-wick-eyes {
+  animation: bot-wick-scan 3.2s ease-in-out infinite;
+}
+.bot-wick--working .bot-wick-ember {
+  animation: bot-wick-rise 1.8s ease-out infinite;
+}
+.bot-wick--working .bot-wick-ember:nth-of-type(2) {
+  animation-delay: -0.6s;
+}
+.bot-wick--working .bot-wick-ember:nth-of-type(3) {
+  animation-delay: -1.2s;
+}
+/* idle: small breathing flame, pulsing glow, looks up at a waiting bubble */
+.bot-wick--idle .bot-wick-flame {
+  transform: scale(0.9);
+  animation: bot-wick-breathe 3s ease-in-out infinite;
+}
+.bot-wick--idle .bot-wick-glow {
+  opacity: 0.3;
+  animation: bot-wick-pulse 2.4s ease-in-out infinite;
+}
+.bot-wick--idle .bot-wick-eyes {
+  transform: translate(1.2px, -1.2px);
+}
+.bot-wick--idle .bot-wick-b--idle {
+  animation: bot-wick-bob 2.4s ease-in-out infinite;
+}
+.bot-wick--idle .bot-wick-dot {
+  animation: bot-wick-dot 1.2s infinite;
+}
+.bot-wick--idle .bot-wick-dot:nth-of-type(2) {
+  animation-delay: 0.2s;
+}
+.bot-wick--idle .bot-wick-dot:nth-of-type(3) {
+  animation-delay: 0.4s;
+}
+/* done: hop, flare, sparks, check badge; rests grinning */
+.bot-wick--done .bot-wick-flame {
+  transform: scale(1.05);
+  animation: bot-wick-flare 0.8s ease-out both;
+}
+.bot-wick--done .bot-wick-all {
+  animation: bot-wick-hop 0.8s ease-out both;
+}
+.bot-wick--done .bot-wick-sparks {
+  animation: bot-wick-burst 0.9s 0.15s ease-out both;
+}
+.bot-wick--done .bot-wick-x {
+  animation: bot-wick-pop 0.5s 0.3s both;
+}
+/* failed: shake, wilt sideways, dim, smoke, X badge; rests drooped */
+.bot-wick--failed .bot-wick-glow {
+  opacity: 0;
+}
+.bot-wick--failed .bot-wick-flame {
+  transform: rotate(-14deg) scale(0.78);
+  animation: bot-wick-droop 0.7s 0.5s ease-in both;
+}
+.bot-wick--failed .bot-wick-core {
+  opacity: 0.45;
+  animation: bot-wick-dim 0.7s 0.5s both;
+}
+.bot-wick--failed .bot-wick-eyes {
+  transform: translateY(1px) scaleY(0.45);
+}
+.bot-wick--failed .bot-wick-blink {
+  animation-duration: 7s;
+}
+.bot-wick--failed .bot-wick-all {
+  animation: bot-wick-shake 0.6s ease-in-out both;
+}
+.bot-wick--failed .bot-wick-smoke {
+  animation: bot-wick-smoke 1.2s 0.9s ease-out both;
+}
+.bot-wick--failed .bot-wick-x {
+  animation: bot-wick-pop 0.5s 0.7s both;
+}
+/* locomotion: shuffling feet, bob, flame trails back, gaze forward (working/idle only) */
+.bot-wick--walk:is(.bot-wick--working, .bot-wick--idle) .bot-wick-feet--walk {
+  opacity: 1;
+}
+.bot-wick--walk:is(.bot-wick--working, .bot-wick--idle) .bot-wick-feet--stand {
+  opacity: 0;
+}
+.bot-wick--walk:is(.bot-wick--working, .bot-wick--idle) .bot-wick-foot {
+  animation: bot-wick-shuffle 0.5s linear infinite;
+}
+.bot-wick--walk:is(.bot-wick--working, .bot-wick--idle) .bot-wick-foot:nth-of-type(2) {
+  animation-delay: -0.25s;
+}
+.bot-wick--walk.bot-wick--idle .bot-wick-foot {
+  animation-duration: 0.8s;
+}
+.bot-wick--walk.bot-wick--idle .bot-wick-foot:nth-of-type(2) {
+  animation-delay: -0.4s;
+}
+.bot-wick--walk.bot-wick--working .bot-wick-step {
+  animation: bot-wick-bob 0.25s ease-in-out infinite;
+}
+.bot-wick--walk.bot-wick--working .bot-wick-lean {
+  transform: rotate(-6deg);
+}
+.bot-wick--walk:is(.bot-wick--working, .bot-wick--idle) .bot-wick-gaze {
+  transform: translateX(1.4px);
+}
+@keyframes bot-wick-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes bot-wick-flick {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  25% {
+    transform: rotate(1deg) scale(1.03, 0.97);
+  }
+  50% {
+    transform: rotate(3deg) scale(0.97, 1.05);
+  }
+  75% {
+    transform: scale(1.02, 0.99);
+  }
+}
+@keyframes bot-wick-scan {
+  0%,
+  40%,
+  100% {
+    transform: translateX(-1.5px);
+  }
+  50%,
+  90% {
+    transform: translateX(1.5px);
+  }
+}
+@keyframes bot-wick-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-9px);
+  }
+}
+@keyframes bot-wick-breathe {
+  0%,
+  100% {
+    transform: scale(0.88);
+  }
+  50% {
+    transform: scale(0.94);
+  }
+}
+@keyframes bot-wick-pulse {
+  0%,
+  100% {
+    opacity: 0.08;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+@keyframes bot-wick-bob {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: translateY(-1.5px);
+  }
+}
+@keyframes bot-wick-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@keyframes bot-wick-hop {
+  0%,
+  55%,
+  100% {
+    transform: none;
+  }
+  30% {
+    transform: translateY(-7px);
+  }
+  72% {
+    transform: translateY(-2px);
+  }
+}
+@keyframes bot-wick-flare {
+  0% {
+    transform: none;
+  }
+  35% {
+    transform: scale(1.22, 1.3);
+  }
+  65% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1.05);
+  }
+}
+@keyframes bot-wick-burst {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+@keyframes bot-wick-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes bot-wick-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  15% {
+    transform: translateX(-3px);
+  }
+  30% {
+    transform: translateX(3px);
+  }
+  45% {
+    transform: translateX(-2.5px);
+  }
+  60% {
+    transform: translateX(2px);
+  }
+  78% {
+    transform: translateX(-1px);
+  }
+}
+@keyframes bot-wick-droop {
+  from {
+    transform: none;
+  }
+  to {
+    transform: rotate(-14deg) scale(0.78);
+  }
+}
+@keyframes bot-wick-dim {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.45;
+  }
+}
+@keyframes bot-wick-smoke {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 0.7;
+    transform: none;
+  }
+}
+@keyframes bot-wick-shuffle {
+  0%,
+  100% {
+    transform: translateX(-2px);
+  }
+  40% {
+    transform: translate(0, -2.6px);
+  }
+  60% {
+    transform: translateX(2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-wick * {
+    animation: none !important;
+  }
+  .bot-wick .bot-wick-lean {
+    transform: none !important;
+  }
+}
+
+/* hover (wick): the flame perks up toward you and crackles (a failed one tries to straighten up). Needs the .bot-wick-perk and .bot-wick-crackle groups. `:focus-visible > *` is the svg inside the focused button. */
+@media (prefers-reduced-motion: no-preference) {
+  .bot-wick {
+    --bot-wick-perk: scale(1.06, 1.12);
+  }
+  .bot-wick--done {
+    --bot-wick-perk: scale(1.03, 1.05);
+  }
+  .bot-wick--failed {
+    --bot-wick-perk: rotate(6deg) scale(1.03);
+  }
+  .bot-wick-perk {
+    transform-origin: 32px 60px;
+    transition: transform 0.35s cubic-bezier(0.3, 1.7, 0.5, 1);
+  }
+  /* Timing lives here; hover only supplies the animation name. */
+  .bot-wick-crackle circle {
+    fill: var(--bot-wick-accent);
+    opacity: 0;
+    animation: 1.8s ease-out infinite;
+  }
+  .bot-wick-crackle circle:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  .bot-wick-crackle circle:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+  .bot-wick--done .bot-wick-crackle circle {
+    animation-iteration-count: 1;
+  }
+  .bot-wick--failed .bot-wick-crackle {
+    opacity: 0;
+  }
+  .bot-wick:is(:hover, :focus-visible > *) .bot-wick-perk {
+    transform: var(--bot-wick-perk);
+  }
+  .bot-wick:is(:hover, :focus-visible > *) .bot-wick-crackle circle {
+    animation-name: bot-wick-crackle;
+  }
+  /* The lane already stops; stop the feet too so it stands still to greet you. */
+  .bot-wick.bot-wick--walk:is(:hover, :focus-visible > *) :is(.bot-wick-foot, .bot-wick-step) {
+    animation-play-state: paused;
+  }
+  @keyframes bot-wick-crackle {
+    0% {
+      opacity: 1;
+      transform: translateY(2px);
+    }
+    40%,
+    100% {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
+}
+/* Reduced motion: no movement, just a brighter halo while hovered or focused. */
+@media (prefers-reduced-motion: reduce) {
+  .bot-wick:is(:hover, :focus-visible > *) .bot-wick-glow {
+    opacity: 0.4;
+  }
+}
+
+/* mascot: glim (Glim, the lantern firefly). Selectors, keyframes and custom properties are all bot-glim-*; palette hex lives only in the :root block (one dark set, the dashboard is dark-only), which reuses dashboard state tokens. */
+:root {
+  --bot-glim-body: #a9adf0;
+  --bot-glim-eye: #15172e;
+  --bot-glim-accent: #ff93a6;
+  --bot-glim-wing: #c9d6ff;
+  --bot-glim-ink: #10122a;
+  --bot-glim-shine: #fff;
+  --bot-glim-working: #4fd8e8;
+  --bot-glim-idle: var(--amber, #ffbe3d);
+  --bot-glim-done: var(--green, #4fd17c);
+  --bot-glim-failed: var(--red, #ff6a5c);
+}
+.bot-glim {
+  display: block;
+  height: var(--bot-glim-size, 56px);
+  width: auto;
+  aspect-ratio: 1;
+  overflow: visible;
+  --bot-glim-glow: var(--bot-glim-working);
+}
+.bot-glim--idle {
+  --bot-glim-glow: var(--bot-glim-idle);
+}
+.bot-glim--done {
+  --bot-glim-glow: var(--bot-glim-done);
+}
+.bot-glim--failed {
+  --bot-glim-glow: var(--bot-glim-failed);
+}
+.bot-glim .bot-glim-body {
+  fill: var(--bot-glim-body);
+}
+.bot-glim .bot-glim-wing {
+  fill: var(--bot-glim-wing);
+  fill-opacity: 0.6;
+  stroke: var(--bot-glim-body);
+  stroke-width: 1;
+}
+.bot-glim .bot-glim-glow,
+.bot-glim .bot-glim-halo,
+.bot-glim .bot-glim-spark,
+.bot-glim .bot-glim-mote {
+  fill: var(--bot-glim-glow);
+  transition:
+    fill 0.4s,
+    opacity 0.4s;
+}
+.bot-glim .bot-glim-halo {
+  opacity: 0.22;
+}
+.bot-glim .bot-glim-ping {
+  fill: none;
+  stroke: var(--bot-glim-glow);
+  stroke-width: 1.5;
+}
+.bot-glim .bot-glim-shine {
+  fill: var(--bot-glim-shine);
+  opacity: 0.55;
+}
+.bot-glim .bot-glim-tip,
+.bot-glim .bot-glim-cheek {
+  fill: var(--bot-glim-accent);
+}
+.bot-glim .bot-glim-cheek {
+  opacity: 0.55;
+}
+.bot-glim .bot-glim-ln {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+.bot-glim .bot-glim-ic {
+  stroke: var(--bot-glim-ink);
+}
+.bot-glim .bot-glim-ant {
+  stroke: var(--bot-glim-body);
+}
+.bot-glim .bot-glim-face {
+  stroke: var(--bot-glim-eye);
+}
+.bot-glim .bot-glim-eye {
+  fill: var(--bot-glim-eye);
+}
+.bot-glim .bot-glim-g-face {
+  transform-origin: 32px 32px;
+}
+.bot-glim--left .bot-glim-g-face {
+  transform: scaleX(-1);
+}
+.bot-glim .bot-glim-g-lean {
+  transform-origin: 32px 44px;
+}
+.bot-glim .bot-glim-g-tilt {
+  transform-origin: 32px 56px;
+}
+.bot-glim .bot-glim-halo,
+.bot-glim .bot-glim-ping {
+  transform-origin: 32px 45px;
+}
+.bot-glim .bot-glim-w {
+  transform-origin: 32px 33px;
+}
+.bot-glim .bot-glim-a {
+  transform-origin: 28px 12px;
+}
+.bot-glim .bot-glim-eyes,
+.bot-glim .bot-glim-blink {
+  transform-origin: 32px 22px;
+}
+.bot-glim .bot-glim-spark {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.bot-glim .bot-glim-blink {
+  animation: bot-glim-blink 5s infinite;
+}
+.bot-glim .bot-glim-x,
+.bot-glim .bot-glim-trail {
+  opacity: 0;
+}
+.bot-glim .bot-glim-mote {
+  opacity: 0.5;
+}
+.bot-glim--working .bot-glim-s-work,
+.bot-glim--idle .bot-glim-s-idle,
+.bot-glim--done .bot-glim-s-done,
+.bot-glim--failed .bot-glim-s-fail {
+  opacity: 1;
+}
+.bot-glim--done .bot-glim-open {
+  opacity: 0;
+}
+/* working: buzzing flight, leaning forward, eyes ahead, glow trail */
+.bot-glim--working .bot-glim-trail {
+  opacity: 1;
+}
+.bot-glim--working .bot-glim-g-lean {
+  transform: rotate(8deg);
+}
+.bot-glim--working .bot-glim-eyes {
+  transform: translateX(1.2px);
+}
+.bot-glim--working .bot-glim-g-float {
+  animation: bot-glim-bob 1.6s ease-in-out infinite alternate;
+}
+.bot-glim--working .bot-glim-w {
+  animation: bot-glim-flap 0.2s ease-in-out infinite alternate;
+}
+.bot-glim--working .bot-glim-a {
+  animation: bot-glim-sway 0.9s ease-in-out infinite alternate;
+}
+.bot-glim--working .bot-glim-halo {
+  animation: bot-glim-pulse 1.2s ease-in-out infinite alternate;
+}
+.bot-glim--working .bot-glim-mote {
+  animation: bot-glim-mote 0.9s linear infinite;
+}
+.bot-glim .bot-glim-mote.bot-glim-m2 {
+  animation-delay: -0.3s;
+}
+.bot-glim .bot-glim-mote.bot-glim-m3 {
+  animation-delay: -0.6s;
+}
+/* idle: wings folded, head cocked, slow amber ping */
+.bot-glim--idle .bot-glim-g-float {
+  animation: bot-glim-bob 3s ease-in-out infinite alternate;
+}
+.bot-glim--idle .bot-glim-g-tilt {
+  transform: rotate(-7deg);
+}
+.bot-glim--idle .bot-glim-w {
+  transform: rotate(-14deg);
+}
+.bot-glim--idle .bot-glim-halo {
+  animation: bot-glim-pulse 2.8s ease-in-out infinite alternate;
+}
+.bot-glim--idle .bot-glim-ping {
+  opacity: 0.4;
+  transform: scale(1.2);
+  animation: bot-glim-ping 2.8s ease-out infinite;
+}
+/* done: hop + wing cheer + sparkles, then rests beaming with wings raised */
+.bot-glim--done .bot-glim-g-float {
+  animation: bot-glim-hop 0.9s cubic-bezier(0.3, 0.7, 0.4, 1) both;
+}
+.bot-glim--done .bot-glim-g-tilt {
+  animation: bot-glim-wig 0.9s ease-in-out both;
+}
+.bot-glim--done .bot-glim-w {
+  transform: rotate(24deg);
+  animation: bot-glim-cheer 0.9s ease-in-out both;
+}
+.bot-glim--done .bot-glim-halo {
+  opacity: 0.35;
+  animation: bot-glim-flash 0.9s ease-out both;
+}
+.bot-glim--done .bot-glim-spark {
+  animation: bot-glim-pop 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.3) 0.3s both;
+}
+.bot-glim--done .bot-glim-sp2 {
+  animation-delay: 0.42s;
+}
+.bot-glim--done .bot-glim-sp3 {
+  animation-delay: 0.54s;
+}
+/* failed: shake, then slumps; wings and antennae droop, lantern dims */
+.bot-glim--failed .bot-glim-g-float {
+  transform: translateY(3px);
+  animation: bot-glim-shake 0.9s ease-in-out both;
+}
+.bot-glim--failed .bot-glim-g-tilt {
+  transform: rotate(7deg);
+  animation: bot-glim-droop 1.2s ease-in both;
+}
+.bot-glim--failed .bot-glim-w {
+  transform: rotate(-40deg);
+  animation: bot-glim-droop 1.2s ease-in both;
+}
+.bot-glim--failed .bot-glim-a {
+  transform: rotate(-38deg);
+  animation: bot-glim-droop 1.2s ease-in both;
+}
+.bot-glim--failed .bot-glim-eyes {
+  transform: translateY(1px) scaleY(0.55);
+  animation: bot-glim-droop 1.2s both;
+}
+.bot-glim--failed .bot-glim-glow {
+  opacity: 0.7;
+}
+.bot-glim--failed .bot-glim-halo {
+  opacity: 0;
+}
+@keyframes bot-glim-blink {
+  0%,
+  93%,
+  100% {
+    transform: none;
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes bot-glim-bob {
+  to {
+    transform: translateY(-2px);
+  }
+}
+@keyframes bot-glim-flap {
+  from {
+    transform: rotate(-10deg);
+  }
+  to {
+    transform: rotate(14deg);
+  }
+}
+@keyframes bot-glim-sway {
+  from {
+    transform: rotate(-7deg);
+  }
+  to {
+    transform: rotate(7deg);
+  }
+}
+@keyframes bot-glim-pulse {
+  from {
+    opacity: 0.14;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 0.42;
+    transform: scale(1.06);
+  }
+}
+@keyframes bot-glim-mote {
+  from {
+    opacity: 0.9;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+@keyframes bot-glim-ping {
+  from {
+    opacity: 0.7;
+    transform: scale(0.75);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+@keyframes bot-glim-hop {
+  0%,
+  55%,
+  100% {
+    transform: none;
+  }
+  30% {
+    transform: translateY(-8px);
+  }
+  72% {
+    transform: translateY(-2.5px);
+  }
+}
+@keyframes bot-glim-wig {
+  25% {
+    transform: rotate(-10deg);
+  }
+  50% {
+    transform: rotate(8deg);
+  }
+  75% {
+    transform: rotate(-3deg);
+  }
+}
+@keyframes bot-glim-cheer {
+  0%,
+  50% {
+    transform: rotate(-6deg);
+  }
+  25%,
+  75% {
+    transform: rotate(30deg);
+  }
+}
+@keyframes bot-glim-flash {
+  from {
+    opacity: 0.85;
+    transform: scale(1.3);
+  }
+}
+@keyframes bot-glim-pop {
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+  60% {
+    transform: scale(1.4);
+  }
+}
+@keyframes bot-glim-shake {
+  0%,
+  60% {
+    transform: none;
+  }
+  10%,
+  30%,
+  50% {
+    transform: translateX(-3px);
+  }
+  20%,
+  40% {
+    transform: translateX(3px);
+  }
+}
+@keyframes bot-glim-droop {
+  0%,
+  60% {
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-glim * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* glim hover/focus "says hi": cheeks blush (also the reduced-motion cue: static opacity), then with motion a
+   squash-hop, the lantern swells gently while hovered, eyes turn to happy ^ ^; failed skips hop and eyes, just perks up. */
+.bot-glim:is(:hover, :focus-visible > *) .bot-glim-cheek {
+  opacity: 0.95;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bot-glim .bot-glim-cheek {
+    transition: opacity 0.25s;
+  }
+  .bot-glim .bot-glim-glow {
+    transform-origin: 32px 45px;
+  }
+  .bot-glim--failed .bot-glim-g-lean {
+    transition: transform 0.4s ease-out;
+  }
+  .bot-glim:is(:hover, :focus-visible > *):not(.bot-glim--failed) {
+    transform-origin: 50% 100%;
+    animation: bot-glim-hi 0.55s ease-out;
+  }
+  .bot-glim:is(:hover, :focus-visible > *) .bot-glim-glow {
+    animation: bot-glim-swell 1s ease-in-out infinite alternate;
+  }
+  .bot-glim:is(:hover, :focus-visible > *):not(.bot-glim--failed) .bot-glim-open {
+    opacity: 0;
+  }
+  .bot-glim:is(:hover, :focus-visible > *):not(.bot-glim--failed) .bot-glim-blink .bot-glim-s-done {
+    opacity: 1;
+  }
+  .bot-glim--failed:is(:hover, :focus-visible > *) .bot-glim-g-lean {
+    transform: rotate(-5deg);
+  }
+  @keyframes bot-glim-hi {
+    35% {
+      transform: translateY(-4px) scale(0.97, 1.04);
+    }
+    70% {
+      transform: scale(1.04, 0.96);
+    }
+  }
+  @keyframes bot-glim-swell {
+    to {
+      transform: scale(1.07);
+    }
+  }
+}
+
+/* mascot: pinch (Pinch, the hermit crab in a { } shell). Selectors, keyframes and custom properties are all bot-pinch-*; palette hex lives only in the :root block (one dark set, the dashboard is dark-only), which reuses dashboard state tokens. */
+:root {
+  --bot-pinch-body: #ff8f74;
+  --bot-pinch-shell: #3b3452;
+  --bot-pinch-spire: #51486e;
+  --bot-pinch-ink: #ddd6f5;
+  --bot-pinch-eye: #fff;
+  --bot-pinch-pupil: #1d1830;
+  --bot-pinch-accent: #a996ff;
+  --bot-pinch-working: #8a9bff;
+  --bot-pinch-idle: var(--amber, #f5b83d);
+  --bot-pinch-done: var(--green, #4fd08a);
+  --bot-pinch-failed: var(--red, #ff6b6b);
+  --bot-pinch-on-state: #15121f;
+}
+.bot-pinch {
+  display: block;
+  height: 56px;
+  width: auto;
+  aspect-ratio: 1;
+  overflow: visible;
+  --bot-pinch-s: var(--bot-pinch-working);
+}
+.bot-pinch--idle {
+  --bot-pinch-s: var(--bot-pinch-idle);
+}
+.bot-pinch--done {
+  --bot-pinch-s: var(--bot-pinch-done);
+}
+.bot-pinch--failed {
+  --bot-pinch-s: var(--bot-pinch-failed);
+}
+.bot-pinch-ln {
+  fill: none;
+  stroke: var(--bot-pinch-ink);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.bot-pinch-fl {
+  fill: var(--bot-pinch-body);
+  stroke: var(--bot-pinch-ink);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+.bot-pinch-shell {
+  fill: var(--bot-pinch-shell);
+  stroke: var(--bot-pinch-ink);
+  stroke-width: 2.5;
+}
+.bot-pinch-spire {
+  fill: var(--bot-pinch-spire);
+}
+.bot-pinch-acc {
+  fill: none;
+  stroke: var(--bot-pinch-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.bot-pinch-brace {
+  fill: none;
+  stroke: var(--bot-pinch-s);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bot-pinch-eye {
+  fill: var(--bot-pinch-eye);
+  stroke: var(--bot-pinch-ink);
+  stroke-width: 2;
+}
+.bot-pinch-pupil {
+  fill: var(--bot-pinch-pupil);
+}
+.bot-pinch-shadow {
+  fill: var(--bot-pinch-ink);
+  opacity: 0.14;
+}
+.bot-pinch-bg {
+  fill: var(--bot-pinch-s);
+}
+.bot-pinch-ic {
+  fill: none;
+  stroke: var(--bot-pinch-on-state);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+}
+.bot-pinch-i-work circle {
+  fill: var(--bot-pinch-on-state);
+  stroke: none;
+}
+.bot-pinch--working .bot-pinch-i-work,
+.bot-pinch--idle .bot-pinch-i-idle,
+.bot-pinch--done .bot-pinch-i-done,
+.bot-pinch--failed .bot-pinch-i-fail {
+  opacity: 1;
+}
+.bot-pinch-face {
+  transform-origin: 50px 0;
+}
+.bot-pinch--right .bot-pinch-face {
+  transform: scaleX(-1);
+}
+.bot-pinch-all {
+  transform-origin: 50px 92px;
+}
+.bot-pinch-eyes {
+  transform-origin: 35px 63px;
+}
+.bot-pinch-blink {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: bot-pinch-blink 5s infinite;
+}
+.bot-pinch-claw {
+  transform-origin: 27px 70px;
+}
+.bot-pinch-pin {
+  transform-origin: 12px 59px;
+}
+.bot-pinch-badge {
+  transform-origin: 86px 14px;
+}
+.bot-pinch-go {
+  opacity: 0;
+}
+.bot-pinch--working .bot-pinch-go {
+  opacity: 1;
+}
+.bot-pinch--working .bot-pinch-still {
+  opacity: 0;
+}
+/* still poses (also the reduced-motion pose) */
+.bot-pinch--idle .bot-pinch-claw {
+  transform: rotate(12deg);
+}
+.bot-pinch--done .bot-pinch-claw {
+  transform: rotate(30deg);
+}
+.bot-pinch--done .bot-pinch-pin {
+  transform: rotate(16deg);
+}
+.bot-pinch--failed .bot-pinch-crab {
+  transform: translate(6px, 1px);
+}
+.bot-pinch--failed .bot-pinch-eyes {
+  transform: rotate(-32deg);
+}
+.bot-pinch--failed .bot-pinch-claw {
+  transform: rotate(-22deg);
+}
+.bot-pinch--failed .bot-pinch-pupil {
+  transform: translateY(1.6px);
+}
+/* working: snip, bob, sway, typing dots, scuttle */
+.bot-pinch--working .bot-pinch-pin {
+  animation: bot-pinch-snip 0.7s ease-in-out infinite;
+}
+.bot-pinch--working .bot-pinch-crab {
+  animation: bot-pinch-bob 1.4s ease-in-out infinite;
+}
+.bot-pinch--working .bot-pinch-eyes {
+  animation: bot-pinch-sway 2.8s ease-in-out infinite;
+}
+.bot-pinch--working .bot-pinch-i-work circle {
+  animation: bot-pinch-dot 1.2s infinite;
+}
+.bot-pinch--working .bot-pinch-i-work circle:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.bot-pinch--working .bot-pinch-i-work circle:nth-child(3) {
+  animation-delay: 0.4s;
+}
+.bot-pinch--working .bot-pinch-lg1 {
+  animation: bot-pinch-step 0.34s ease-in-out infinite;
+}
+.bot-pinch--working .bot-pinch-lg2 {
+  animation: bot-pinch-step 0.34s -0.17s ease-in-out infinite;
+}
+/* idle: look around, wave every few seconds, pulsing ! */
+.bot-pinch--idle .bot-pinch-eyes {
+  animation: bot-pinch-look 6s ease-in-out infinite;
+}
+.bot-pinch--idle .bot-pinch-claw {
+  animation: bot-pinch-wave 4s ease-in-out infinite;
+}
+.bot-pinch--idle .bot-pinch-badge {
+  animation: bot-pinch-pulse 2.4s ease-in-out infinite;
+}
+/* done / failed: one beat, then rest */
+.bot-pinch--done .bot-pinch-all {
+  animation: bot-pinch-hop 0.9s ease-out;
+}
+.bot-pinch--done .bot-pinch-claw,
+.bot-pinch--done .bot-pinch-pin {
+  animation: bot-pinch-in 0.4s ease-out both;
+}
+.bot-pinch--done .bot-pinch-badge,
+.bot-pinch--failed .bot-pinch-badge {
+  animation: bot-pinch-pop 0.45s ease-out both;
+}
+.bot-pinch--failed .bot-pinch-all {
+  animation: bot-pinch-shake 0.55s ease-in-out;
+}
+.bot-pinch--failed .bot-pinch-crab,
+.bot-pinch--failed .bot-pinch-eyes,
+.bot-pinch--failed .bot-pinch-claw,
+.bot-pinch--failed .bot-pinch-pupil {
+  animation: bot-pinch-in 0.6s 0.55s ease-in both;
+}
+@keyframes bot-pinch-blink {
+  0%,
+  93%,
+  100% {
+    transform: none;
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes bot-pinch-in {
+  from {
+    transform: none;
+  }
+}
+@keyframes bot-pinch-snip {
+  50% {
+    transform: rotate(-22deg);
+  }
+}
+@keyframes bot-pinch-bob {
+  50% {
+    transform: translateY(-1.5px);
+  }
+}
+@keyframes bot-pinch-step {
+  50% {
+    transform: translate(-2px, -2.5px);
+  }
+}
+@keyframes bot-pinch-sway {
+  0%,
+  100% {
+    transform: rotate(-4deg);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+@keyframes bot-pinch-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@keyframes bot-pinch-look {
+  0%,
+  30%,
+  80%,
+  100% {
+    transform: rotate(-6deg);
+  }
+  40%,
+  70% {
+    transform: rotate(7deg);
+  }
+}
+@keyframes bot-pinch-wave {
+  0%,
+  60%,
+  100% {
+    transform: rotate(12deg);
+  }
+  70%,
+  90% {
+    transform: rotate(32deg);
+  }
+  80% {
+    transform: rotate(18deg);
+  }
+}
+@keyframes bot-pinch-pulse {
+  50% {
+    transform: scale(1.14);
+    opacity: 0.7;
+  }
+}
+@keyframes bot-pinch-hop {
+  30% {
+    transform: translateY(-11px);
+  }
+  55%,
+  86% {
+    transform: none;
+  }
+  72% {
+    transform: translateY(-4px);
+  }
+}
+@keyframes bot-pinch-pop {
+  from {
+    transform: scale(0);
+  }
+  60% {
+    transform: scale(1.25);
+  }
+}
+@keyframes bot-pinch-shake {
+  15%,
+  55% {
+    transform: translateX(-4px);
+  }
+  35%,
+  75% {
+    transform: translateX(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-pinch * {
+    animation: none !important;
+  }
+}
+
+/* hover (pinch): hover ("hello snip"): eyestalks perk up at you, the claw lifts and snips twice.
+   done: smaller lift. failed: drooped eyes and claw lift a little, a hopeful peek, no snip.
+   Needs the three wrapper groups (bot-pinch-hclaw, bot-pinch-hpin, bot-pinch-heyes); the state animations stay on their own groups. */
+@media (prefers-reduced-motion: no-preference) {
+  .bot-pinch-heyes,
+  .bot-pinch-hclaw {
+    transform-origin: 35px 63px;
+    transition: transform 0.3s cubic-bezier(0.3, 1.6, 0.5, 1);
+  }
+  .bot-pinch-hclaw {
+    transform-origin: 27px 70px;
+  }
+  .bot-pinch-hpin {
+    transform-origin: 12px 59px;
+  }
+  .bot-pinch:hover .bot-pinch-heyes,
+  :focus-visible > .bot-pinch .bot-pinch-heyes {
+    transform: translateY(-3px) scale(1.06);
+  }
+  .bot-pinch:hover .bot-pinch-hclaw,
+  :focus-visible > .bot-pinch .bot-pinch-hclaw {
+    transform: rotate(14deg);
+  }
+  .bot-pinch:hover .bot-pinch-hpin,
+  :focus-visible > .bot-pinch .bot-pinch-hpin {
+    animation: bot-pinch-hsnip 0.8s 0.15s ease-in-out;
+  }
+  .bot-pinch--done:hover .bot-pinch-hclaw,
+  :focus-visible > .bot-pinch--done .bot-pinch-hclaw {
+    transform: rotate(6deg);
+  }
+  .bot-pinch--failed:hover .bot-pinch-heyes,
+  :focus-visible > .bot-pinch--failed .bot-pinch-heyes {
+    transform: rotate(12deg) translateY(-1px);
+  }
+  .bot-pinch--failed:hover .bot-pinch-hpin,
+  :focus-visible > .bot-pinch--failed .bot-pinch-hpin {
+    animation: none;
+  }
+  @keyframes bot-pinch-hsnip {
+    25%,
+    75% {
+      transform: rotate(-24deg);
+    }
+    50% {
+      transform: none;
+    }
+  }
+}
+/* reduced motion: no movement, only a static brightness lift */
+@media (prefers-reduced-motion: reduce) {
+  .bot-pinch:hover,
+  :focus-visible > .bot-pinch {
+    filter: brightness(1.15);
+  }
+}
+
+/* mascot: crab (Pinch (screen), the hermit crab in a code-screen shell). Selectors, keyframes and custom properties are all bot-crab-*; palette hex lives only in the :root block (one dark set, the dashboard is dark-only), which reuses dashboard state tokens. */
+:root {
+  --bot-crab-body: #8fb0bf;
+  --bot-crab-accent: #ff8d6b;
+  --bot-crab-line: #0c1418;
+  --bot-crab-screen: #101b21;
+  --bot-crab-eye: #fffaf2;
+  --bot-crab-working: #5cc8ec;
+  --bot-crab-idle: var(--amber, #ffc247);
+  --bot-crab-done: var(--green, #63d683);
+  --bot-crab-failed: var(--red, #ff7468);
+}
+
+/* artwork */
+.bot-crab {
+  display: block;
+  height: 56px;
+  width: auto;
+  aspect-ratio: 1;
+  overflow: visible;
+  --bot-crab-state: var(--bot-crab-working);
+}
+.bot-crab--idle {
+  --bot-crab-state: var(--bot-crab-idle);
+}
+.bot-crab--done {
+  --bot-crab-state: var(--bot-crab-done);
+}
+.bot-crab--failed {
+  --bot-crab-state: var(--bot-crab-failed);
+}
+.bot-crab * {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bot-crab-shadow {
+  fill: var(--bot-crab-line);
+  opacity: 0.16;
+}
+.bot-crab-shell {
+  fill: var(--bot-crab-body);
+  stroke: var(--bot-crab-line);
+  stroke-width: 2;
+}
+.bot-crab-skin {
+  fill: var(--bot-crab-accent);
+  stroke: var(--bot-crab-line);
+  stroke-width: 2;
+}
+.bot-crab-limb {
+  fill: none;
+  stroke: var(--bot-crab-accent);
+  stroke-width: 3;
+}
+.bot-crab-screen {
+  fill: var(--bot-crab-screen);
+}
+.bot-crab-eye {
+  fill: var(--bot-crab-eye);
+  stroke: var(--bot-crab-line);
+  stroke-width: 1.5;
+}
+.bot-crab-pupil {
+  fill: none;
+  stroke: var(--bot-crab-line);
+  stroke-width: 3.6;
+}
+.bot-crab-x,
+.bot-crab-mouth {
+  fill: none;
+  stroke: var(--bot-crab-line);
+  stroke-width: 1.6;
+}
+.bot-crab-glyph {
+  fill: none;
+  stroke: var(--bot-crab-state);
+  stroke-width: 2.6;
+  opacity: 0;
+}
+
+/* pivots (viewBox units) */
+.bot-crab-unflip,
+.bot-crab-glyph--idle {
+  transform-origin: 21px 31px;
+}
+.bot-crab-leg--1 {
+  transform-origin: 37px 52px;
+}
+.bot-crab-leg--2 {
+  transform-origin: 43px 53px;
+  --bot-crab-s: -1;
+}
+.bot-crab-leg--3 {
+  transform-origin: 49px 52px;
+}
+.bot-crab-claw {
+  transform-origin: 50px 49px;
+}
+.bot-crab-eyes {
+  transform-origin: 46px 40px;
+}
+.bot-crab-blink {
+  transform-origin: 47px 23px;
+}
+.bot-crab-code {
+  transform-origin: 13.5px 0;
+}
+.bot-crab-rays {
+  transform-origin: 22px 12px;
+}
+.bot-crab-pack {
+  transform-origin: 21px 47px;
+}
+
+/* facing */
+.bot-crab--left,
+.bot-crab--left .bot-crab-unflip {
+  transform: scaleX(-1);
+}
+
+/* still pose per state (this is also the reduced-motion pose) */
+.bot-crab-x,
+.bot-crab-mouth--down {
+  opacity: 0;
+}
+.bot-crab--working .bot-crab-glyph--working,
+.bot-crab--idle .bot-crab-glyph--idle,
+.bot-crab--done .bot-crab-glyph--done,
+.bot-crab--done .bot-crab-rays,
+.bot-crab--failed .bot-crab-glyph--failed,
+.bot-crab--failed .bot-crab-x,
+.bot-crab--failed .bot-crab-mouth--down {
+  opacity: 1;
+}
+.bot-crab--failed .bot-crab-pupil,
+.bot-crab--failed .bot-crab-mouth--up {
+  opacity: 0;
+}
+.bot-crab--idle .bot-crab-claw--a {
+  transform: translateY(-6px);
+}
+.bot-crab--idle .bot-crab-pupil {
+  transform: translateY(-1.2px);
+}
+.bot-crab--done .bot-crab-claw--a {
+  transform: translateY(-10px);
+}
+.bot-crab--done .bot-crab-claw--b {
+  transform: translate(1px, -7px);
+}
+.bot-crab--failed .bot-crab-head {
+  transform: translate(-4px, 3px);
+}
+.bot-crab--failed .bot-crab-pack {
+  transform: translateY(3px) rotate(-4deg);
+}
+.bot-crab--failed .bot-crab-eyes {
+  transform: rotate(24deg);
+}
+.bot-crab--failed .bot-crab-claw {
+  transform: rotate(22deg);
+}
+.bot-crab--failed .bot-crab-leg--1 {
+  transform: rotate(40deg);
+}
+.bot-crab--failed .bot-crab-leg--2 {
+  transform: rotate(60deg);
+}
+.bot-crab--failed .bot-crab-leg--3 {
+  transform: rotate(-40deg);
+}
+
+/* every state: blink */
+.bot-crab-blink {
+  animation: bot-crab-blink 4.6s infinite;
+}
+@keyframes bot-crab-blink {
+  0%,
+  93%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+
+/* working: scuttle, tap the claws, type on the shell */
+.bot-crab--working .bot-crab-leg {
+  animation: bot-crab-step 0.26s ease-in-out infinite alternate;
+}
+.bot-crab--working .bot-crab-all {
+  animation: bot-crab-bob 0.26s ease-in-out infinite alternate;
+}
+.bot-crab--working .bot-crab-claw {
+  animation: bot-crab-tap 0.32s ease-in-out infinite alternate;
+}
+.bot-crab--working .bot-crab-claw--b {
+  animation-delay: -0.32s;
+}
+.bot-crab--working .bot-crab-code {
+  animation: bot-crab-type 1.4s steps(6) infinite;
+}
+.bot-crab--working .bot-crab-code + .bot-crab-code {
+  animation-delay: 0.25s;
+}
+.bot-crab--working .bot-crab-code + .bot-crab-code + .bot-crab-code {
+  animation-delay: 0.5s;
+}
+@keyframes bot-crab-step {
+  from {
+    transform: rotate(calc(var(--bot-crab-s, 1) * -16deg));
+  }
+  to {
+    transform: rotate(calc(var(--bot-crab-s, 1) * 16deg));
+  }
+}
+@keyframes bot-crab-bob {
+  to {
+    transform: translateY(-1.2px);
+  }
+}
+@keyframes bot-crab-tap {
+  from {
+    transform: rotate(-10deg);
+  }
+  to {
+    transform: rotate(14deg);
+  }
+}
+@keyframes bot-crab-type {
+  0% {
+    transform: scaleX(0.1);
+  }
+  55%,
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+/* idle: one cycle = shuffle a few steps (first half), then stop and wave (second half).
+     --bot-crab-idle-cycle / --bot-crab-delay let a roaming wrapper keep the steps in sync with its travel. */
+.bot-crab--idle .bot-crab-leg {
+  animation: bot-crab-shuffle var(--bot-crab-idle-cycle, 4s) linear var(--bot-crab-delay, 0s)
+    infinite;
+}
+.bot-crab--idle .bot-crab-claw--a {
+  animation: bot-crab-wave var(--bot-crab-idle-cycle, 4s) ease-in-out var(--bot-crab-delay, 0s)
+    infinite;
+}
+.bot-crab--idle .bot-crab-glyph--idle {
+  animation: bot-crab-ask var(--bot-crab-idle-cycle, 4s) ease-in-out var(--bot-crab-delay, 0s)
+    infinite;
+}
+@keyframes bot-crab-shuffle {
+  0%,
+  50%,
+  100% {
+    transform: none;
+  }
+  8%,
+  24%,
+  40% {
+    transform: rotate(calc(var(--bot-crab-s, 1) * -14deg));
+  }
+  16%,
+  32% {
+    transform: rotate(calc(var(--bot-crab-s, 1) * 14deg));
+  }
+}
+@keyframes bot-crab-wave {
+  0%,
+  55%,
+  100% {
+    transform: translateY(-6px);
+  }
+  63%,
+  79% {
+    transform: translateY(-8px) rotate(-16deg);
+  }
+  71%,
+  87% {
+    transform: translateY(-8px) rotate(10deg);
+  }
+}
+@keyframes bot-crab-ask {
+  0%,
+  55%,
+  100% {
+    transform: none;
+  }
+  72% {
+    transform: translateY(-1.5px) scale(1.15);
+  }
+}
+
+/* done: one hop, claws thrown up, rays pop; rests in the cheer pose */
+.bot-crab--done .bot-crab-all {
+  animation: bot-crab-hop 0.9s ease-in-out 1;
+}
+.bot-crab--done .bot-crab-claw {
+  animation: bot-crab-from-rest 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) 1;
+}
+.bot-crab--done .bot-crab-rays {
+  animation: bot-crab-pop 0.5s 0.15s ease-out 1 backwards;
+}
+@keyframes bot-crab-hop {
+  0%,
+  55%,
+  100% {
+    transform: none;
+  }
+  30% {
+    transform: translateY(-9px);
+  }
+  75% {
+    transform: translateY(-4px);
+  }
+}
+@keyframes bot-crab-from-rest {
+  from {
+    transform: none;
+  }
+}
+@keyframes bot-crab-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
+/* failed: one shake, then slump into the shell; rests slumped */
+.bot-crab--failed .bot-crab-all {
+  animation: bot-crab-shake 0.5s linear 1;
+}
+.bot-crab--failed .bot-crab-head,
+.bot-crab--failed .bot-crab-pack,
+.bot-crab--failed .bot-crab-eyes,
+.bot-crab--failed .bot-crab-claw,
+.bot-crab--failed .bot-crab-leg {
+  animation: bot-crab-droop 1.1s ease-in-out 1;
+}
+@keyframes bot-crab-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  15%,
+  45%,
+  75% {
+    transform: translateX(-2px);
+  }
+  30%,
+  60% {
+    transform: translateX(2px);
+  }
+}
+@keyframes bot-crab-droop {
+  0%,
+  45% {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-crab,
+  .bot-crab * {
+    animation: none !important;
+  }
+}
+
+/* hover (crab):  Startled hermit crab: it ducks into the shell, then peeks back
+   out, while the shell screen flickers awake. Plays once per hover/focus. Uses only groups the state
+   animations leave alone: .bot-crab-screen (never animated) and .bot-crab-head (animated only in
+   failed, which is excluded: a slumped crab just gets the screen flicker). No JSX changes. */
+@media (prefers-reduced-motion: no-preference) {
+  :is(.bot-crab:hover, :focus-visible > .bot-crab) .bot-crab-screen {
+    animation: bot-crab-hover-flicker 0.5s linear 1;
+  }
+  :is(.bot-crab:hover, :focus-visible > .bot-crab):not(.bot-crab--failed) .bot-crab-head {
+    animation: bot-crab-hover-duck 0.75s ease-in-out 1;
+  }
+  @keyframes bot-crab-hover-flicker {
+    20% {
+      opacity: 0.3;
+    }
+    40% {
+      opacity: 1;
+    }
+    60% {
+      opacity: 0.55;
+    }
+  }
+  @keyframes bot-crab-hover-duck {
+    22%,
+    52% {
+      transform: translate(-6px, 3px);
+    }
+    80% {
+      transform: translate(1px, -1px);
+    }
+  }
+}
+/* reduced motion: static cue only, the shell screen lightens while hovered/focused */
+@media (prefers-reduced-motion: reduce) {
+  :is(.bot-crab:hover, :focus-visible > .bot-crab) .bot-crab-screen {
+    opacity: 0.7;
+  }
+}

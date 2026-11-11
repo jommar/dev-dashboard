@@ -1,0 +1,215 @@
+/* The Mascots screen (panels/MascotsPanel.jsx): every registered mascot in all four states, and a
+   fake bottom bar. The board pane owns the scroll and the fill; this sheet styles the toolbar's
+   toggles and picker, the card grid and a state figure. The cards are uniform, so the grid is a real
+   grid with explicit columns at the repo's two breakpoints (760px, 1700px), not masonry. The roaming
+   preview reuses bot-bar.css's lane classes and keyframes unchanged; only its frame is here.
+   Tokens only, short transitions that name their properties, a reduced-motion block. */
+
+/* Toolbar: the facing switch, the moving toggle and Replay sit in the section's controls. */
+.mascots-controls-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+.mascots-controls-label {
+  margin-right: var(--s1);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.mascots-toggle[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--strong);
+}
+
+/* The picker: a typed session key, and the mascot it hashes to. */
+.mascots-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.mascots-pick label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+.mascots-pick input {
+  min-height: 30px;
+  width: 220px;
+  max-width: 100%;
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font: inherit;
+  transition: box-shadow 120ms var(--ease-out);
+}
+.mascots-pick input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.mascots-pick-result {
+  min-width: 0;
+  color: var(--strong);
+  font-weight: 600;
+}
+
+/* The pane's content: the roaming preview, then the card grid. */
+.mascots-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.mascots-heading {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+.mascots-note {
+  margin: var(--s1) 0 var(--s2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* The fake bar: a recessed strip standing in for the bottom of the screen. Its lanes are the bot
+   bar's own (.bot-bar-lane), positioned inside this box instead of the viewport. */
+.mascots-roam {
+  --bot-bar-size: 56px;
+  position: relative;
+  height: calc(var(--bot-bar-size) + var(--s3));
+  overflow-x: clip;
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent);
+}
+.mascots-roam .bot-bar-lane {
+  bottom: var(--s2);
+}
+.mascots-roam-bot > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The cards: one column, then two, then three. */
+.mascots-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--s4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 760px) {
+  .mascots-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1700px) {
+  .mascots-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.mascots-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-width: 0;
+  padding: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel2);
+}
+.mascots-card[data-picked='true'] {
+  border-color: var(--accent);
+}
+.mascots-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+  min-width: 0;
+}
+.mascots-card-name {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+.mascots-card-id {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+.mascots-card-picked {
+  margin-left: auto;
+  padding: 0 var(--s2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}
+.mascots-size-caption {
+  margin: 0 0 var(--s2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+/* The four states: a row at bar size, as many columns as fit; a 2 x 2 at 160 px, because three
+   would leave one state alone on a second row. */
+.mascots-states {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  align-items: end;
+  gap: var(--s3) var(--s2);
+}
+.mascots-states[data-size='large'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.mascots-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
+  margin: 0;
+}
+.mascots-art {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  max-width: 100%;
+}
+/* Beats the mascot sheet's own 56px (one class), so a figure is the size it is captioned with. */
+.mascots-art > svg {
+  height: var(--mascots-size);
+  max-width: 100%;
+}
+.mascots-figure figcaption {
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+
+@media (max-width: 599px) {
+  .mascots-card {
+    padding: var(--s2);
+  }
+  /* Two 160 px pictures do not fit side by side on a phone. */
+  .mascots-states[data-size='large'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascots-pick input {
+    transition: none;
+  }
+}

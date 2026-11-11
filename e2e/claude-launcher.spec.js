@@ -70,9 +70,13 @@ const insetFromStart = (foot, testId) =>
   }, testId);
 
 const isPath = (path) => (url) => url.pathname === path;
+// The board's own reads: the bot bar polls the same route on every screen, marked `?surface=bot-bar`.
+const isBarRead = (url) => new URL(url, 'http://dashboard.test').searchParams.has('surface');
 const claudeReads = ({ requests }) =>
-  requests.filter(({ method, path }) => method === 'GET' && path.startsWith('/api/claude/tickets'))
-    .length;
+  requests.filter(
+    ({ method, path }) =>
+      method === 'GET' && path.startsWith('/api/claude/tickets') && !isBarRead(path),
+  ).length;
 // The bodies the fake API was sent for one POST route, in order.
 const bodiesTo = ({ data }, path) =>
   data.claude.calls.filter((call) => call.path === path).map((call) => call.body);
@@ -546,6 +550,7 @@ test('scenario 40: a poll already in flight cannot put the old state back after 
   let held = 0;
   try {
     await page.route(isPath('/api/claude/tickets'), async (route) => {
+      if (isBarRead(route.request().url())) return route.fallback();
       held += 1;
       const stale = structuredClone(dashboard.data.claude.tickets);
       await gate;
@@ -556,7 +561,8 @@ test('scenario 40: a poll already in flight cannot put the old state back after 
     await dialog.getByTestId('claude-action-investigate').click();
     await expect(iconOf(page)).toHaveAttribute('data-state', 'working');
     const answered = page.waitForResponse(
-      (response) => new URL(response.url()).pathname === '/api/claude/tickets',
+      (response) =>
+        new URL(response.url()).pathname === '/api/claude/tickets' && !isBarRead(response.url()),
     );
     release();
     await (await answered).finished();

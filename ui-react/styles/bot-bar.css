@@ -1,0 +1,351 @@
+/* The bot bar: a transparent strip of mascots along the bottom of every screen, one per Claude
+   session of a PR or its code review. It is an overlay: position: fixed takes it out of the flow, so
+   no screen's height, scroll or viewport fill changes, and nothing in it can scroll the page
+   sideways. The strip itself ignores the pointer; only a bot (and the dismiss button of a finished
+   one) takes it. It sits under the tooltip and the popups, and under every dialog, which is in the
+   top layer.
+
+   Where a bot stands is computed once, in ui/bot-bar.js, from its session key and handed in as
+   plain numbers (percent of the room the bar leaves a bot, never px):
+     --bot-from / --bot-range  the stretch a working or waiting bot walks
+     --bot-dur / --bot-dur-idle / --bot-dur-stroll   seconds of one walk there and back
+     --bot-phase               how far in it starts (0 to 1)
+     --bot-rest                where a failed bot stands
+     --bot-rest-still          where every bot stands when motion is reduced
+   Working bots patrol (back and forth, no stop), waiting (idle) ones wander (slow, a rest at each end),
+   done ones stroll (the slowest: a rest at each end and one on the way out) and failed ones stand
+   slumped at --bot-rest. Walking is two keyframe sets on one clock: the lane slides (translateX), and the face flips
+   (scaleX) at the same percentages, so a bot turns exactly at each end. Transform only, no script.
+   Without motion every bot, walkers included, stands still at its --bot-rest-still. */
+.bot-bar {
+  --bot-bar-size: 56px;
+  /* Walkers keep this far from each side, so a callout (centred on its bot, at most twice this plus
+     one bot wide) can never run off the screen. */
+  --bot-bar-edge: 88px;
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  height: calc(var(--bot-bar-size) + var(--s1) + env(safe-area-inset-bottom, 0px));
+  overflow-x: clip;
+  pointer-events: none;
+}
+
+/* The lane stands still at --bot-rest; a walker's lane (below) is the stretch it walks. */
+.bot-bar-lane {
+  /* The room a bot's left edge has, in the unit it is used in (a percentage of the bar's width). */
+  --bot-room: calc(100% - var(--bot-bar-size) - 2 * var(--bot-bar-edge, 0px));
+  position: absolute;
+  bottom: calc(var(--s1) + env(safe-area-inset-bottom, 0px));
+  left: calc(
+    var(--bot-bar-edge, 0px) + var(--bot-rest-still, var(--bot-rest, 0)) / 100 * var(--bot-room)
+  );
+  width: var(--bot-bar-size);
+  height: var(--bot-bar-size);
+  pointer-events: none;
+}
+.bot-bar-face {
+  width: var(--bot-bar-size);
+  height: var(--bot-bar-size);
+}
+
+.bot-bar-bot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 120ms var(--ease-out);
+}
+.bot-bar-bot:hover {
+  transform: translateY(-2px);
+}
+.bot-bar-bot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.bot-bar-bot :where(svg) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The callout: a speech bubble above a bot saying what just happened, in the tooltip's look. It is a
+   child of the lane, so it rides with the bot, and outside the face wrapper, so it is never
+   mirrored when the bot turns. It takes no room and no pointer. */
+.bot-bar-callout {
+  position: absolute;
+  bottom: calc(100% + var(--s2));
+  left: calc(var(--bot-bar-size) / 2);
+  width: max-content;
+  max-width: calc(2 * (var(--bot-bar-edge, 0px) + var(--bot-bar-size) / 2));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.bot-bar-callout-bubble {
+  position: relative;
+  display: block;
+  padding: 5px var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  overflow-wrap: break-word;
+  text-align: center;
+  animation: bot-bar-callout-in 180ms var(--ease-out) both;
+}
+.bot-bar-callout-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border: solid var(--border);
+  border-width: 0 1px 1px 0;
+  background: var(--panel2);
+  transform: translateX(-50%) rotate(45deg);
+}
+.bot-bar-callout-bubble[data-leaving='true'] {
+  animation: bot-bar-callout-out 300ms linear forwards;
+}
+@keyframes bot-bar-callout-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes bot-bar-callout-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes bot-bar-callout-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (max-width: 599px) {
+  .bot-bar {
+    --bot-bar-edge: 40px;
+  }
+}
+
+/* Sends a finished or failed bot away: a small round control at the bot's top right corner. */
+.bot-bar-dismiss {
+  position: absolute;
+  top: 0;
+  left: calc(var(--bot-bar-size) - var(--s4));
+  display: grid;
+  place-items: center;
+  width: var(--s5);
+  height: var(--s5);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    color 120ms var(--ease-out),
+    background-color 120ms var(--ease-out);
+}
+.bot-bar-dismiss:hover {
+  background: var(--panel2);
+  color: var(--strong);
+}
+.bot-bar-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A done bot in its last stretch (FADE_MS in ui/bot-bar.js: keep the two equal) goes. */
+.bot-bar-lane[data-fading='true'] {
+  animation: bot-bar-fade-out 20s linear forwards;
+}
+@keyframes bot-bar-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .bot-bar-lane[data-state='working'],
+  .bot-bar-lane[data-state='waiting'],
+  .bot-bar-lane[data-state='done'] {
+    left: calc(var(--bot-bar-edge, 0px) + var(--bot-from) / 100 * var(--bot-room));
+    width: calc(var(--bot-range) / 100 * var(--bot-room));
+  }
+  /* A failed bot stands where it was put among the failed ones, not among the walkers. */
+  .bot-bar-lane[data-state='failed'] {
+    left: calc(var(--bot-bar-edge, 0px) + var(--bot-rest, 0) / 100 * var(--bot-room));
+  }
+  /* Working: back and forth with no stop. Waiting (idle): slow, with a rest at each end. */
+  .bot-bar-lane[data-state='working'] {
+    --bot-cycle: calc(var(--bot-dur) * 1s);
+    --bot-start: calc(var(--bot-phase) * var(--bot-cycle) * -1);
+    animation: bot-bar-patrol var(--bot-cycle) var(--bot-start) ease-in-out infinite;
+  }
+  .bot-bar-lane[data-state='working'] .bot-bar-face {
+    animation: bot-bar-patrol-turn var(--bot-cycle) var(--bot-start) linear infinite;
+  }
+  .bot-bar-lane[data-state='waiting'] {
+    --bot-cycle: calc(var(--bot-dur-idle) * 1s);
+    --bot-start: calc(var(--bot-phase) * var(--bot-cycle) * -1);
+    animation: bot-bar-wander var(--bot-cycle) var(--bot-start) ease-in-out infinite;
+  }
+  .bot-bar-lane[data-state='waiting'] .bot-bar-face {
+    animation: bot-bar-wander-turn var(--bot-cycle) var(--bot-start) linear infinite;
+  }
+  /* Done: a relaxed amble, the slowest walk. It rests at each end and once on the way out; the fade
+     (below) runs beside it on the same lane. */
+  .bot-bar-lane[data-state='done'] {
+    --bot-cycle: calc(var(--bot-dur-stroll) * 1s);
+    --bot-start: calc(var(--bot-phase) * var(--bot-cycle) * -1);
+    animation: bot-bar-stroll var(--bot-cycle) var(--bot-start) ease-in-out infinite;
+  }
+  .bot-bar-lane[data-state='done'][data-fading='true'] {
+    animation:
+      bot-bar-stroll var(--bot-cycle) var(--bot-start) ease-in-out infinite,
+      bot-bar-fade-out 20s linear forwards;
+  }
+  .bot-bar-lane[data-state='done'] .bot-bar-face {
+    animation: bot-bar-stroll-turn var(--bot-cycle) var(--bot-start) linear infinite;
+  }
+  /* A bot you are about to click stands still. */
+  .bot-bar-lane[data-state]:is(:hover, :focus-within),
+  .bot-bar-lane[data-state]:is(:hover, :focus-within) .bot-bar-face {
+    animation-play-state: paused;
+  }
+}
+
+/* The lane slides by its own width: from --bot-from to --bot-from + --bot-range. */
+@keyframes bot-bar-patrol {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(100%);
+  }
+}
+@keyframes bot-bar-patrol-turn {
+  0%,
+  49.9% {
+    transform: none;
+  }
+  50%,
+  99.9% {
+    transform: scaleX(-1);
+  }
+}
+@keyframes bot-bar-wander {
+  0%,
+  8%,
+  82%,
+  100% {
+    transform: translateX(0);
+  }
+  38%,
+  52% {
+    transform: translateX(100%);
+  }
+}
+@keyframes bot-bar-wander-turn {
+  0%,
+  51.9%,
+  82%,
+  100% {
+    transform: none;
+  }
+  52%,
+  81.9% {
+    transform: scaleX(-1);
+  }
+}
+
+/* Out with a rest at the start, halfway and the far end, back with none but the one at home. */
+@keyframes bot-bar-stroll {
+  0%,
+  8%,
+  90%,
+  100% {
+    transform: translateX(0);
+  }
+  30%,
+  38% {
+    transform: translateX(48%);
+  }
+  60%,
+  68% {
+    transform: translateX(100%);
+  }
+}
+@keyframes bot-bar-stroll-turn {
+  0%,
+  59.9%,
+  90%,
+  100% {
+    transform: none;
+  }
+  60%,
+  89.9% {
+    transform: scaleX(-1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-bar-lane,
+  .bot-bar-lane .bot-bar-face {
+    animation: none;
+  }
+  /* The fade becomes a dimmer bot until the time to live ends. */
+  .bot-bar-lane[data-fading='true'] {
+    animation: none;
+    opacity: 0.5;
+  }
+  /* The callout only fades, no movement. base.css stops every animation under reduced motion with
+     !important, so this says it too: an opacity fade is not motion. */
+  .bot-bar-callout-bubble {
+    animation: bot-bar-callout-fade-in 180ms linear both !important;
+  }
+  .bot-bar-callout-bubble[data-leaving='true'] {
+    animation: bot-bar-callout-out 300ms linear forwards !important;
+  }
+  .bot-bar-bot,
+  .bot-bar-dismiss {
+    transition: none;
+  }
+  .bot-bar-bot:hover {
+    transform: none;
+  }
+}
+
+@media print {
+  .bot-bar {
+    display: none;
+  }
+}

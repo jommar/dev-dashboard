@@ -384,6 +384,7 @@ An agent can read the same logs three ways:
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
    - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers`, `POST /api/claude/approve` and `POST /api/claude/rereview` (see [Claude launcher](#claude-launcher))
+   - `GET /api/active-sprint-tickets?keys=A-1,B-2` (which of those tickets are in an active Jira sprint; see [Bot bar](#bot-bar))
    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
 
 ## Home
@@ -1767,6 +1768,93 @@ starting a copy. If one is wrong, the fix is a single constant or rule: the id p
 `backend/claude-ticket-state.mjs`), or, for the last one, `SETTLE_MS` in
 `backend/slack-watcher.mjs`, which the Slack wake shares. To roll the feature back, revert the change;
 `claude/` holds only local files you can delete, and running sessions are unaffected.
+
+## Bot bar
+
+A strip of small animated mascots runs along the bottom of every screen once setup is complete (the
+Settings-only setup mode has none): one **bot per Claude session that belongs to a PR or its code
+review**, so you can see at a glance which ones are working and which need you. It is an overlay
+(`position: fixed`, transparent, and it ignores the pointer except on the bots), so it takes no room,
+never scrolls the page and leaves every screen's height and viewport fill unchanged. It is hidden
+while there is no session to show.
+
+- **Which sessions.** The implement and review sessions of each ticket (the ones tied to PRs and code
+  review), **of tickets in an active Jira sprint only**. The phases live in one constant, `BOT_PHASES`
+  in [`ui/bot-bar.js`](ui/bot-bar.js); the investigate and groom sessions are not shown. A session whose
+  state is `none` (never started) or `unknown` (the CLI listing could not be read) has no bot, and neither
+  does a session of a ticket outside the active sprint, which also keeps old finished sessions off the bar.
+- **The active sprint.** "Active" is the rule My Tickets and Home use (a sprint Jira reports as
+  `active`, read from the ticket's most relevant sprint; several boards can each have one, and a
+  ticket in any of them counts). The bar asks which of its tickets are in one with
+  `GET /api/active-sprint-tickets?keys=A-1,B-2` (setup-gated, at most 200 keys), answered by
+  `fetchActiveSprintKeys` in `backend/jira.mjs`: one Jira search per 50 keys with no answer yet, each
+  ticket's answer kept for 5 minutes (so a repeat call costs Jira nothing), and the response is
+  `{ available, keys }`, where `keys` is the subset in an active sprint. The pure filter is
+  `inActiveSprint` in `ui/bot-bar.js`. The browser asks when the bar sees a ticket it has not placed,
+  every 5 minutes (`SPRINT_POLL_MS`) while the page is visible, and when the page becomes visible after
+  that long. **A ticket whose sprint is not known has no bot**: nothing shows until the first answer is
+  in, and when Jira is not configured or unreachable (`available: false`, or a failed request) the bar
+  keeps the last good set of keys and adds none, so it never shows a bot it cannot place.
+- **States.** `working` patrols back and forth along the bar, turning at each end. `waiting` is
+  shown as **idle** (it needs you) and wanders slowly, resting at each end. `done` **strolls**: the
+  slowest walk, a relaxed amble that rests at each end and once halfway out (about 4.5 times a working
+  patrol's length of cycle, `STROLL_CYCLE_FACTOR` in `ui/bot-bar.js`, beside the idle wander's
+  `IDLE_CYCLE_FACTOR`). `failed` stands slumped where it was put. Walkers keep clear of the screen's
+  edges. With reduced motion every bot stands still, spread out along the bar.
+- **Mascot.** Each session is one of the mascots for life: the pick is a hash of the session key
+  (`<TICKET>:<phase>`), with nothing stored, so it never changes between renders or reloads, and
+  where it walks or stands comes from the same hash. The mascot list lives only in
+  [`ui-react/components/mascots/index.js`](ui-react/components/mascots/index.js); a session is
+  matched to a mascot by highest-random-weight hashing, so adding a mascot moves only about one
+  session in N to it and leaves the rest as they were. See
+  [Adding a mascot](ui-react/components/mascots/README.md).
+- **Click a bot** to open the Claude dialog of that session: the code review dialog for a review bot,
+  the workflow dialog for an implement bot. Its accessible name reads `<KEY> <phase>: <state>`
+  (`TAP-1234 review: idle`). Hovering or focusing it shows the dashboard's own popup (the same
+  `DashboardTooltip` the boards use, so it works from the keyboard as well) with the same words and the
+  reason, for example `TAP-1451 review: done · finished`; no bot carries a native `title` tooltip. The
+  dialogs show the key without the ticket summary, which the bar does not load. A walking bot stops
+  while you hover or focus it.
+- **Callouts.** When a bot's state changes between two polls while the page is open (working to done,
+  working to idle, any state to failed, or a session starting to work), a small speech bubble in the
+  tooltip's look appears above it, for example `TAP-1451 · Done ✓`. The words are the small map
+  `CALLOUT_TEXT` in `ui/bot-bar.js`. There is none on first load, for a bot that appears already in a
+  state, or when a dismissed or timed-out bot merely comes back. Working and done bubbles go after about
+  6 seconds (`CALLOUT_AUTO_HIDE_MS`); idle and failed ones stay until you hover, focus or click the bot
+  or its state changes again. There is one bubble per bot and at most three at once (a newer one pushes
+  the oldest out). The bubble rides with its bot without being mirrored when it turns, takes no room or
+  pointer, and only fades under reduced motion. It is hidden from assistive technology; instead one
+  polite status region in the bar says `TAP-1451 review: done` once per change.
+- **Done bots leave.** A `done` bot fades out 10 minutes after the bar first saw it done
+  (`DONE_TTL_MS`), and a `done` or `failed` bot has a small **x** beside it that dismisses it. A
+  dismissed bot comes back if its session changes state. This is remembered in memory only, so a
+  reload starts the 10 minutes again and brings dismissed bots back.
+- **The bar polls.** It reads `GET /api/claude/tickets` itself, on every screen, every 15 seconds
+  while the page is visible, through its own `useClaudeTickets` (a failed read keeps the last
+  answer; there is no countdown). Its requests carry `?surface=bot-bar`, which the server ignores,
+  so a request log or a test counting a board's own reads can tell them apart. It reads no
+  other route than `/api/active-sprint-tickets` above (in particular never `/api/team-velocity`).
+
+## Mascots page
+
+The **Mascots** tab (after DevTools) shows every registered mascot, for looking at and picking one.
+It is static: no session data, no request and no polling, and it reads the one registry
+(`MASCOTS` in [`ui-react/components/mascots/index.js`](ui-react/components/mascots/index.js)), so a
+mascot you register appears on it with no page change.
+
+- **A card per mascot**: its name and id, then the four states (working, **idle**, done, failed) at
+  the bar's 56 px and at 160 px, each captioned in words. The cards are a grid of one, two or three
+  columns (at 760 px and 1700 px), and the pane scrolls inside the screen.
+- **Toolbar**: **Facing** (Left or Right) turns every picture; **Moving** switches on the walk cycle
+  of the mascots that have one; **Replay** remounts the pictures so the one-time done hop and failed
+  shake can be watched again.
+- **Hover or focus a mascot** to see its reaction (a squeak, a snip, a flame perking up, a blush and hop,
+  a startled duck into the shell); with reduced motion it shows a still cue instead.
+- **Roaming preview**: a fake bottom bar where each mascot has a working bot and one in another
+  state. It uses the real bar's lane classes and keyframes, so it walks, pauses and stands as the bar
+  does, and stands still with reduced motion.
+- **Which mascot would a session get?** Type a session key (`<TICKET>:<phase>`, such as
+  `TAP-1234:implement`) to see the mascot the bar would give it, and its card is marked **Picked**.
 
 ## Releases
 

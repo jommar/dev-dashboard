@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- Added a Mascots tab (after DevTools) that shows every registered mascot for viewing and picking: a
+  card per entry of `MASCOTS` with its name and id and all four states (working, idle, done, failed)
+  at the bar's 56 px and at 160 px, each captioned in words. Toolbar controls flip the facing
+  (Left/Right), turn the walk cycle on (Moving) and replay the one-time done hop and failed shake
+  (Replay); a "Roaming preview" strip walks a few bots with the real bot bar's own lane classes and
+  keyframes; and a text box shows which mascot a typed session key (`TAP-1234:implement`) hashes to.
+  The page is static: it reads no session data, makes no request and does not poll, and a newly
+  registered mascot appears on it with no page change. To share the roaming rules, the bar's lane
+  style and its facing/stepping choice moved into `laneStyle` and `botPose` in `ui/bot-bar.js` and
+  the mascot lookup into `ui-react/lib/mascot-for.js`; the bar itself behaves as before.
+
+- Fixed the mascots' colours on a light-scheme machine. The dashboard is dark-only, but each
+  mascot's palette followed the operating system's light/dark setting, so Glim's navy body and
+  Wick's dark ink sat on the dark panel with low contrast on a light-OS machine. `mascots.css`
+  now has one dark palette per mascot and no `prefers-color-scheme` split.
+
+- Added a bot bar: a transparent strip of animated mascots along the bottom of every screen (not in
+  the Settings-only setup mode), one bot per Claude implement or review session of a ticket in an
+  active Jira sprint (the bar asks the new `GET /api/active-sprint-tickets?keys=`, which searches
+  Jira only for tickets with no answer from the last 5 minutes and is asked at most every 5 minutes
+  per page; a ticket whose sprint is unknown, or any ticket while Jira is unavailable or not
+  configured, gets no bot, and the last good set is kept when a refresh fails). Phases (`BOT_PHASES` in
+  `ui/bot-bar.js`; investigate and groom are left out, as are sessions that are `none` or
+  `unknown`). A working bot patrols back and forth, a waiting one is shown as idle and wanders with
+  pauses, a done one strolls (a slow amble with rests at each end and halfway) and a failed one
+  stands slumped; with reduced motion every bot stands still. Hovering or focusing a bot shows the
+  dashboard's own popup (`TAP-1451 review: done · finished`), never a native `title`. When a bot's state
+  changes while the page is open, a small speech bubble above it says so (`TAP-1451 · Done ✓`; working
+  and done go after about 6 seconds, idle and failed stay until the bot is attended to; at most three
+  at once), and one polite live region announces each change once. Each
+  session is one mascot for life, picked from the registry in `ui-react/components/mascots/index.js`
+  by highest-random-weight hashing of its session key (nothing stored; adding a mascot moves only
+  about one session in N). A bot opens the existing Claude dialog (review or workflow) for its ticket.
+  A done bot fades out after 10 minutes and a done or failed one can be dismissed with its small x
+  (in memory only). The bar is an overlay and changes no screen's height, and it polls
+  `GET /api/claude/tickets` itself every 15 seconds on every screen while the page is visible
+  (marked `?surface=bot-bar`); the My Tickets and Pull Requests polling is unchanged.
+
 - Added a built-in Markdown viewer for the files a ticket's Claude sessions leave in
   `~/pathwise/.orchestrator/<ticket>/` (plan, checklist, spec, groom notes). In the My Tickets Claude
   dialog, View plan (beside the plan path), View groom notes (once a groom session is done) and a

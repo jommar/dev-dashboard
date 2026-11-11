@@ -17,8 +17,10 @@ const NO_TICKETS = Object.freeze({});
 // keeps its identity while the answer is equal, so the memoized board is not re-rendered by a poll
 // that found nothing new. `launch`, `answer`, `approve` and `rereview` resolve with the API result, whose `ticket` entry
 // is put in the map at once: a poll that was already in flight cannot put the old state back.
-export function useClaudeTickets({ active }) {
+export function useClaudeTickets({ active, source }) {
   const [byTicket, setByTicket] = useState(NO_TICKETS);
+  // True once a read has answered: before that `byTicket` is the empty map, not an answer.
+  const [loaded, setLoaded] = useState(false);
   const inFlight = useRef(false);
   const latest = useRef(0);
 
@@ -27,16 +29,17 @@ export function useClaudeTickets({ active }) {
     inFlight.current = true;
     const request = ++latest.current;
     try {
-      const result = await getClaudeTickets();
+      const result = await getClaudeTickets(source);
       if (request !== latest.current || !result.ok) return;
       const tickets = result.tickets ?? NO_TICKETS;
+      setLoaded(true);
       setByTicket((previous) =>
         JSON.stringify(previous) === JSON.stringify(tickets) ? previous : tickets,
       );
     } finally {
       inFlight.current = false;
     }
-  }, []);
+  }, [source]);
 
   useEffect(() => {
     if (!active) return undefined;
@@ -75,5 +78,5 @@ export function useClaudeTickets({ active }) {
   const approve = useCallback(async (key) => settle(key, await approveClaude(key)), [settle]);
   const rereview = useCallback(async (key) => settle(key, await rereviewClaude(key)), [settle]);
 
-  return { byTicket, launch, answer, approve, rereview };
+  return { byTicket, loaded, launch, answer, approve, rereview };
 }

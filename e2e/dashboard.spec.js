@@ -1,6 +1,6 @@
 import { test, expect, seedVelocitySnapshot } from './fixtures.js';
 
-test('shell exposes eight semantic navigation links @smoke', async ({ page }) => {
+test('shell exposes nine semantic navigation links @smoke', async ({ page }) => {
   await page.goto('/#/home');
   await expect(page.getByTestId('panel-home')).toBeVisible();
   const links = await page
@@ -22,6 +22,7 @@ test('shell exposes eight semantic navigation links @smoke', async ({ page }) =>
     { name: 'Releases', tag: 'A', href: '#/releases', current: null },
     { name: 'Services', tag: 'A', href: '#/services', current: null },
     { name: 'DevTools', tag: 'A', href: '#/devtools', current: null },
+    { name: 'Mascots', tag: 'A', href: '#/mascots', current: null },
     { name: 'Settings', tag: 'A', href: '#/settings', current: null },
   ]);
 });

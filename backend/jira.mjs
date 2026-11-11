@@ -11,6 +11,7 @@
 import { captureConfiguration } from './settings.mjs';
 import { collectCappedJiraIssues } from './jira-search.mjs';
 import { allSprints } from '../ui/sprint-data.js';
+import { isTicketKey } from './claude-ticket-state.mjs';
 
 export { allSprints } from '../ui/sprint-data.js';
 
@@ -34,7 +35,9 @@ export async function fetchTicketStatuses(keys, { snapshot } = {}) {
   return (await fetchTicketMetadata(keys, { snapshot })).statuses;
 }
 
-export async function fetchTicketMetadata(keys, { snapshot } = {}) {
+// `strict` makes a Jira failure throw instead of reading as "no tickets", for a caller that must tell
+// the two apart (fetchActiveSprintKeys).
+export async function fetchTicketMetadata(keys, { snapshot, strict = false } = {}) {
   const cfg = jiraConfig(snapshot);
   const empty = { statuses: {}, sprints: {} };
   if (!cfg) return empty;
@@ -58,7 +61,10 @@ export async function fetchTicketMetadata(keys, { snapshot } = {}) {
         Authorization: authorization(cfg.email, cfg.token),
       },
     });
-    if (!res.ok) return empty;
+    if (!res.ok) {
+      if (strict) throw new Error(`jira search failed: ${res.status}`);
+      return empty;
+    }
     const data = await res.json();
 
     const statuses = {};
@@ -68,9 +74,57 @@ export async function fetchTicketMetadata(keys, { snapshot } = {}) {
       sprints[issue.key] = mapSprints(issue.fields?.[cfg.sprintField])[0] || null;
     }
     return { statuses, sprints };
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return empty;
   }
+}
+
+// Which of `keys` are in a sprint Jira calls active. The bot bar asks this on every screen, so a
+// ticket's answer is kept for ACTIVE_SPRINT_TTL_MS (sprint membership changes rarely) and only keys
+// with no fresh answer go to Jira, ACTIVE_SPRINT_CHUNK at a time in one search each. "Active" is the
+// rule `activeSprints` and My Tickets use (`state === 'active'`), read from the ticket's most
+// relevant sprint (`mapSprints` puts an active one first); a ticket Jira does not return is not in one.
+// Resolves `{ available: true, keys }` (the subset, sorted), or `{ available: false, reason, keys: [] }`
+// when Jira is not configured or a search failed: never a guess for a ticket it could not place.
+export const ACTIVE_SPRINT_TTL_MS = 5 * 60 * 1000;
+export const ACTIVE_SPRINT_MAX_KEYS = 200;
+const ACTIVE_SPRINT_CHUNK = 50;
+const activeSprintAnswers = new Map();
+
+export function clearActiveSprintAnswers() {
+  activeSprintAnswers.clear();
+}
+
+export async function fetchActiveSprintKeys(keys, { snapshot, now = Date.now() } = {}) {
+  const cfg = jiraConfig(snapshot);
+  if (!cfg) return { available: false, reason: 'jira_not_configured', keys: [] };
+  const wanted = [...new Set((Array.isArray(keys) ? keys : []).filter(isTicketKey))]
+    .sort()
+    .slice(0, ACTIVE_SPRINT_MAX_KEYS);
+  const cacheKey = (key) => `${cfg.baseUrl} ${cfg.sprintField} ${key}`;
+  const fresh = (key) => {
+    const answer = activeSprintAnswers.get(cacheKey(key));
+    return answer && now - answer.at < ACTIVE_SPRINT_TTL_MS;
+  };
+  const missing = wanted.filter((key) => !fresh(key));
+  try {
+    for (let i = 0; i < missing.length; i += ACTIVE_SPRINT_CHUNK) {
+      const chunk = missing.slice(i, i + ACTIVE_SPRINT_CHUNK);
+      const { sprints } = await fetchTicketMetadata(chunk, { snapshot, strict: true });
+      for (const key of chunk)
+        activeSprintAnswers.set(cacheKey(key), {
+          at: now,
+          active: sprints[key]?.state === 'active',
+        });
+    }
+  } catch {
+    return { available: false, reason: 'jira_unavailable', keys: [] };
+  }
+  return {
+    available: true,
+    keys: wanted.filter((key) => activeSprintAnswers.get(cacheKey(key))?.active),
+  };
 }
 
 // Exact Jira status names the two PR-list filters match against (see

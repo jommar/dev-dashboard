@@ -109,6 +109,30 @@ failed generation and the separate unsaved-snapshot warning on storage failure.
 Do not infer historical delivered work or change the standalone report. Other
 screens' polling and shared board contracts below remain unchanged.
 
+## UI layout: the bot bar (every screen)
+
+`ui-react/components/BotBar.jsx` (mounted once in `AppShell`, only once setup is ready) is a
+`position: fixed`, transparent strip of mascots along the bottom of every screen, one per Claude
+implement or review session. It is an overlay: `pointer-events: none` on the strip and `auto` on the
+bots, z-index under the tooltip and dialogs, no change to any screen's height or the viewport-fill
+rule; keep it that way, and never put a dialog inside the strip (it would inherit the
+`pointer-events: none`). Which phases get a bot is the single constant `BOT_PHASES` in
+`ui/bot-bar.js`, with the state mapping, the done time to live and the pure helpers; `none` and
+`unknown` get no bot. A bot also needs its ticket in an active Jira sprint: the pure filter
+`inActiveSprint` is applied to the sessions with the keys `useActiveSprintKeys` gets from
+`GET /api/active-sprint-tickets` (`fetchActiveSprintKeys` in `backend/jira.mjs`; per-ticket answers
+cached 5 minutes server side, asked again by the browser every `SPRINT_POLL_MS`, 5 minutes). A ticket
+whose sprint is unknown gets no bot, and on a failed or `available: false` answer the last good key set
+stays; do not show a bot for a ticket the sprint filter has not placed. The mascot is deterministic per session (rendezvous hashing of the session key
+over the registry ids), so a session keeps it for life; the mascot list lives only in
+`ui-react/components/mascots/index.js` (see `ui-react/components/mascots/README.md`, "Adding a
+mascot"), so do not hard-code a mascot count or order. The bar polls `GET /api/claude/tickets`
+itself on every screen (its own `useClaudeTickets({ active: true, source: 'bot-bar' })`, 15 s,
+paused while the page is hidden, requests marked `?surface=bot-bar`): specs that count a board's own
+Claude reads must exclude that marker. Its styles are in `ui-react/styles/bot-bar.css` (tokens only,
+`bot-bar-*` names, transform-only keyframes, a reduced-motion block). It never calls
+`/api/team-velocity`, so the Home velocity rule above is unaffected.
+
 ## DevTools: a wall of live tiles
 
 DevTools is a `.board-pane` holding `.devtools-wall`, a real grid

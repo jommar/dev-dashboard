@@ -2,7 +2,7 @@ import { hasBuiltUi, serveBuiltUi, serveUi } from './static.mjs';
 import { parseLines } from './log-lines.mjs';
 import { DEFAULT_TAIL_LINES } from './config.mjs';
 import { fetchOpenPRs, PR_DISCOVERY_UNAVAILABLE, PR_DISCOVERY_INCOMPLETE } from './github.mjs';
-import { fetchMyTickets, fetchTicketMetadata } from './jira.mjs';
+import { fetchActiveSprintKeys, fetchMyTickets, fetchTicketMetadata } from './jira.mjs';
 import { fetchUatPromoteCandidates } from './uat-promote.mjs';
 import { enrichOpenPRs } from './review.mjs';
 import { fetchPrDashboard } from './prs.mjs';
@@ -153,6 +153,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     fetchOpenPRs,
     fetchMyTickets,
     fetchTicketMetadata,
+    fetchActiveSprintKeys,
     fetchUatPromoteCandidates,
     enrichOpenPRs,
     getOriginDiff,
@@ -564,6 +565,19 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         const includeDone = ['1', 'true'].includes(url.searchParams.get('includeDone'));
         json(res, 200, {
           ...(await api.fetchMyTickets({ ...options, includeDone })),
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+      // Which of `?keys=A-1,B-2` are in a sprint Jira calls active: the bot bar's filter, asked on
+      // every screen, so Jira is searched only for keys with no answer from the last few minutes.
+      // Never fails the bar: an unavailable Jira is still a 200 with `available: false`.
+      if (req.method === 'GET' && pathname === '/api/active-sprint-tickets') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        const keys = (url.searchParams.get('keys') || '').split(',');
+        json(res, 200, {
+          ...(await api.fetchActiveSprintKeys(keys, options)),
           updatedAt: new Date().toISOString(),
         });
         return;

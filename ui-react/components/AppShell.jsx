@@ -1,5 +1,6 @@
 import { Button } from './Primitives.jsx';
 import { AppTabs } from './AppTabs.jsx';
+import { BotBar } from './BotBar.jsx';
 import logoUrl from '../assets/logo.svg?no-inline';
 
 export function AppShell({ children, tabs, active, onNavigate, connection, ready }) {
@@ -60,6 +61,8 @@ export function AppShell({ children, tabs, active, onNavigate, connection, ready
       <main className="panels" id="workspace" tabIndex={-1}>
         {children}
       </main>
+      {/* An overlay on every screen once the app is set up; setup-only mode (Settings alone) has none. */}
+      {ready && <BotBar />}
       <div id="tooltip" className="tooltip" hidden data-testid="tooltip" />
     </>
   );
