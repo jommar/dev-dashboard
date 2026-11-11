@@ -4,7 +4,7 @@
 // and draft state. A card whose open PRs are all approved is marked green and
 // sealed. Every glyph is inline SVG and every state is also a word, so nothing is
 // carried by colour alone.
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { slug, timeAgo } from '../../ui/dom.js';
 import { inSprints } from '../../ui/home-data.js';
 import {
@@ -19,6 +19,7 @@ import { canonicalTicketKey } from '../../ui/slack-ticket-links.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { Board, BoardColumn } from './BoardShell.jsx';
 import { SprintPill } from './SprintPill.jsx';
+import { DashboardTooltip } from './Primitives.jsx';
 
 // Jira priority names mapped to a chevron step: two up, one up, bars, one down,
 // two down. The shape carries the level; the name is in the label.
@@ -74,17 +75,13 @@ function PriorityMark({ name, testId }) {
   const label = `Priority: ${name}`;
   const step = PRIORITY_STEP.get(String(name).trim().toLowerCase()) ?? 0;
   return (
-    <span
-      className="my-tickets-priority"
-      role="img"
-      aria-label={label}
-      data-tooltip={label}
-      data-testid={testId}
-    >
-      <StrokeGlyph>
-        <PriorityGlyph step={step} />
-      </StrokeGlyph>
-    </span>
+    <DashboardTooltip title={label}>
+      <span className="my-tickets-priority" role="img" aria-label={label} data-testid={testId}>
+        <StrokeGlyph>
+          <PriorityGlyph step={step} />
+        </StrokeGlyph>
+      </span>
+    </DashboardTooltip>
   );
 }
 
@@ -122,29 +119,35 @@ const COMMENT_GLYPHS = new Map([
 
 // A review-comment chip: the author glyph, a check once every thread is resolved, and the
 // count. The words are in its tooltip and in the PR line's accessible name.
-function CommentChip({ ticketKey, repo, number, chip }) {
+function CommentChip({ ticketKey, repo, number, chip, onEnter }) {
   return (
-    <span
-      className="my-tickets-pr-comments"
-      data-testid={`my-tickets-pr-comments-${chip.author}-${ticketKey}-${slug(repo)}-${number}`}
-      data-comment-state={chip.state}
-      data-tooltip={chip.summary}
-      aria-hidden="true"
-    >
-      <StrokeGlyph size={11} ariaHidden={false}>
-        {COMMENT_GLYPHS.get(chip.author)}
-      </StrokeGlyph>
-      {chip.state === 'resolved' && (
+    <DashboardTooltip title={chip.summary}>
+      <span
+        className="my-tickets-pr-comments"
+        data-testid={`my-tickets-pr-comments-${chip.author}-${ticketKey}-${slug(repo)}-${number}`}
+        data-comment-state={chip.state}
+        aria-hidden="true"
+        onMouseEnter={onEnter}
+      >
         <StrokeGlyph size={11} ariaHidden={false}>
-          <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+          {COMMENT_GLYPHS.get(chip.author)}
         </StrokeGlyph>
-      )}
-      {chip.text}
-    </span>
+        {chip.state === 'resolved' && (
+          <StrokeGlyph size={11} ariaHidden={false}>
+            <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+          </StrokeGlyph>
+        )}
+        {chip.text}
+      </span>
+    </DashboardTooltip>
   );
 }
 
 function PrLine({ ticketKey, pr }) {
+  // The comment chips sit inside the line and carry their own popup, so the line's CI popup is
+  // controlled: it does not open from a chip and closes when the pointer reaches one, so the two
+  // never stack.
+  const [lineOpen, setLineOpen] = useState(false);
   const name = `${pr.repo.split('/').pop()} #${pr.number}`;
   const ciState = pr.ci ? pr.ci.state : 'unknown';
   const ciText = ciSummaryText(pr.ci);
@@ -159,38 +162,47 @@ function PrLine({ ticketKey, pr }) {
     .filter(Boolean)
     .join(', ');
   return (
-    <a
-      className="my-tickets-pr"
-      href={pr.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      data-testid={`my-tickets-pr-${ticketKey}-${slug(pr.repo)}-${pr.number}`}
-      data-ci-state={ciState}
-      data-tooltip={ciText}
-      aria-label={words}
+    <DashboardTooltip
+      title={ciText}
+      open={lineOpen}
+      onOpen={(event) => {
+        if (!event.target.closest?.('.my-tickets-pr-comments')) setLineOpen(true);
+      }}
+      onClose={() => setLineOpen(false)}
     >
-      <span className="my-tickets-pr-ci">
-        <CiGlyph state={ciState} />
-      </span>
-      <span className="my-tickets-pr-name">{name}</span>
-      <span className="my-tickets-pr-meta">
-        <span className="my-tickets-pr-review">{review}</span>
-        {chips.length > 0 && (
-          <span className="my-tickets-pr-chips">
-            {chips.map((chip) => (
-              <CommentChip
-                key={chip.author}
-                ticketKey={ticketKey}
-                repo={pr.repo}
-                number={pr.number}
-                chip={chip}
-              />
-            ))}
-          </span>
-        )}
-      </span>
-      {pr.draft && <span className="board-chip my-tickets-pr-draft">Draft</span>}
-    </a>
+      <a
+        className="my-tickets-pr"
+        href={pr.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-testid={`my-tickets-pr-${ticketKey}-${slug(pr.repo)}-${pr.number}`}
+        data-ci-state={ciState}
+        aria-label={words}
+      >
+        <span className="my-tickets-pr-ci">
+          <CiGlyph state={ciState} />
+        </span>
+        <span className="my-tickets-pr-name">{name}</span>
+        <span className="my-tickets-pr-meta">
+          <span className="my-tickets-pr-review">{review}</span>
+          {chips.length > 0 && (
+            <span className="my-tickets-pr-chips">
+              {chips.map((chip) => (
+                <CommentChip
+                  key={chip.author}
+                  ticketKey={ticketKey}
+                  repo={pr.repo}
+                  number={pr.number}
+                  chip={chip}
+                  onEnter={() => setLineOpen(false)}
+                />
+              ))}
+            </span>
+          )}
+        </span>
+        {pr.draft && <span className="board-chip my-tickets-pr-draft">Draft</span>}
+      </a>
+    </DashboardTooltip>
   );
 }
 
@@ -198,18 +210,19 @@ function PrLine({ ticketKey, pr }) {
 // apart from the CI check so the two greens do not read as one mark.
 function ApprovedSeal({ testId }) {
   return (
-    <span
-      className="my-tickets-approved"
-      role="img"
-      aria-label="All PRs approved"
-      data-tooltip="All PRs approved"
-      data-testid={testId}
-    >
-      <StrokeGlyph strokeWidth={1.6}>
-        <circle cx="8" cy="8" r="6.2" />
-        <path d="M5.4 8.2 7.2 10l3.4-3.8" />
-      </StrokeGlyph>
-    </span>
+    <DashboardTooltip title="All PRs approved">
+      <span
+        className="my-tickets-approved"
+        role="img"
+        aria-label="All PRs approved"
+        data-testid={testId}
+      >
+        <StrokeGlyph strokeWidth={1.6}>
+          <circle cx="8" cy="8" r="6.2" />
+          <path d="M5.4 8.2 7.2 10l3.4-3.8" />
+        </StrokeGlyph>
+      </span>
+    </DashboardTooltip>
   );
 }
 
@@ -266,9 +279,11 @@ function TicketCard({
         claudeByTicket={claudeByTicket}
         onOpenClaude={onOpenClaude}
       />
-      <p className="board-card-summary" title={ticket.summary} data-testid={testId('summary')}>
-        {ticket.summary || ''}
-      </p>
+      <DashboardTooltip title={ticket.summary} describeChild>
+        <p className="board-card-summary" data-testid={testId('summary')}>
+          {ticket.summary || ''}
+        </p>
+      </DashboardTooltip>
       {prs.length > 0 && (
         <ul className="my-tickets-prs">
           {prs.map((pr) => (

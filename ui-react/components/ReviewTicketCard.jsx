@@ -5,6 +5,7 @@ import { reviewText } from '../../ui/ticket-board.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { DiffViewer } from './DiffViewer.jsx';
 import { SprintPill } from './SprintPill.jsx';
+import { DashboardTooltip } from './Primitives.jsx';
 
 export function ReviewTicketCard({
   ticket,
@@ -70,9 +71,9 @@ export function ReviewTicketCard({
         }}
         onOpenClaude={onOpenClaude}
       />
-      <p className="board-card-summary" title={ticket.summary}>
-        {ticket.summary}
-      </p>
+      <DashboardTooltip title={ticket.summary} describeChild>
+        <p className="board-card-summary">{ticket.summary}</p>
+      </DashboardTooltip>
       <div className="review-ticket-meta">
         <p className="review-ticket-assignee" data-testid={`prs-ticket-assignee-${ticket.key}`}>
           Assignee:{' '}
@@ -105,20 +106,21 @@ export function ReviewTicketCard({
                 className="review-ticket-pr"
                 data-review-state={state}
               >
-                <a
-                  className="review-ticket-pr-link"
-                  href={pr.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`${label}, ${pr.title}${pr.draft ? ', draft' : ''}, ${reviewText({ state })}`}
-                  title={`${label}: ${pr.title}`}
-                  data-testid={`prs-pr-${id}`}
-                >
-                  <span className="review-ticket-pr-name">{label}</span>
-                  <span className="review-ticket-pr-state" data-review-state={state}>
-                    {reviewText({ state })}
-                  </span>
-                </a>
+                <DashboardTooltip title={`${label}: ${pr.title}`}>
+                  <a
+                    className="review-ticket-pr-link"
+                    href={pr.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${label}, ${pr.title}${pr.draft ? ', draft' : ''}, ${reviewText({ state })}`}
+                    data-testid={`prs-pr-${id}`}
+                  >
+                    <span className="review-ticket-pr-name">{label}</span>
+                    <span className="review-ticket-pr-state" data-review-state={state}>
+                      {reviewText({ state })}
+                    </span>
+                  </a>
+                </DashboardTooltip>
                 {pr.draft && (
                   <span className="board-chip" data-tone="warn">
                     Draft

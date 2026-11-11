@@ -1,4 +1,4 @@
-import { test, expect, watchListReads } from './fixtures.js';
+import { test, expect, expectTooltip, watchListReads } from './fixtures.js';
 import {
   WATCH_DEFAULT_TEMPLATE,
   slackWatchData,
@@ -185,7 +185,7 @@ for (const [name, watch, count, attention] of WATCH_TABS) {
       await expect(watchTab).toHaveAttribute('data-tone', 'warn');
       // The warning is a sentence too, not only a colour: named for a screen reader and on hover.
       await expect(watchTab).toHaveAccessibleName(new RegExp(`${attention}$`));
-      await expect(watchTab).toHaveAttribute('data-tooltip', attention);
+      await expectTooltip(page, watchTab, attention);
       const color = await watchTab
         .locator('.board-tab-count')
         .evaluate((node) => getComputedStyle(node).color);
@@ -196,7 +196,8 @@ for (const [name, watch, count, attention] of WATCH_TABS) {
     } else {
       await expect(watchTab).not.toHaveAttribute('data-tone', /.+/);
       await expect(watchTab).toHaveAccessibleName(/^Watch threads\s*\d*$/);
-      await expect(watchTab).not.toHaveAttribute('data-tooltip', /.+/);
+      await watchTab.hover();
+      await expect(page.getByRole('tooltip')).toHaveCount(0);
     }
   });
 }

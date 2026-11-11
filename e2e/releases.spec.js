@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, expectTooltip } from './fixtures.js';
 
 const STORAGE_KEY = 'dev-dashboard.releases';
 const API_WITH_QUERY = /\/api\/releases\?/;
@@ -120,7 +120,7 @@ test('view: Cards is the default, List is one row per ticket, and the choice liv
     await expect(pill).toHaveJSProperty('tagName', 'SPAN');
     await expect(pill).toHaveText(status);
     await expect(pill).toHaveClass('pill ticket-status');
-    await expect(pill).toHaveAttribute('data-tooltip', status);
+    await expectTooltip(page, pill, status);
     await expect(pill).toHaveAttribute('data-jira-status-kind', kind);
     await expect(page.getByTestId(`release-ticket-${key}`)).toHaveAttribute(
       'data-jira-status-kind',
@@ -142,7 +142,7 @@ test('view: Cards is the default, List is one row per ticket, and the choice liv
     await expect(pill).toHaveJSProperty('tagName', 'SPAN');
     await expect(pill).toHaveText(status);
     await expect(pill).toHaveClass('pill ticket-status');
-    await expect(pill).toHaveAttribute('data-tooltip', status);
+    await expectTooltip(page, pill, status);
     await expect(pill).toHaveAttribute('data-jira-status-kind', kind);
     await expect(page.getByTestId(`release-row-${key}`)).toHaveAttribute(
       'data-jira-status-kind',

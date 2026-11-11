@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs';
-import { test, expect, seedVelocitySnapshot } from './fixtures.js';
+import { test, expect, expectTooltip, seedVelocitySnapshot } from './fixtures.js';
 import {
   ticketBoardData,
   withFollowUpCases,
@@ -34,6 +34,8 @@ const COLUMNS = [
 
 const BOARD = 'my-tickets-board';
 const prLine = (page, key, repo, number) => page.getByTestId(prId(key, repo, number));
+// A point at the line's own edge: the comment chips inside it carry popups of their own.
+const LINE_POINT = { position: { x: 3, y: 3 } };
 // A PR line's own id and its comment chips' ids share the `my-tickets-pr-` prefix, so the lines are
 // the ones that are not chips.
 const prLinesOf = (page, key) =>
@@ -134,7 +136,7 @@ test('a card shows its Jira link, named priority, points, update time and clampe
   await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   const priority = card.getByTestId('my-tickets-item-priority-TAP-9001');
   await expect(priority).toHaveAccessibleName(/high/i);
-  await expect(priority).toHaveAttribute('data-tooltip', /high/i);
+  await expectTooltip(page, priority, /high/i);
   await expect(card.getByTestId('my-tickets-item-points-TAP-9001')).toHaveText('5 pt');
   await expect(card.getByTestId('my-tickets-item-updated-TAP-9001')).toHaveText('2h ago');
   await expect(card.getByTestId('my-tickets-item-summary-TAP-9001')).toHaveText(
@@ -144,7 +146,7 @@ test('a card shows its Jira link, named priority, points, update time and clampe
   const longSummary = data.tickets.tickets.find(({ key }) => key === 'TAP-9008').summary;
   const summary = page.getByTestId('my-tickets-item-summary-TAP-9008');
   await expect(summary).toHaveText(longSummary);
-  await expect(summary).toHaveAttribute('title', longSummary);
+  await expectTooltip(page, summary, longSummary);
   const clamp = await summary.evaluate((element) => ({
     lines: getComputedStyle(element).getPropertyValue('-webkit-line-clamp'),
     clipped: element.scrollHeight > element.clientHeight,
@@ -192,7 +194,7 @@ test('sprint badges show current, future and closed Jira sprints and omit missin
     await expect(badge).toHaveText(name);
     await expect(badge).toHaveClass(/ticket-sprint/);
     await expect(badge).toHaveAttribute('data-sprint-state', state);
-    await expect(badge).toHaveAttribute('data-tooltip', new RegExp(`^${state} · `));
+    await expectTooltip(page, badge, new RegExp(`^${state} · `));
   }
   await expect(page.getByTestId('my-tickets-item-sprint-label-TAP-9006')).toHaveCount(0);
   await expect(page.getByTestId('my-tickets-item-TAP-9006').locator('.ticket-sprint')).toHaveCount(
@@ -255,7 +257,7 @@ test('each CI state has its own glyph, repo and number, review words and a toolt
   for (const [state, line] of Object.entries(lines)) {
     await expect(line, state).toBeVisible();
     await expect(line, state).toHaveAttribute('data-ci-state', state);
-    await expect(line, state).toHaveAttribute('data-tooltip', tooltips[state]);
+    await expectTooltip(page, line, tooltips[state], LINE_POINT);
   }
   await expect(lines.failing).toHaveAccessibleName(
     /CI failing: lint, unit-tests \(2 of 9 failed\)/,
@@ -289,7 +291,8 @@ test('a failing line names at most three failing checks and counts the rest @reg
     failing: ['a-lint', 'b-unit', 'c-e2e', 'd-build', 'e-types'],
   };
   await openBoard(page);
-  const tooltip = await prLine(page, 'TAP-9001', API, 812).getAttribute('data-tooltip');
+  await prLine(page, 'TAP-9001', API, 812).hover(LINE_POINT);
+  const tooltip = await page.getByRole('tooltip').innerText();
   expect(tooltip).toMatch(/^CI failing: a-lint, b-unit, c-e2e/);
   expect(tooltip).toMatch(/\+2 more/);
   expect(tooltip).not.toMatch(/d-build|e-types/);
@@ -339,7 +342,7 @@ test('unreadable review and CI show as unknown on that PR only @regression', asy
   const line = prLine(page, 'TAP-9001', API, 812);
   await expect(line).toBeVisible();
   await expect(line).toHaveAttribute('data-ci-state', 'unknown');
-  await expect(line).toHaveAttribute('data-tooltip', 'CI status unavailable');
+  await expectTooltip(page, line, 'CI status unavailable', LINE_POINT);
   await expect(line).toContainText('#812');
   await expect(line).not.toContainText(/approved|changes requested|awaiting/);
   // The next ticket's PR is untouched.
@@ -965,20 +968,14 @@ test('comment chips show unresolved over total while open, the total alone once 
   await expect(human).toBeVisible();
   await expect(human).toHaveText('2/5');
   await expect(human).toHaveAttribute('data-comment-state', 'open');
-  await expect(human).toHaveAttribute(
-    'data-tooltip',
-    'Human: 2 unresolved, 3 resolved, 9 comments',
-  );
+  await expectTooltip(page, human, 'Human: 2 unresolved, 3 resolved, 9 comments');
   expect(await colorOf(human), 'an open chip is amber').toBe(amber);
   await expect(chip('copilot', 'TAP-9401', 401)).toHaveCount(0);
 
   const copilot = chip('copilot', 'TAP-9402', 402);
   await expect(copilot).toHaveText('4');
   await expect(copilot).toHaveAttribute('data-comment-state', 'resolved');
-  await expect(copilot).toHaveAttribute(
-    'data-tooltip',
-    'Copilot: 0 unresolved, 4 resolved, 6 comments',
-  );
+  await expectTooltip(page, copilot, 'Copilot: 0 unresolved, 4 resolved, 6 comments');
   expect(await colorOf(copilot), 'a resolved chip is muted').toBe(muted);
   await expect(chip('human', 'TAP-9402', 402)).toHaveCount(0);
 
@@ -996,7 +993,7 @@ test('comment chips show unresolved over total while open, the total alone once 
   const cut = chip('human', 'TAP-9408', 408);
   await expect(cut).toHaveText('3/50+');
   await expect(cut).toHaveAttribute('data-comment-state', 'open');
-  await expect(cut).toHaveAttribute('data-tooltip', /^Human: 3 unresolved/);
+  await expectTooltip(page, cut, /^Human: 3 unresolved/);
   await expect(chip('copilot', 'TAP-9408', 408)).toHaveCount(0);
 });
 
@@ -1055,7 +1052,7 @@ test('the PR line keeps its CI tooltip, stays one link and adds the comment word
 }) => {
   await openFollowUps(page, dashboard);
   const talked = prLine(page, 'TAP-9401', API, 401);
-  await expect(talked).toHaveAttribute('data-tooltip', 'CI passing (9 of 9)');
+  await expectTooltip(page, talked, 'CI passing (9 of 9)', LINE_POINT);
   await expect(talked).toHaveAttribute('data-ci-state', 'passing');
   await expect(talked).toHaveAccessibleName(/Human: 2 unresolved, 3 resolved, 9 comments/);
   await expect(talked).toHaveAccessibleName(/CI passing \(9 of 9\)/);
@@ -1074,10 +1071,7 @@ test('the PR line keeps its CI tooltip, stays one link and adds the comment word
   await expect(cut).toHaveAccessibleName(/showing the first 50 of 63 threads/);
   await expect(cut).toHaveAccessibleName(/Human: 3 unresolved, 47 resolved, 61 comments/);
   // A PR with no chips still reads as before.
-  await expect(prLine(page, 'TAP-9405', API, 405)).toHaveAttribute(
-    'data-tooltip',
-    'CI passing (9 of 9)',
-  );
+  await expectTooltip(page, prLine(page, 'TAP-9405', API, 405), 'CI passing (9 of 9)', LINE_POINT);
 });
 
 test('matrix PR lines show the chips of their comments, and a PR whose comments are unknown shows none @regression', async ({
@@ -1226,11 +1220,11 @@ test('an attached thread is filled, coloured and worded, and an unattached one o
 
   await expect(attached).toHaveAttribute('data-attached', 'true');
   await expect(attached).toHaveAttribute('aria-label', /Claude session attached/);
-  await expect(attached).toHaveAttribute('data-tooltip', /Claude session attached/);
+  await expectTooltip(page, attached, /Claude session attached/);
   await expect(attached).toHaveAttribute('aria-label', /2 replies/);
   await expect(unattached).not.toHaveAttribute('data-attached', 'true');
   await expect(unattached).not.toHaveAttribute('aria-label', /Claude session/);
-  await expect(unattached).not.toHaveAttribute('data-tooltip', /Claude session/);
+  await expectTooltip(page, unattached, /^(?!.*Claude session)/);
   await expect(unattached).toHaveAttribute('aria-label', /2 replies/);
 
   // The words are in the label only: the chip still shows just the reply count.
@@ -1402,7 +1396,7 @@ test('exactly the cards whose every open PR is approved carry the green mark and
     await expect(seal, key).toBeVisible();
     await expect(seal, key).toHaveAttribute('role', 'img');
     await expect(seal, key).toHaveAccessibleName('All PRs approved');
-    await expect(seal, key).toHaveAttribute('data-tooltip', 'All PRs approved');
+    await expectTooltip(page, seal, 'All PRs approved');
   }
   for (const key of PLAIN_CARDS) {
     const card = page.getByTestId(`my-tickets-item-${key}`);

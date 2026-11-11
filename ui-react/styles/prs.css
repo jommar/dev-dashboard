@@ -229,30 +229,6 @@
   border-style: dashed;
 }
 
-/* Single floating tooltip, shared by every [data-tooltip] element; lives
-   outside the cards so overflow never clips it. */
-.tooltip {
-  position: fixed;
-  z-index: 50;
-  /* Never wider than the viewport it has to fit inside — the positioner can
-     only clamp a box that is narrower than the screen. */
-  max-width: min(340px, calc(100vw - 2 * var(--s2)));
-  padding: 5px var(--s3);
-  background: var(--panel2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
-  /* Wraps inside max-width rather than running off in one line — some hints
-     are a full sentence. break-word keeps an unbroken token (a branch name,
-     a URL) from overflowing the box. Short hints still sit on one line, since
-     the box is content-width up to the cap. */
-  line-height: 1.45;
-  overflow-wrap: break-word;
-  box-shadow: var(--shadow);
-  pointer-events: none;
-}
-
 .pr-empty,
 .pr-error {
   color: var(--muted);

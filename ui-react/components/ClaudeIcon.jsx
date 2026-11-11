@@ -4,6 +4,7 @@
 // check for done, a cross for failed), so colour never carries it alone. A ticket with no workflow
 // record shows its groom session instead (same looks, and the words say grooming). Presentational
 // only: the entry comes from useClaudeTickets and the click hands the ticket key to the panel.
+import { DashboardTooltip } from './Primitives.jsx';
 
 // What an entry's reason reads as; a state with no reason of its own is "not started".
 const PHRASES = {
@@ -54,33 +55,34 @@ export function ClaudeIcon({
   const state = entry?.state ?? 'none';
   const label = overrideLabel ?? `Claude${grooming ? ' grooming' : ''}: ${claudePhrase(entry)}`;
   return (
-    <button
-      type="button"
-      className="claude-icon"
-      data-testid={testId ?? `claude-icon-${ticketKey}`}
-      data-state={state}
-      data-reason={entry?.reason ?? undefined}
-      data-tooltip={tooltip ? label : undefined}
-      aria-label={label}
-      aria-haspopup="dialog"
-      onClick={() => onOpen?.(ticketKey)}
-    >
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        focusable="false"
+    <DashboardTooltip title={tooltip ? label : undefined}>
+      <button
+        type="button"
+        className="claude-icon"
+        data-testid={testId ?? `claude-icon-${ticketKey}`}
+        data-state={state}
+        data-reason={entry?.reason ?? undefined}
+        aria-label={label}
+        aria-haspopup="dialog"
+        onClick={() => onOpen?.(ticketKey)}
       >
-        {/* A six-spoke burst: at 18px it reads faster than any brand mark would. */}
-        <path d="M10 3v14M3.9 6.5l12.2 7M3.9 13.5l12.2-7" />
-        {BADGES[state]}
-      </svg>
-    </button>
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          {/* A six-spoke burst: at 18px it reads faster than any brand mark would. */}
+          <path d="M10 3v14M3.9 6.5l12.2 7M3.9 13.5l12.2-7" />
+          {BADGES[state]}
+        </svg>
+      </button>
+    </DashboardTooltip>
   );
 }

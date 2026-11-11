@@ -129,24 +129,24 @@ export function BoardTabs({ name, label, tabs, value, onChange }) {
   return (
     <div className="board-tabs" role="tablist" aria-label={label} onKeyDown={move}>
       {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          id={tabDomId(name, tab.id)}
-          className="board-tab"
-          aria-selected={tab.id === value}
-          aria-controls={tabPanelDomId(name)}
-          tabIndex={tab.id === value ? 0 : -1}
-          data-tone={tab.tone}
-          data-tooltip={tab.hint}
-          data-testid={tab.testId}
-          onClick={() => onChange(tab.id)}
-        >
-          {tab.label}
-          {tab.count !== undefined && <span className="board-tab-count">{tab.count}</span>}
-          {tab.hint && <span className="sr-only">{tab.hint}</span>}
-        </button>
+        <DashboardTooltip key={tab.id} title={tab.hint} describeChild>
+          <button
+            type="button"
+            role="tab"
+            id={tabDomId(name, tab.id)}
+            className="board-tab"
+            aria-selected={tab.id === value}
+            aria-controls={tabPanelDomId(name)}
+            tabIndex={tab.id === value ? 0 : -1}
+            data-tone={tab.tone}
+            data-testid={tab.testId}
+            onClick={() => onChange(tab.id)}
+          >
+            {tab.label}
+            {tab.count !== undefined && <span className="board-tab-count">{tab.count}</span>}
+            {tab.hint && <span className="sr-only">{tab.hint}</span>}
+          </button>
+        </DashboardTooltip>
       ))}
     </div>
   );

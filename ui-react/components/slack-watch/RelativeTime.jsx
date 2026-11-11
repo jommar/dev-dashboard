@@ -1,9 +1,12 @@
 import { timeAgo } from '../../../ui/dom.js';
+import { DashboardTooltip } from '../Primitives.jsx';
 
 export function RelativeTime({ iso, ...props }) {
   return (
-    <time dateTime={iso} title={new Date(iso).toLocaleString()} {...props}>
-      {timeAgo(iso)}
-    </time>
+    <DashboardTooltip title={new Date(iso).toLocaleString()} describeChild>
+      <time dateTime={iso} {...props}>
+        {timeAgo(iso)}
+      </time>
+    </DashboardTooltip>
   );
 }

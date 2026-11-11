@@ -250,7 +250,8 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
   const link = read('components/SlackThreadLink.jsx');
   assert.match(link, /export function SlackThreadLinks\(/);
   assert.match(link, /className="slack-thread-link"/);
-  assert.match(link, /data-tooltip=\{/);
+  assert.match(link, /<DashboardTooltip\b[^>]*\btitle=\{label\}/);
+  assert.doesNotMatch(link, /data-tooltip|\stitle="/);
   assert.match(link, /aria-label=\{/);
   assert.match(link, /<button/);
   assert.match(link, /type="button"/);

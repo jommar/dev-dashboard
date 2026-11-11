@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardNote, BoardPanel, BoardSection, BoardState } from '../components/BoardShell.jsx';
-import { Button } from '../components/Primitives.jsx';
+import { Button, DashboardTooltip } from '../components/Primitives.jsx';
 import { TeamVelocityChart } from '../components/TeamVelocityChart.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import {
@@ -98,31 +98,34 @@ function PersonBreakdown({ people, personId, sprintCount, sprintName, onSelect }
       <ul className="home-velocity-people-list">
         {people.map((person) => (
           <li key={person.id}>
-            <button
-              type="button"
-              data-testid="home-velocity-person-row"
-              aria-pressed={personId === person.id}
-              aria-label={`${person.label}: ${person.points} total points; ${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started`}
+            <DashboardTooltip
               title={`${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started points`}
-              onClick={() => onSelect(personId === person.id ? '' : person.id)}
             >
-              <span className="home-velocity-person-name">{person.label}</span>
-              <strong>{person.points}</strong>
-              <span
-                className="home-velocity-person-meter"
-                data-testid="home-velocity-person-meter"
-                aria-hidden="true"
+              <button
+                type="button"
+                data-testid="home-velocity-person-row"
+                aria-pressed={personId === person.id}
+                aria-label={`${person.label}: ${person.points} total points; ${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started`}
+                onClick={() => onSelect(personId === person.id ? '' : person.id)}
               >
-                {Object.entries(person.byStatus).map(([status, points]) => (
-                  <span
-                    key={status}
-                    className="home-velocity-segment"
-                    data-status={status}
-                    style={{ width: `${(points / maximum) * 100}%` }}
-                  />
-                ))}
-              </span>
-            </button>
+                <span className="home-velocity-person-name">{person.label}</span>
+                <strong>{person.points}</strong>
+                <span
+                  className="home-velocity-person-meter"
+                  data-testid="home-velocity-person-meter"
+                  aria-hidden="true"
+                >
+                  {Object.entries(person.byStatus).map(([status, points]) => (
+                    <span
+                      key={status}
+                      className="home-velocity-segment"
+                      data-status={status}
+                      style={{ width: `${(points / maximum) * 100}%` }}
+                    />
+                  ))}
+                </span>
+              </button>
+            </DashboardTooltip>
           </li>
         ))}
       </ul>

@@ -1,6 +1,7 @@
 import { slug, timeAgo } from '../../ui/dom.js';
 import { jiraStatusKind } from '../../ui/jira-status.js';
 import { TicketStatusPill } from './TicketStatusPill.jsx';
+import { DashboardTooltip } from './Primitives.jsx';
 
 const DEVELOPMENT_BASE = 'ops/development';
 const SAFE_LINK_RE = /^https:\/\//i;
@@ -48,16 +49,18 @@ function ReleasePrRow({ pr }) {
         <span className="pr-num" data-testid={testId('num')}>
           {pr.repo} #{pr.number}
         </span>
-        <span
-          className="pill release-pr-base"
-          data-base-match={mismatch ? 'false' : undefined}
-          data-tooltip={
-            mismatch ? `Merged into a branch other than ${DEVELOPMENT_BASE}` : undefined
-          }
-          data-testid={testId('base')}
+        <DashboardTooltip
+          title={mismatch ? `Merged into a branch other than ${DEVELOPMENT_BASE}` : undefined}
+          describeChild
         >
-          {pr.base}
-        </span>
+          <span
+            className="pill release-pr-base"
+            data-base-match={mismatch ? 'false' : undefined}
+            data-testid={testId('base')}
+          >
+            {pr.base}
+          </span>
+        </DashboardTooltip>
         {pr.head && (
           <span className="release-pr-head" data-testid={testId('head')}>
             {pr.head}

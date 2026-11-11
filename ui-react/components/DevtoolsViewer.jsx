@@ -8,7 +8,7 @@
 // tab; choosing one pins it (and brings it to the front of the browser window), and "Auto-follow
 // newest" lets go. Choosing a tab releases control, so input never lands on a tab not just looked at.
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Button } from './Primitives.jsx';
+import { Button, DashboardTooltip } from './Primitives.jsx';
 import { BoardTabs, tabDomId, tabPanelDomId } from './BoardShell.jsx';
 import { useScreencast } from '../hooks/useScreencast.js';
 import { selectDevtoolsTab, sendDevtoolsInput } from '../lib/api.js';
@@ -217,12 +217,9 @@ function DevtoolsViewerView({ id, label, port, onClose }) {
                 id: tab.id,
                 testId: `devtools-viewer-tab-${tab.id}`,
                 label: (
-                  <span
-                    className="devtools-viewer-tabname"
-                    title={`${tab.title} ${tab.url}`.trim()}
-                  >
-                    {tabLabel(tab)}
-                  </span>
+                  <DashboardTooltip title={`${tab.title} ${tab.url}`.trim()} describeChild>
+                    <span className="devtools-viewer-tabname">{tabLabel(tab)}</span>
+                  </DashboardTooltip>
                 ),
               }))}
             />

@@ -1,4 +1,4 @@
-import { Button } from './Primitives.jsx';
+import { Button, DashboardTooltip } from './Primitives.jsx';
 import { AppTabs } from './AppTabs.jsx';
 import { BotBar } from './BotBar.jsx';
 import logoUrl from '../assets/logo.svg?no-inline';
@@ -46,15 +46,16 @@ export function AppShell({ children, tabs, active, onNavigate, connection, ready
         <div className="shell-foot">
           <span className="shell-location">Local workspace</span>
           {ready && (
-            <span
-              id="connection-status"
-              data-testid="connection-status"
-              role="status"
-              data-state={connection}
-              title={connectionLabel}
-            >
-              <span className="connection-label">{connectionLabel}</span>
-            </span>
+            <DashboardTooltip title={connectionLabel} describeChild>
+              <span
+                id="connection-status"
+                data-testid="connection-status"
+                role="status"
+                data-state={connection}
+              >
+                <span className="connection-label">{connectionLabel}</span>
+              </span>
+            </DashboardTooltip>
           )}
         </div>
       </header>
@@ -63,7 +64,6 @@ export function AppShell({ children, tabs, active, onNavigate, connection, ready
       </main>
       {/* An overlay on every screen once the app is set up; setup-only mode (Settings alone) has none. */}
       {ready && <BotBar />}
-      <div id="tooltip" className="tooltip" hidden data-testid="tooltip" />
     </>
   );
 }

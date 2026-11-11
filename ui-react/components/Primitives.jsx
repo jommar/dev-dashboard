@@ -1,3 +1,4 @@
+import { cloneElement, isValidElement } from 'react';
 import {
   Alert,
   Button as MuiButton,
@@ -67,10 +68,25 @@ export function Pill({ children, className = '', ...props }) {
   );
 }
 
-export function DashboardTooltip({ title, children, ...props }) {
+// The app's one hover and focus popup. No text, no tooltip, so a conditional hint can be passed
+// straight in. `describeChild` keeps the child's own accessible name and makes the popup its
+// description (aria-describedby while open); without it the title becomes the child's aria-label
+// unless the child sets its own. MUI would also stamp a native `title` on a described child while
+// the popup is closed, which the browser shows as a second tooltip, so that one is overridden.
+export function DashboardTooltip({ title, children, describeChild, slotProps, ...props }) {
+  if (!title) return children;
+  const child =
+    describeChild && isValidElement(children)
+      ? cloneElement(children, { title: undefined })
+      : children;
   return (
-    <Tooltip title={title} {...props}>
-      {children}
+    <Tooltip
+      title={title}
+      describeChild={describeChild}
+      slotProps={{ transition: { timeout: 0 }, ...slotProps }}
+      {...props}
+    >
+      {child}
     </Tooltip>
   );
 }

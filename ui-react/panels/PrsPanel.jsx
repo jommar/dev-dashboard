@@ -8,6 +8,7 @@ import {
   BoardState,
   RefreshControl,
 } from '../components/BoardShell.jsx';
+import { DashboardTooltip } from '../components/Primitives.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
 import { ReviewTicketCard } from '../components/ReviewTicketCard.jsx';
 import { ClaudePlaceholderDialog } from '../components/ClaudePlaceholderDialog.jsx';
@@ -158,9 +159,12 @@ export function PrsPanel({ config, active }) {
         name="prs"
         title="Pull Requests"
         sub={
-          <span title="Other-assigned Ready For Code Review tickets · open PRs from watched repositories only. Reviewing means approvals or changes requested, not live reviewer activity.">
-            Ready For Code Review · watched repositories only
-          </span>
+          <DashboardTooltip
+            title="Other-assigned Ready For Code Review tickets · open PRs from watched repositories only. Reviewing means approvals or changes requested, not live reviewer activity."
+            describeChild
+          >
+            <span>Ready For Code Review · watched repositories only</span>
+          </DashboardTooltip>
         }
         meta={meta}
         controls={

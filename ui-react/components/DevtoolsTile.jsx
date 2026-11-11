@@ -11,7 +11,7 @@
 // forwards no input, and the only way to drive a browser is "Take control" in the full viewer that
 // the picture opens.
 import { memo, useEffect, useRef, useState } from 'react';
-import { Button } from './Primitives.jsx';
+import { Button, DashboardTooltip } from './Primitives.jsx';
 import { devtoolsStream } from '../lib/devtools-stream.js';
 import { useDocumentVisible, useInView } from '../hooks/useTileVisibility.js';
 import { shouldStream, tilePageTitle, tileState } from '../../ui/devtools-wall.js';
@@ -68,9 +68,11 @@ function DevtoolsTileView({ browser, active, busy, onAction }) {
       data-testid={`devtools-tile-${id}`}
     >
       <div className="devtools-tile-head">
-        <h3 className="devtools-tile-label" title={label} data-testid={`devtools-label-${id}`}>
-          {label}
-        </h3>
+        <DashboardTooltip title={label} describeChild>
+          <h3 className="devtools-tile-label" data-testid={`devtools-label-${id}`}>
+            {label}
+          </h3>
+        </DashboardTooltip>
         <span className="devtools-tile-port">
           port{' '}
           <span className="devtools-tile-portnumber" data-testid={`devtools-port-${id}`}>
@@ -87,9 +89,11 @@ function DevtoolsTileView({ browser, active, busy, onAction }) {
           <span className="devtools-tile-dot" aria-hidden="true" />
           {state.text}
         </span>
-        <span className="devtools-tile-title" title={title} data-testid={`devtools-title-${id}`}>
-          {title}
-        </span>
+        <DashboardTooltip title={title} describeChild>
+          <span className="devtools-tile-title" data-testid={`devtools-title-${id}`}>
+            {title}
+          </span>
+        </DashboardTooltip>
       </div>
 
       {running ? (

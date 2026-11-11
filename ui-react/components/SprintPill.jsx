@@ -1,4 +1,5 @@
 import { sprintDay } from '../../ui/domain-helpers.js';
+import { DashboardTooltip } from './Primitives.jsx';
 
 export function SprintPill({ sprint, testId }) {
   const state = sprint ? sprint.state : 'none';
@@ -8,13 +9,10 @@ export function SprintPill({ sprint, testId }) {
     : '';
   const title = sprint ? [sprint.state, range].filter(Boolean).join(' · ') : 'Not in a sprint';
   return (
-    <span
-      className="pill ticket-sprint"
-      data-sprint-state={state}
-      data-tooltip={title}
-      data-testid={testId}
-    >
-      {label}
-    </span>
+    <DashboardTooltip title={title} describeChild>
+      <span className="pill ticket-sprint" data-sprint-state={state} data-testid={testId}>
+        {label}
+      </span>
+    </DashboardTooltip>
   );
 }

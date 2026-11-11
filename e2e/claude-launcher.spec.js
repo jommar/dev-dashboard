@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, expectTooltip } from './fixtures.js';
 import { BOARD_THREAD_TS, claudeEntry, claudeQuestion, ticketBoardData } from './data.js';
 
 // The Claude launcher on the My Tickets board. The fixture is the matrix in `ticketBoardData`
@@ -928,7 +928,7 @@ test('scenario 51: the icon and dialog tell answers not sent, plan not done and 
     await expect(icon).toHaveAttribute('data-state', state);
     await expect(icon).toHaveAttribute('data-reason', reason);
     await expect(icon).toHaveAttribute('aria-label', `Claude: ${phrase}`);
-    await expect(icon).toHaveAttribute('data-tooltip', `Claude: ${phrase}`);
+    await expectTooltip(page, icon, `Claude: ${phrase}`);
   }
 
   // Answers complete but never sent: a hint above the questions says to press Save answers, and

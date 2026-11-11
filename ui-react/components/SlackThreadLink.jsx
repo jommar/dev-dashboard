@@ -6,6 +6,7 @@
 // words. Presentational only: matching lives in ui/slack-ticket-links.js, and the
 // click hands the thread to the in-app dialog instead of navigating away.
 import { timeAgo } from '../../ui/dom.js';
+import { DashboardTooltip } from './Primitives.jsx';
 
 // The Claude sessions the watcher has attached to this thread. A missing or unreadable
 // count is 0, so the chip stays plain.
@@ -41,49 +42,49 @@ export function SlackThreadLinks({ links = [], onOpen }) {
         const replies = Number.isFinite(thread.replyCount) ? thread.replyCount : 0;
         const attached = attachedCount(thread) > 0;
         return (
-          <button
-            key={thread.ts}
-            type="button"
-            className="slack-thread-link"
-            data-testid={`slack-thread-link-${thread.ts}`}
-            data-tooltip={label}
-            data-attached={attached ? 'true' : undefined}
-            aria-label={label}
-            onClick={() => onOpen?.(thread)}
-          >
-            {/* A speech bubble: at 13px a thread's outline reads faster than any
-                Slack mark that would need its own brand colours. An attached thread
-                fills the outline; the fill takes the chip's colour. */}
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              focusable="false"
+          <DashboardTooltip key={thread.ts} title={label}>
+            <button
+              type="button"
+              className="slack-thread-link"
+              data-testid={`slack-thread-link-${thread.ts}`}
+              data-attached={attached ? 'true' : undefined}
+              aria-label={label}
+              onClick={() => onOpen?.(thread)}
             >
-              <path
-                d="M21 11.6a8.4 8.4 0 0 1-8.5 8.2 9.2 9.2 0 0 1-3.3-.6L4.2 20.6l1.3-4.3a8 8 0 0 1-1.6-4.7A8.4 8.4 0 0 1 12.5 3.3 8.4 8.4 0 0 1 21 11.6Z"
-                fill={attached ? 'currentColor' : undefined}
-              />
-            </svg>
-            {replies > 0 && (
-              <span className="slack-thread-count" aria-hidden="true">
-                {replies}
-              </span>
-            )}
-            {thread.needsReply && (
-              <span
-                className="slack-thread-needs"
+              {/* A speech bubble: at 13px a thread's outline reads faster than any
+                  Slack mark that would need its own brand colours. An attached thread
+                  fills the outline; the fill takes the chip's colour. */}
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 aria-hidden="true"
-                data-testid={`slack-thread-needs-reply-${thread.ts}`}
-              />
-            )}
-          </button>
+                focusable="false"
+              >
+                <path
+                  d="M21 11.6a8.4 8.4 0 0 1-8.5 8.2 9.2 9.2 0 0 1-3.3-.6L4.2 20.6l1.3-4.3a8 8 0 0 1-1.6-4.7A8.4 8.4 0 0 1 12.5 3.3 8.4 8.4 0 0 1 21 11.6Z"
+                  fill={attached ? 'currentColor' : undefined}
+                />
+              </svg>
+              {replies > 0 && (
+                <span className="slack-thread-count" aria-hidden="true">
+                  {replies}
+                </span>
+              )}
+              {thread.needsReply && (
+                <span
+                  className="slack-thread-needs"
+                  aria-hidden="true"
+                  data-testid={`slack-thread-needs-reply-${thread.ts}`}
+                />
+              )}
+            </button>
+          </DashboardTooltip>
         );
       })}
     </span>

@@ -3,6 +3,7 @@ import { slug, timeAgo } from '../../ui/dom.js';
 import { jiraStatusKind } from '../../ui/jira-status.js';
 import { filterActionTiers, filterTickets } from '../../ui/work-filters.js';
 import { PrItem } from './PrCard.jsx';
+import { DashboardTooltip } from './Primitives.jsx';
 import { WorkTicketRow } from './WorkTicket.jsx';
 import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
 
@@ -88,17 +89,19 @@ export function HomeKpis({ tiles }) {
           const props = {
             className: 'kpi-tile',
             'data-testid': `kpi-${id}`,
-            'data-tooltip': hint || undefined,
             'data-unknown': unknown ? 'true' : undefined,
           };
-          return target ? (
-            <a href={`#/${target}`} {...props} key={id}>
+          const tile = target ? (
+            <a href={`#/${target}`} {...props}>
               {content}
             </a>
           ) : (
-            <div {...props} key={id}>
-              {content}
-            </div>
+            <div {...props}>{content}</div>
+          );
+          return (
+            <DashboardTooltip key={id} title={hint} describeChild>
+              {tile}
+            </DashboardTooltip>
           );
         })}
       </div>
@@ -163,14 +166,14 @@ export function HomeSprintCard({
         {bands
           .filter((band) => band.w > 0)
           .map((band) => (
-            <span
-              key={band.key}
-              className="sprint-band"
-              data-kind={band.kind}
-              style={{ width: `${((band.w / denom) * 100).toFixed(2)}%` }}
-              data-tooltip={tooltip(band)}
-              data-testid={`${testId}-band-${band.key}`}
-            />
+            <DashboardTooltip key={band.key} title={tooltip(band)}>
+              <span
+                className="sprint-band"
+                data-kind={band.kind}
+                style={{ width: `${((band.w / denom) * 100).toFixed(2)}%` }}
+                data-testid={`${testId}-band-${band.key}`}
+              />
+            </DashboardTooltip>
           ))}
       </div>
       <div className="sprint-legend">
@@ -183,25 +186,25 @@ export function HomeSprintCard({
             const hint = tooltip(band);
             const key = band.key;
             return (
-              <button
-                key={key}
-                type="button"
-                className="sprint-legend-item"
-                data-kind={band.kind}
-                data-band={key}
-                data-sprint={sprintKey}
-                aria-expanded={isOpen(key)}
-                aria-controls={listId(key)}
-                aria-label={`${label}. ${hint}`}
-                data-tooltip={hint}
-                data-testid={`${testId}-count-${key}`}
-                onClick={() => onToggle(`${sprintKey}:${key}`)}
-              >
-                {label}
-                <span className="sprint-caret" aria-hidden="true">
-                  ▾
-                </span>
-              </button>
+              <DashboardTooltip key={key} title={hint}>
+                <button
+                  type="button"
+                  className="sprint-legend-item"
+                  data-kind={band.kind}
+                  data-band={key}
+                  data-sprint={sprintKey}
+                  aria-expanded={isOpen(key)}
+                  aria-controls={listId(key)}
+                  aria-label={`${label}. ${hint}`}
+                  data-testid={`${testId}-count-${key}`}
+                  onClick={() => onToggle(`${sprintKey}:${key}`)}
+                >
+                  {label}
+                  <span className="sprint-caret" aria-hidden="true">
+                    ▾
+                  </span>
+                </button>
+              </DashboardTooltip>
             );
           })}
         <span className="sprint-legend-total" data-testid={`${testId}-total`}>
@@ -210,32 +213,36 @@ export function HomeSprintCard({
             : `${total} tickets`}
         </span>
         {!byPoints ? (
-          <span
-            className="sprint-legend-note"
-            data-tooltip="No ticket in this sprint has a story-point estimate, so the bar counts tickets instead."
-            data-testid={`${testId}-nopoints`}
+          <DashboardTooltip
+            title="No ticket in this sprint has a story-point estimate, so the bar counts tickets instead."
+            describeChild
           >
-            no estimates
-          </span>
+            <span className="sprint-legend-note" data-testid={`${testId}-nopoints`}>
+              no estimates
+            </span>
+          </DashboardTooltip>
         ) : (
           unestimated > 0 && (
-            <button
-              type="button"
-              className="sprint-legend-note"
-              data-band="unestimated"
-              data-sprint={sprintKey}
-              aria-expanded={isOpen('unestimated')}
-              aria-controls={listId('unestimated')}
-              aria-label={`${unestimated} unestimated. ${unestimated} of your ${total} sprint tickets have no story points, so they add no width to the bar and are not in the pts figures.`}
-              data-tooltip={`${unestimated} of your ${total} sprint tickets have no story points, so they add no width to the bar and are not in the pts figures.`}
-              data-testid={`${testId}-unestimated`}
-              onClick={() => onToggle(`${sprintKey}:unestimated`)}
+            <DashboardTooltip
+              title={`${unestimated} of your ${total} sprint tickets have no story points, so they add no width to the bar and are not in the pts figures.`}
             >
-              {unestimated} unestimated
-              <span className="sprint-caret" aria-hidden="true">
-                ▾
-              </span>
-            </button>
+              <button
+                type="button"
+                className="sprint-legend-note"
+                data-band="unestimated"
+                data-sprint={sprintKey}
+                aria-expanded={isOpen('unestimated')}
+                aria-controls={listId('unestimated')}
+                aria-label={`${unestimated} unestimated. ${unestimated} of your ${total} sprint tickets have no story points, so they add no width to the bar and are not in the pts figures.`}
+                data-testid={`${testId}-unestimated`}
+                onClick={() => onToggle(`${sprintKey}:unestimated`)}
+              >
+                {unestimated} unestimated
+                <span className="sprint-caret" aria-hidden="true">
+                  ▾
+                </span>
+              </button>
+            </DashboardTooltip>
           )
         )}
       </div>
@@ -272,14 +279,18 @@ export function HomeSprintCard({
                       showSprint={false}
                       testIdPrefix={`${listId(key)}-item`}
                       extraMeta={
-                        <span
-                          className="pill sprint-points"
-                          data-unestimated={hasPoints ? undefined : 'true'}
-                          data-tooltip={hasPoints ? 'Story points' : 'No story-point estimate'}
-                          data-testid={testPoints}
+                        <DashboardTooltip
+                          title={hasPoints ? 'Story points' : 'No story-point estimate'}
+                          describeChild
                         >
-                          {hasPoints ? `${fmtPoints(ticket.storyPoints)} pts` : 'no estimate'}
-                        </span>
+                          <span
+                            className="pill sprint-points"
+                            data-unestimated={hasPoints ? undefined : 'true'}
+                            data-testid={testPoints}
+                          >
+                            {hasPoints ? `${fmtPoints(ticket.storyPoints)} pts` : 'no estimate'}
+                          </span>
+                        </DashboardTooltip>
                       }
                     />
                   );
@@ -319,16 +330,17 @@ export function HomeVelocity({ series }) {
             >
               <span className="velocity-value">{fmtPoints(entry.points)}</span>
               <div className="velocity-track">
-                <span
-                  className="velocity-bar"
-                  style={{ height: `${height}%` }}
-                  data-tooltip={hint}
-                  data-testid={`home-velocity-bar-${key}`}
-                />
+                <DashboardTooltip title={hint}>
+                  <span
+                    className="velocity-bar"
+                    style={{ height: `${height}%` }}
+                    data-testid={`home-velocity-bar-${key}`}
+                  />
+                </DashboardTooltip>
               </div>
-              <span className="velocity-label" title={entry.sprint.name}>
-                {entry.sprint.name}
-              </span>
+              <DashboardTooltip title={entry.sprint.name} describeChild>
+                <span className="velocity-label">{entry.sprint.name}</span>
+              </DashboardTooltip>
             </div>
           );
         })}

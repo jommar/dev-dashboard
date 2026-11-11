@@ -2,6 +2,7 @@ import { slug, timeAgo } from '../../ui/dom.js';
 import { jiraStatusKind } from '../../ui/jira-status.js';
 import { SprintPill } from './SprintPill.jsx';
 import { TicketStatusPill } from './TicketStatusPill.jsx';
+import { DashboardTooltip } from './Primitives.jsx';
 
 export function PrItem({ pr, variant = 'pr-open', approval }) {
   const state = pr.draft ? 'draft' : 'open';
@@ -9,32 +10,38 @@ export function PrItem({ pr, variant = 'pr-open', approval }) {
   const testId = (name) => `${variant}-${name}-${itemSuffix}`;
   const reviewState = pr.reviews?.state;
   const reviewBadge = !pr.reviews ? null : pr.reviews.state === 'approved' ? (
-    <span
-      className="pill review-badge approved"
-      data-review-state="approved"
-      data-tooltip={`Approved by @${pr.reviews.approvers.join(', @')}`}
-      data-testid={testId('review-approved')}
-    >
-      approved
-    </span>
+    <DashboardTooltip title={`Approved by @${pr.reviews.approvers.join(', @')}`} describeChild>
+      <span
+        className="pill review-badge approved"
+        data-review-state="approved"
+        data-testid={testId('review-approved')}
+      >
+        approved
+      </span>
+    </DashboardTooltip>
   ) : pr.reviews.state === 'changes_requested' ? (
-    <span
-      className="pill review-badge changes"
-      data-review-state="changes-requested"
-      data-tooltip={`Changes requested by @${pr.reviews.changesRequesters.join(', @')}`}
-      data-testid={testId('review-changes')}
+    <DashboardTooltip
+      title={`Changes requested by @${pr.reviews.changesRequesters.join(', @')}`}
+      describeChild
     >
-      changes requested
-    </span>
+      <span
+        className="pill review-badge changes"
+        data-review-state="changes-requested"
+        data-testid={testId('review-changes')}
+      >
+        changes requested
+      </span>
+    </DashboardTooltip>
   ) : (
-    <span
-      className="pill review-badge pending"
-      data-review-state="awaiting"
-      data-tooltip="Awaiting review"
-      data-testid={testId('review-pending')}
-    >
-      awaiting
-    </span>
+    <DashboardTooltip title="Awaiting review" describeChild>
+      <span
+        className="pill review-badge pending"
+        data-review-state="awaiting"
+        data-testid={testId('review-pending')}
+      >
+        awaiting
+      </span>
+    </DashboardTooltip>
   );
   return (
     <div
@@ -78,28 +85,29 @@ export function PrItem({ pr, variant = 'pr-open', approval }) {
         <span className="updated" data-testid={testId('updated')}>
           {timeAgo(pr.updatedAt)}
         </span>
-        <button
-          type="button"
-          className="btn subtle icon-btn view-diff"
-          data-repo={pr.repo}
-          data-number={pr.number}
-          data-tooltip="View diff vs origin/ops/development"
-          aria-label="View diff vs origin/ops/development"
-          data-testid={`${variant}-view-diff-${itemSuffix}`}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            aria-hidden="true"
+        <DashboardTooltip title="View diff vs origin/ops/development">
+          <button
+            type="button"
+            className="btn subtle icon-btn view-diff"
+            data-repo={pr.repo}
+            data-number={pr.number}
+            aria-label="View diff vs origin/ops/development"
+            data-testid={`${variant}-view-diff-${itemSuffix}`}
           >
-            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        </button>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
+            >
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+        </DashboardTooltip>
       </div>
     </div>
   );

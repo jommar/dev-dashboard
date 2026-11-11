@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button } from '../components/Primitives.jsx';
+import { Button, DashboardTooltip } from '../components/Primitives.jsx';
 import { SlackWatchCard } from '../components/SlackWatchCard.jsx';
 import {
   Board,
@@ -48,36 +48,39 @@ function SlackThreadCard({ thread, mentions, now, onOpen }) {
     mentions && thread.starter?.name !== thread.author?.name ? thread.starter?.name : null;
   const lastBy = thread.replyCount > 0 ? thread.latestReplyBy?.name : null;
   return (
-    <button
-      type="button"
-      className="board-card board-card-action"
-      data-testid={`slack-thread-${thread.ts}`}
-      data-needs-reply={thread.needsReply == null ? 'unknown' : thread.needsReply ? 'yes' : 'no'}
-      data-tooltip="Open the conversation"
-      aria-haspopup="dialog"
-      onClick={() => onOpen(thread)}
-    >
-      <span className="board-card-top">
-        {thread.needsReply === true && (
-          <span className="board-chip" data-tone="warn">
-            Needs reply
+    <DashboardTooltip title="Open the conversation" describeChild>
+      <button
+        type="button"
+        className="board-card board-card-action"
+        data-testid={`slack-thread-${thread.ts}`}
+        data-needs-reply={thread.needsReply == null ? 'unknown' : thread.needsReply ? 'yes' : 'no'}
+        aria-haspopup="dialog"
+        onClick={() => onOpen(thread)}
+      >
+        <span className="board-card-top">
+          {thread.needsReply === true && (
+            <span className="board-chip" data-tone="warn">
+              Needs reply
+            </span>
+          )}
+          {thread.needsReply == null && <span className="board-chip">Reply status unknown</span>}
+          <span className="board-card-stat">
+            {thread.replyCount} {thread.replyCount === 1 ? 'reply' : 'replies'}
+          </span>
+          <span className="board-card-stat slack-thread-when">
+            {timeAgo(thread.activityAt, now)}
+          </span>
+        </span>
+        <span className="board-card-summary">{thread.text || '(no text)'}</span>
+        {(mentionedBy || startedBy || lastBy) && (
+          <span className="slack-thread-meta">
+            {mentionedBy && <span className="slack-thread-who">@{mentionedBy} mentioned you</span>}
+            {startedBy && <span>started by {startedBy}</span>}
+            {lastBy && <span>last by {lastBy}</span>}
           </span>
         )}
-        {thread.needsReply == null && <span className="board-chip">Reply status unknown</span>}
-        <span className="board-card-stat">
-          {thread.replyCount} {thread.replyCount === 1 ? 'reply' : 'replies'}
-        </span>
-        <span className="board-card-stat slack-thread-when">{timeAgo(thread.activityAt, now)}</span>
-      </span>
-      <span className="board-card-summary">{thread.text || '(no text)'}</span>
-      {(mentionedBy || startedBy || lastBy) && (
-        <span className="slack-thread-meta">
-          {mentionedBy && <span className="slack-thread-who">@{mentionedBy} mentioned you</span>}
-          {startedBy && <span>started by {startedBy}</span>}
-          {lastBy && <span>last by {lastBy}</span>}
-        </span>
-      )}
-    </button>
+      </button>
+    </DashboardTooltip>
   );
 }
 

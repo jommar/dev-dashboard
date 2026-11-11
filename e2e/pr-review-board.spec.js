@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, expectTooltip } from './fixtures.js';
 import { claudeEntry, ticketBoardData } from './data.js';
 
 const queueReads = (dashboard) =>
@@ -95,7 +95,7 @@ for (const width of [390, 1440]) {
       await expect(badge).toHaveText(sprint.name);
       await expect(badge).toHaveClass(/ticket-sprint/);
       await expect(badge).toHaveAttribute('data-sprint-state', sprint.state);
-      await expect(badge).toHaveAttribute('data-tooltip', new RegExp(`^${sprint.state} · `));
+      await expectTooltip(page, badge, new RegExp(`^${sprint.state} · `));
     }
     const card = ticket(page, 'DEMO-2');
     const badge = card.getByTestId('prs-ticket-sprint-DEMO-2');
@@ -345,16 +345,16 @@ test('PR Claude icons have no hover/focus tooltip but retain review names and My
   dashboard.data.tickets.tickets[0].key = 'DEMO-1';
   await page.goto('/#/my-tickets');
   const mine = page.getByTestId('claude-icon-DEMO-1');
-  await expect(mine).toHaveAttribute('data-tooltip', 'Claude: not started');
   await expect(mine).toHaveAccessibleName('Claude: not started');
   await mine.hover();
-  const visibleTooltips = page.getByTestId('tooltip').filter({ visible: true });
-  await expect(visibleTooltips).toHaveCount(1);
+  const visibleTooltips = page.getByRole('tooltip');
+  await expect(visibleTooltips).toHaveText('Claude: not started');
+  await page.mouse.move(0, 0);
+  await expect(visibleTooltips).toHaveCount(0);
   await page.getByTestId('tab-prs').click();
   const icon = page.getByTestId('prs-claude-icon-DEMO-1');
   await expect.soft(icon).toHaveAccessibleName('Claude code review for DEMO-1');
   await expect(icon).toHaveAttribute('aria-haspopup', 'dialog');
-  await expect.soft(icon).not.toHaveAttribute('data-tooltip');
   await expect.soft(icon).not.toHaveAttribute('title');
   for (const interaction of ['hover', 'focus']) {
     await icon[interaction]();

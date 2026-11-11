@@ -186,4 +186,13 @@ export const test = base.extend({
   ],
 });
 
+// The app's own popup (DashboardTooltip): hover the target, read the one role=tooltip popup, then leave.
+// `position` aims the pointer at a part of the target that carries no popup of its own.
+export async function expectTooltip(page, target, text, options = {}) {
+  await target.hover(options);
+  await expect(page.getByRole('tooltip')).toHaveText(text);
+  await page.mouse.move(0, 0);
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+}
+
 export { expect };

@@ -1,28 +1,36 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavIcon } from './NavIcon.jsx';
+import { DashboardTooltip } from './Primitives.jsx';
 
 const PRIMARY_ROUTES = new Set(['home', 'my-tickets', 'slack']);
 
 function NavLink({ tab: { id, label, badge }, active, onNavigate }) {
   return (
-    <a
-      className={`tab${active === id ? ' active' : ''}`}
-      href={`#/${id}`}
-      title={label}
-      data-tab={id}
-      data-testid={`tab-${id}`}
-      aria-current={active === id ? 'page' : undefined}
-      onClick={(event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
-          return;
-        event.preventDefault();
-        onNavigate(id);
-      }}
-    >
-      <NavIcon name={id} />
-      <span className="nav-label">{label}</span>
-      {badge}
-    </a>
+    <DashboardTooltip title={label} describeChild>
+      <a
+        className={`tab${active === id ? ' active' : ''}`}
+        href={`#/${id}`}
+        data-tab={id}
+        data-testid={`tab-${id}`}
+        aria-current={active === id ? 'page' : undefined}
+        onClick={(event) => {
+          if (
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey ||
+            event.button !== 0
+          )
+            return;
+          event.preventDefault();
+          onNavigate(id);
+        }}
+      >
+        <NavIcon name={id} />
+        <span className="nav-label">{label}</span>
+        {badge}
+      </a>
+    </DashboardTooltip>
   );
 }
 

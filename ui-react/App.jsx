@@ -14,7 +14,6 @@ import { MascotsPanel } from './panels/MascotsPanel.jsx';
 import { SlackPanel } from './panels/SlackPanel.jsx';
 import { SlackTabBadge } from './components/SlackTabBadge.jsx';
 import { SettingsPanel } from './panels/SettingsPanel.jsx';
-import { TooltipLayer } from './components/Tooltip.jsx';
 import './styles.css';
 
 // The badge polls from inside the Slack tab entry, so setup-only mode (which
@@ -145,7 +144,6 @@ export function App() {
             </>
           )}
           <SettingsPanel config={config} active={active === 'settings'} />
-          <TooltipLayer />
         </AppShell>
       )}
     </ThemeProvider>

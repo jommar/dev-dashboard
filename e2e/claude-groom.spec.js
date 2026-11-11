@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, expectTooltip } from './fixtures.js';
 import { claudeEntry, claudeQuestion, ticketBoardData } from './data.js';
 
 // Groom ticket in the Claude dialog: a third row, after Implement plan, that is not part of the
@@ -233,7 +233,7 @@ test('scenario 62: the card icon follows grooming only for a ticket with no work
     const icon = iconOf(page, key);
     await expect(icon, `${key} shows its groom session`).toHaveAttribute('data-state', state);
     await expect(icon).toHaveAttribute('aria-label', grooming);
-    await expect(icon).toHaveAttribute('data-tooltip', grooming);
+    await expectTooltip(page, icon, grooming);
   }
   for (const [key, state] of [
     [KEY, 'working'],
