@@ -33,11 +33,13 @@ const unavailable = () => ({
   updatedAt: new Date().toISOString(),
 });
 
-// One page of the open spec PRs, newest first, with the fields a card shows.
+// One page of the open spec PRs, newest first, with the fields a card shows. `last` keeps the newest
+// reviews, which are the ones the viewer's review state reads.
 const specQuery = (cursor) => `query {
+  viewer { login }
   repository(owner: "${ORG}", name: "${SPEC_REPO}") {
     pullRequests(first: ${PAGE_SIZE}, states: [OPEN], labels: ["${SPEC_LABEL}"], orderBy: {field: CREATED_AT, direction: DESC}${after(cursor)}) {
-      nodes { number title url isDraft createdAt author { login } reviews(first: 100, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) { nodes { author { login } } } }
+      nodes { number title url isDraft createdAt headRefOid author { login } reviews(last: 100, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) { nodes { author { login } commit { oid } } } }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -58,20 +60,23 @@ async function graphqlData(res) {
   return errors || !data ? null : data;
 }
 
-// Every open spec PR, in pages of 100 (three pages at most). Null when a page failed.
+// Every open spec PR, in pages of 100 (three pages at most), with the signed-in viewer's login. Null
+// when a page failed.
 async function scanSpecs(config) {
   const nodes = [];
+  let viewer = null;
   let cursor;
   for (let page = 0; page < SPEC_PAGE_LIMIT; page += 1) {
     const data = await graphqlData(await postGraphql(config, specQuery(cursor)));
     const found = data?.repository?.pullRequests;
     if (!Array.isArray(found?.nodes)) return null;
+    viewer = login(data.viewer);
     nodes.push(...found.nodes);
     if (!found.pageInfo?.hasNextPage) break;
     if (!found.pageInfo.endCursor) return null;
     cursor = found.pageInfo.endCursor;
   }
-  return nodes;
+  return { nodes, viewer };
 }
 
 // The keys named by the OPEN and MERGED PRs of the code repos, in titles and head branches. A repo
@@ -128,8 +133,18 @@ async function codedKeys(config) {
   return scans.get(revision);
 }
 
+// The viewer's review state on a spec: `current` when their newest submitted review is on the head
+// commit, `stale` when it is on an earlier one, `none` when they have no submitted review or the login
+// or commit oid that would say which is missing.
+function reviewState(node, viewer) {
+  const mine = viewer ? node.reviews.nodes.filter((review) => login(review.author) === viewer) : [];
+  const oid = mine.at(-1)?.commit?.oid;
+  if (!oid || !node.headRefOid) return 'none';
+  return oid === node.headRefOid ? 'current' : 'stale';
+}
+
 // The card data of one spec node. Its keys are the title's, in title order and without repeats.
-function toSpec(node) {
+function toSpec(node, viewer) {
   const author = login(node.author);
   return {
     number: node.number,
@@ -140,6 +155,7 @@ function toSpec(node) {
     keys: [...new Set(keysIn(node.title))],
     ageDays: Math.floor((Date.now() - Date.parse(node.createdAt)) / DAY_MS),
     reviewsByOthers: node.reviews.nodes.filter((review) => login(review.author) !== author).length,
+    review: reviewState(node, viewer),
   };
 }
 
@@ -148,12 +164,12 @@ export async function fetchSpecReviews({ snapshot } = {}) {
   try {
     const config = captureConfiguration(snapshot);
     if (!config.credentials.githubToken) return unavailable();
-    const nodes = await scanSpecs(config);
-    if (!nodes) return unavailable();
+    const scan = await scanSpecs(config);
+    if (!scan) return unavailable();
     const coded = await codedKeys(config);
     if (!coded) return unavailable();
-    const specs = nodes
-      .map(toSpec)
+    const specs = scan.nodes
+      .map((node) => toSpec(node, scan.viewer))
       .filter(({ keys }) => keys.length > 0 && !keys.some((key) => coded.has(key)))
       .sort((a, b) => b.number - a.number);
     return { available: true, total: specs.length, specs, updatedAt: new Date().toISOString() };

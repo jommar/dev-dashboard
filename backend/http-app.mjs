@@ -140,7 +140,7 @@ function specReviewResponse(data) {
     available: data.available,
     total: data.total,
     specs: data.specs.map(
-      ({ number, title, url, author, draft, keys, ageDays, reviewsByOthers }) => ({
+      ({ number, title, url, author, draft, keys, ageDays, reviewsByOthers, review }) => ({
         number,
         title,
         url,
@@ -149,6 +149,7 @@ function specReviewResponse(data) {
         keys,
         ageDays,
         reviewsByOthers,
+        review,
       }),
     ),
     updatedAt: data.updatedAt,

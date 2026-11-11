@@ -6,6 +6,23 @@
   `spec` whose title names a TAP or TRIPS ticket with no open or merged code PR in Portage-backend,
   Portage-frontend or TravelTracker. Its Claude button starts a spec review against the ticket's
   acceptance criteria (`GET /api/spec-reviews`; `POST /api/claude/launch` with `phase: 'spec-review'`).
+- The spec review session now runs unattended: instead of replying in the session, it is told to post
+  one `COMMENT` review on the spec PR and one reply in the ticket's existing `#ezat_claudio` Slack thread,
+  as the signed-in user (no existing thread, no Slack reply; it is told to write nothing else). The launch
+  enforces its built-in tool set (`Read`, `Skill`, `ToolSearch`), no `--add-dir`, only the launch
+  directory's `.mcp.json` (`--strict-mcp-config`: the servers that file names, which today is `toolkit-mcp`
+  alone and should stay so, since that file is untracked and editable from the working directory), and an
+  explicit deny list of 28 toolkit write tools and 28 `Read` paths (secrets, configuration, SQL dumps, CSV
+  table exports and uploads, browser and test-runner auth state). The list is not exhaustive: reads inside
+  the working directory stay unrestricted. The `COMMENT` event, the Slack
+  destination, the no-mention and no-link rules and the reads limited to the skill files it loads are
+  prompt-only. A session can still submit any review event on any PR and post to any Slack destination
+  through the tools it must keep; only narrowing the user's own allow rule, `--restricted` with an exact
+  allowlist or argument-locked tools could close that, which is the user's decision.
+- Spec review cards show the signed-in user's own review state, read from GitHub: a Reviewed chip when
+  their newest review is on the PR's current head commit, New commits since your review when the PR has
+  moved on, and no chip otherwise. The dialog's action then reads Review again or Re-review to match
+  (`review` on each spec in `GET /api/spec-reviews`).
 
 - Added posters to the bot bar: every bot now carries a small sign on a pole above its head with its
   ticket key (`TAP-1451`), in one of five designs (First Class, an airmail stamp; Open Late, a neon sign;

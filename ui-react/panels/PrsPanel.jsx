@@ -300,6 +300,7 @@ export function PrsPanel({ config, active }) {
           ticketKey={openSpec.keys[0]}
           summary={openSpec.title}
           specNumber={openSpec.number}
+          review={openSpec.review}
           entry={claude.byTicket[openSpec.keys[0]]}
           launch={claude.launch}
           onClose={() => setOpenSpec(null)}

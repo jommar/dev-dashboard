@@ -25,6 +25,12 @@ const SPEC_REASON_TEXT = {
   session_running: 'A spec review session is already running for this ticket.',
 };
 const reasonText = (code, spec) => (spec && SPEC_REASON_TEXT[code]) || REASON_TEXT[code];
+// The spec action's label says whether this is the first spec review of the PR or another one.
+const SPEC_ACTION_TEXT = {
+  none: 'Start spec review',
+  current: 'Review again',
+  stale: 'Re-review',
+};
 
 function rereviewText({ send }) {
   if (send?.status === 'sent') return 'Re-review requested. Claude is checking the linked PRs.';
@@ -41,6 +47,7 @@ export function ClaudePlaceholderDialog({
   onClose,
   resolveOpener,
   specNumber,
+  review,
 }) {
   const dialogRef = useRef(null);
   const closeButton = useRef(null);
@@ -55,6 +62,7 @@ export function ClaudePlaceholderDialog({
   // A spec review is the panel's one action on a spec card: no re-review, and its own state and block.
   const spec = Boolean(specNumber);
   const label = spec ? 'Spec review' : 'Code review';
+  const specAction = SPEC_ACTION_TEXT[review] ?? SPEC_ACTION_TEXT.none;
   const block = spec ? entry?.blocks.specReview : entry?.blocks.review;
   const rereviewBlock = entry?.blocks.rereview;
   const resentAt = entry?.reviewResentAt;
@@ -192,7 +200,7 @@ export function ClaudePlaceholderDialog({
               aria-describedby={startReason ? `${reasonId}-start` : undefined}
               onClick={startReview}
             >
-              {spec ? 'Start spec review' : startQuiet ? 'Start new review' : 'Start code review'}
+              {spec ? specAction : startQuiet ? 'Start new review' : 'Start code review'}
             </Button>
           </li>
           {!spec && (

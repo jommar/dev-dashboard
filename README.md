@@ -587,21 +587,78 @@ The fourth column, **Spec review**, lists open PRs in `TransActComm/ezat-specs` 
 the `spec` label and whose title names a ticket (`TAP-n` or `TRIPS-n`). A spec drops out when
 an open or merged PR in Portage-backend, Portage-frontend or TravelTracker names the same key
 in its title or head branch. Specs with no ticket key are not listed. Each card shows its keys
-as Jira links, the PR, its author, age in days, reviews by others and a Draft chip on a draft PR. The repos
-and label are fixed in code, not the Settings watched list, and spec cards ignore the work filters.
+as Jira links, the PR, its author, age in days, reviews by others, a Draft chip on a draft PR and a
+review chip (below). The repos and label are fixed in code, not the Settings watched list, and spec
+cards ignore the work filters.
 
 The feed is `GET /api/spec-reviews`. It always answers 200 with `{ available, total, specs, updatedAt }`;
-each spec carries `number`, `title`, `url`, `author`, `draft`, `keys`, `ageDays` and `reviewsByOthers`.
+each spec carries `number`, `title`, `url`, `author`, `draft`, `keys`, `ageDays`, `reviewsByOthers`
+and `review`.
 `available: false` means the lookup failed or was incomplete, and then `specs` is empty. A cross-site or
 same-site browser request gets `403 OPERATION_FAILED` before any GitHub call.
 
 The lookup is cached for 10 minutes; Refresh does not bypass it, so a new code PR hides its
 spec within 10 minutes. If the lookup fails or is incomplete, the lane is empty and a note says
 so, and the ticket lanes are unaffected. The card's **Claude** button opens a dialog with one
-action, **Start spec review**, which posts `{ key, phase: 'spec-review', pr }`; `pr` is required. The
-server builds the review prompt, and the session is named `<KEY>-spec-review`. Its state is in the
-ticket's [Claude launcher](#claude-launcher) entry, where `blocks.specReview` appears only once a spec
-review was launched.
+action, **Start spec review**, **Re-review** or **Review again** (see below), which posts
+`{ key, phase: 'spec-review', pr }`; `pr` is required. The server builds the review prompt, and the
+session is named `<KEY>-spec-review`. Its state is in the ticket's [Claude launcher](#claude-launcher)
+entry, where `blocks.specReview` appears only once a spec review was launched.
+
+`review` is the signed-in user's own state on the PR, worked out from GitHub when the feed is read
+(the same 10-minute cache applies). `current` means their newest submitted review is on the PR's
+current head commit; `stale` means it is on an earlier commit, so the PR has new commits since their
+review; `none` means they have no submitted review, or the lookup has no viewer login or head commit.
+The dashboard stores nothing for it. A `current` card shows a **Reviewed** chip, a `stale` card shows
+**New commits since your review**, and `none` shows no chip. The dialog's action reads **Start spec
+review** for `none`, **Re-review** for `stale` and **Review again** for `current`; all three send the
+same launch and stay enabled.
+
+The spec review session runs unattended, as the signed-in user. The launch enforces part of its limits on
+the command line, for this session only, and no prompt can widen them: the built-in tools are only `Read`,
+`Skill` and `ToolSearch` (no `Bash`, `Edit`, `Write`, `Grep`, `Glob`, `WebFetch` or `Agent`); it gets no
+`--add-dir`, so no workflow state folder; it loads only the servers that the `.mcp.json` of the launch
+directory (`~/pathwise`) names, with `--strict-mcp-config`. That file is untracked, and a session that can
+write there can change it, so the session gets whatever servers the file lists at launch. The file should
+name `toolkit-mcp` only. Today it names `toolkit-mcp` alone, and in the manual probe on this machine the
+claude.ai connectors and the Playwright, memory, wiki and taskboard servers were not loaded; and a deny list
+blocks 28 toolkit tools (GitHub PR create, merge, update, label, assignee and reviewer writes, PR comment and
+review-comment writes, thread resolve and review dismissal; Jira issue, comment, link and transition writes;
+Confluence page writes; the Figma comment post; Slack login and logout) and the `Read` tool on 28 named paths,
+covering secrets, configuration, SQL dumps, CSV table exports and uploads, and browser and test-runner auth
+state: `~/.config`, `~/.ssh`, `~/.aws`, `~/.claude.json`, `.env*`, `config.json` and `config.json.*`,
+`.mcp.json`, `*.sql`, `*.csv`, `./TravelTracker/files`, `./.worktrees`, `./.corpus_runs`, `.playwright`,
+`./.playwright-mcp`, `cypress.env.json`, `auth.json`, `~/.claude/.credentials.json`, `~/.claude/projects`,
+`~/.claude/history.jsonl`, `~/.bash_history*`, `~/.local/share`, `~/.git-credentials`, `~/.npmrc`, `~/.netrc`,
+`~/.docker`, `~/.gnupg` and `//ezat`. That deny list is an explicit list of named tools and paths, not an
+exhaustive one: a `Read` inside the working directory is otherwise unrestricted, and other reads follow the
+user's own settings. Its tool entries are all `toolkit-mcp` tools, because the file names no other server
+today. The deny rules cover `Read` only, because `Grep` and `Glob` are not available to this session. The
+read tools, `github_submit_pr_review` and the Slack `slack_prepare_write` and `slack_confirm_write` pair stay
+allowed.
+
+Everything else is only the prompt's instruction, and nothing enforces it. The session is told to submit one
+`COMMENT` review on the spec PR (never an approval or a changes request, since `github_submit_pr_review`
+accepts any event; the merge and the push are blocked by the launch), to mention nobody, quote no Jira or
+Slack text and link nowhere but that PR. It is told to reply once in the ticket's existing `#ezat_claudio`
+thread, found by searching the ticket key there and never from a Slack link in the ticket or the PR, with
+`expected_destination` set to `ezat_claudio`; the reply is a two-line summary of the verdict counts and a
+link to the review, and no other link. It skips Slack when there is no thread or more than one matches, and
+sends only when its preview shows no mentions and no warnings. It reads only the skill files it loads, and it
+makes no other write. If the session cannot finish the review, it posts nothing. A ticket with no existing
+thread gets no Slack reply, and no thread is created.
+
+The residual is inherent, and this repo cannot close it. The session must keep `github_submit_pr_review`,
+`slack_prepare_write` and `slack_confirm_write`, and the user allows them, so an instruction injected through
+the spec, its ticket or the Slack thread can still submit a review with any event on any PR the user can
+review, or post what it can read to any Slack destination. Only the prompt stops those. Closing it is the
+user's decision: narrow their own `mcp__toolkit-mcp__*` allow rule to named tools, run the session with
+`--restricted` and an exact allowlist, or use tools whose arguments are locked (a review locked to `COMMENT`
+on `ezat-specs`, a Slack write locked to one channel). The dashboard never edits a settings file, and
+`mcp__toolkit-mcp__*` stays allowed in the user's own settings, so every other session keeps it. The
+dashboard records nothing beyond the existing `spec-review` record in the ticket's `launch.json` (session
+name, launch time and session id). A finished review is visible as the PR review itself, and its Slack reply
+as the message in that thread.
 
 ### Local work filters
 

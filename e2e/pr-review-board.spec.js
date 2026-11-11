@@ -1182,6 +1182,7 @@ test.describe('Spec review lane', () => {
     keys,
     ageDays: 3,
     reviewsByOthers: 2,
+    review: 'none',
     ...extra,
   });
   const SINGLE = specPr(321, '[TAP-100] Trip export spec', ['TAP-100']);
@@ -1296,6 +1297,49 @@ test.describe('Spec review lane', () => {
     await expect.poll(() => bodies.length).toBe(1);
     expect(bodies).toEqual([{ key: 'TAP-1', phase: 'spec-review', pr: 330 }]);
   });
+
+  test('marks a spec the signed-in user has reviewed, or must review again', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.specReviews = specFeed([
+      specPr(321, '[TAP-100] Not reviewed spec', ['TAP-100'], { review: 'none' }),
+      specPr(322, '[TAP-101] Reviewed spec', ['TAP-101'], { review: 'current' }),
+      specPr(323, '[TAP-102] Changed spec', ['TAP-102'], { review: 'stale' }),
+    ]);
+    await page.goto('/#/prs');
+    await expect(page.getByTestId('prs-column-count-spec-review')).toHaveText('3');
+    await expect(page.getByTestId('prs-spec-review-321')).toHaveCount(0);
+    await expect(spec(page, 321).locator('.board-chip')).toHaveCount(0);
+    await expect(page.getByTestId('prs-spec-review-322')).toHaveText('Reviewed');
+    await expect(page.getByTestId('prs-spec-review-323')).toHaveText(
+      'New commits since your review',
+    );
+    for (const number of [322, 323])
+      await expect(spec(page, number).getByTestId(`prs-spec-review-${number}`)).toHaveClass(
+        /board-chip/,
+      );
+  });
+
+  for (const [state, label] of [
+    ['none', 'Start spec review'],
+    ['current', 'Review again'],
+    ['stale', 'Re-review'],
+  ]) {
+    test(`the dialog button reads "${label}" for a spec with review ${state}`, async ({
+      page,
+      dashboard,
+    }) => {
+      dashboard.data.specReviews = specFeed([
+        specPr(321, '[TAP-100] Trip export spec', ['TAP-100'], { review: state }),
+      ]);
+      await page.goto('/#/prs');
+      await spec(page, 321).getByTestId('prs-spec-claude-icon-321').click();
+      const action = page.getByTestId('prs-claude-action-spec-review');
+      await expect(action).toHaveText(label);
+      await expect(action).toBeEnabled();
+    });
+  }
 
   test('shows spec cards beside the empty state when there are no review tickets', async ({
     page,

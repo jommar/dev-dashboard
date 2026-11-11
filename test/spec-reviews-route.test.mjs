@@ -15,6 +15,7 @@ const SPEC = {
   keys: ['TAP-100'],
   ageDays: 3,
   reviewsByOthers: 2,
+  review: 'current',
 };
 const PAYLOAD = {
   available: true,
@@ -87,3 +88,32 @@ test('17. the route refuses cross-site reads before the feed runs', async (t) =>
   assert.equal('specs' in response.json, false, 'no spec data is returned');
   assert.deepEqual(calls, []);
 });
+
+for (const state of ['none', 'current', 'stale']) {
+  test(`20. the route serves review ${state} and no login or commit oid`, async (t) => {
+    const leaks = {
+      viewer: { login: 'viewer-login-secret' },
+      viewerLogin: 'viewer-login-secret',
+      headRefOid: 'oid-secret-0123',
+      commit: { oid: 'oid-secret-0123' },
+    };
+    const result = {
+      ...PAYLOAD,
+      ...leaks,
+      specs: [{ ...SPEC, review: state, ...leaks }],
+    };
+    const { request } = await endpoint(t, { result });
+    const response = await request();
+    assert.equal(response.status, 200);
+    assert.equal(response.json.specs[0].review, state);
+    assert.deepEqual(Object.keys(response.json.specs[0]).sort(), Object.keys(SPEC).sort());
+    assert.deepEqual(Object.keys(response.json).sort(), [
+      'available',
+      'specs',
+      'total',
+      'updatedAt',
+    ]);
+    assert.ok(!response.text.includes('viewer-login-secret'), 'no login in the response');
+    assert.ok(!response.text.includes('oid-secret-0123'), 'no commit oid in the response');
+  });
+}

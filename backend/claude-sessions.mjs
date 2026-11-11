@@ -477,14 +477,25 @@ export function createClaudeSessions({
   }
 
   // Starts a background session named `name` that runs `prompt` from `cwd`, with access to `addDir`
-  // when one is given.
+  // when one is given, the built-in `tools` only when given, none of `disallowedTools` when given, and
+  // only the MCP servers in the `mcpConfig` file when given (`--strict-mcp-config`).
   // The prompt follows `--`, so it is never read as an option. Returns the id the CLI printed, or
   // null when it printed none.
-  async function launch({ name, prompt, cwd, addDir }) {
+  async function launch({ name, prompt, cwd, addDir, tools, disallowedTools, mcpConfig }) {
     const env = { ...process.env };
     for (const secret of SECRET_ENV_NAMES) delete env[secret];
     const { error, stdout, stderr } = await run(
-      ['--bg', ...(addDir ? ['--add-dir', addDir] : []), '-n', name, '--', prompt],
+      [
+        '--bg',
+        ...(addDir ? ['--add-dir', addDir] : []),
+        ...(tools ? ['--tools', tools.join(',')] : []),
+        ...(disallowedTools ? ['--disallowedTools', disallowedTools.join(',')] : []),
+        ...(mcpConfig ? ['--strict-mcp-config', '--mcp-config', mcpConfig] : []),
+        '-n',
+        name,
+        '--',
+        prompt,
+      ],
       { cwd, env, timeout: LAUNCH_TIMEOUT_MS, maxBuffer: LAUNCH_MAX_BYTES },
     );
     if (!error) return { ...delivered(), id: stdout.match(STARTED_ID)?.[0] ?? null };

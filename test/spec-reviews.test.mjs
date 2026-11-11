@@ -12,12 +12,19 @@ const MINUTE_MS = 60_000;
 const SPEC_REPO = 'ezat-specs';
 const CODE_REPOS = ['Portage-backend', 'Portage-frontend', 'TravelTracker'];
 const TOP_LEVEL = ['available', 'total', 'specs', 'updatedAt'];
+const VIEWER = 'viewer-user';
+const HEAD = 'oid-head';
+const OLD_HEAD = 'oid-earlier';
 
-// A node of the spec query's answer: GitHub's own field names.
+// A submitted review node: who wrote it and the commit it was made on. GitHub lists them oldest first.
+const review = (login, oid) => ({ author: { login }, commit: { oid } });
+
+// A node of the spec query's answer: GitHub's own field names. `reviewers` are other people's
+// reviews on an earlier commit; `reviews` are explicit nodes, appended in the order given.
 const spec = (
   number,
   title,
-  { author = 'alice', daysAgo = 1, reviewers = [], draft = false } = {},
+  { author = 'alice', daysAgo = 1, reviewers = [], reviews = [], draft = false, head = HEAD } = {},
 ) => ({
   number,
   title,
@@ -25,7 +32,8 @@ const spec = (
   isDraft: draft,
   createdAt: new Date(NOW - daysAgo * DAY_MS - 5 * 3_600_000).toISOString(),
   author: { login: author },
-  reviews: { nodes: reviewers.map((login) => ({ author: { login } })) },
+  headRefOid: head,
+  reviews: { nodes: [...reviewers.map((login) => review(login, OLD_HEAD)), ...reviews] },
 });
 
 // A node of the code-PR query's answer. `state` is what the double filters on, never selected.
@@ -35,10 +43,19 @@ const code = (title, headRefName, state = 'OPEN') => ({ title, headRefName, stat
 // query (answer under `data.repository`); any other is the code-PR scan, one alias per repo in the
 // form `<alias>: repository(owner: "TransActComm", name: "<repo>")`, answered per alias. A node
 // whose `state` the query does not ask for is left out, as GitHub would. `pagingRepo` never runs out
-// of pages. `codeReply` replaces the answer to every code-PR query.
+// of pages. `codeReply` replaces the answer to every code-PR query. The spec answer carries the
+// signed-in `viewer` beside `repository`; `viewer: null` is an answer without one.
 function githubDouble(
   t,
-  { specs = [], codeByRepo = {}, pagingRepo, codeReply, specReply, specPageInfo } = {},
+  {
+    specs = [],
+    codeByRepo = {},
+    pagingRepo,
+    codeReply,
+    specReply,
+    specPageInfo,
+    viewer = { login: VIEWER },
+  } = {},
 ) {
   const reply = { spec: specReply, code: codeReply };
   const posts = [];
@@ -51,6 +68,7 @@ function githubDouble(
       if (reply.spec) return reply.spec();
       return Response.json({
         data: {
+          viewer,
           repository: {
             pullRequests: {
               nodes: specs,
@@ -124,6 +142,7 @@ test('1. a keyed, uncoded spec is listed with its card data', async (t) => {
       keys: ['TAP-100'],
       ageDays: 3,
       reviewsByOthers: 2,
+      review: 'none',
     },
   ]);
 });
@@ -301,4 +320,75 @@ test('reviews by others count only submitted reviews, never pending ones', async
   const states = first.query.match(/reviews\([^)]*states\s*:\s*\[([^\]]*)\]/)?.[1];
   assert.ok(states, 'the spec query filters reviews by state');
   assert.doesNotMatch(states, /PENDING/);
+});
+
+// The viewer's own review state of a spec: whether they have a submitted review on the head commit.
+const reviewOf = async (t, node, options = {}) => {
+  startAt(t);
+  githubDouble(t, { specs: [node], ...options });
+  const result = await load();
+  assert.equal(result.available, true);
+  return result.specs[0].review;
+};
+
+test('19. a spec the viewer has not reviewed is none', async (t) => {
+  const node = spec(321, '[TAP-100] Trip export spec');
+  assert.equal(await reviewOf(t, node), 'none');
+});
+
+test('20. a viewer review on the head commit is current, however many earlier ones it follows', async (t) => {
+  const node = spec(321, '[TAP-100] Trip export spec', {
+    reviews: [review(VIEWER, OLD_HEAD), review(VIEWER, HEAD)],
+  });
+  assert.equal(await reviewOf(t, node), 'current');
+});
+
+test('21. a viewer review only on an earlier commit is stale', async (t) => {
+  const node = spec(321, '[TAP-100] Trip export spec', {
+    reviews: [review(VIEWER, OLD_HEAD)],
+    head: 'oid-moved-on',
+  });
+  assert.equal(await reviewOf(t, node), 'stale');
+});
+
+test('22. another user reviewing the head commit leaves the viewer at none', async (t) => {
+  const node = spec(321, '[TAP-100] Trip export spec', { reviews: [review('bob', HEAD)] });
+  startAt(t);
+  githubDouble(t, { specs: [node] });
+  const result = await load();
+  assert.equal(result.specs[0].review, 'none');
+  assert.equal(result.specs[0].reviewsByOthers, 1, 'the count of others is unchanged');
+});
+
+for (const [label, viewer] of [
+  ['no viewer at all', null],
+  ['a viewer without a login', { login: null }],
+]) {
+  test(`23. ${label} makes every spec none and does not throw`, async (t) => {
+    startAt(t);
+    githubDouble(t, {
+      viewer,
+      specs: [
+        spec(322, '[TAP-101] Other spec', { reviews: [review(VIEWER, HEAD)] }),
+        spec(321, '[TAP-100] Trip export spec', { reviews: [review(VIEWER, OLD_HEAD)] }),
+      ],
+    });
+    const result = await load();
+    assert.equal(result.available, true);
+    assert.deepEqual(
+      result.specs.map(({ review: state }) => state),
+      ['none', 'none'],
+    );
+  });
+}
+
+test('24. the spec query asks for the viewer, the head commit and each review commit', async (t) => {
+  startAt(t);
+  const github = githubDouble(t, { specs: [spec(321, '[TAP-100] Trip export spec')] });
+  await load();
+  const [first] = github.posts;
+  assert.match(first.query, /viewer\s*\{\s*login\s*\}/);
+  assert.match(first.query, /\bheadRefOid\b/);
+  assert.match(first.query, /commit\s*\{\s*oid\s*\}/);
+  assert.match(first.query, /reviews\(\s*last\s*:\s*100\b/, 'the newest reviews are the ones seen');
 });

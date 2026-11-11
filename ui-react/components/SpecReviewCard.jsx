@@ -3,8 +3,15 @@
 // starts nothing itself). Presentational only: the panel owns the feed and the dialog.
 import { ClaudeIcon } from './ClaudeIcon.jsx';
 
+// The viewer's own review of this PR as a chip. The words carry the meaning; warn marks new commits.
+const REVIEW_CHIPS = {
+  current: { text: 'Reviewed' },
+  stale: { text: 'New commits since your review', tone: 'warn' },
+};
+
 export function SpecReviewCard({ spec, jiraBase, onOpenClaude }) {
   const [firstKey] = spec.keys;
+  const reviewChip = REVIEW_CHIPS[spec.review];
   return (
     <article className="board-card spec-review-card" data-testid={`prs-spec-${spec.number}`}>
       <div className="board-card-top">
@@ -23,6 +30,15 @@ export function SpecReviewCard({ spec, jiraBase, onOpenClaude }) {
         {spec.draft && (
           <span className="board-chip" data-tone="warn">
             Draft
+          </span>
+        )}
+        {reviewChip && (
+          <span
+            className="board-chip"
+            data-tone={reviewChip.tone}
+            data-testid={`prs-spec-review-${spec.number}`}
+          >
+            {reviewChip.text}
           </span>
         )}
         <span className="board-card-stat" data-testid={`prs-spec-age-${spec.number}`}>
