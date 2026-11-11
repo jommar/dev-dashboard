@@ -1927,16 +1927,16 @@ starting a copy. If one is wrong, the fix is a single constant or rule: the id p
 ## Bot bar
 
 A strip of small animated mascots runs along the bottom of every screen once setup is complete (the
-Settings-only setup mode has none): one **bot per Claude session that belongs to a PR or its code
-review**, so you can see at a glance which ones are working and which need you. It is an overlay
+Settings-only setup mode has none): one **bot per Claude session** (investigate, implement,
+review, groom or e2e check), so you can see at a glance which ones are working and which need you. It is an overlay
 (`position: fixed`, transparent, and it ignores the pointer except on the bots), so it takes no room,
 never scrolls the page and leaves every screen's height and viewport fill unchanged. It is hidden
 while there is no session to show.
 
-- **Which sessions.** The implement, review and e2e check sessions of each ticket (the ones tied to PRs
-  and code review, and the [E2E check](#e2e-check)), **of tickets in an active Jira sprint only**. The
-  phases live in one constant, `BOT_PHASES` in [`ui/bot-bar.js`](ui/bot-bar.js); the investigate and
-  groom sessions are not shown. An e2e bot is keyed `<KEY>:e2e` and drawn after the ticket's review bot. A session whose
+- **Which sessions.** Every Claude session of each ticket (investigate, implement, review, groom and the
+  [E2E check](#e2e-check)), **of tickets in an active Jira sprint only**. The sessions live in one
+  table, `SESSIONS` in [`ui/bot-bar.js`](ui/bot-bar.js) (`BOT_PHASES` is derived from it), which is also the
+  order a ticket's bots are drawn in; a new kind of session is one new row. A bot is keyed `<KEY>:<phase>` (an e2e bot `<KEY>:e2e`). A session whose
   state is `none` (never started) or `unknown` (the CLI listing could not be read) has no bot, and neither
   does a session of a ticket outside the active sprint, which also keeps old finished sessions off the bar.
 - **The active sprint.** "Active" is the rule My Tickets and Home use (a sprint Jira reports as

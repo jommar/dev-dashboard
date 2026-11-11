@@ -1,19 +1,17 @@
 // bot-bar.js — the pure rules behind the bot bar, the strip of mascots along the bottom of every
-// screen, one per Claude session that belongs to a PR or its code review.
+// screen, one per Claude session (investigate, implement, review, groom or e2e check).
 //
 // Nothing here touches the DOM, a timer or the network. The bar polls GET /api/claude/tickets
 // (the per-ticket entries `useClaudeTickets` holds) and these functions turn that map into the
 // bots to draw: which sessions count, the state each shows, which mascot each one is, where it
 // roams or rests, and when a finished one leaves.
 
-// The ONE place that says which sessions get a bot: the phases tied to PRs and code review, and the
-// e2e check. An entry also carries investigate (the planning phase) and groom; they are left out, and
-// adding a name here is all it takes to bring one in.
-export const BOT_PHASES = ['implement', 'review', 'e2e'];
-
-// Every session an entry can describe, in the order a ticket's bots are drawn. A ticket's workflow
-// entry is the session of its current phase (`entry.phase`), so a ticket has one implement or
-// investigate session at a time; review, groom and e2e are side sessions with their own `{ state, reason }`.
+// Every session an entry can describe, in the order a ticket's bots are drawn, each with how to read
+// it off the entry. A ticket's workflow entry is the session of its current phase (`entry.phase`), so a
+// ticket has one implement or investigate session at a time; review, groom and e2e are side sessions
+// with their own `{ state, reason }`. This table is the ONE place that says which sessions get a bot:
+// every row does, while it has a state to show, so a new kind of session is one new row (plus its field
+// on the entry) and no second list to keep in step.
 const IMPLEMENT = 'implement-plan';
 const INVESTIGATE = 'investigate-and-plan';
 const SESSIONS = [
@@ -23,6 +21,7 @@ const SESSIONS = [
   ['groom', (entry) => entry.groom ?? null],
   ['e2e', (entry) => entry.e2e ?? null],
 ];
+export const BOT_PHASES = Object.freeze(SESSIONS.map(([phase]) => phase));
 
 // A bot shows one of four states. `none` (never started) and `unknown` (the CLI listing could not
 // be read) have no mascot, so a session in either is not listed.
@@ -59,7 +58,7 @@ export function botsFromTickets(response) {
     .flatMap(([ticket, entry]) =>
       entry && typeof entry === 'object'
         ? SESSIONS.flatMap(([phase, read]) => {
-            const session = BOT_PHASES.includes(phase) ? read(entry) : null;
+            const session = read(entry);
             const state = BOT_STATES[session?.state];
             return state
               ? [
@@ -184,11 +183,10 @@ export function sessionStates(response) {
   if (!tickets || typeof tickets !== 'object') return states;
   for (const [ticket, entry] of Object.entries(tickets))
     if (entry && typeof entry === 'object')
-      for (const [phase, read] of SESSIONS)
-        if (BOT_PHASES.includes(phase)) {
-          const session = read(entry);
-          if (typeof session?.state === 'string') states.set(botKey(ticket, phase), session.state);
-        }
+      for (const [phase, read] of SESSIONS) {
+        const session = read(entry);
+        if (typeof session?.state === 'string') states.set(botKey(ticket, phase), session.state);
+      }
   return states;
 }
 

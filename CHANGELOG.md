@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The bot bar now shows a mascot for every Claude session while it runs, not only implement, review and
+  e2e: investigate (`investigate-and-plan`) and groom sessions get a bot too, keyed `<KEY>:investigate`
+  and `<KEY>:groom` and drawn in that order around the others. A bot opens the Claude dialog (review
+  bots still open the review dialog). The active-sprint filter is unchanged.
 - DevTools browsers now launch headless (`--headless=new`) by default, because a visible window kept
   taking the desktop focus while an agent drove it. `POST /api/devtools/browsers` takes an optional
   boolean `headed`; `true` opens a normal visible window, anything else that is not a boolean is 400

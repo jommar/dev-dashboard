@@ -113,11 +113,11 @@ screens' polling and shared board contracts below remain unchanged.
 
 `ui-react/components/BotBar.jsx` (mounted once in `AppShell`, only once setup is ready) is a
 `position: fixed`, transparent strip of mascots along the bottom of every screen, one per Claude
-implement, review or e2e check session. It is an overlay: `pointer-events: none` on the strip and `auto` on the
+session of any kind (investigate, implement, review, groom or e2e check). It is an overlay: `pointer-events: none` on the strip and `auto` on the
 bots, z-index under the tooltip and dialogs, no change to any screen's height or the viewport-fill
 rule; keep it that way, and never put a dialog inside the strip (it would inherit the
-`pointer-events: none`). Which phases get a bot is the single constant `BOT_PHASES` in
-`ui/bot-bar.js` (`implement`, `review`, `e2e`; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`), with the state mapping, the done time to live and the pure helpers; `none` and
+`pointer-events: none`). Which sessions get a bot is the single `SESSIONS` table in
+`ui/bot-bar.js` (every row does; `BOT_PHASES` is derived from it, so a new kind of session is one new row there, never a second list) (`investigate`, `implement`, `review`, `groom`, `e2e`: every session an entry carries, in draw order; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`; every phase but `review` opens `ClaudeDialog`), with the state mapping, the done time to live and the pure helpers; `none` and
 `unknown` get no bot. A bot also needs its ticket in an active Jira sprint: the pure filter
 `inActiveSprint` is applied to the sessions with the keys `useActiveSprintKeys` gets from
 `GET /api/active-sprint-tickets` (`fetchActiveSprintKeys` in `backend/jira.mjs`; per-ticket answers

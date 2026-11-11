@@ -1,5 +1,5 @@
 // BotBar.jsx — the strip of mascots along the bottom of every screen: one bot per Claude session
-// that belongs to a PR or its code review (BOT_PHASES in ui/bot-bar.js says which), each in the
+// (investigate, implement, review, groom or e2e check; BOT_PHASES in ui/bot-bar.js says which), each in the
 // state of that session. A bot is a button: it opens the same Claude dialog the My Tickets card and
 // the PR card open. The strip is an overlay (position: fixed, see bot-bar.css) and takes no room, so
 // no screen's height or its viewport-fill layout changes.
@@ -273,7 +273,7 @@ export function BotBar() {
           onClose={close}
         />
       )}
-      {(open?.phase === 'implement' || open?.phase === 'e2e') && (
+      {open && open.phase !== 'review' && (
         <ClaudeDialog
           key={open.ticket}
           ticketKey={open.ticket}

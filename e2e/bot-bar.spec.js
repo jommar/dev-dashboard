@@ -2,14 +2,14 @@ import { test, expect } from './fixtures.js';
 import { claudeEntry, settingsData } from './data.js';
 import { roamFor, walkStretch } from '../ui/bot-bar.js';
 
-// The bot bar: one mascot per implement or review Claude session of a ticket in the active Jira
-// sprint, on every screen, polling /api/claude/tickets itself and asking /api/active-sprint-tickets
+// The bot bar: one mascot per Claude session (investigate, implement, review, groom, e2e) of a ticket
+// in the active Jira sprint, on every screen, polling /api/claude/tickets itself and asking /api/active-sprint-tickets
 // which of its tickets are in an active sprint. Invented tickets only.
 //   BOT-1  implement session working      -> "BOT-1 implement: working"
 //   BOT-2  review session waiting         -> "BOT-2 review: idle"
 //   BOT-3  review session done            -> "BOT-3 review: done"
 //   BOT-4  implement session failed       -> "BOT-4 implement: failed"
-//   BOT-5  investigate working, groom working, a review that never started: no bot
+//   BOT-5  nothing ever started (investigate none, groom none, review none): no bot
 //   BOT-6  implement session unknown: no bot
 //   BOT-7  review working and BOT-8 implement done, but in no active sprint: no bot
 //   The active sprint holds BOT-1 to BOT-6.
@@ -22,9 +22,7 @@ const SESSIONS = {
     review: { state: 'done', reason: 'finished' },
   }),
   'BOT-4': claudeEntry('failed', 'ended_without_flag', { phase: 'implement-plan' }),
-  'BOT-5': claudeEntry('working', 'running', {
-    groom: { state: 'working', reason: 'running' },
-  }),
+  'BOT-5': claudeEntry('none', null),
   'BOT-6': claudeEntry('unknown', 'listing_unavailable', { phase: 'implement-plan' }),
   'BOT-7': claudeEntry('none', null, { review: { state: 'working', reason: 'running' } }),
   'BOT-8': claudeEntry('done', 'implemented', { phase: 'implement-plan' }),
@@ -121,6 +119,31 @@ test('an e2e bot opens the Claude dialog on the E2E row, and a finished one can 
   await page.getByTestId('bot-bar-dismiss-BOT-10-e2e').click();
   await expect(bots(page)).toHaveCount(1);
   await expect(page.getByTestId('bot-bar-bot-BOT-10-e2e')).toHaveCount(0);
+});
+
+test('investigate and groom sessions get a bot too, and the bot opens the Claude dialog', async ({
+  page,
+  dashboard,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  seed(dashboard, {
+    sessions: {
+      'BOT-11': claudeEntry('working', 'running'),
+      'BOT-12': claudeEntry('none', null, { groom: { state: 'working', reason: 'running' } }),
+    },
+    sprint: ['BOT-11', 'BOT-12'],
+  });
+  await page.goto('/#/services');
+  await expect(bots(page)).toHaveCount(2);
+  await expect(page.getByTestId('bot-bar-bot-BOT-11-investigate')).toHaveAccessibleName(
+    'BOT-11 investigate: working',
+  );
+  await expect(page.getByTestId('bot-bar-bot-BOT-12-groom')).toHaveAccessibleName(
+    'BOT-12 groom: working',
+  );
+  await page.getByTestId('bot-bar-bot-BOT-11-investigate').click();
+  await expect(page.getByTestId('claude-dialog')).toBeVisible();
+  await expect(page.getByTestId('claude-dialog-title')).toContainText('BOT-11');
 });
 
 test('the bar is absent when no session qualifies, and a session appears on the next poll', async ({

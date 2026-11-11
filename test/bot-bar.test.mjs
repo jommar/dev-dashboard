@@ -202,8 +202,8 @@ test('restingSpots keep done and failed bots apart and never reorder them', () =
   );
 });
 
-test('only the implement, review and e2e sessions get a bot', () => {
-  assert.deepEqual(BOT_PHASES, ['implement', 'review', 'e2e']);
+test('every kind of session gets a bot, in draw order, when it has a state to show', () => {
+  assert.deepEqual(BOT_PHASES, ['investigate', 'implement', 'review', 'groom', 'e2e']);
   const tickets = {
     'TAP-1': entry('investigate-and-plan', 'working'),
     'TAP-2': entry('implement-plan', 'working', {
@@ -213,13 +213,17 @@ test('only the implement, review and e2e sessions get a bot', () => {
     }),
     'TAP-3': entry('implement-plan', 'none'),
     'TAP-4': entry(null, 'none', { groom: { state: 'done', reason: 'finished' } }),
+    'TAP-5': entry('investigate-and-plan', 'unknown'),
   };
   assert.deepEqual(
     botsFromTickets(tickets).map(({ key, state }) => [key, state]),
     [
+      ['TAP-1:investigate', 'working'],
       ['TAP-2:implement', 'working'],
       ['TAP-2:review', 'done'],
+      ['TAP-2:groom', 'working'],
       ['TAP-2:e2e', 'working'],
+      ['TAP-4:groom', 'done'],
     ],
   );
 });
@@ -409,7 +413,7 @@ test('a good sprint answer replaces the keys; a failed or unavailable one keeps 
 
 const states = (entries) => new Map(Object.entries(entries));
 
-test('session states cover implement and review, including the states that get no bot', () => {
+test('session states cover every session, including the states that get no bot', () => {
   const map = sessionStates({
     'TAP-1': entry('implement-plan', 'working', { review: { state: 'none', reason: null } }),
     'TAP-2': entry('investigate-and-plan', 'done', { review: { state: 'done', reason: 'x' } }),
@@ -418,9 +422,13 @@ test('session states cover implement and review, including the states that get n
   assert.deepEqual(Object.fromEntries(map), {
     'TAP-1:implement': 'working',
     'TAP-1:review': 'none',
+    'TAP-1:groom': 'none',
+    'TAP-2:investigate': 'done',
     'TAP-2:review': 'done',
+    'TAP-2:groom': 'none',
     'TAP-3:implement': 'unknown',
     'TAP-3:review': 'none',
+    'TAP-3:groom': 'none',
   });
   assert.equal(sessionStates(null).size, 0);
 });
