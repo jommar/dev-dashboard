@@ -5,12 +5,7 @@ import { once } from 'node:events';
 import * as jira from '../backend/jira.mjs';
 import { createHttpHandler } from '../backend/http-app.mjs';
 import { settingsFixture, accept } from './settings-fixture.mjs';
-import { prOpenListHtml } from '../ui/components/pr-open-section.js';
-import { prApprovalSectionHtml } from '../ui/components/pr-approval-section.js';
-import { prUatPromoteSectionHtml } from '../ui/components/pr-uat-promote-section.js';
-import { ticketCardHtml } from '../ui/components/pr-card.js';
 
-const jiraBase = 'https://jira.example.invalid/browse/';
 const pr = (number, tickets, draft = false, updatedAt = '2026-10-06T12:00:00Z') => ({
   number,
   tickets,
@@ -133,30 +128,12 @@ test('own drafts survive every Jira status while compatible PR inputs and ready 
     [20],
   );
   assert.deepEqual(data.uatPromoteGroups, {});
-  const open = prOpenListHtml(data, jiraBase);
-  assert.match(open, /pr-open-ExampleOrg\/app-16/);
-  assert.doesNotMatch(open, /data-pr-state="draft"|pr-open-ExampleOrg\/app-(13|14)/);
-  const { prDraftSectionHtml } = await import('../ui/components/pr-draft-section.js');
-  const draft = prDraftSectionHtml(data, jiraBase);
-  assert.match(draft, /Your draft PRs/);
-  assert.match(draft, /data-testid="pr-draft-count">5</);
-  assert.match(draft, /data-testid="pr-draft-group-count-DEMO-1">2</);
-  assert.match(draft, /data-testid="pr-draft-view-diff-ExampleOrg\/app-12"/);
-  assert.ok(
-    draft.indexOf('pr-draft-ExampleOrg/app-12') < draft.indexOf('pr-draft-ExampleOrg/app-11'),
-  );
-  assert.doesNotMatch(draft, /pr-draft-ExampleOrg\/app-(16|20|21)"/);
-  assert.match(
-    prDraftSectionHtml({ ...data, draftPrs: [], draftGroups: {} }, jiraBase),
-    /No draft PRs/,
-  );
   unavailable = true;
   const outage = await request();
   assert.equal(outage.status, 200);
   assert.equal(outage.data.prsAvailable, false);
   assert.deepEqual(outage.data.draftPrs, []);
   assert.deepEqual(outage.data.draftGroups, {});
-  assert.match(prDraftSectionHtml(outage.data, jiraBase), /GitHub is unavailable/);
 });
 
 test(
@@ -568,15 +545,6 @@ test('Jira public metadata lookup and PR HTTP response carry configured preferre
       assert.deepEqual(retainedTickets, [
         { key: 'DEMO-7', summary: '', status: 'Promote to UAT', sprint: expectedSprint },
       ]);
-      for (const variant of ['pr-open', 'pr-draft', 'pr-approval', 'pr-uat-promote']) {
-        const html = ticketCardHtml('DEMO-7', [pr(33, ['DEMO-7'])], 'Code Review', jiraBase, {
-          variant,
-          sprint: malformedMetadata.sprints['DEMO-7'],
-        });
-        assert.match(html, /data-testid="[^"]*-ticket-status-DEMO-7">Code Review</);
-        assert.ok(html.includes(expectedSprint.name));
-        assert.doesNotMatch(html, /Invalid Date|\[object Object\]/);
-      }
     });
   }
   t.mock.method(globalThis, 'fetch', async () => {
@@ -587,82 +555,4 @@ test('Jira public metadata lookup and PR HTTP response carry configured preferre
     statuses: {},
     sprints: {},
   });
-});
-
-test('shared PR headers show optional escaped sprint state and dates in open, draft, approval and UAT sections', async () => {
-  const sprint = {
-    id: 8,
-    name: 'Sprint <img src=x> & "delivery"',
-    state: 'active',
-    startDate: '2026-10-01T12:00:00Z',
-    endDate: '2026-10-14T12:00:00Z',
-  };
-  const own = pr(40, ['DEMO-1']);
-  const draft = pr(41, ['DEMO-1'], true);
-  const data = {
-    prsAvailable: true,
-    prs: [own],
-    groups: { 'DEMO-1': [own] },
-    ticketStatuses: { 'DEMO-1': 'Code Review' },
-    ticketSprints: { 'DEMO-1': sprint },
-    draftPrs: [draft],
-    draftGroups: { 'DEMO-1': [draft] },
-    approvalThreshold: 2,
-    reviewDataAvailable: true,
-    prsNeedingApprovals: [own],
-    approvalGroups: { 'DEMO-1': [own] },
-    approvalTicketStatuses: { 'DEMO-1': 'Ready For Code Review' },
-    approvalTicketSprints: { 'DEMO-1': sprint },
-    uatPromoteAvailable: true,
-    uatPromoteTotal: 1,
-    uatPromoteGroups: { 'DEMO-1': { prs: [own], ticket: { status: 'Promote to UAT', sprint } } },
-  };
-  const check = (html, variant) => {
-    assert.match(
-      html,
-      /Sprint &lt;img src=x&gt; &amp; &quot;delivery&quot;/,
-      `${variant} must escape the sprint name`,
-    );
-    assert.match(html, /data-sprint-state="active"/);
-    assert.match(html, /data-tooltip="active · [^"]*Oct 1[^"]*Oct 14/);
-    assert.match(html, new RegExp(`data-testid="${variant}-ticket-status-DEMO-1"`));
-    assert.match(html, new RegExp(`data-testid="${variant}-group-count-DEMO-1">1<`));
-    assert.match(html, new RegExp(`data-testid="${variant}-updated-ExampleOrg/app-`));
-    assert.doesNotMatch(html, /<img|<script/);
-  };
-  check(prOpenListHtml(data, jiraBase), 'pr-open');
-  const { prDraftSectionHtml } = await import('../ui/components/pr-draft-section.js');
-  check(prDraftSectionHtml(data, jiraBase), 'pr-draft');
-  check(prApprovalSectionHtml(data, jiraBase), 'pr-approval');
-  check(prUatPromoteSectionHtml(data, jiraBase), 'pr-uat-promote');
-  for (const variant of ['pr-open', 'pr-draft', 'pr-approval', 'pr-uat-promote']) {
-    assert.doesNotMatch(
-      ticketCardHtml('DEMO-1', [own], 'Code Review', jiraBase, { variant }),
-      /ticket-sprint|No sprint/,
-    );
-    assert.doesNotMatch(
-      ticketCardHtml('Unticketed', [own], null, jiraBase, { variant, sprint }),
-      /ticket-sprint|Sprint &lt;/,
-    );
-    const future = ticketCardHtml('DEMO-1', [own], 'Code Review', jiraBase, {
-      variant,
-      sprint: { name: 'Next', state: 'future' },
-    });
-    assert.match(future, /data-sprint-state="future"/);
-    assert.doesNotMatch(future, /Invalid Date/);
-  }
-  const without = {
-    ...data,
-    ticketSprints: {},
-    approvalTicketSprints: {},
-    uatPromoteGroups: { 'DEMO-1': { prs: [own], ticket: { status: 'Promote to UAT' } } },
-  };
-  for (const html of [
-    prOpenListHtml(without, jiraBase),
-    prDraftSectionHtml(without, jiraBase),
-    prApprovalSectionHtml(without, jiraBase),
-    prUatPromoteSectionHtml(without, jiraBase),
-  ]) {
-    assert.doesNotMatch(html, /ticket-sprint|No sprint/);
-  }
 });

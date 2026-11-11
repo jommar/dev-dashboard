@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DIFF_TMP_NS, getOriginDiff, parsePrNumber, parseRepoRef } from '../backend/diff.mjs';
-import { prItemHtml } from '../ui/components/pr-card.js';
 
 test('copy diff accepts only configured repositories and positive PR numbers', () => {
   assert.equal(parseRepoRef('TransActComm/Portage-backend'), 'Portage-backend');
@@ -74,17 +73,4 @@ test('copy diff cleans up its temporary ref when git diff fails', async () => {
   );
   assert.equal(calls.at(-1)[0], 'update-ref');
   assert.deepEqual(calls.at(-1).slice(1, 3), ['-d', calls[1].at(-1).split(':')[1]]);
-});
-
-test('PR card renders an accessible diff viewer button', () => {
-  const html = prItemHtml(
-    { repo: 'TransActComm/TravelTracker', number: 99 },
-    { variant: 'pr-open' },
-  );
-  assert.match(html, /class="[^"]*\bview-diff\b[^"]*"/);
-  assert.match(html, /data-repo="TransActComm\/TravelTracker"/);
-  assert.match(html, /data-number="99"/);
-  assert.match(html, /aria-label="View diff vs origin\/ops\/development"/);
-  assert.match(html, /data-testid="pr-open-view-diff-TransActComm\/TravelTracker-99"/);
-  assert.doesNotMatch(html, /class="[^"]*copy-diff/);
 });

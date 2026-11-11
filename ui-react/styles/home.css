@@ -430,7 +430,7 @@ button.sprint-legend-note:hover {
   letter-spacing: 0;
 }
 
-/* PR rows come from pr-card.js's prItemHtml so the two views can't drift on
+/* PR rows come from PrCard.jsx's PrItem so the two views can't drift on
    how a PR reads. It ships only the coloured state rail, so give it the same
    card surface the ticket rows have. */
 .action-group .pr-item {

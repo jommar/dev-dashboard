@@ -8,7 +8,7 @@ import {
   commentSummaryText,
   reviewText,
 } from '../ui/ticket-board.js';
-import { jiraStatusKind } from '../ui/components/pr-card.js';
+import { jiraStatusKind } from '../ui/jira-status.js';
 import { deepFreeze } from '../e2e/deep-freeze.mjs';
 
 // Ranks inside each band, in workflow order (lower-cased names).

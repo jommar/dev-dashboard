@@ -1,10 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { jiraStatusKind } from '../ui/jira-status.js';
-import { jiraStatusKind as legacyJiraStatusKind } from '../ui/components/pr-card.js';
 
-test('the pure Jira classifier preserves coercion, color bands and the legacy export binding', () => {
-  assert.equal(legacyJiraStatusKind, jiraStatusKind);
+test('the pure Jira classifier preserves coercion and color bands', () => {
   for (const [status, kind] of [
     ['To Do', 'queued'],
     ['  SELECTED FOR DEVELOPMENT\t', 'queued'],
