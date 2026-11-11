@@ -7,9 +7,13 @@ import {
   FADE_MS,
   NO_MEMORY,
   CALLOUT_AUTO_HIDE_MS,
-  DONE_ZONE_MIN_PX,
   DONE_ZONE_SHARE,
+  ZONES,
+  ZONES_MIN_WIDTH_PX,
   walkStretch,
+  zoneBounds,
+  zoneOf,
+  zoneSpots,
   CALLOUT_EXIT_MS,
   CALLOUT_PENDING_MS,
   CALLOUT_TEXT,
@@ -517,83 +521,121 @@ test('the done stroll is the slowest walk, from one named factor next to the idl
 
 test('a lane is styled with the custom properties bot-bar.css reads', () => {
   const roam = roamFor('TAP-1:review');
-  const style = laneStyle(roam, 42.5, 60);
-  assert.deepEqual(style, {
+  assert.deepEqual(laneStyle(roam, 42.5), {
     '--bot-from': roam.from,
     '--bot-range': roam.range,
     '--bot-zone-from': roam.zoneFrom,
     '--bot-zone-range': roam.zoneRange,
-    '--bot-zone-share': DONE_ZONE_SHARE,
-    '--bot-zone-min': DONE_ZONE_MIN_PX,
+    '--bot-zone-left-share': ZONES.left.share,
+    '--bot-zone-left-min': ZONES.left.minPx,
+    '--bot-zone-right-share': ZONES.right.share,
+    '--bot-zone-right-min': ZONES.right.minPx,
     '--bot-dur': roam.seconds,
     '--bot-dur-idle': roam.idleSeconds,
     '--bot-dur-stroll': roam.strollSeconds,
     '--bot-phase': roam.phase,
     '--bot-rest': 42.5,
-    '--bot-rest-still': 60,
   });
-  assert.equal(laneStyle(roam, 42.5)['--bot-rest-still'], 42.5, 'one place when no other is given');
 });
 
-test('a done bot walks inside the left zone, any other bot the whole bar, each by its own key', () => {
-  assert.equal(DONE_ZONE_SHARE, 30);
-  assert.equal(DONE_ZONE_MIN_PX, 240);
-  for (const width of [320, 600, 1024, 1440, 2560]) {
-    const edge = width < 600 ? 40 : 88;
-    const zoneEnd = Math.min(Math.max(240, width * 0.3), width - edge);
+const ZONE_TABLE = [
+  // state, zone, where the zone is on a 1440px bar
+  ['done', 'left', 0, 432],
+  ['working', 'center', 432, 1008],
+  ['waiting', 'center', 432, 1008],
+  ['failed', 'right', 1008, 1440],
+];
+
+test('the zones: numbers, shares, and which state lives in which', () => {
+  assert.deepEqual(ZONES, {
+    left: { share: 20, minPx: 200, spread: 35 },
+    center: { share: 60, minPx: 200, spread: 12 },
+    right: { share: 20, minPx: 200, spread: 35 },
+  });
+  assert.equal(ZONES_MIN_WIDTH_PX, 600);
+  assert.equal(DONE_ZONE_SHARE, 20);
+  assert.deepEqual(
+    ['done', 'working', 'waiting', 'failed'].map((state) => zoneOf(state)),
+    ['left', 'center', 'center', 'right'],
+  );
+  assert.deepEqual(
+    ['done', 'working', 'waiting', 'failed'].map((state) => zoneOf(state, true)),
+    ['all', 'all', 'all', 'all'],
+  );
+  assert.deepEqual(zoneBounds('left', 1440), { start: 0, end: 288 });
+  assert.deepEqual(zoneBounds('center', 1440), { start: 288, end: 1152 });
+  assert.deepEqual(zoneBounds('right', 1440), { start: 1152, end: 1440 });
+  // The minimums bite below 1000px, the centre keeps its own 200px at 600px (where zones stop).
+  assert.deepEqual(zoneBounds('left', 600), { start: 0, end: 200 });
+  assert.deepEqual(zoneBounds('center', 600), { start: 200, end: 400 });
+});
+
+test('every state walks and stands inside its own zone, deterministically; a state change moves it', () => {
+  for (const width of [600, 700, 1024, 1440, 2560]) {
+    const edge = 88;
     for (const key of keys(200)) {
       const roam = roamFor(key);
-      assert.ok(roam.zoneRange >= 55 && roam.zoneRange <= 100);
-      assert.ok(roam.zoneFrom >= 0 && roam.zoneFrom + roam.zoneRange <= 100);
-      const done = walkStretch(roam, 'done', width, { edge });
-      assert.ok(done.min >= edge - 1e-9, `${width}: starts at or after the left margin`);
-      assert.ok(done.max + 56 <= zoneEnd + 1e-9, `${width}: ends inside the zone (${zoneEnd})`);
-      assert.deepEqual(done, walkStretch(roamFor(key), 'done', width, { edge }), 'deterministic');
-      for (const state of ['working', 'waiting']) {
+      for (const [state, zone] of ZONE_TABLE.map(([s, z]) => [s, z])) {
         const walk = walkStretch(roam, state, width, { edge });
-        assert.ok(walk.min >= edge - 1e-9 && walk.max + 56 <= width - edge + 1e-9);
+        const bounds = zoneBounds(zone, width);
+        const start = bounds.start === 0 ? edge : bounds.start;
+        const end = bounds.end === width ? width - edge : bounds.end;
+        assert.ok(walk.min >= start - 1e-9, `${state} at ${width}: starts inside its zone`);
+        assert.ok(walk.max + 56 <= end + 1e-9, `${state} at ${width}: ends inside its zone`);
+        assert.deepEqual(walk, walkStretch(roamFor(key), state, width, { edge }), 'deterministic');
+      }
+      // The same session in two states is in two zones: a state change moves it, whole.
+      const done = walkStretch(roam, 'done', width, { edge });
+      const working = walkStretch(roam, 'working', width, { edge });
+      const failed = walkStretch(roam, 'failed', width, { edge });
+      assert.ok(done.max + 56 <= working.zone.start + 1e-9, 'done lies left of working');
+      assert.ok(working.max + 56 <= failed.zone.start + 1e-9, 'working lies left of failed');
+    }
+  }
+  // Working and idle share the centre but walk their own stretches, by key.
+  const stretches = new Set(keys(50).map((key) => walkStretch(roamFor(key), 'working', 1440).min));
+  assert.ok(stretches.size > 20, 'working bots do not collapse on one spot');
+});
+
+test('under 600px the zones collapse: every state has the whole width between the edge margins', () => {
+  for (const width of [320, 480, 599]) {
+    for (const key of keys(100)) {
+      const roam = roamFor(key);
+      for (const state of ['done', 'working', 'waiting', 'failed']) {
+        const walk = walkStretch(roam, state, width, { edge: 40 });
+        assert.deepEqual(walk.zone, { start: 0, end: width });
+        assert.ok(walk.min >= 40 - 1e-9 && walk.max + 56 <= width - 40 + 1e-9);
+        assert.equal(walk.room, width - 80 - 56);
       }
     }
   }
-  // Other bots are not kept out of the zone, and their walk does not depend on it: some reach far past it.
-  const wide = keys(200).map((key) => walkStretch(roamFor(key), 'working', 1440).max);
-  assert.ok(
-    wide.some((max) => max > 432),
-    'a working bot can walk beyond the zone',
-  );
-  assert.equal(walkStretch(roamFor('TAP-1:review'), 'failed', 1440).room, 1440 - 56 - 176);
 });
 
-test('done bots get places spread inside the zone, and failed bots stay in range', () => {
-  const done = keys(6).map((key) => ({ key, state: 'done' }));
-  const spots = restingSpots(done, 35);
-  const row = [...spots.values()].sort((a, b) => a - b);
-  assert.ok(row[0] >= 0 && row.at(-1) <= 100);
-  for (let i = 1; i < row.length; i += 1) assert.ok(row[i] > row[i - 1], 'no two on one spot');
-  const failed = restingSpots(keys(12).map((key) => ({ key, state: 'failed' })));
-  assert.ok([...failed.values()].every((at) => at >= 0 && at <= 100));
-});
-
-test('only bots that stand are spread: failed bots among themselves, every bot when motion is reduced', () => {
+test('resting places are spread inside each zone, apart from the others zones', () => {
   const bots = [
-    { key: 'TAP-1:implement', state: 'done' },
-    { key: 'TAP-2:implement', state: 'failed' },
-    { key: 'TAP-3:review', state: 'done' },
-    { key: 'TAP-4:review', state: 'failed' },
-    { key: 'TAP-5:review', state: 'working' },
+    ...keys(6).map((key) => ({ key: `${key}:d`, state: 'done' })),
+    ...keys(5).map((key) => ({ key: `${key}:w`, state: 'working' })),
+    ...keys(3).map((key) => ({ key: `${key}:i`, state: 'waiting' })),
+    ...keys(4).map((key) => ({ key: `${key}:f`, state: 'failed' })),
   ];
-  const standing = restingSpots(bots.filter(({ state }) => !walks(state)));
-  assert.deepEqual([...standing.keys()].sort(), ['TAP-2:implement', 'TAP-4:review']);
-  // Strolling bots leave the failed ones where they would stand alone.
-  const failedOnly = restingSpots(bots.filter(({ state }) => state === 'failed'));
-  assert.deepEqual(standing, failedOnly);
-  const still = restingSpots(bots);
-  assert.equal(still.size, 5, 'under reduced motion every bot has a place');
-  const row = [...still.values()].sort((a, b) => a - b);
-  for (let i = 1; i < row.length; i += 1) assert.ok(row[i] - row[i - 1] >= 11.9);
-  // The stroll's range stays in the bar like any walk.
-  for (const { key } of bots) {
-    const roam = roamFor(key);
-    assert.ok(roam.from >= 0 && roam.from + roam.range <= 100);
+  const spots = zoneSpots(bots);
+  assert.equal(spots.size, bots.length);
+  assert.ok([...spots.values()].every((at) => at >= 0 && at <= 100));
+  for (const zone of ['left', 'center', 'right']) {
+    const row = bots
+      .filter(({ state }) => zoneOf(state) === zone)
+      .map(({ key }) => spots.get(key))
+      .sort((a, b) => a - b);
+    for (let i = 1; i < row.length; i += 1)
+      assert.ok(row[i] > row[i - 1], `${zone}: no shared spot`);
   }
+  // Working and idle bots spread together in the centre.
+  const centre = bots.filter(({ state }) => state === 'working' || state === 'waiting');
+  const row = centre.map(({ key }) => spots.get(key)).sort((a, b) => a - b);
+  for (let i = 1; i < row.length; i += 1)
+    assert.ok(row[i] - row[i - 1] >= Math.min(ZONES.center.spread, 100 / (row.length - 1)) - 0.2);
+  // Narrow: one zone for everyone.
+  const narrow = zoneSpots(bots, true);
+  const all = [...narrow.values()].sort((a, b) => a - b);
+  assert.equal(new Set(all).size, bots.length);
 });

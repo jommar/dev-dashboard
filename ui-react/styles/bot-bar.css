@@ -5,18 +5,24 @@
    one) takes it. It sits under the tooltip and the popups, and under every dialog, which is in the
    top layer.
 
+   Every state has its own zone along the bar, and a bot never leaves it: done on the left, working
+   and idle (waiting) in the centre, failed on the right (the shares are ZONES in ui/bot-bar.js, handed
+   in as --bot-zone-left-* and --bot-zone-right-*; the centre is what is left). Nothing marks a zone.
+   Under 600px wide the zones collapse and every bot has the whole width. A bot that changes state
+   jumps to its new zone: a transition longer than the contract's 200ms would be a slide.
+
    Where a bot stands is computed once, in ui/bot-bar.js, from its session key and handed in as
-   plain numbers (percent of the room the bar leaves a bot, never px):
-     --bot-from / --bot-range  the stretch a working or waiting bot walks
+   plain numbers (percent of the room its zone leaves a bot, never px):
+     --bot-from / --bot-range  the stretch a working or waiting bot walks in the centre
+     --bot-zone-from / --bot-zone-range   the stretch a done bot walks in the left zone
      --bot-dur / --bot-dur-idle / --bot-dur-stroll   seconds of one walk there and back
      --bot-phase               how far in it starts (0 to 1)
-     --bot-rest                where a failed bot stands
-     --bot-rest-still          where every bot stands when motion is reduced
+     --bot-rest                where it stands (a failed bot, or any bot when motion is reduced)
    Working bots patrol (back and forth, no stop), waiting (idle) ones wander (slow, a rest at each end),
    done ones stroll (the slowest: a rest at each end and one on the way out) and failed ones stand
-   slumped at --bot-rest. Walking is two keyframe sets on one clock: the lane slides (translateX), and the face flips
-   (scaleX) at the same percentages, so a bot turns exactly at each end. Transform only, no script.
-   Without motion every bot, walkers included, stands still at its --bot-rest-still. */
+   slumped at --bot-rest. Walking is two keyframe sets on one clock: the lane slides (translateX), and
+   the face flips (scaleX) at the same percentages, so a bot turns exactly at each end. Transform
+   only, no script. Without motion every bot stands still at its --bot-rest. */
 .bot-bar {
   --bot-bar-size: 56px;
   /* Walkers keep this far from each side, so a callout (centred on its bot, at most twice this plus
@@ -34,33 +40,45 @@
 
 /* The lane stands still at --bot-rest; a walker's lane (below) is the stretch it walks. */
 .bot-bar-lane {
-  /* The room a bot's left edge has, in the unit it is used in (a percentage of the bar's width). */
-  --bot-room: calc(100% - var(--bot-bar-size) - 2 * var(--bot-bar-edge, 0px));
-  /* The done zone: the left of the bar, a share of its width but never less than a minimum, and
-     never past the right edge margin. A done bot's left edge has this much room inside it. */
-  --bot-zone: min(
-    max(calc(var(--bot-zone-min, 240) * 1px), calc(var(--bot-zone-share, 30) * 1%)),
-    calc(100% - var(--bot-bar-edge, 0px))
+  /* The zones, as lengths of the bar: the left and right ones are a share of its width but never less
+     than a minimum, and the centre is what they leave. Each zone then gives a bot's left edge a room:
+     --bot-zs is where the room starts and --bot-zroom how long it is (less one bot, and less the edge
+     margin at the bar's own ends). The state picks its zone below. */
+  --bot-zl: max(
+    calc(var(--bot-zone-left-share, 20) * 1%),
+    calc(var(--bot-zone-left-min, 200) * 1px)
   );
-  --bot-done-room: max(0px, calc(var(--bot-zone) - var(--bot-bar-edge, 0px) - var(--bot-bar-size)));
+  --bot-zr: max(
+    calc(var(--bot-zone-right-share, 20) * 1%),
+    calc(var(--bot-zone-right-min, 200) * 1px)
+  );
+  --bot-zs: var(--bot-bar-edge, 0px);
+  --bot-zroom: max(0px, calc(100% - var(--bot-bar-size) - 2 * var(--bot-bar-edge, 0px)));
   position: absolute;
   bottom: calc(var(--s1) + env(safe-area-inset-bottom, 0px));
-  left: calc(
-    var(--bot-bar-edge, 0px) + var(--bot-rest-still, var(--bot-rest, 0)) / 100 * var(--bot-room)
-  );
+  left: calc(var(--bot-zs) + var(--bot-rest, 0) / 100 * var(--bot-zroom));
   width: var(--bot-bar-size);
   height: var(--bot-bar-size);
   z-index: var(--bot-layer, auto);
   pointer-events: none;
 }
-/* A done bot stands in the zone. Bots can overlap there when there are many: the one you point at or
-   focus comes to the front, so its dismiss button stays reachable. */
-.bot-bar-lane[data-state='done'] {
-  left: calc(
-    var(--bot-bar-edge, 0px) + var(--bot-rest-still, var(--bot-rest, 0)) / 100 *
-      var(--bot-done-room)
-  );
+@media (min-width: 600px) {
+  .bot-bar-lane[data-state='done'] {
+    --bot-zs: var(--bot-bar-edge, 0px);
+    --bot-zroom: max(0px, calc(var(--bot-zl) - var(--bot-bar-edge, 0px) - var(--bot-bar-size)));
+  }
+  .bot-bar-lane[data-state='working'],
+  .bot-bar-lane[data-state='waiting'] {
+    --bot-zs: var(--bot-zl);
+    --bot-zroom: max(0px, calc(100% - var(--bot-zl) - var(--bot-zr) - var(--bot-bar-size)));
+  }
+  .bot-bar-lane[data-state='failed'] {
+    --bot-zs: calc(100% - var(--bot-zr));
+    --bot-zroom: max(0px, calc(var(--bot-zr) - var(--bot-bar-edge, 0px) - var(--bot-bar-size)));
+  }
 }
+/* Bots can overlap in a crowded zone, which is never widened: the one you point at or focus comes to
+   the front, so its dismiss button stays reachable. */
 .bot-bar-lane:is(:hover, :focus-within) {
   z-index: 100;
 }
@@ -212,19 +230,15 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  /* A walker's lane is its stretch of its own zone (from and range are percentages of the room). */
   .bot-bar-lane[data-state='working'],
   .bot-bar-lane[data-state='waiting'] {
-    left: calc(var(--bot-bar-edge, 0px) + var(--bot-from) / 100 * var(--bot-room));
-    width: calc(var(--bot-range) / 100 * var(--bot-room));
+    left: calc(var(--bot-zs) + var(--bot-from) / 100 * var(--bot-zroom));
+    width: calc(var(--bot-range) / 100 * var(--bot-zroom));
   }
-  /* A done bot's stroll is inside the done zone. */
   .bot-bar-lane[data-state='done'] {
-    left: calc(var(--bot-bar-edge, 0px) + var(--bot-zone-from) / 100 * var(--bot-done-room));
-    width: calc(var(--bot-zone-range) / 100 * var(--bot-done-room));
-  }
-  /* A failed bot stands where it was put among the failed ones, not among the walkers. */
-  .bot-bar-lane[data-state='failed'] {
-    left: calc(var(--bot-bar-edge, 0px) + var(--bot-rest, 0) / 100 * var(--bot-room));
+    left: calc(var(--bot-zs) + var(--bot-zone-from) / 100 * var(--bot-zroom));
+    width: calc(var(--bot-zone-range) / 100 * var(--bot-zroom));
   }
   /* Working: back and forth with no stop. Waiting (idle): slow, with a rest at each end. */
   .bot-bar-lane[data-state='working'] {

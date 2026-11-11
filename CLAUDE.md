@@ -125,11 +125,18 @@ cached 5 minutes server side, asked again by the browser every `SPRINT_POLL_MS`,
 whose sprint is unknown gets no bot, and on a failed or `available: false` answer the last good key set
 stays; do not show a bot for a ticket the sprint filter has not placed.
 
-Motion: working patrols, waiting (idle) wanders, done strolls (cycle factors `IDLE_CYCLE_FACTOR` and
-`STROLL_CYCLE_FACTOR` in `ui/bot-bar.js`) and only inside the done zone on the left of the bar
-(`DONE_ZONE_SHARE`, 30% of the bar, at least `DONE_ZONE_MIN_PX`, 240px; `walkStretch` mirrors the CSS
-math), failed stands. The zone restricts done bots only: every other state roams or rests anywhere, the
-zone included. Reduced motion stands everyone still. Hover detail is the app's own `DashboardTooltip`
+Motion and zones: working patrols, waiting (idle) wanders, done strolls (cycle factors
+`IDLE_CYCLE_FACTOR` and `STROLL_CYCLE_FACTOR` in `ui/bot-bar.js`), failed stands. Each state is confined to
+its own zone, from the `ZONES` table (`ZONE_OF_STATE`; `DONE_ZONE_SHARE` and `DONE_ZONE_MIN_PX` name the
+done zone's): done on the left 20%, working and waiting in the centre 60%, failed on the right 20%, the
+left and right at least 200px, the centre the remainder, the bar's ends keeping their edge margin. The
+CSS (`--bot-zl`, `--bot-zr`, `--bot-zs`, `--bot-zroom`, per `data-state`) and `walkStretch` /
+`zoneBounds` do the same math; change both together. A state change is a jump, never a slide
+(transitions are capped at 200ms), with lane and phase from the new zone's range. A crowded zone
+overlaps, never widens or shrinks bots, and the hovered or focused bot is raised so its dismiss button
+is reachable. Under 600px (`ZONES_MIN_WIDTH_PX`; the CSS media query and `useNarrow` agree) the zones
+collapse to the whole width with a 40px margin. No zone is drawn. Reduced motion stands everyone still
+at a spread-out place inside their own zone. Hover detail is the app's own `DashboardTooltip`
 (keyboard focus works), never a native `title`, `data-tooltip` or SVG `<title>`. A state change between
 polls raises a callout bubble (`CALLOUT_TEXT`, detection in the pure `stateChanges`, state in
 `useBotCallouts`; never on first load; at most three; the bubble sits outside the mirrored face and only

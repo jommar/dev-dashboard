@@ -1799,14 +1799,24 @@ while there is no session to show.
   shown as **idle** (it needs you) and wanders slowly, resting at each end. `done` **strolls**: the
   slowest walk, a relaxed amble that rests at each end and once halfway out (three times a working
   patrol's length of cycle, `STROLL_CYCLE_FACTOR` in `ui/bot-bar.js`, beside the idle wander's
-  `IDLE_CYCLE_FACTOR`), and only inside the **done zone** on the left of the bar: the zone is 30% of the
-  bar's width, at least 240px (`DONE_ZONE_SHARE` and `DONE_ZONE_MIN_PX`), and a done bot never leaves
-  it. Nothing marks the zone, and it does not keep anyone out: working, idle and failed bots roam or
-  stand anywhere on the bar, the zone included. A bot that turns done jumps into the zone (no tween);
-  many done bots overlap there rather than widen it, and the one you point at or focus comes to the
-  front so its dismiss button stays reachable. `failed` stands slumped where it was put. Walkers keep
-  clear of the screen's edges. With reduced motion every bot stands still, a done one at a spread-out
-  place inside the zone and the others spread over the whole bar.
+  `IDLE_CYCLE_FACTOR`), and `failed` stands slumped where it was put.
+- **Zones per state.** Every state keeps to its own zone of the bar (the `ZONES` table in
+  `ui/bot-bar.js`, mirrored by `ui-react/styles/bot-bar.css`): `done` on the **left** 20%, `working` and
+  idle (`waiting`) in the **centre** 60%, `failed` on the **right** 20%. The left and right zones are
+  their share of the bar's width but at least 200px (`ZONES.<zone>.minPx`), and the centre is what they
+  leave; `DONE_ZONE_SHARE` and `DONE_ZONE_MIN_PX` name the done zone's. The bar's own ends keep their
+  edge margin (88px, 40px when narrow), so a bot never touches the screen's edge. Nothing marks a
+  zone and no bot may enter another's. A bot whose state changes **jumps** to its new zone on the next
+  poll (no slide: transitions stay under 200ms) and walks or stands from a lane and phase taken from
+  the new zone's range, so it never ends up outside it; a bot that turns done still hops and gets its
+  callout there. Working and idle bots share the centre without piling onto one spot: each has its own
+  lane from its session key, and their motions stay distinct (a patrol with steady feet, a slow wander
+  with pauses). A crowded zone is never widened and bots are never shrunk: they overlap, spaced by
+  their hash, and the bot you point at or focus comes to the front so its dismiss button stays
+  reachable in every zone. **Under 600px wide the zones collapse** (a CSS media query at
+  `ZONES_MIN_WIDTH_PX`, with `useNarrow` mirroring it for the resting spots): every state has the whole
+  width between a 40px margin on each side. With reduced motion every bot stands still at a spread-out
+  place inside its own zone.
 - **Mascot.** Each session is one of the mascots for life: the pick is a hash of the session key
   (`<TICKET>:<phase>`), with nothing stored, so it never changes between renders or reloads, and
   where it walks or stands comes from the same hash. The mascot list lives only in

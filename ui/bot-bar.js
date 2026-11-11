@@ -312,11 +312,31 @@ const between = (low, high, amount) => low + (high - low) * amount;
 export const IDLE_CYCLE_FACTOR = 2.2;
 export const STROLL_CYCLE_FACTOR = 3;
 
-// Done bots live in a zone on the left of the bar and never leave it; every other bot roams the whole
-// bar, the zone included. The zone is this share of the bar's width (percent), but at least this many
-// pixels so a few done bots fit on a narrow screen (it never passes the right edge margin).
-export const DONE_ZONE_SHARE = 30;
-export const DONE_ZONE_MIN_PX = 240;
+// Every state has a zone along the bar and its bot never leaves it: done on the left, working and
+// idle (waiting) in the centre, failed on the right. The left and right zones are a share of the bar's
+// width (percent) but never less than `minPx`, so a few bots fit on a narrow screen; the centre is what
+// they leave (its own `share` and `minPx` are what that comes to at the usual widths and at 600px, the
+// narrowest the zones exist at). `spread` is how far apart (percent of the zone) bots rest at least, so
+// a crowded zone overlaps evenly instead of being widened. Below ZONES_MIN_WIDTH_PX the zones collapse:
+// every bot has the whole width.
+export const ZONES = Object.freeze({
+  left: Object.freeze({ share: 20, minPx: 200, spread: 35 }),
+  center: Object.freeze({ share: 60, minPx: 200, spread: 12 }),
+  right: Object.freeze({ share: 20, minPx: 200, spread: 35 }),
+});
+export const ZONES_MIN_WIDTH_PX = 600;
+export const ZONE_OF_STATE = Object.freeze({
+  done: 'left',
+  working: 'center',
+  waiting: 'center',
+  failed: 'right',
+});
+export const DONE_ZONE_SHARE = ZONES.left.share;
+export const DONE_ZONE_MIN_PX = ZONES.left.minPx;
+
+// The zone a bot of this state is confined to: its own, or 'all' (the whole width) when the screen is
+// narrow and the zones have collapsed.
+export const zoneOf = (state, narrow = false) => (narrow ? 'all' : ZONE_OF_STATE[state]);
 
 const tenths = (number) => Math.round(number * 10) / 10;
 
@@ -349,19 +369,29 @@ export function roamFor(sessionKey) {
 // Whether a bot of this state walks the bar (working, waiting and done do; only failed stands).
 export const walks = (state) => state === 'working' || state === 'waiting' || state === 'done';
 
-// The stretch, in pixels, a bot's left edge walks along a bar `barWidth` wide: what bot-bar.css works
-// out from the same numbers. A done bot walks inside the done zone (from `edge` to the zone's end less
-// one bot); any other bot walks the whole bar between its two edge margins. A done bot rests inside
-// the same zone, a failed one anywhere in the other.
+// The stretch, in pixels, a bot's left edge walks (and stands) along a bar `barWidth` wide: what
+// bot-bar.css works out from the same numbers. A bot is confined to its state's zone, less the edge
+// margin at the bar's own ends and one bot at the zone's far end; under ZONES_MIN_WIDTH_PX every bot has
+// the whole bar between its margins. `zone` is the zone's own `{ start, end }`.
+export function zoneBounds(zone, barWidth) {
+  const left = Math.max((barWidth * ZONES.left.share) / 100, ZONES.left.minPx);
+  const right = Math.max((barWidth * ZONES.right.share) / 100, ZONES.right.minPx);
+  if (barWidth < ZONES_MIN_WIDTH_PX || zone === 'all') return { start: 0, end: barWidth };
+  return {
+    left: { start: 0, end: left },
+    center: { start: left, end: barWidth - right },
+    right: { start: barWidth - right, end: barWidth },
+  }[zone];
+}
+
 export function walkStretch(roam, state, barWidth, { edge = 88, size = 56 } = {}) {
+  const zone = zoneBounds(zoneOf(state, barWidth < ZONES_MIN_WIDTH_PX), barWidth);
+  const start = zone.start === 0 ? edge : zone.start;
+  const end = zone.end === barWidth ? barWidth - edge : zone.end;
+  const room = Math.max(0, end - start - size);
   const done = state === 'done';
-  const zoneEnd = Math.min(
-    Math.max(DONE_ZONE_MIN_PX, (barWidth * DONE_ZONE_SHARE) / 100),
-    barWidth - edge,
-  );
-  const room = Math.max(0, done ? zoneEnd - edge - size : barWidth - size - 2 * edge);
-  const min = edge + ((done ? roam.zoneFrom : roam.from) / 100) * room;
-  return { min, max: min + ((done ? roam.zoneRange : roam.range) / 100) * room, room };
+  const min = start + ((done ? roam.zoneFrom : roam.from) / 100) * room;
+  return { min, max: min + ((done ? roam.zoneRange : roam.range) / 100) * room, room, zone };
 }
 
 // What a bot is told about its pose: a bot that walks is turned by its lane's keyframes, so it is
@@ -373,23 +403,35 @@ export function botPose(state, roam) {
 }
 
 // The custom properties ui-react/styles/bot-bar.css reads to place and move one bot's lane: where it
-// walks and how long (`roam`, from roamFor; a done bot's walk is in the done zone), where a failed
-// bot stands (`rest`) and where a bot stands when motion is reduced (`still`, from restingSpots; for a
-// done bot a place in the zone; `rest` when not given).
-export const laneStyle = (roam, rest, still = rest) => ({
+// walks and how long (`roam`, from roamFor, as percentages of the room its zone gives it), and where
+// it stands (`rest`, from restingSpots among the bots of its zone: a failed bot, or any when motion
+// is reduced), plus the zone table.
+export const laneStyle = (roam, rest) => ({
   '--bot-from': roam.from,
   '--bot-range': roam.range,
   '--bot-zone-from': roam.zoneFrom,
   '--bot-zone-range': roam.zoneRange,
-  '--bot-zone-share': DONE_ZONE_SHARE,
-  '--bot-zone-min': DONE_ZONE_MIN_PX,
+  '--bot-zone-left-share': ZONES.left.share,
+  '--bot-zone-left-min': ZONES.left.minPx,
+  '--bot-zone-right-share': ZONES.right.share,
+  '--bot-zone-right-min': ZONES.right.minPx,
   '--bot-dur': roam.seconds,
   '--bot-dur-idle': roam.idleSeconds,
   '--bot-dur-stroll': roam.strollSeconds,
   '--bot-phase': roam.phase,
   '--bot-rest': rest,
-  '--bot-rest-still': still,
 });
+
+// The resting places of every bot, by key, each spread among the bots of its own zone (`narrow`: one
+// zone, the whole width) so none stands on another, with the zone's own `spread`.
+export function zoneSpots(bots, narrow = false) {
+  const spots = new Map();
+  for (const zone of narrow ? ['all'] : Object.keys(ZONES)) {
+    const members = bots.filter(({ state }) => zoneOf(state, narrow) === zone);
+    for (const [key, at] of restingSpots(members, ZONES[zone]?.spread)) spots.set(key, at);
+  }
+  return spots;
+}
 
 // The resting place of each bot, by key, so no two stand on top of each other (give it the bots that
 // really stand: the failed ones, or every bot when motion is reduced): every bot starts at
