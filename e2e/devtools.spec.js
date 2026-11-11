@@ -301,6 +301,44 @@ test.describe('devtools wall', () => {
     await expect.poll(() => subscriptions(dashboard)[id]).toBe('tile');
   });
 
+  // The browser opens headless unless "Show browser window" is checked for that launch.
+  const showWindow = (page) => page.getByRole('checkbox', { name: 'Show browser window' });
+
+  test('launch: Show browser window is unchecked and the default launch sends no headed', async ({
+    page,
+    dashboard,
+  }) => {
+    await openDevtools(page);
+    await expect(showWindow(page)).toBeVisible();
+    await expect(showWindow(page)).not.toBeChecked();
+
+    await page.getByTestId('devtools-label-input').fill('QA');
+    await page.getByTestId('devtools-launch').click();
+    await expect(tile(page, dashboard.data.devtools.nextLaunch.id)).toBeVisible();
+    expect(lastCall(dashboard)).toEqual({
+      method: 'POST',
+      path: '/api/devtools/browsers',
+      body: { label: 'QA' },
+    });
+  });
+
+  test('launch: checking Show browser window sends headed: true', async ({ page, dashboard }) => {
+    await openDevtools(page);
+    const { id } = dashboard.data.devtools.nextLaunch;
+    await page.getByTestId('devtools-label-input').fill('QA');
+    await showWindow(page).check();
+    await page.getByTestId('devtools-launch').click();
+
+    await expect(tile(page, id)).toBeVisible();
+    expect(lastCall(dashboard)).toEqual({
+      method: 'POST',
+      path: '/api/devtools/browsers',
+      body: { label: 'QA', headed: true },
+    });
+    // The choice is per launch: the form goes back to a headless launch.
+    await expect(showWindow(page)).not.toBeChecked();
+  });
+
   test('stop turns a tile into a stopped placeholder and lets its stream go', async ({
     page,
     dashboard,

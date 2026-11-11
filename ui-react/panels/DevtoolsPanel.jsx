@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BoardPanel, BoardSection, BoardState, RefreshControl } from '../components/BoardShell.jsx';
 import { Button } from '../components/Primitives.jsx';
+import { ShowWindowToggle } from '../components/ShowWindowToggle.jsx';
 import { DevtoolsTile } from '../components/DevtoolsTile.jsx';
 import { DevtoolsViewer } from '../components/DevtoolsViewer.jsx';
 import { useActivePolling } from '../hooks/useActivePolling.js';
@@ -18,9 +19,9 @@ import {
 const replaced = (browser) => (current) =>
   current.map((entry) => (entry.id === browser.id ? browser : entry));
 
-// The DevTools tab is a wall of live tiles, one per debug browser: each is a real Chromium window
-// with a CDP port, so a human can sign in and an agent attaches with
-// `agent-browser connect <port>`. One instance per agent, each on its own profile, so several run
+// The DevTools tab is a wall of live tiles, one per debug browser: each is a real Chromium (headless
+// unless "Show browser window" was ticked) with a CDP port, so a human can sign in and an agent
+// attaches with `agent-browser connect <port>`. One instance per agent, each on its own profile, so several run
 // side by side. A tile opens the full viewer (and "Take control") for its browser.
 export function DevtoolsPanel({ active }) {
   const [browsers, setBrowsers] = useState([]);
@@ -29,6 +30,7 @@ export function DevtoolsPanel({ active }) {
   const [busy, setBusy] = useState(null);
   const [label, setLabel] = useState('');
   const [url, setUrl] = useState('');
+  const [headed, setHeaded] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [viewing, setViewing] = useState(null);
   const closeViewer = useCallback(() => setViewing(null), []);
@@ -125,13 +127,18 @@ export function DevtoolsPanel({ active }) {
     setBusy('launch');
     setFeedback('');
     try {
-      const result = await launchDevtoolsBrowser({ label: label.trim(), url: url.trim() });
+      const result = await launchDevtoolsBrowser({
+        label: label.trim(),
+        url: url.trim(),
+        headed,
+      });
       if (!result.ok) {
         setFeedback(result.error || 'Could not open a browser.');
         return;
       }
       setBrowsers((current) => [result.browser, ...current]);
       setLabel('');
+      setHeaded(false);
       setFeedback(`Opened on port ${result.browser.port} — sign in, then attach the agent to it.`);
     } finally {
       setBusy(null);
@@ -166,6 +173,7 @@ export function DevtoolsPanel({ active }) {
           onChange={(event) => setUrl(event.target.value)}
         />
       </label>
+      <ShowWindowToggle checked={headed} onChange={setHeaded} />
       <Button type="submit" data-testid="devtools-launch" disabled={busy === 'launch'}>
         Launch
       </Button>

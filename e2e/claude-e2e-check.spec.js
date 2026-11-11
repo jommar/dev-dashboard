@@ -118,6 +118,85 @@ test('e2e check: the browser launches first, the session does not', async ({ pag
   expect(bodiesTo(dashboard, '/api/claude/launch')).toEqual([]);
 });
 
+// Step 1 with the URL filled in; `headed` ticks "Show browser window" before launching.
+async function launchFromStepOne(page, dashboard, { headed = false } = {}) {
+  await openBoard(page, dashboard);
+  const claude = await openDialog(page);
+  await claude.getByTestId('claude-action-e2e').click();
+  await expect(e2eDialog(page)).toBeVisible();
+  await e2eDialog(page).getByPlaceholder(DEFAULT_DEVTOOLS_URL).fill(URL_ENTERED);
+  if (headed) await showWindowBox(page).check();
+  await launchButton(page).click();
+  await expect(startButton(page)).toBeEnabled();
+}
+const showWindowBox = (page) =>
+  e2eDialog(page).getByRole('checkbox', { name: 'Show browser window' });
+// The one-sentence hint above the buttons; it is the only place the dialog says where to sign in.
+const hint = (page) => e2eDialog(page).locator('.claude-note');
+const PROMISES_A_WINDOW = /window|desktop|visible/i;
+
+test('e2e check: Show browser window is unchecked, and the default launch sends no headed', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard);
+  const claude = await openDialog(page);
+  await claude.getByTestId('claude-action-e2e').click();
+  await expect(showWindowBox(page)).toBeVisible();
+  await expect(showWindowBox(page)).not.toBeChecked();
+  // Step 1 promises no window by default.
+  await expect(hint(page)).not.toHaveText(PROMISES_A_WINDOW);
+
+  await e2eDialog(page).getByPlaceholder(DEFAULT_DEVTOOLS_URL).fill(URL_ENTERED);
+  await launchButton(page).click();
+  await expect(startButton(page)).toBeEnabled();
+  expect(browserCalls(dashboard, '')).toEqual([
+    {
+      method: 'POST',
+      path: '/api/devtools/browsers',
+      body: { label: `E2E ${KEY}`, url: URL_ENTERED },
+    },
+  ]);
+});
+
+test('e2e check: checking Show browser window launches with headed: true', async ({
+  page,
+  dashboard,
+}) => {
+  await launchFromStepOne(page, dashboard, { headed: true });
+  expect(browserCalls(dashboard, '')).toEqual([
+    {
+      method: 'POST',
+      path: '/api/devtools/browsers',
+      body: { label: `E2E ${KEY}`, url: URL_ENTERED, headed: true },
+    },
+  ]);
+  // Still the same step 2: the session starts only from its button.
+  expect(bodiesTo(dashboard, '/api/claude/launch')).toEqual([]);
+});
+
+test('e2e check: by default the hint sends you to the live viewer, never to a desktop window', async ({
+  page,
+  dashboard,
+}) => {
+  await launchFromStepOne(page, dashboard);
+  await expect(hint(page)).toContainText(/live view/i);
+  await expect(hint(page)).toContainText('Take control');
+  await expect(hint(page)).not.toHaveText(PROMISES_A_WINDOW);
+  await expect(hint(page)).toContainText('throw-away test client');
+});
+
+test('e2e check: a browser launched with its window says the window is a second way to sign in', async ({
+  page,
+  dashboard,
+}) => {
+  await launchFromStepOne(page, dashboard, { headed: true });
+  await expect(hint(page)).toContainText(/window/i);
+  await expect(hint(page)).toContainText(/live view/i);
+  await expect(hint(page)).toContainText('Take control');
+  await expect(hint(page)).not.toHaveText(/desktop/i);
+});
+
 test('e2e check: a rejected URL stays on step 1', async ({ page, dashboard }) => {
   const MESSAGE = 'Enter an http or https address.';
   await page.route('**/api/devtools/browsers', (route) =>

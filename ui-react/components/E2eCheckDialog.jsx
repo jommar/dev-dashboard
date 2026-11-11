@@ -8,6 +8,7 @@
 // tab); after Start the backend owns the stop. This component opens no event stream of its own.
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
+import { ShowWindowToggle } from './ShowWindowToggle.jsx';
 import { DevtoolsViewer } from './DevtoolsViewer.jsx';
 import { launchDevtoolsBrowser, stopDevtoolsBrowser } from '../lib/api.js';
 import { DEFAULT_DEVTOOLS_URL } from '../../ui/devtools-defaults.js';
@@ -23,6 +24,7 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
   const pressedBackdrop = useRef(false);
   const titleId = useId();
   const [url, setUrl] = useState('');
+  const [headed, setHeaded] = useState(false);
   const [browser, setBrowser] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -82,7 +84,11 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
     event.preventDefault();
     setBusy(true);
     setError('');
-    const result = await launchDevtoolsBrowser({ label: `E2E ${ticketKey}`, url: url.trim() });
+    const result = await launchDevtoolsBrowser({
+      label: `E2E ${ticketKey}`,
+      url: url.trim(),
+      headed,
+    });
     // Closed while the browser was opening: nothing else will ever stop it.
     if (!mounted.current) {
       if (result.ok) stopDevtoolsBrowser(result.browser.id);
@@ -139,8 +145,10 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
             <div className="claude-e2e-step">
               <p className="claude-e2e-port">Port {browser.port}</p>
               <p className="claude-note">
-                Sign in in the browser window, or open the live view. Sign in to a throw-away test
-                client, never a real one.
+                {browser.headed
+                  ? 'Sign in in the browser window, or through the live view (Take control). '
+                  : 'Sign in through the live view (Take control). '}
+                Sign in to a throw-away test client, never a real one.
               </p>
               <div className="claude-e2e-actions">
                 <Button onClick={() => setWatching(true)}>Open live view</Button>
@@ -164,6 +172,7 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
               <p className="claude-note">
                 Opens a new browser at this address. You sign in there, then the check starts.
               </p>
+              <ShowWindowToggle checked={headed} onChange={setHeaded} />
               <div className="claude-e2e-actions">
                 <Button type="submit" className="primary" disabled={busy}>
                   Launch browser

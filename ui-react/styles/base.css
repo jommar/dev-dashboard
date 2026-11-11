@@ -102,6 +102,14 @@ input {
 .feedback[data-state='error'] {
   color: var(--red);
 }
+/* The "Show browser window" checkbox of every DevTools browser launch. */
+.show-window-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
 .sr-only {
   position: absolute;
   width: 1px;

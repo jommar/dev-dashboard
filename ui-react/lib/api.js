@@ -225,10 +225,11 @@ async function watchRequest(url, { method = 'GET', body } = {}) {
 
 // The DevTools tab: the debug browsers this machine can hand to an agent over CDP.
 export const getDevtoolsBrowsers = () => watchRequest('/api/devtools/browsers');
-export const launchDevtoolsBrowser = ({ label, url } = {}) =>
+// Browsers launch headless; `headed: true` (sent only when asked for) opens a real window.
+export const launchDevtoolsBrowser = ({ label, url, headed } = {}) =>
   watchRequest('/api/devtools/browsers', {
     method: 'POST',
-    body: url ? { label, url } : { label },
+    body: { label, ...(url && { url }), ...(headed === true && { headed: true }) },
   });
 export const startDevtoolsBrowser = (id) =>
   watchRequest('/api/devtools/browsers/start', { method: 'POST', body: { id } });

@@ -1,9 +1,11 @@
-// browser-devtools.mjs — visible, CDP-attachable debug browsers.
+// browser-devtools.mjs — CDP-attachable debug browsers.
 //
-// The DevTools tab launches a real Chromium-family window with
-// `--remote-debugging-port`, so a human signs in and an agent attaches with
-// `agent-browser connect <port>`. Playwright is deliberately not used: it owns
-// the debugging port in its own argv, which would hide the port being read out.
+// The DevTools tab launches a Chromium-family browser with `--remote-debugging-port`,
+// headless (`--headless=new`) by default so no window steals the desktop focus: a human
+// signs in through the dashboard's live view, and an agent attaches with
+// `agent-browser connect <port>`. `headed: true` opens a normal visible window instead,
+// and the record remembers it so a stop then start keeps its mode. Playwright is deliberately
+// not used: it owns the debugging port in its own argv, which would hide the port being read out.
 //
 // State lives in ~/.config/dev-dashboard/browsers/instances.json. A profile dir
 // is kept across restarts and across stop, so a relaunch stays signed in.
@@ -160,6 +162,7 @@ export function createBrowserDevtools({
         [
           `--remote-debugging-port=${port}`,
           `--user-data-dir=${profileDir}`,
+          ...(record.headed === true ? [] : ['--headless=new']),
           '--no-first-run',
           '--no-default-browser-check',
           record.url,
@@ -210,6 +213,12 @@ export function createBrowserDevtools({
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
       throw fail('INVALID_URL', 'Enter an http or https URL.', 400);
     return value;
+  }
+
+  function normalizeHeaded(input) {
+    if (input === undefined || input === false) return false;
+    if (input !== true) throw fail('INVALID_HEADED', 'headed must be true or false.', 400);
+    return true;
   }
 
   function normalizeLabel(input, id) {
@@ -282,7 +291,8 @@ export function createBrowserDevtools({
     return readState().sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
   }
 
-  async function launch({ label, url } = {}) {
+  async function launch({ label, url, headed } = {}) {
+    const showWindow = normalizeHeaded(headed);
     await reconcile();
     const browsers = readState();
     const id = randomId();
@@ -295,6 +305,7 @@ export function createBrowserDevtools({
       url: normalizeUrl(url),
       startedAt: now().toISOString(),
       status: 'stopped',
+      ...(showWindow && { headed: true }),
     };
     await start(browsers, record);
     return record;

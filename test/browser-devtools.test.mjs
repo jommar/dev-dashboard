@@ -9,6 +9,9 @@ import path from 'node:path';
 import { createBrowserDevtools, DEFAULT_DEVTOOLS_URL } from '../backend/browser-devtools.mjs';
 
 const NOW = new Date('2026-11-11T09:12:31.004Z');
+// Headless is the default: a visible window steals the desktop focus while agents drive the browser.
+// `headed: true` opts into a real window.
+const HEADLESS = '--headless=new';
 
 function harness({ taken = [], ps = '', env } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devtools-'));
@@ -97,13 +100,17 @@ test('allocates the first free port and spawns the required browser', async () =
   assert.equal(browser.profileDir, path.join(h.root, 'b-00001', 'profile'));
   assert.equal(h.spawns.length, 1);
   assert.equal(h.spawns[0].binary, path.join(h.home, 'bin', 'brave-browser'));
-  assert.deepEqual(h.spawns[0].args, [
-    '--remote-debugging-port=9302',
-    `--user-data-dir=${browser.profileDir}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    'https://example.invalid/login',
-  ]);
+  // The headless flag has its own test below; its position is not part of this contract.
+  assert.deepEqual(
+    h.spawns[0].args.filter((arg) => arg !== HEADLESS),
+    [
+      '--remote-debugging-port=9302',
+      `--user-data-dir=${browser.profileDir}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      'https://example.invalid/login',
+    ],
+  );
   assert.ok(fs.statSync(browser.profileDir).isDirectory());
   assert.deepEqual(await h.devtools.list(), [browser]);
 });
@@ -310,4 +317,145 @@ test('a late exit of a replaced child does not announce the restarted browser as
   stopped.length = 0;
   h.spawns[0].child.exits.forEach((listener) => listener());
   assert.deepEqual(stopped, [], 'the old process is not the running one');
+});
+
+const headlessFlags = (args) => args.filter((arg) => arg.startsWith('--headless'));
+const savedBrowsers = (h) =>
+  JSON.parse(fs.readFileSync(path.join(h.root, 'instances.json'), 'utf8')).browsers;
+
+test('launches headless by default, beside the debugging port and the profile, URL still last', async () => {
+  const h = harness({ taken: [9300] });
+  // The e2e dialog's launch goes through the same call, with a label and a URL.
+  const e2e = await h.devtools.launch({
+    label: 'E2E TAP-9001',
+    url: 'https://example.invalid/app',
+  });
+  const { args } = h.spawns[0];
+  assert.deepEqual(headlessFlags(args), [HEADLESS], 'exactly one headless flag, the new mode');
+  assert.ok(args.includes(`--remote-debugging-port=${e2e.port}`));
+  assert.ok(args.includes(`--user-data-dir=${e2e.profileDir}`));
+  assert.equal(args.at(-1), 'https://example.invalid/app');
+
+  // No options, and an explicit headed:false, are the same default.
+  await h.devtools.launch({});
+  await h.devtools.launch({ headed: false });
+  for (const spawned of h.spawns.slice(1))
+    assert.deepEqual(headlessFlags(spawned.args), [HEADLESS]);
+});
+
+test('headed: true launches a normal window, with no headless flag at all', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Window', headed: true });
+  const { args } = h.spawns[0];
+  assert.deepEqual(headlessFlags(args), []);
+  assert.ok(args.includes(`--remote-debugging-port=${browser.port}`));
+  assert.ok(args.includes(`--user-data-dir=${browser.profileDir}`));
+  assert.equal(args.at(-1), DEFAULT_DEVTOOLS_URL);
+});
+
+test('a headed that is not a boolean is refused 400 without spawning or saving a record', async () => {
+  const h = harness();
+  for (const headed of ['true', 'yes', 1, 0, null, {}, []])
+    await assert.rejects(
+      h.devtools.launch({ label: 'Bad', headed }),
+      { code: 'INVALID_HEADED', status: 400 },
+      JSON.stringify(headed),
+    );
+  assert.deepEqual(h.spawns, []);
+  assert.deepEqual(await h.devtools.list(), []);
+});
+
+test('the mode is stored as headed: true only when true, and a relaunch keeps it', async () => {
+  const h = harness();
+  const plain = await h.devtools.launch({ label: 'Plain' });
+  const explicit = await h.devtools.launch({ label: 'Explicit', headed: false });
+  const shown = await h.devtools.launch({ label: 'Shown', headed: true });
+  assert.equal(shown.headed, true);
+  for (const record of [plain, explicit])
+    assert.ok(!('headed' in record), 'a headless record carries no headed field');
+  const saved = savedBrowsers(h);
+  assert.equal(saved.find((entry) => entry.id === shown.id).headed, true);
+  for (const record of [plain, explicit])
+    assert.ok(!('headed' in saved.find((entry) => entry.id === record.id)));
+
+  // Stop then start of the same id: a headed browser stays headed, the others stay headless.
+  for (const record of [plain, shown]) {
+    h.setPs('');
+    await h.devtools.stop(record.id);
+    await h.devtools.start(record.id);
+  }
+  const [, , , relaunchedPlain, relaunchedShown] = h.spawns;
+  assert.deepEqual(headlessFlags(relaunchedPlain.args), [HEADLESS]);
+  assert.deepEqual(headlessFlags(relaunchedShown.args), []);
+  assert.equal(savedBrowsers(h).find((entry) => entry.id === shown.id).headed, true);
+});
+
+test('a record saved without the field (before this option) relaunches headless', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Old' });
+  const stateFile = path.join(h.root, 'instances.json');
+  const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  delete saved.browsers[0].headed;
+  saved.browsers[0].status = 'stopped';
+  saved.browsers[0].pid = null;
+  fs.writeFileSync(stateFile, JSON.stringify(saved));
+  h.setPs('');
+  await h.devtools.start(browser.id);
+  assert.deepEqual(headlessFlags(h.spawns.at(-1).args), [HEADLESS]);
+  // Only the exact boolean true opens a window: a tampered stored value stays headless.
+  for (const tampered of ['false', 1, {}]) {
+    await h.devtools.stop(browser.id);
+    const edited = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    edited.browsers[0].headed = tampered;
+    fs.writeFileSync(stateFile, JSON.stringify(edited));
+    await h.devtools.start(browser.id);
+    assert.deepEqual(headlessFlags(h.spawns.at(-1).args), [HEADLESS], JSON.stringify(tampered));
+  }
+});
+
+test('a headless browser is still found, adopted, stopped and relaunched by its argv', async () => {
+  const h = harness();
+  const browser = await h.devtools.launch({ label: 'Headless' });
+  const argv = (pid) =>
+    `  ${pid} /bin/brave-browser ${HEADLESS} --remote-debugging-port=9300 --user-data-dir=${browser.profileDir} --no-first-run about:blank`;
+
+  // Stop recognises it (argv-of-pid) and signals the group.
+  h.setPs(argv(browser.pid));
+  const stopped = await h.devtools.stop(browser.id);
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(h.signals[0].pid, -browser.pid, 'the headless process group is signalled');
+
+  // Reconcile adopts a survivor, reading its pid and port from the headless argv.
+  const revive = (stdout) =>
+    createBrowserDevtools({
+      home: h.home,
+      fs,
+      env: { PATH: path.join(h.home, 'bin') },
+      run: async () => stdout,
+      now: () => NOW,
+    });
+  const adopted = await revive(argv(7777)).list();
+  assert.equal(adopted[0].status, 'running');
+  assert.equal(adopted[0].pid, 7777);
+  assert.equal(adopted[0].port, 9300);
+
+  // A headless profile dir nobody recorded is adopted with its port.
+  const unknownDir = path.join(h.root, 'b-9', 'profile');
+  const unknown = await revive(
+    `  8888 /bin/brave-browser ${HEADLESS} --remote-debugging-port=9311 --user-data-dir=${unknownDir}`,
+  ).list();
+  const record = unknown.find((entry) => entry.id === 'b-9');
+  assert.equal(record.port, 9311);
+  assert.equal(record.pid, 8888);
+
+  // Its headless renderer inherits the profile but carries no debugging port: not the browser.
+  const rendererOnly = await revive(
+    `  5150 /bin/brave-browser ${HEADLESS} --type=renderer --user-data-dir=${browser.profileDir}`,
+  ).list();
+  assert.equal(rendererOnly.find((entry) => entry.id === browser.id).pid, null);
+
+  // And a stopped one relaunches.
+  h.setPs('');
+  const restarted = await h.devtools.start(browser.id);
+  assert.equal(restarted.status, 'running');
 });

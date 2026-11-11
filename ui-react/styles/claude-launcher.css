@@ -722,6 +722,9 @@
   color: var(--muted);
   font-size: var(--fs-sm);
 }
+.claude-e2e-step .show-window-toggle {
+  font-size: var(--fs-sm);
+}
 .claude-e2e-input {
   box-sizing: border-box;
   width: 100%;

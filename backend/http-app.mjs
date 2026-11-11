@@ -479,8 +479,10 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'GET /api/devtools/browsers': () =>
           browserDevtools.list().then((browsers) => ({ browsers })),
         'POST /api/devtools/browsers': async (request) => {
-          const { label, url } = await readJson(request);
-          return { ok: true, browser: await browserDevtools.launch({ label, url }) };
+          const { label, url, headed } = await readJson(request);
+          // headed goes through uncoerced (launch validates it), and only when posted.
+          const options = { label, url, ...(headed !== undefined && { headed }) };
+          return { ok: true, browser: await browserDevtools.launch(options) };
         },
         'POST /api/devtools/browsers/start': async (request) => {
           const { id } = await readJson(request);
@@ -695,6 +697,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'BROWSER_NOT_FOUND',
         'LAUNCH_FAILED',
         'INVALID_URL',
+        'INVALID_HEADED',
         'BROWSER_NOT_RUNNING',
         'SCREENCAST_NOT_ACTIVE',
         'INVALID_INPUT',

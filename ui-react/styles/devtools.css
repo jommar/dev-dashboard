@@ -17,7 +17,7 @@
   color: var(--muted);
   font-size: var(--fs-xs);
 }
-.devtools-launch input {
+.devtools-launch input:not([type='checkbox']) {
   padding: var(--s1) var(--s2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -26,9 +26,15 @@
   font: inherit;
   transition: border-color 120ms var(--ease-out);
 }
-.devtools-launch input:focus-visible {
+.devtools-launch input:not([type='checkbox']):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+.devtools-launch .show-window-toggle {
+  flex: 0 0 auto;
+  flex-direction: row;
+  max-width: none;
+  padding-bottom: var(--s1);
 }
 .devtools-feedback {
   margin: 0;

@@ -1551,11 +1551,15 @@ any ticket, no flags, no `status.json`, no gates either way. Only a running e2e 
 ticket refuses another (`session_running`).
 
 - **Dialog.** The row's button opens a two-step dialog over the Claude dialog. Step 1 takes the
-  address (the DevTools tab's default is the placeholder) and **Launch browser** starts a new,
-  visible DevTools browser labelled `E2E <KEY>`; a server rejection such as an invalid URL shows
-  inline. Step 2 names its port. Sign in there, in the real browser window or in **Open live view**
-  (the DevTools viewer, view-only until Take control), using a throw-away test client, never a real
-  one. **I've logged in, start check** is the only thing that starts the session. The live view is a
+  address (the DevTools tab's default is the placeholder) and **Launch browser** starts a new
+  DevTools browser labelled `E2E <KEY>`; a server rejection such as an invalid URL shows
+  inline. The browser is headless by default, so no window opens or takes your desktop focus; tick
+  **Show browser window** (unchecked by default) to open a normal visible window instead. Step 2
+  names its port. Sign in through **Open live view** (the DevTools viewer, view-only until Take
+  control), or in the window if you showed it, using a throw-away test client, never a real
+  one. The DevTools tab's own launch form has the same **Show browser window** checkbox. The mode is
+  kept on the browser's record, so stopping and starting it again keeps it; a record saved before
+  the option existed starts headless. **I've logged in, start check** is the only thing that starts the session. The live view is a
   modal over the dialog, so Start cannot be reached while it is open. The dialog opens no event
   stream of its own.
 - **Session.** `POST /api/claude/launch` with `phase` `e2e-ticket-check` and the `browserId`,

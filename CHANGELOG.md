@@ -2,9 +2,17 @@
 
 ## Unreleased
 
+- DevTools browsers now launch headless (`--headless=new`) by default, because a visible window kept
+  taking the desktop focus while an agent drove it. `POST /api/devtools/browsers` takes an optional
+  boolean `headed`; `true` opens a normal visible window, anything else that is not a boolean is 400
+  `INVALID_HEADED`. The DevTools tab's launch form and step 1 of the E2E check dialog gain a **Show
+  browser window** checkbox, unchecked by default. `headed: true` is stored on the instance record
+  only when true, so a stop then start keeps the mode and a record without it starts headless. The
+  E2E dialog now sends you to the live view (Take control) to sign in, and mentions the window only
+  when it was shown.
 - Added an E2E check action to the Claude dialog (`POST /api/claude/launch` with `phase:
 'e2e-ticket-check'` and a `browserId`). Its button opens a two-step dialog: enter the address, which
-  launches a new DevTools browser, then sign in there (in the real window or the embedded live view)
+  launches a new DevTools browser, then sign in there (in the embedded live view, or the window if shown)
   and press Start. The session `<KEY>-e2e-ticket-check` runs the `e2e-ticket-check` skill from
   `~/pathwise`, attaches to the browser by its debug port and writes `e2e.md`, which the row opens in
   the artifact viewer once done. The prompt is server-owned and carries only the ticket key and the

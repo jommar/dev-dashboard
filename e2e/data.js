@@ -2036,6 +2036,8 @@ function devtoolsResponse(url, method, { devtools }, body) {
       url: body?.url || DEFAULT_DEVTOOLS_URL,
       startedAt: '2026-11-11T09:30:00.000Z',
       status: 'running',
+      // As the backend stores it: the field exists only for a browser launched with a window.
+      ...(body?.headed === true ? { headed: true } : {}),
     };
     devtools.browsers.push(browser);
     return { json: { ok: true, browser: structuredClone(browser) } };

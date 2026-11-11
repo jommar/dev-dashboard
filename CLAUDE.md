@@ -176,6 +176,17 @@ open. A tile pauses (unsubscribes, last frame kept, "Paused") when scrolled out 
 page is hidden or when the screen is not shown. Frames paint straight into the `<img>`; tiles are
 memoized so the panel's once-a-second countdown repaints nothing.
 
+**Launch mode.** A browser launches headless (`--headless=new`, in `backend/browser-devtools.mjs`) by
+default: a visible window kept stealing the user's desktop focus while agents drove it, so the user
+signs in through the viewer's Take control. `POST /api/devtools/browsers` takes an optional boolean
+`headed`; `true` launches without `--headless*`, a non-boolean is 400 `INVALID_HEADED` (the route
+passes it through uncoerced, `launch` validates, and the code is in the route's allow-list). The mode
+is stored on the instance record as `headed: true` only when true, so `start` after `stop` keeps it
+and a record without the field relaunches headless; the UI sends `headed` only when exactly `true`.
+Both launch places (the DevTools tab form and the E2E dialog's step 1) share `ShowWindowToggle.jsx`,
+a "Show browser window" checkbox, unchecked by default. Do not describe a DevTools browser as a real
+or visible window anywhere except when `headed` is set.
+
 ## UI layout: the shared board (My Tickets, Slack, Pull Requests)
 
 Services also uses `BoardPanel` / `BoardSection`, with a scrolling `.board-pane`
@@ -280,7 +291,10 @@ like groom and review; the contracts the backend and UI hold:
 - **Once-only auto-stop.** The browser is stopped when the finished session is first seen, which only
   `list()` (`GET /api/claude/tickets`) can see, under the ticket lock with a re-read, and either marker
   ends the attempts. A stop failure is logged, never fails the list.
-- **Dialog.** The live viewer is a modal over the dialog, so Start is unreachable while it is open
+- **Dialog.** Step 1 launches headless unless "Show browser window" is ticked (`headed: true`); the
+  step-2 hint reads `browser.headed` from the launch response: the default points to the live view
+  (Take control) and never mentions a window, the headed one names the window as a second way to sign
+  in. The live viewer is a modal over the dialog, so Start is unreachable while it is open
   (no separate unmount code). Closing at step 2 before Start stops the browser; while Start runs, close
   does nothing and unmount stops nothing; after `timed_out` no close path stops it (the backend's
   auto-stop owns it). No `EventSource` in the component.

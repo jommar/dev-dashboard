@@ -190,6 +190,32 @@ test('launches with the posted body and returns the instance', async (t) => {
   assert.deepEqual(calls, [['launch', { label: 'QA', url: 'https://example.invalid/login' }]]);
 });
 
+test('passes headed to launch exactly as posted, so launch is what validates it', async (t) => {
+  const { request, calls } = await endpoint(t);
+  for (const headed of [true, false, 'yes'])
+    await request('/api/devtools/browsers', { method: 'POST', body: { label: 'QA', headed } });
+  assert.deepEqual(
+    calls.map(([, input]) => input.headed),
+    [true, false, 'yes'],
+    'the route never coerces the flag',
+  );
+});
+
+test('answers the 400 a launch refuses a bad headed with, code and message intact', async (t) => {
+  const { request } = await endpoint(t, {
+    launchError: Object.assign(new Error('headed must be true or false.'), {
+      code: 'INVALID_HEADED',
+      status: 400,
+    }),
+  });
+  const response = await request('/api/devtools/browsers', {
+    method: 'POST',
+    body: { headed: 'yes' },
+  });
+  assert.equal(response.status, 400);
+  assert.equal(response.json.code, 'INVALID_HEADED');
+});
+
 test('keeps NO_FREE_PORT as a 409 with its code', async (t) => {
   const { request } = await endpoint(t, {
     launchError: Object.assign(new Error('No free debug port.'), {
