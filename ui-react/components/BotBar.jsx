@@ -9,8 +9,9 @@
 // drawn only for a ticket Jira places in an active sprint (GET /api/active-sprint-tickets, asked
 // every SPRINT_POLL_MS and when a new ticket appears, through `useActiveSprintKeys`): until that
 // answer is in, or when Jira cannot say, it draws nothing for the ticket. It draws nothing at all
-// while there is nothing to show. A finished bot leaves after DONE_TTL_MS and
-// a finished or failed bot can be dismissed; both are remembered in memory only.
+// while there is nothing to show. A finished bot leaves after DONE_TTL_MS, except a done implement
+// bot whose ticket Jira still reports as open, which stays until the ticket is done-kind (see
+// `heldDoneBots`); a finished or failed bot can be dismissed. Both are remembered in memory only.
 //
 // Working bots patrol, waiting (idle) ones wander, done ones stroll and failed ones stand slumped;
 // under reduced motion every bot stands still. Each bot carries a poster with its ticket key above
@@ -35,6 +36,7 @@ import {
   botPose,
   botsFromTickets,
   dismissBot,
+  heldDoneBots,
   inActiveSprint,
   laneStyle,
   liveBots,
@@ -185,8 +187,11 @@ export function BotBar() {
   // Sessions that qualify by phase and state, then only the tickets Jira places in an active sprint.
   const sessions = useMemo(() => botsFromTickets(claude.byTicket), [claude.byTicket]);
   const ticketKeys = useMemo(() => [...new Set(sessions.map(({ ticket }) => ticket))], [sessions]);
-  const sprintKeys = useActiveSprintKeys(ticketKeys);
-  const bots = useMemo(() => inActiveSprint(sessions, sprintKeys), [sessions, sprintKeys]);
+  const sprint = useActiveSprintKeys(ticketKeys);
+  const bots = useMemo(() => inActiveSprint(sessions, sprint?.keys), [sessions, sprint]);
+  // A done implement bot whose ticket is still open in Jira stays until the ticket reaches a
+  // done-kind status; its status map is part of the same sprint answer.
+  const held = useMemo(() => heldDoneBots(bots, sprint?.statuses), [bots, sprint]);
   const [memory, setMemory] = useState(NO_MEMORY);
   // Bumped when a done bot starts to fade or is due to leave, the only change with no new data.
   const [clock, setClock] = useState(0);
@@ -197,14 +202,17 @@ export function BotBar() {
   }, [bots]);
 
   useEffect(() => {
-    const wait = nextBotChange(bots, memory, Date.now());
+    const wait = nextBotChange(bots, memory, Date.now(), { held });
     if (wait === null) return undefined;
     const timer = setTimeout(() => setClock((count) => count + 1), Math.min(wait, LONGEST_WAIT_MS));
     return () => clearTimeout(timer);
-  }, [bots, memory, clock]);
+  }, [bots, memory, held, clock]);
 
   // `clock` is not read: it is what makes the list be worked out again when a done bot's time comes.
-  const visible = useMemo(() => liveBots(bots, memory, Date.now()), [bots, memory, clock]);
+  const visible = useMemo(
+    () => liveBots(bots, memory, Date.now(), { held }),
+    [bots, memory, held, clock],
+  );
   // Where bots stand (a failed bot, or any bot under reduced motion): spread among the bots of the same
   // zone, or among all of them when the screen is narrow and the zones have collapsed.
   const narrow = useNarrow();

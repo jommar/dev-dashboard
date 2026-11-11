@@ -1698,9 +1698,10 @@ function claudeData() {
   return {
     listing: 'ok',
     tickets: {},
-    // What GET /api/active-sprint-tickets knows: the tickets Jira puts in an active sprint, and whether
-    // Jira can say (`available: false` is an unreachable or unconfigured Jira). `asks` logs each key list.
-    activeSprint: { available: true, keys: [], asks: [] },
+    // What GET /api/active-sprint-tickets knows: the tickets Jira puts in an active sprint, each
+    // one's Jira status name, and whether Jira can say (`available: false` is an unreachable or
+    // unconfigured Jira). `asks` logs each key list.
+    activeSprint: { available: true, keys: [], statuses: {}, asks: [] },
     calls: [],
     sends: [],
     // The Markdown each ticket's sessions left, by ticket key then file name: `{ [key]: { [name]: text } }`.
@@ -1802,8 +1803,16 @@ function claudeResponse(url, method, { claude, devtools }, body) {
     sprint.asks.push(asked);
     return {
       json: sprint.available
-        ? { available: true, keys: asked.filter((key) => sprint.keys.includes(key)) }
-        : { available: false, reason: 'jira_unavailable', keys: [] },
+        ? {
+            available: true,
+            keys: asked.filter((key) => sprint.keys.includes(key)),
+            statuses: Object.fromEntries(
+              asked
+                .filter((key) => key in (sprint.statuses ?? {}))
+                .map((key) => [key, sprint.statuses[key]]),
+            ),
+          }
+        : { available: false, reason: 'jira_unavailable', keys: [], statuses: {} },
     };
   }
   if (method === 'GET' && pathname === '/api/claude/tickets')

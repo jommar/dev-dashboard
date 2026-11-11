@@ -32,10 +32,11 @@ import {
   botsFromTickets,
   dismissBot,
   hashOf,
+  heldDoneBots,
   inActiveSprint,
   laneStyle,
   liveBots,
-  nextSprintKeys,
+  nextSprint,
   normalizeTicketKey,
   nextBotChange,
   pickMascot,
@@ -395,20 +396,104 @@ test('only bots whose ticket is in the active sprint pass, and an unknown sprint
   assert.equal(inActiveSprint(bots, new Set(['TAP-1'])).length, 2, 'both sessions of a ticket');
 });
 
-test('a good sprint answer replaces the keys; a failed or unavailable one keeps the last good set', () => {
-  const good = nextSprintKeys(null, { ok: true, available: true, keys: ['tap-1', 'TAP-2'] });
-  assert.deepEqual([...good].sort(), ['TAP-1', 'TAP-2']);
-  assert.equal(nextSprintKeys(good, { ok: true, available: true, keys: ['TAP-2', 'TAP-1'] }), good);
-  assert.deepEqual([...nextSprintKeys(good, { ok: true, available: true, keys: [] })], []);
+test('a good sprint answer replaces the keys and statuses; a failed one keeps the last good set', () => {
+  const good = nextSprint(null, {
+    ok: true,
+    available: true,
+    keys: ['tap-1', 'TAP-2'],
+    statuses: { 'TAP-1': 'Code Review', 'tap-2': 'Deployed' },
+  });
+  assert.deepEqual([...good.keys].sort(), ['TAP-1', 'TAP-2']);
+  assert.deepEqual(Object.fromEntries(good.statuses), {
+    'TAP-1': 'Code Review',
+    'TAP-2': 'Deployed',
+  });
+  assert.equal(
+    nextSprint(good, {
+      ok: true,
+      available: true,
+      keys: ['TAP-2', 'TAP-1'],
+      statuses: { 'TAP-2': 'Deployed', 'TAP-1': 'Code Review' },
+    }),
+    good,
+    'the same answer keeps the same object',
+  );
+  assert.deepEqual(
+    [...nextSprint(good, { ok: true, available: true, keys: [], statuses: {} }).keys],
+    [],
+  );
+  const moved = nextSprint(good, {
+    ok: true,
+    available: true,
+    keys: ['TAP-1', 'TAP-2'],
+    statuses: { 'TAP-1': 'Code Review', 'TAP-2': 'Ready for Deployment' },
+  });
+  assert.equal(moved.statuses.get('TAP-2'), 'Ready for Deployment');
+  assert.deepEqual([...moved.keys].sort(), ['TAP-1', 'TAP-2']);
+  // A status Jira did not report is left out, not guessed.
+  assert.deepEqual(
+    Object.fromEntries(nextSprint(good, { ok: true, available: true, keys: ['TAP-1'] }).statuses),
+    {},
+  );
   for (const bad of [
     { ok: false, status: 0, keys: [] },
-    { ok: true, available: false, reason: 'jira_unavailable', keys: [] },
+    { ok: true, available: false, reason: 'jira_unavailable', keys: [], statuses: {} },
     { ok: true, available: true },
     { ok: true, available: true, keys: 'TAP-1' },
     undefined,
   ])
-    assert.equal(nextSprintKeys(good, bad), good);
-  assert.equal(nextSprintKeys(null, { ok: true, available: false, keys: [] }), null);
+    assert.equal(nextSprint(good, bad), good);
+  assert.equal(nextSprint(null, { ok: true, available: false, keys: [] }), null);
+});
+
+test('a done implement bot is held while its ticket is open in Jira', () => {
+  const bots = botsFromTickets({
+    'TAP-1': entry('implement-plan', 'done'),
+    'TAP-2': entry('implement-plan', 'working', { review: { state: 'done', reason: 'finished' } }),
+    'TAP-3': entry('implement-plan', 'done'),
+    'TAP-4': entry('implement-plan', 'working'),
+  });
+  const status = (items) => [...heldDoneBots(bots, new Map(items))].sort();
+  // Working tickets hold their done implement bot.
+  assert.deepEqual(status([['TAP-1', 'Ready For Testing']]), ['TAP-1:implement']);
+  assert.deepEqual(status([['TAP-1', 'In Progress']]), ['TAP-1:implement']);
+  assert.deepEqual(status([['TAP-1', 'Blocked']]), ['TAP-1:implement'], 'blocked is not done');
+  // A done-kind status ('Deployed', 'Ready for Deployment', 'Hardening in UAT', ...) lets it go.
+  assert.deepEqual(status([['TAP-1', 'Deployed']]), []);
+  assert.deepEqual(status([['TAP-1', 'Ready for Deployment']]), []);
+  assert.deepEqual(status([['TAP-1', 'Hardening in UAT']]), []);
+  // Only the implement session holds: the done review of TAP-2 does not.
+  assert.deepEqual(status([['TAP-2', 'Ready For Testing']]), []);
+  // A status Jira could not give, or does not recognise, falls back to the time to live.
+  assert.deepEqual(status([]), []);
+  assert.deepEqual(status([['TAP-1', 'Something New']]), []);
+  // The ticket is matched the way the app compares keys: trimmed, upper case.
+  const lower = botsFromTickets({ ' tap-1 ': entry('implement-plan', 'done') });
+  assert.deepEqual(
+    [...heldDoneBots(lower, new Map([['TAP-1', 'In Progress']]))],
+    [' tap-1 :implement'],
+  );
+});
+
+test('a held bot stays past its time to live and schedules no fade', () => {
+  const bots = botsFromTickets({ 'TAP-1': entry('implement-plan', 'done') });
+  const memory = rememberBots(NO_MEMORY, bots, 0);
+  const held = heldDoneBots(bots, new Map([['TAP-1', 'Ready For Testing']]));
+  assert.deepEqual(liveBots(bots, memory, DONE_TTL_MS * 10, { held }), [
+    {
+      key: 'TAP-1:implement',
+      ticket: 'TAP-1',
+      phase: 'implement',
+      state: 'done',
+      reason: 'r',
+      fading: false,
+    },
+  ]);
+  assert.equal(nextBotChange(bots, memory, 0, { held }), null, 'no fade to wake up for');
+  // Once the ticket is done-kind the bot ages out as before.
+  const released = heldDoneBots(bots, new Map([['TAP-1', 'Deployed']]));
+  assert.deepEqual(liveBots(bots, memory, DONE_TTL_MS, { held: released }), []);
+  assert.equal(nextBotChange(bots, memory, 0, { held: released }), DONE_TTL_MS - FADE_MS);
 });
 
 const states = (entries) => new Map(Object.entries(entries));
@@ -606,8 +691,10 @@ test('the bar is mounted once in the shell, behind setup, with its own tickets p
     read('components/BotBar.jsx'),
     /useClaudeTickets\(\{ active: true, source: 'bot-bar' \}\)/,
   );
-  assert.match(read('components/BotBar.jsx'), /inActiveSprint\(sessions, sprintKeys\)/);
+  assert.match(read('components/BotBar.jsx'), /inActiveSprint\(sessions, sprint\?\.keys\)/);
+  assert.match(read('components/BotBar.jsx'), /heldDoneBots\(bots, sprint\?\.statuses\)/);
   assert.match(read('hooks/useActiveSprintKeys.js'), /getActiveSprintTickets/);
+  assert.match(read('hooks/useActiveSprintKeys.js'), /nextSprint\(/);
   // Hover detail is the app's popup (DashboardTooltip), never a native title or the old data-tooltip.
   const bar = read('components/BotBar.jsx');
   assert.doesNotMatch(bar, /<(?:button|div|span|svg)\b[^>]*\stitle=|data-tooltip|describeChild/);

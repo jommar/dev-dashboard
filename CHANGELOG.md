@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A done **implement** bot now stays on the bot bar while its ticket is still open in Jira, instead of
+  leaving after 10 minutes: it leaves when the ticket reaches a done-kind status (Deployed, Complete,
+  Closed, ... per `jiraStatusKind`), so finished-but-unshipped work keeps its mascot. Only implement
+  holds — a done review, groom, e2e or investigate bot still leaves after `DONE_TTL_MS`, as does an
+  implement bot whose status Jira does not report or does not recognise, so a Jira outage or a new
+  workflow status can never pin bots to the bar. `GET /api/active-sprint-tickets` now also answers
+  `statuses` (a key -> status object), read from the same Jira search it already made and cached.
 - The bot bar now shows a mascot for every Claude session while it runs, not only implement, review and
   e2e: investigate (`investigate-and-plan`) and groom sessions get a bot too, keyed `<KEY>:investigate`
   and `<KEY>:groom` and drawn in that order around the others. A bot opens the Claude dialog (review

@@ -53,7 +53,17 @@ test('only tickets whose most relevant sprint is active are in the active sprint
     ['DEMO-5', 'DEMO-1', 'DEMO-2', 'DEMO-3', 'DEMO-4', 'DEMO-6', 'demo-7', 'junk', 'DEMO-1'],
     { snapshot },
   );
-  assert.deepEqual(result, { available: true, keys: ['DEMO-1', 'DEMO-5'] });
+  assert.deepEqual(result, {
+    available: true,
+    keys: ['DEMO-1', 'DEMO-5'],
+    statuses: {
+      'DEMO-1': 'Code Review',
+      'DEMO-2': 'Code Review',
+      'DEMO-3': 'Code Review',
+      'DEMO-4': 'Code Review',
+      'DEMO-5': 'Code Review',
+    },
+  });
   assert.equal(searches.length, 1, 'one search for the whole list');
   assert.deepEqual(searches[0], ['DEMO-1', 'DEMO-2', 'DEMO-3', 'DEMO-4', 'DEMO-5', 'DEMO-6']);
 });
@@ -68,6 +78,7 @@ test('answers are cached for the TTL and only new keys reach Jira', async (t) =>
     now: t0 + 1000,
   });
   assert.deepEqual(again.keys, ['DEMO-1']);
+  assert.deepEqual(again.statuses, { 'DEMO-1': 'Code Review', 'DEMO-2': 'Code Review' });
   assert.equal(searches.length, 1, 'a repeat asks Jira nothing');
   const grown = await jira.fetchActiveSprintKeys(['DEMO-1', 'DEMO-2', 'DEMO-3'], {
     snapshot,
@@ -95,6 +106,7 @@ test('an unavailable or unconfigured Jira reports unavailable, never an empty an
     available: false,
     reason: 'jira_unavailable',
     keys: [],
+    statuses: {},
   });
   t.mock.restoreAll();
   const searches = fakeJira(t, { 'DEMO-1': [ACTIVE] });
@@ -104,6 +116,7 @@ test('an unavailable or unconfigured Jira reports unavailable, never an empty an
     available: false,
     reason: 'jira_not_configured',
     keys: [],
+    statuses: {},
   });
 });
 
@@ -121,7 +134,7 @@ test('GET /api/active-sprint-tickets is setup-gated and passes the keys to the i
       integrations: {
         fetchActiveSprintKeys: async (keys) => {
           calls.push(keys);
-          return { available: true, keys: ['DEMO-1'] };
+          return { available: true, keys: ['DEMO-1'], statuses: { 'DEMO-1': 'Code Review' } };
         },
       },
     });
@@ -140,6 +153,7 @@ test('GET /api/active-sprint-tickets is setup-gated and passes the keys to the i
     assert.deepEqual(calls, [['DEMO-1', 'DEMO-2']]);
     const body = JSON.parse(response.text);
     assert.deepEqual([body.available, body.keys], [true, ['DEMO-1']]);
+    assert.deepEqual(body.statuses, { 'DEMO-1': 'Code Review' });
     assert.ok(body.updatedAt);
   }
 });

@@ -286,8 +286,9 @@ export const checkSlackWatchNow = () => watchRequest('/api/slack/watch/check', {
 export const getClaudeTickets = (surface) =>
   watchRequest(`/api/claude/tickets${surface ? `?surface=${encodeURIComponent(surface)}` : ''}`);
 
-// Which of `keys` are in a sprint Jira calls active (the bot bar's filter). Resolves like the other
-// watch calls: `ok`, `available` (false when Jira could not say) and `keys`.
+// Which of `keys` are in a sprint Jira calls active (the bot bar's filter) and their status names.
+// Resolves like the other watch calls: `ok`, `available` (false when Jira could not say), `keys` and
+// `statuses` (a ticket key -> Jira status name object, only for the tickets Jira reported).
 export const getActiveSprintTickets = (keys) =>
   watchRequest(`/api/active-sprint-tickets?keys=${encodeURIComponent(keys.join(','))}`);
 

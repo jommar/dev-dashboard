@@ -80,13 +80,15 @@ export async function fetchTicketMetadata(keys, { snapshot, strict = false } = {
   }
 }
 
-// Which of `keys` are in a sprint Jira calls active. The bot bar asks this on every screen, so a
-// ticket's answer is kept for ACTIVE_SPRINT_TTL_MS (sprint membership changes rarely) and only keys
-// with no fresh answer go to Jira, ACTIVE_SPRINT_CHUNK at a time in one search each. "Active" is the
-// rule `activeSprints` and My Tickets use (`state === 'active'`), read from the ticket's most
-// relevant sprint (`mapSprints` puts an active one first); a ticket Jira does not return is not in one.
-// Resolves `{ available: true, keys }` (the subset, sorted), or `{ available: false, reason, keys: [] }`
-// when Jira is not configured or a search failed: never a guess for a ticket it could not place.
+// Which of `keys` are in a sprint Jira calls active, and each ticket's current status name. The bot
+// bar asks this on every screen, so a ticket's answer is kept for ACTIVE_SPRINT_TTL_MS (sprint
+// membership changes rarely) and only keys with no fresh answer go to Jira, ACTIVE_SPRINT_CHUNK at a
+// time in one search each. "Active" is the rule `activeSprints` and My Tickets use (`state ===
+// 'active'`), read from the ticket's most relevant sprint (`mapSprints` puts an active one first); a
+// ticket Jira does not return is not in one. Resolves `{ available: true, keys, statuses }` (`keys`
+// the subset, sorted; `statuses` a key -> status name object holding only the tickets whose status
+// Jira reported), or `{ available: false, reason, keys: [], statuses: {} }` when Jira is not
+// configured or a search failed: never a guess for a ticket it could not place.
 export const ACTIVE_SPRINT_TTL_MS = 5 * 60 * 1000;
 export const ACTIVE_SPRINT_MAX_KEYS = 200;
 const ACTIVE_SPRINT_CHUNK = 50;
@@ -98,7 +100,7 @@ export function clearActiveSprintAnswers() {
 
 export async function fetchActiveSprintKeys(keys, { snapshot, now = Date.now() } = {}) {
   const cfg = jiraConfig(snapshot);
-  if (!cfg) return { available: false, reason: 'jira_not_configured', keys: [] };
+  if (!cfg) return { available: false, reason: 'jira_not_configured', keys: [], statuses: {} };
   const wanted = [...new Set((Array.isArray(keys) ? keys : []).filter(isTicketKey))]
     .sort()
     .slice(0, ACTIVE_SPRINT_MAX_KEYS);
@@ -111,19 +113,26 @@ export async function fetchActiveSprintKeys(keys, { snapshot, now = Date.now() }
   try {
     for (let i = 0; i < missing.length; i += ACTIVE_SPRINT_CHUNK) {
       const chunk = missing.slice(i, i + ACTIVE_SPRINT_CHUNK);
-      const { sprints } = await fetchTicketMetadata(chunk, { snapshot, strict: true });
+      const { sprints, statuses } = await fetchTicketMetadata(chunk, { snapshot, strict: true });
       for (const key of chunk)
         activeSprintAnswers.set(cacheKey(key), {
           at: now,
           active: sprints[key]?.state === 'active',
+          status: statuses[key] ?? null,
         });
     }
   } catch {
-    return { available: false, reason: 'jira_unavailable', keys: [] };
+    return { available: false, reason: 'jira_unavailable', keys: [], statuses: {} };
+  }
+  const statuses = {};
+  for (const key of wanted) {
+    const status = activeSprintAnswers.get(cacheKey(key))?.status;
+    if (typeof status === 'string') statuses[key] = status;
   }
   return {
     available: true,
     keys: wanted.filter((key) => activeSprintAnswers.get(cacheKey(key))?.active),
+    statuses,
   };
 }
 

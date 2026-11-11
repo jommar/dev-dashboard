@@ -1945,7 +1945,8 @@ while there is no session to show.
   `GET /api/active-sprint-tickets?keys=A-1,B-2` (setup-gated, at most 200 keys), answered by
   `fetchActiveSprintKeys` in `backend/jira.mjs`: one Jira search per 50 keys with no answer yet, each
   ticket's answer kept for 5 minutes (so a repeat call costs Jira nothing), and the response is
-  `{ available, keys }`, where `keys` is the subset in an active sprint. The pure filter is
+  `{ available, keys, statuses }`, where `keys` is the subset in an active sprint and `statuses` maps
+  each ticket to its current Jira status name. The pure filter is
   `inActiveSprint` in `ui/bot-bar.js`. The browser asks when the bar sees a ticket it has not placed,
   every 5 minutes (`SPRINT_POLL_MS`) while the page is visible, and when the page becomes visible after
   that long. **A ticket whose sprint is not known has no bot**: nothing shows until the first answer is
@@ -2010,9 +2011,14 @@ while there is no session to show.
   pointer, and only fades under reduced motion. It is hidden from assistive technology; instead one
   polite status region in the bar says `TAP-1451 review: done` once per change.
 - **Done bots leave.** A `done` bot fades out 10 minutes after the bar first saw it done
-  (`DONE_TTL_MS`), and a `done` or `failed` bot has a small **x** beside it that dismisses it. A
-  dismissed bot comes back if its session changes state. This is remembered in memory only, so a
-  reload starts the 10 minutes again and brings dismissed bots back.
+  (`DONE_TTL_MS`), except a **done implement bot whose ticket is still open in Jira**: that one stays
+  until the ticket reaches a done-kind status (Deployed, Complete, Closed, ... — the `done` kind in
+  `ui/jira-status.js`), so the bar shows the work that finished but has not shipped. Only the implement
+  session holds; a done review, groom or e2e bot still leaves after the 10 minutes. A status Jira could
+  not give, an unrecognised one, or a failed `/api/active-sprint-tickets` read falls back to the 10
+  minutes, so an outage never pins bots to the bar. A `done` or `failed` bot also has a small **x**
+  beside it that dismisses it. A dismissed bot comes back if its session changes state. This is
+  remembered in memory only, so a reload starts the 10 minutes again and brings dismissed bots back.
 - **The bar polls.** It reads `GET /api/claude/tickets` itself, on every screen, every 15 seconds
   while the page is visible, through its own `useClaudeTickets` (a failed read keeps the last
   answer; there is no countdown). Its requests carry `?surface=bot-bar`, which the server ignores,

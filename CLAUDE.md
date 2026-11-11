@@ -117,13 +117,22 @@ session of any kind (investigate, implement, review, groom or e2e check). It is 
 bots, z-index under the tooltip and dialogs, no change to any screen's height or the viewport-fill
 rule; keep it that way, and never put a dialog inside the strip (it would inherit the
 `pointer-events: none`). Which sessions get a bot is the single `SESSIONS` table in
-`ui/bot-bar.js` (every row does; `BOT_PHASES` is derived from it, so a new kind of session is one new row there, never a second list) (`investigate`, `implement`, `review`, `groom`, `e2e`: every session an entry carries, in draw order; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`; every phase but `review` opens `ClaudeDialog`), with the state mapping, the done time to live and the pure helpers; `none` and
+`ui/bot-bar.js` (every row does; `BOT_PHASES` is derived from it, so a new kind of session is one new row there, never a second list) (`investigate`, `implement`, `review`, `groom`, `e2e`: every session an entry carries, in draw order; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`; every phase but `review` opens `ClaudeDialog`), with the state mapping, the done time to live, the hold rule and the pure helpers; `none` and
 `unknown` get no bot. A bot also needs its ticket in an active Jira sprint: the pure filter
 `inActiveSprint` is applied to the sessions with the keys `useActiveSprintKeys` gets from
 `GET /api/active-sprint-tickets` (`fetchActiveSprintKeys` in `backend/jira.mjs`; per-ticket answers
 cached 5 minutes server side, asked again by the browser every `SPRINT_POLL_MS`, 5 minutes). A ticket
 whose sprint is unknown gets no bot, and on a failed or `available: false` answer the last good key set
 stays; do not show a bot for a ticket the sprint filter has not placed.
+
+That answer is `{ keys, statuses }` (`nextSprint`): the same Jira search already returns each ticket's
+status name, so `statuses` is a key -> status map, not a second call. It feeds the hold rule:
+`heldDoneBots` holds a done **implement** bot past `DONE_TTL_MS` while its ticket's status is not a
+done-kind one (`jiraStatusKind` in `ui/jira-status.js` — Deployed, Complete, Closed, ...), and the bar
+passes that set to `liveBots` and `nextBotChange` so a held bot neither fades nor schedules a fade.
+Only implement holds; a done review, groom or e2e bot keeps the time to live. A status Jira did not
+report, an unrecognised one, or an `available: false` answer falls back to the time to live, never to
+"hold forever".
 
 Motion and zones: working patrols, waiting (idle) wanders, done strolls (cycle factors
 `IDLE_CYCLE_FACTOR` and `STROLL_CYCLE_FACTOR` in `ui/bot-bar.js`), failed stands. Each state is confined to

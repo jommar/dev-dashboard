@@ -6,6 +6,8 @@
 // bots to draw: which sessions count, the state each shows, which mascot each one is, where it
 // roams or rests, and when a finished one leaves.
 
+import { jiraStatusKind } from './jira-status.js';
+
 // Every session an entry can describe, in the order a ticket's bots are drawn, each with how to read
 // it off the entry. A ticket's workflow entry is the session of its current phase (`entry.phase`), so a
 // ticket has one implement or investigate session at a time; review, groom and e2e are side sessions
@@ -96,13 +98,46 @@ export function inActiveSprint(items, sprintKeys) {
   return active.size ? items.filter(({ ticket }) => active.has(normalizeTicketKey(ticket))) : [];
 }
 
-// The sprint keys after an answer: the answer's keys (as a Set) when Jira could say, otherwise
-// `previous` unchanged, so a failed or unavailable read keeps the last good set (null if none).
-export function nextSprintKeys(previous, result) {
+// The sprint answer after a poll, as `{ keys, statuses }`: `keys` is the Set of tickets Jira puts in
+// an active sprint, `statuses` a Map of ticket key -> the ticket's current Jira status name (missing
+// for a ticket Jira said nothing about). An answer Jira could not give leaves `previous` unchanged, so
+// a failed or unavailable read keeps the last good set (null if none has been).
+export function nextSprint(previous, result) {
   if (!result?.ok || result.available !== true || !Array.isArray(result.keys)) return previous;
-  const next = new Set(result.keys.map(normalizeTicketKey));
-  const same = previous && previous.size === next.size && [...next].every((k) => previous.has(k));
-  return same ? previous : next;
+  const keys = new Set(result.keys.map(normalizeTicketKey));
+  const statuses = new Map(
+    Object.entries(result.statuses ?? {}).map(([key, status]) => [
+      normalizeTicketKey(key),
+      typeof status === 'string' ? status : null,
+    ]),
+  );
+  const sameKeys =
+    previous?.keys?.size === keys.size && [...keys].every((key) => previous.keys.has(key));
+  const sameStatuses =
+    previous?.statuses?.size === statuses.size &&
+    [...statuses].every(([key, status]) => previous.statuses.get(key) === status);
+  return sameKeys && sameStatuses ? previous : { keys, statuses };
+}
+
+// Which Jira status kinds keep a finished bot: everything but the done kind (deployed, complete,
+// closed, ...) and the unrecognised one, which falls back to the time to live so a failed read or an
+// outage never pins bots to the bar.
+const HOLDING_KINDS = new Set(['queued', 'active', 'attention']);
+
+// The done implement bots held on the bar past DONE_TTL_MS: their ticket is still open in Jira, i.e.
+// its status is not a done-kind one (see `jiraStatusKind` in ui/jira-status.js). Only the implement
+// session holds, so a finished review, groom or e2e session still leaves after the time to live; a
+// ticket with no status, an unrecognised one, or a failed read ages out as it always has.
+const HELD_PHASE = 'implement';
+
+export function heldDoneBots(bots, statuses) {
+  const held = new Set();
+  for (const { key, ticket, phase, state } of bots) {
+    if (phase !== HELD_PHASE || state !== 'done') continue;
+    const kind = jiraStatusKind(statuses?.get(normalizeTicketKey(ticket)) ?? '');
+    if (HOLDING_KINDS.has(kind)) held.add(key);
+  }
+  return held;
 }
 
 // What the bar remembers while the page is open: when each session was first seen done, and which
@@ -132,23 +167,34 @@ export function rememberBots(memory, bots, now) {
 export const dismissBot = (memory, { key, state }) =>
   isFinished(state) ? { ...memory, dismissed: new Map(memory.dismissed).set(key, state) } : memory;
 
-// The bots to draw at `now`: all of them but a dismissed one and a done one past its time to live.
-// A done bot the memory has not seen yet counts as seen now. `fading` marks a done bot in its last
-// stretch.
-export function liveBots(bots, memory, now, { ttl = DONE_TTL_MS, fade = FADE_MS } = {}) {
+// The bots to draw at `now`: all of them but a dismissed one, a done one past its time to live and a
+// done one held while its ticket is still open (`held`, from `heldDoneBots`). A done bot the memory
+// has not seen yet counts as seen now. `fading` marks a done bot in its last stretch.
+export function liveBots(
+  bots,
+  memory,
+  now,
+  { ttl = DONE_TTL_MS, fade = FADE_MS, held = new Set() } = {},
+) {
   return bots.flatMap((bot) => {
     if (memory.dismissed.get(bot.key) === bot.state) return [];
-    if (bot.state !== 'done') return [{ ...bot, fading: false }];
+    if (bot.state !== 'done' || held.has(bot.key)) return [{ ...bot, fading: false }];
     const age = now - (memory.seenDoneAt.get(bot.key) ?? now);
     return age >= ttl ? [] : [{ ...bot, fading: age >= ttl - fade }];
   });
 }
 
 // When the picture next changes without any new data: the earliest moment a done bot starts to
-// fade or leaves, as milliseconds from `now`, or null when no done bot is waiting on a clock.
-export function nextBotChange(bots, memory, now, { ttl = DONE_TTL_MS, fade = FADE_MS } = {}) {
+// fade or leaves, as milliseconds from `now`, or null when no done bot is waiting on a clock. A held
+// bot never fades, so it is not waited for.
+export function nextBotChange(
+  bots,
+  memory,
+  now,
+  { ttl = DONE_TTL_MS, fade = FADE_MS, held = new Set() } = {},
+) {
   const waits = bots
-    .filter(({ key, state }) => state === 'done' && memory.seenDoneAt.has(key))
+    .filter(({ key, state }) => state === 'done' && !held.has(key) && memory.seenDoneAt.has(key))
     .flatMap(({ key }) => {
       const age = now - memory.seenDoneAt.get(key);
       return [ttl - fade - age, ttl - age].filter((wait) => wait > 0);
