@@ -2,7 +2,7 @@
 // ticket stands with Claude and opens the panel's one Claude dialog. The state is a word in the
 // label and tooltip, and a badge shape beside the mark (a ring for working, a dot for waiting, a
 // check for done, a cross for failed), so colour never carries it alone. A ticket with no workflow
-// record shows its groom session instead (same looks, and the words say grooming). Presentational
+// record shows its groom, else its e2e check session instead (same looks, and the words say which). Presentational
 // only: the entry comes from useClaudeTickets and the click hands the ticket key to the panel.
 import { DashboardTooltip } from './Primitives.jsx';
 
@@ -38,9 +38,16 @@ const BADGES = {
   failed: <path d="M15.6 15.6l4.8 4.8m0-4.8-4.8 4.8" />,
 };
 
-// Grooming is not part of the workflow, so it stands in only while the workflow has not started.
-const isGrooming = (entry) =>
-  entry?.state === 'none' && Boolean(entry.groom) && entry.groom.state !== 'none';
+// Grooming and the e2e check are not part of the workflow, so a side session stands in only while the
+// workflow has not started: groom first, then e2e. `words` is what the label calls it.
+const SIDE_SESSIONS = [
+  { key: 'groom', words: 'grooming' },
+  { key: 'e2e', words: 'e2e check' },
+];
+const standIn = (entry) =>
+  entry?.state === 'none'
+    ? SIDE_SESSIONS.find(({ key }) => entry[key] && entry[key].state !== 'none')
+    : undefined;
 
 export function ClaudeIcon({
   ticketKey,
@@ -50,10 +57,10 @@ export function ClaudeIcon({
   testId,
   tooltip = true,
 }) {
-  const grooming = isGrooming(listed);
-  const entry = grooming ? listed.groom : listed;
+  const side = standIn(listed);
+  const entry = side ? listed[side.key] : listed;
   const state = entry?.state ?? 'none';
-  const label = overrideLabel ?? `Claude${grooming ? ' grooming' : ''}: ${claudePhrase(entry)}`;
+  const label = overrideLabel ?? `Claude${side ? ` ${side.words}` : ''}: ${claudePhrase(entry)}`;
   return (
     <DashboardTooltip title={tooltip ? label : undefined}>
       <button

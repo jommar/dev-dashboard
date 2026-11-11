@@ -3,6 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  E2E,
+  E2E_ID,
+  E2E_NAME,
   FIRST_ID,
   GROOM,
   GROOM_NAME,
@@ -16,6 +19,8 @@ import {
   REVIEW_NAME,
   START_MS,
   answeredMap,
+  e2eEntry,
+  e2eRecord,
   launchRecord,
   listed,
   question,
@@ -1742,4 +1747,54 @@ test('spec review state: a working session is reported and blocks only itself', 
   assert.equal(entry.blocks.groom, null);
   assert.deepEqual(entry.review, { state: 'none', reason: null });
   assert.equal(entry.phase, null);
+});
+
+// ---- e2e check: its own record, state, block and go-to, present only for a ticket that has run one ----
+
+const e2eDerive = (overrides = {}) =>
+  derive({
+    status: null,
+    planPresent: false,
+    launch: { [E2E]: e2eRecord() },
+    entries: [e2eEntry()],
+    ...overrides,
+  });
+
+test('e2e check state: without a record there is no block and no go-to, and the state is none', async () => {
+  const state = await import('../backend/claude-ticket-state.mjs');
+  assert.equal(state.E2E, E2E);
+  assert.deepEqual(state.PHASES, [INVESTIGATE, IMPLEMENT], 'not a workflow phase');
+  assert.equal(state.sessionName(KEY, E2E), E2E_NAME);
+
+  const entry = await e2eDerive({ launch: {}, entries: [] });
+
+  assert.deepEqual(entry.e2e, { state: 'none', reason: null });
+  assert.equal('e2e' in entry.blocks, false, 'no blocks.e2e key');
+  assert.equal('e2e' in entry.goTo, false, 'no goTo.e2e key');
+});
+
+test('e2e check state: a working session is reported, blocks only itself and offers attach', async () => {
+  const entry = await e2eDerive({ entries: [workingEntry({ id: E2E_ID, name: E2E_NAME })] });
+
+  assert.deepEqual(entry.e2e, { state: 'working', reason: 'running' });
+  assert.equal(entry.blocks.e2e, 'session_running');
+  assert.deepEqual(entry.goTo.e2e, attachFor(E2E_ID));
+  assert.equal(entry.blocks.groom, null);
+  assert.equal(entry.blocks.review, null);
+  assert.deepEqual(entry.review, { state: 'none', reason: null });
+  assert.equal(entry.phase, null);
+});
+
+test('e2e check state: a finished session is done, unblocked and offers a resume command', async () => {
+  const entry = await e2eDerive();
+
+  assert.deepEqual(entry.e2e, { state: 'done', reason: 'finished' });
+  assert.equal(entry.blocks.e2e, null);
+  assert.deepEqual(entry.goTo.e2e, resumeFor(E2E_ID));
+});
+
+test('e2e check state: a session missing from the listing has failed', async () => {
+  const entry = await e2eDerive({ entries: [] });
+
+  assert.deepEqual(entry.e2e, { state: 'failed', reason: 'session_missing' });
 });

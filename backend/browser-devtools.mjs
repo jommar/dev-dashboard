@@ -18,8 +18,10 @@ import { DEFAULT_DEVTOOLS_URL } from '../ui/devtools-defaults.js';
 
 export { DEFAULT_DEVTOOLS_URL };
 
-const PORT_FIRST = 9300;
-const PORT_LAST = 9399;
+export const PORT_FIRST = 9300;
+export const PORT_LAST = 9399;
+// A browser id, as `randomId` makes them.
+export const BROWSER_ID = /^b-[0-9a-f]{8}$/;
 const GRACE_MS = 3000;
 const POLL_MS = 100;
 const BINARIES = [

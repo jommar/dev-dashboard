@@ -273,7 +273,7 @@ export function BotBar() {
           onClose={close}
         />
       )}
-      {open?.phase === 'implement' && (
+      {(open?.phase === 'implement' || open?.phase === 'e2e') && (
         <ClaudeDialog
           key={open.ticket}
           ticketKey={open.ticket}

@@ -5,6 +5,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
+  BROWSER_ID,
+  BROWSER_PORT,
+  E2E,
+  E2E_NAME,
   EARLIER_ID,
   FIRST_ID,
   GROOM,
@@ -28,6 +32,7 @@ import {
   requestsSeen,
   reviewEntry,
   reviewRecord,
+  runningBrowser,
   seedPlanned,
   sessionUuid,
   sleep,
@@ -923,4 +928,39 @@ test('spec review route: a launch without a valid pr is INVALID_TICKET and touch
   // The phase itself is accepted: only the pr was at fault.
   const ok = await f.http.json('POST', LAUNCH, { key: KEY, phase: SPEC_REVIEW, pr: SPEC_PR });
   assert.equal(ok.status, 200, 'a valid pr launches');
+});
+
+// ---- e2e check over HTTP ----
+
+test('e2e check route: the launch endpoint forwards browserId and starts the session on the registry port', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.browsers.set([runningBrowser()]);
+
+  const res = await f.http.json('POST', LAUNCH, { key: KEY, phase: E2E, browserId: BROWSER_ID });
+
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(
+    [body.ok, body.key, body.phase, body.name, body.id],
+    [true, KEY, E2E, E2E_NAME, FIRST_ID],
+  );
+  assert.deepEqual(body.ticket.e2e, { state: 'working', reason: 'running' });
+  assert.equal(f.cli.launches().length, 1);
+  const { args } = f.cli.launches()[0];
+  assert.deepEqual(args.slice(0, 3), ['--bg', '-n', E2E_NAME]);
+  assert.match(args.at(-1), new RegExp(`agent-browser connect ${BROWSER_PORT}\\b`));
+  assert.equal(f.parsed().launch[E2E].browserId, BROWSER_ID);
+});
+
+test('e2e check route: a stopped browser is refused with its reason and nothing starts', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.browsers.set([runningBrowser({ status: 'stopped', port: null })]);
+
+  const res = await f.http.json('POST', LAUNCH, { key: KEY, phase: E2E, browserId: BROWSER_ID });
+
+  assert.equal(res.status, 409);
+  assert.equal(res.json().code, 'CLAUDE_REFUSED');
+  assert.deepEqual(res.json().errors, ['browser_not_running']);
+  assert.equal(f.cli.launches().length, 0);
+  assert.equal(f.files().launch, null);
 });

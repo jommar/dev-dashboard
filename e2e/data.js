@@ -1563,6 +1563,14 @@ function claudeDerived(entry) {
       : groomState === 'unknown' || entry.state === 'unknown'
         ? 'listing_unavailable'
         : null;
+  // An e2e check is another side session, and exists on an entry only once it has a record: the
+  // server adds `blocks.e2e` and `goTo.e2e` for those alone, so every other entry keeps its shape.
+  const e2eBlock =
+    entry.e2e?.state === 'working'
+      ? 'session_running'
+      : entry.e2e?.state === 'unknown'
+        ? 'listing_unavailable'
+        : null;
   const review = entry.review ?? { state: 'none', reason: null };
   const reviewBlock =
     review.state === 'working'
@@ -1615,6 +1623,7 @@ function claudeDerived(entry) {
         approve: planned ? approve : 'not_planned',
       }),
       groom,
+      ...(entry.e2e && { e2e: e2eBlock }),
       review: reviewBlock,
       rereview,
     },
@@ -1755,7 +1764,7 @@ function claudePromptsResponse(pathname, method, { prompts, calls }, body) {
   return null;
 }
 
-function claudeResponse(url, method, { claude }, body) {
+function claudeResponse(url, method, { claude, devtools }, body) {
   const { pathname } = url;
   const prompts = claudePromptsResponse(pathname, method, claude, body);
   if (prompts) return prompts;
@@ -1821,6 +1830,42 @@ function claudeResponse(url, method, { claude }, body) {
         key: body.key,
         phase: 'pr-review-transact',
         name: `${body.key}-pr-review-transact`,
+        id: 'ab12cd34',
+        ticket: structuredClone(ticket),
+      },
+    };
+  }
+  if (pathname === '/api/claude/launch' && body?.phase === 'e2e-ticket-check') {
+    // The launcher's own refusals, in its order: the listing, its own working session, then the
+    // browser the DevTools registry holds under the posted id (a stopped one is refused too).
+    const current = claude.tickets[body.key] ?? claudeEntry('none', null);
+    const browser = devtools?.browsers.find(({ id }) => id === body.browserId);
+    const refusal =
+      claude.listing !== 'ok'
+        ? 'listing_unavailable'
+        : current.e2e?.state === 'working'
+          ? 'session_running'
+          : !browser
+            ? 'browser_not_found'
+            : browser.status !== 'running'
+              ? 'browser_not_running'
+              : null;
+    // An unavailable listing is a failure (502) in the launcher, every other reason a refusal (409).
+    if (refusal === 'listing_unavailable') return claudeFailure(502, 'CLAUDE_FAILED', [refusal]);
+    if (refusal) return claudeFailure(409, 'CLAUDE_REFUSED', [refusal]);
+    // Like groom, an e2e check has a session and a record of its own and leaves the workflow alone.
+    const ticket = claudeDerived({
+      ...current,
+      e2e: { state: 'working', reason: 'starting' },
+      goTo: { ...current.goTo, e2e: CLAUDE_ATTACH },
+    });
+    claude.tickets[body.key] = ticket;
+    return {
+      json: {
+        ok: true,
+        key: body.key,
+        phase: 'e2e-ticket-check',
+        name: `${body.key}-e2e-ticket-check`,
         id: 'ab12cd34',
         ticket: structuredClone(ticket),
       },

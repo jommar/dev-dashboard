@@ -113,11 +113,11 @@ screens' polling and shared board contracts below remain unchanged.
 
 `ui-react/components/BotBar.jsx` (mounted once in `AppShell`, only once setup is ready) is a
 `position: fixed`, transparent strip of mascots along the bottom of every screen, one per Claude
-implement or review session. It is an overlay: `pointer-events: none` on the strip and `auto` on the
+implement, review or e2e check session. It is an overlay: `pointer-events: none` on the strip and `auto` on the
 bots, z-index under the tooltip and dialogs, no change to any screen's height or the viewport-fill
 rule; keep it that way, and never put a dialog inside the strip (it would inherit the
 `pointer-events: none`). Which phases get a bot is the single constant `BOT_PHASES` in
-`ui/bot-bar.js`, with the state mapping, the done time to live and the pure helpers; `none` and
+`ui/bot-bar.js` (`implement`, `review`, `e2e`; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`), with the state mapping, the done time to live and the pure helpers; `none` and
 `unknown` get no bot. A bot also needs its ticket in an active Jira sprint: the pure filter
 `inActiveSprint` is applied to the sessions with the keys `useActiveSprintKeys` gets from
 `GET /api/active-sprint-tickets` (`fetchActiveSprintKeys` in `backend/jira.mjs`; per-ticket answers
@@ -257,3 +257,30 @@ natural height. So a new board screen needs `BoardPanel` and nothing else: no he
 change to `App.jsx` or `AppShell.jsx`. One trap: `.board-pane[hidden]` and `.board-sub[hidden]` need
 their explicit `display: none` rules, because a `display: flex` rule on the same element defeats the
 `hidden` attribute.
+
+## E2E ticket check: facts not to break
+
+The Claude dialog's E2E row (`E2eCheckDialog.jsx`, phase `e2e-ticket-check`, bot phase `e2e`) launches
+a new DevTools browser, lets the user sign in, then starts an unattended session. It is a side action
+like groom and review; the contracts the backend and UI hold:
+
+- **Record.** The side-action record lives in `launch.json` under `e2e-ticket-check`
+  (`{ name, launchedAt, id, browserId }`, plus `browserStoppedAt` or `browserStopFailed`). The
+  INVESTIGATE branch of `launchLocked` keeps it through its `kept` list; a side key not named there is
+  deleted by the next investigate launch. `entry.e2e` is always present, `blocks.e2e` and `goTo.e2e`
+  only for a ticket with the record.
+- **Prompt and launch.** The prompt is server-owned (`e2ePrompt(key, port)`), minimal, and interpolates
+  only the validated key (and slug) and the port, an integer in 9300-9399 read from the DevTools
+  registry by `browserId` (`b-` plus 8 hex digits, else 400 `INVALID_TICKET`); never client text, a port
+  or a URL from the client. The launch passes only the working directory: no tool limits, no
+  `--add-dir`, no MCP override. Refusals: `browser_not_found` / `browser_not_running` (409
+  `CLAUDE_REFUSED`), an unavailable listing 502 `CLAUDE_FAILED` like every phase, `timed_out` 502
+  `CLAUDE_FAILED` with the record kept. The launcher gets `browsers` as `{ list, stop }` only, so a
+  profile is never deleted from here.
+- **Once-only auto-stop.** The browser is stopped when the finished session is first seen, which only
+  `list()` (`GET /api/claude/tickets`) can see, under the ticket lock with a re-read, and either marker
+  ends the attempts. A stop failure is logged, never fails the list.
+- **Dialog.** The live viewer is a modal over the dialog, so Start is unreachable while it is open
+  (no separate unmount code). Closing at step 2 before Start stops the browser; while Start runs, close
+  does nothing and unmount stops nothing; after `timed_out` no close path stops it (the backend's
+  auto-stop owns it). No `EventSource` in the component.

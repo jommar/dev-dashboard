@@ -6,14 +6,14 @@
 // bots to draw: which sessions count, the state each shows, which mascot each one is, where it
 // roams or rests, and when a finished one leaves.
 
-// The ONE place that says which sessions get a bot: the phases tied to PRs and code review. An entry
-// also carries investigate (the planning phase) and groom; they are left out, and adding a name here
-// is all it takes to bring one in.
-export const BOT_PHASES = ['implement', 'review'];
+// The ONE place that says which sessions get a bot: the phases tied to PRs and code review, and the
+// e2e check. An entry also carries investigate (the planning phase) and groom; they are left out, and
+// adding a name here is all it takes to bring one in.
+export const BOT_PHASES = ['implement', 'review', 'e2e'];
 
 // Every session an entry can describe, in the order a ticket's bots are drawn. A ticket's workflow
 // entry is the session of its current phase (`entry.phase`), so a ticket has one implement or
-// investigate session at a time; review and groom are side sessions with their own `{ state, reason }`.
+// investigate session at a time; review, groom and e2e are side sessions with their own `{ state, reason }`.
 const IMPLEMENT = 'implement-plan';
 const INVESTIGATE = 'investigate-and-plan';
 const SESSIONS = [
@@ -21,6 +21,7 @@ const SESSIONS = [
   ['implement', (entry) => (entry.phase === IMPLEMENT ? entry : null)],
   ['review', (entry) => entry.review ?? null],
   ['groom', (entry) => entry.groom ?? null],
+  ['e2e', (entry) => entry.e2e ?? null],
 ];
 
 // A bot shows one of four states. `none` (never started) and `unknown` (the CLI listing could not

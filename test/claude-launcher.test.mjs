@@ -11,6 +11,10 @@ import {
   APPROVE_TEMPLATE,
   REREVIEW_TEMPLATE,
   BAD_PROMPT_FILES,
+  BROWSER_ID,
+  BROWSER_PORT,
+  E2E,
+  E2E_NAME,
   EARLIER_ID,
   FIRST_ID,
   GROOM,
@@ -38,6 +42,8 @@ import {
   fsChanges,
   implementPrompt,
   investigateParagraphs,
+  e2eEntry,
+  e2eRecord,
   launchRecord,
   launcherEnvironment,
   listed,
@@ -47,6 +53,7 @@ import {
   reviewRecord,
   resolvesWithin,
   routingEnvironment,
+  runningBrowser,
   seedPlanned,
   sentRecord,
   sessionUuid,
@@ -4163,4 +4170,334 @@ test('spec review launch: the spec-review record survives an investigate launch'
   const launch = env.parsed().launch;
   assert.deepEqual(launch[SPEC_REVIEW], record, 'the side record is kept');
   assert.equal(launch[INVESTIGATE].name, INVESTIGATE_NAME, 'the workflow record is new');
+});
+
+// ---- e2e check: a side action on a DevTools browser, with its own record, session and browser stop ----
+
+const e2eBody = (browserId = BROWSER_ID) => ({ key: KEY, phase: E2E, browserId });
+// The launcher over a registry that holds one running browser, as after "Launch browser".
+async function e2eEnvironment(t, browsers = [runningBrowser()]) {
+  const env = await launcherEnvironment(t);
+  env.browsers.set(browsers);
+  return env;
+}
+
+test('e2e check launch: starts the e2e prompt on the registry port and ignores a client port and prompt', async (t) => {
+  const env = await e2eEnvironment(t);
+  const { e2ePrompt } = await import('../backend/claude-launcher.mjs');
+
+  const result = await env.launcher.launch({ ...e2eBody(), port: 9999, prompt: 'client text' });
+
+  assert.equal(env.cli.launches().length, 1);
+  const [launch] = env.cli.launches();
+  assert.deepEqual(
+    launch.args.slice(-4),
+    ['-n', E2E_NAME, '--', e2ePrompt(KEY, BROWSER_PORT)],
+    'name, then the prompt on the registry port, last',
+  );
+  assert.ok(!launch.args.join('\n').includes('9999'), 'the client port is nowhere in argv');
+  assert.ok(
+    !launch.args.join('\n').includes('client text'),
+    'the client prompt is nowhere in argv',
+  );
+  assert.equal(launch.options.cwd, env.pathwise);
+  assert.deepEqual(env.parsed().launch[E2E], {
+    name: E2E_NAME,
+    launchedAt: START_MS,
+    id: FIRST_ID,
+    browserId: BROWSER_ID,
+  });
+  assert.equal(env.files().status, null, 'no status file is written');
+  assert.deepEqual(
+    [result.ok, result.phase, result.name, result.id],
+    [true, E2E, E2E_NAME, FIRST_ID],
+  );
+});
+
+test('e2e check prompt: names the skill, key, port, report path and verdict line, and only those values vary', async () => {
+  const { e2ePrompt } = await import('../backend/claude-launcher.mjs');
+
+  const prompt = e2ePrompt('TAP-1234', 9301);
+
+  assert.match(prompt, /e2e-ticket-check/, 'the skill');
+  assert.match(prompt, /TAP-1234/, 'the key');
+  assert.match(prompt, /agent-browser connect 9301/, 'the attach command');
+  assert.ok(prompt.includes('.orchestrator/tap-1234/e2e.md'), 'the report path');
+  for (const verdict of ['PASS', 'FAIL', 'PARTIAL', 'BLOCKED'])
+    assert.ok(prompt.includes(`Verdict: ${verdict}`), `the ${verdict} first line`);
+  assert.ok(!/\{[A-Z_]+\}|\$\{/.test(prompt), 'no unfilled placeholder');
+  assert.equal(
+    e2ePrompt('TAP-77', 9350),
+    prompt
+      .replaceAll('TAP-1234', 'TAP-77')
+      .replaceAll('tap-1234', 'tap-77')
+      .replaceAll('9301', '9350'),
+    'another key and port change only those values',
+  );
+});
+
+for (const [label, browserId] of [
+  ['missing', undefined],
+  ['path-like', '../x'],
+  ['too short', 'b-123'],
+  ['upper case', 'B-0A1B2C3D'],
+  ['number', 9301],
+  ['array', [BROWSER_ID]],
+]) {
+  test(`e2e check launch: ${label} browserId is refused before anything runs or is written`, async (t) => {
+    const env = await e2eEnvironment(t);
+    env.recorder.clearCalls();
+    const body = browserId === undefined ? { key: KEY, phase: E2E } : e2eBody(browserId);
+
+    await assertRejects(
+      () => env.launcher.launch(body),
+      { code: 'INVALID_TICKET', status: 400 },
+      label,
+    );
+
+    assert.equal(env.cli.calls.length, 0, 'no listing and no launch');
+    assert.deepEqual(fsChanges(env.recorder), [], 'nothing is written');
+    assert.equal(fs.existsSync(env.ticketDir()), false);
+    // The phase itself is accepted: only the browserId was at fault.
+    assert.equal((await env.launcher.launch(e2eBody())).ok, true, 'a valid browserId launches');
+  });
+}
+
+for (const [label, browsers, reason] of [
+  ['unknown', [], 'browser_not_found'],
+  ['another id', [runningBrowser({ id: 'b-ffffffff' })], 'browser_not_found'],
+  ['stopped', [runningBrowser({ status: 'stopped', port: null })], 'browser_not_running'],
+  ['on a port outside 9300-9399', [runningBrowser({ port: 80 })], 'browser_not_running'],
+  ['without a port', [runningBrowser({ port: null })], 'browser_not_running'],
+]) {
+  test(`e2e check launch: browser ${label} is refused and nothing changes`, async (t) => {
+    const env = await e2eEnvironment(t, browsers);
+    env.recorder.clearCalls();
+    const before = env.files();
+
+    await assertRejects(() => env.launcher.launch(e2eBody()), refused(reason), label);
+
+    assert.equal(env.cli.launches().length, 0);
+    assert.deepEqual(env.files(), before, 'launch.json is as it was (absent stays absent)');
+    assert.deepEqual(fsChanges(env.recorder), [], 'nothing is written');
+    // The same request succeeds once the browser runs: only the browser was at fault.
+    env.browsers.set([runningBrowser()]);
+    assert.equal((await env.launcher.launch(e2eBody())).ok, true, 'a running browser launches');
+  });
+}
+
+test('e2e check launch: own session refuses a relaunch only while it works', async (t) => {
+  const env = await e2eEnvironment(t);
+  env.seed(KEY, { launch: { [E2E]: e2eRecord() } });
+  env.cli.setListing([e2eEntry({ state: 'working', status: 'busy', pid: 4260 })]);
+  const before = env.files();
+
+  await assertRejects(() => env.launcher.launch(e2eBody()), refused('session_running'), 'working');
+
+  assert.equal(env.cli.launches().length, 0);
+  assert.deepEqual(env.files(), before, 'the refusal changed nothing');
+
+  env.cli.failListing();
+  await assertRejects(
+    () => env.launcher.launch(e2eBody()),
+    failed('listing_unavailable'),
+    'no listing',
+  );
+  assert.equal(env.cli.launches().length, 0);
+  assert.deepEqual(env.files(), before, 'the second refusal changed nothing');
+});
+
+for (const [phase, name, id] of [
+  [INVESTIGATE, INVESTIGATE_NAME, EARLIER_ID],
+  [IMPLEMENT, IMPLEMENT_NAME, EARLIER_ID],
+  [GROOM, GROOM_NAME, EARLIER_ID],
+  [REVIEW, REVIEW_NAME, EARLIER_ID],
+]) {
+  test(`e2e check launch: own session is not blocked by a working ${phase} session`, async (t) => {
+    const env = await e2eEnvironment(t);
+    env.seed(KEY, { launch: { [phase]: launchRecord({ name, id }) } });
+    env.cli.setListing([listed({ id, name, state: 'working', status: 'busy', pid: 4261 })]);
+
+    const result = await env.launcher.launch(e2eBody());
+
+    assert.equal(result.ok, true);
+    assert.equal(env.cli.launches().length, 1);
+  });
+}
+
+test('e2e check launch: own session starts again once finished and replaces the record', async (t) => {
+  const env = await e2eEnvironment(t);
+  env.seed(KEY, {
+    launch: { [E2E]: e2eRecord({ browserId: 'b-ffffffff', browserStoppedAt: START_MS - 1_000 }) },
+  });
+  env.cli.setListing([e2eEntry({ state: 'done' })]);
+
+  const result = await env.launcher.launch(e2eBody());
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    env.parsed().launch[E2E],
+    { name: E2E_NAME, launchedAt: START_MS, id: FIRST_ID, browserId: BROWSER_ID },
+    'the earlier markers and browser are gone with the earlier record',
+  );
+});
+
+test('e2e check launch: the argv is only --bg, the name and the prompt, from the launch directory', async (t) => {
+  const env = await e2eEnvironment(t);
+  const { e2ePrompt } = await import('../backend/claude-launcher.mjs');
+
+  await env.launcher.launch(e2eBody());
+
+  const [{ args, options }] = env.cli.launches();
+  assert.deepEqual(args, ['--bg', '-n', E2E_NAME, '--', e2ePrompt(KEY, BROWSER_PORT)]);
+  assert.equal(options.cwd, env.pathwise);
+});
+
+test('e2e check launch: the e2e record survives an investigate launch', async (t) => {
+  const env = await e2eEnvironment(t);
+  const record = e2eRecord({ browserStoppedAt: START_MS - 1_000 });
+  env.seed(KEY, { launch: { [E2E]: record } });
+
+  await env.launcher.launch(launchBody(INVESTIGATE));
+
+  const launch = env.parsed().launch;
+  assert.deepEqual(launch[E2E], record, 'the side record is kept, markers included');
+  assert.equal(launch[INVESTIGATE].name, INVESTIGATE_NAME, 'the workflow record is new');
+});
+
+// The browser is stopped from `list()`, the one place a finished session is visible.
+const seedFinishedE2e = (
+  env,
+  { record = e2eRecord(), entries = [e2eEntry({ state: 'done' })] } = {},
+) => {
+  env.seed(KEY, { launch: { [E2E]: record } });
+  env.cli.setListing(entries);
+};
+
+for (const [label, entries] of [
+  ['done', [e2eEntry({ state: 'done' })]],
+  ['missing from the listing', []],
+]) {
+  test(`e2e check stop: finished ${label} session stops its browser once and marks the record`, async (t) => {
+    const env = await e2eEnvironment(t);
+    seedFinishedE2e(env, { entries });
+    const earlier = env.parsed().launch[E2E];
+
+    await env.launcher.list();
+
+    assert.deepEqual(env.browsers.stops, [BROWSER_ID], 'stopped once');
+    assert.deepEqual(env.parsed().launch[E2E], { ...earlier, browserStoppedAt: START_MS });
+
+    await env.launcher.list();
+
+    assert.deepEqual(env.browsers.stops, [BROWSER_ID], 'a second list stops nothing');
+  });
+}
+
+for (const [label, arrange] of [
+  [
+    'working',
+    (env) => env.cli.setListing([e2eEntry({ state: 'working', status: 'busy', pid: 4262 })]),
+  ],
+  ['waiting', (env) => env.cli.setListing([e2eEntry({ state: 'blocked' })])],
+  ['unlisted', (env) => env.cli.failListing()],
+]) {
+  test(`e2e check stop: finished is not met by a ${label} session, so no stop and no marker until it finishes`, async (t) => {
+    const env = await e2eEnvironment(t);
+    seedFinishedE2e(env);
+    arrange(env);
+    const before = env.files();
+
+    await env.launcher.list();
+
+    assert.deepEqual(env.browsers.stops, []);
+    assert.deepEqual(env.files(), before, 'launch.json is untouched');
+
+    env.cli.failListing(null);
+    env.cli.setListing([e2eEntry({ state: 'done' })]);
+    await env.launcher.list();
+
+    assert.deepEqual(env.browsers.stops, [BROWSER_ID], 'stopped once it finished');
+  });
+}
+
+test('e2e check stop: failure is recorded and logged, never retried and never fails the list', async (t) => {
+  const lines = captureConsole(t);
+  const env = await e2eEnvironment(t);
+  seedFinishedE2e(env);
+  env.seed('TAP-5678', { launch: { [INVESTIGATE]: launchRecord() } });
+  env.browsers.failStop('LAUNCH_FAILED');
+  const earlier = env.parsed().launch[E2E];
+
+  const { tickets } = await env.launcher.list();
+
+  assert.deepEqual(Object.keys(tickets).sort(), [KEY, 'TAP-5678'], 'every ticket is still listed');
+  assert.deepEqual(env.parsed().launch[E2E], { ...earlier, browserStopFailed: 'LAUNCH_FAILED' });
+  assert.ok(
+    lines.some((line) => line.includes('LAUNCH_FAILED')),
+    'the failure is logged',
+  );
+
+  await env.launcher.list();
+
+  assert.deepEqual(env.browsers.stops, [BROWSER_ID], 'the next list does not call stop again');
+});
+
+for (const [label, browsers] of [
+  ['stopped', [runningBrowser({ status: 'stopped', port: null })]],
+  ['gone from the registry', []],
+]) {
+  test(`e2e check stop: already ${label} needs no stop call but is marked`, async (t) => {
+    const env = await e2eEnvironment(t, browsers);
+    seedFinishedE2e(env);
+    const earlier = env.parsed().launch[E2E];
+
+    await env.launcher.list();
+
+    assert.deepEqual(env.browsers.stops, [], 'stop is not called');
+    assert.deepEqual(env.parsed().launch[E2E], { ...earlier, browserStoppedAt: START_MS });
+  });
+}
+
+test('e2e check stop: overlapping lists stop the browser once', async (t) => {
+  const env = await e2eEnvironment(t);
+  seedFinishedE2e(env);
+  const gate = env.browsers.holdStop();
+
+  const first = env.launcher.list();
+  const second = env.launcher.list();
+  await until(() => env.browsers.stops.length > 0);
+  await sleep(20);
+  gate.release();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(env.browsers.stops, [BROWSER_ID], 'one stop for two overlapping lists');
+  assert.equal(typeof env.parsed().launch[E2E].browserStoppedAt, 'number');
+});
+
+test('e2e check launch: a timeout keeps the record with its browser, and the finish-time stop cleans up', async (t) => {
+  const env = await e2eEnvironment(t);
+  env.cli.failLaunch({ timeout: true });
+
+  await assertRejects(
+    () => env.launcher.launch(e2eBody()),
+    failed('timed_out'),
+    'timeout is told apart from a refusal',
+  );
+
+  assert.deepEqual(env.parsed().launch[E2E], {
+    name: E2E_NAME,
+    launchedAt: START_MS,
+    id: null,
+    browserId: BROWSER_ID,
+  });
+  await env.launcher.list();
+  assert.deepEqual(env.browsers.stops, [], 'still starting: the browser is not stopped');
+
+  env.clock.advance(31_000);
+  env.cli.setListing([e2eEntry({ startedAt: START_MS + 5_000, state: 'done' })]);
+  await env.launcher.list();
+
+  assert.deepEqual(env.browsers.stops, [BROWSER_ID], 'stopped once the session ended');
+  assert.equal(env.parsed().launch[E2E].browserStoppedAt, env.clock.now());
 });

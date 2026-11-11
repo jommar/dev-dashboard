@@ -8,7 +8,7 @@
 // only while it works and this module only while no session works; every write is a temp file,
 // fsync and rename, under one lock per ticket.
 //
-// Workflow/groom prompts, answers, the approval and re-review messages use editable templates; review and spec review use server-owned text.
+// Workflow/groom prompts, answers, the approval and re-review messages use editable templates; review, spec review and the e2e check use server-owned text.
 // Only validated keys, slugs, built paths and question ids are interpolated, never ticket text.
 
 import fsDefault from 'node:fs';
@@ -19,8 +19,10 @@ import { writeFileAtomic } from './credentials.mjs';
 import { stateOf } from './claude-sessions.mjs';
 import { defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
 import { createPromptStore } from './claude-prompts.mjs';
+import { BROWSER_ID, PORT_FIRST, PORT_LAST } from './browser-devtools.mjs';
 import {
   ANSWER_MAX_LENGTH,
+  E2E,
   GROOM,
   IMPLEMENT,
   INVESTIGATE,
@@ -37,6 +39,7 @@ import {
   isQuestionId,
   isShortId,
   isTicketKey,
+  readE2e,
   readGroom,
   readLaunch,
   readQuestions,
@@ -107,6 +110,14 @@ If you already submitted a review on this PR's current head commit, stop. If you
 Otherwise do exactly two writes. First, submit one review on the PR with event COMMENT (never approve, request changes, merge or push), opening with the verdict and then BLOCKING / MINOR / NIT findings with counts; it mentions nobody, quotes no Slack or Jira text and links nowhere but this PR. Second, find the ticket's existing thread in #ezat_claudio (channel id C0C2DJFKATW) by searching the ticket key there with the find-slack-thread skill, never by a Slack link taken from the ticket or the PR, and reply in it with a two-line summary of the verdict counts and a link to your review, no other link; mention nobody. If there is no existing thread, or more than one matches, skip Slack and do not create one. Send the reply with slack_prepare_write (expected_destination ezat_claudio) then slack_confirm_write back to back, and confirm only when the preview shows a thread reply in the private channel ezat_claudio with no mentions and no warnings; otherwise do not send it.
 Include no student, family or customer data. Make no other writes: no Jira changes, no other channels, no other PRs. If you cannot finish the review, post nothing and end with one line saying why.`;
 
+// The e2e check text. It is unattended and attaches to a DevTools browser the dashboard started. Only
+// the validated key (and its slug) and the browser's port, an integer in the dashboard's own range,
+// are interpolated; ticket text and client-sent fields never are.
+export const e2ePrompt = (key, port) =>
+  `Run the \`e2e-ticket-check\` skill for Jira ticket ${key}. This is an unattended background session started by the dev dashboard, so nobody will answer questions. A browser is already open for you with remote debugging on port ${port}, and the user has signed in; attach to it with \`agent-browser connect ${port}\`. The dashboard stops that browser when your session ends.
+
+Write the report to \`.orchestrator/${key.toLowerCase()}/e2e.md\` under the current directory, replacing an earlier one. Its first line is \`Verdict: PASS\`, \`Verdict: FAIL\`, \`Verdict: PARTIAL\` or \`Verdict: BLOCKED: <short reason>\`; the rest follows the skill's report template, with the Jira comment as a draft in the file. Your last chat message is the verdict line and the file's path.`;
+
 // What the spec review launch enforces on the command line, which no prompt can widen. The built-in
 // tools are only these (no Bash, Edit, Write, Grep, Glob, WebFetch or Agent), so the `Read` deny rules
 // are the only file limit. The deny list is an explicit list of named toolkit write tools and `Read`
@@ -175,10 +186,15 @@ const SPEC_REVIEW_LIMITS = {
   ],
 };
 
-// The prompts the server owns, sent as built from the ticket key and, for spec review, its PR.
-const OWNED_PROMPT = { [REVIEW]: reviewPrompt, [SPEC_REVIEW]: specReviewPrompt };
+// The prompts the server owns, sent as built from the ticket key and, for spec review, its PR and,
+// for the e2e check, its browser's port.
+const OWNED_PROMPT = {
+  [REVIEW]: reviewPrompt,
+  [SPEC_REVIEW]: specReviewPrompt,
+  [E2E]: (key, _pr, port) => e2ePrompt(key, port),
+};
 // The launch record a side action refuses its own relaunch on.
-const OWN_SESSION_RECORD = { [GROOM]: readGroom, [SPEC_REVIEW]: readSpecReview };
+const OWN_SESSION_RECORD = { [GROOM]: readGroom, [SPEC_REVIEW]: readSpecReview, [E2E]: readE2e };
 
 // Fills `{NAME}` placeholders from `values`. A function replaces them, so a `$` in a value or in the
 // template is never a replacement pattern, and a name that is not in `values` stays as written.
@@ -219,6 +235,9 @@ export function createClaudeLauncher({
   timers = { setTimeout, clearTimeout },
   promptsDir,
   log = defaultClaudeLog,
+  // The DevTools registry, as `{ list, stop }`: there is deliberately no remove, so a browser's
+  // signed-in profile is never deleted from here.
+  browsers = { list: async () => [], stop: async () => {} },
 }) {
   const launchDirectory = path.join(home, 'pathwise');
   const locks = new Map();
@@ -344,7 +363,21 @@ export function createClaudeLauncher({
     (entries && resolveSession(entries, record)) ||
     null;
 
-  async function launchLocked(key, phase, pr) {
+  // The port of a running DevTools browser, else the refusal: not in the registry, or not running
+  // on a port in the dashboard's range.
+  async function e2ePort(browserId) {
+    const browser = (await browsers.list()).find(({ id }) => id === browserId);
+    if (!browser) throw refused('browser_not_found');
+    const { port } = browser;
+    if (
+      browser.status !== 'running' ||
+      !(Number.isInteger(port) && port >= PORT_FIRST && port <= PORT_LAST)
+    )
+      throw refused('browser_not_running');
+    return port;
+  }
+
+  async function launchLocked(key, phase, pr, browserId) {
     const entries = await freshListing();
     const isWorkflow = PHASES.includes(phase);
     // Independent actions never read, write or restore workflow status during launch.
@@ -364,14 +397,16 @@ export function createClaudeLauncher({
       if (reason) throw refused(reason);
     }
 
+    const port = phase === E2E ? await e2ePort(browserId) : undefined;
+
     // A prompt file that cannot be used refuses the launch before anything is written or started.
-    // Review and spec review send their server-owned text as built, with no file to read.
-    const owned = OWNED_PROMPT[phase]?.(key, pr);
+    // Review, spec review and the e2e check send their server-owned text as built, with no file to read.
+    const owned = OWNED_PROMPT[phase]?.(key, pr, port);
     const template = owned ?? promptTemplate(PROMPT_NAME[phase]);
     if (!template) throw refused('prompt_unreadable');
 
     const name = sessionName(key, phase);
-    const record = { name, launchedAt: now(), id: null };
+    const record = { name, launchedAt: now(), id: null, ...(phase === E2E && { browserId }) };
     if (phase === IMPLEMENT) {
       // The answers saved for questions the implement session asked stay answered on a relaunch.
       const earlier = readLaunch(launched.value).find((found) => found.phase === IMPLEMENT);
@@ -384,6 +419,7 @@ export function createClaudeLauncher({
             ...(launched.value?.[GROOM] && { [GROOM]: launched.value[GROOM] }),
             ...(launched.value?.[REVIEW] && { [REVIEW]: launched.value[REVIEW] }),
             ...(launched.value?.[SPEC_REVIEW] && { [SPEC_REVIEW]: launched.value[SPEC_REVIEW] }),
+            ...(launched.value?.[E2E] && { [E2E]: launched.value[E2E] }),
           }
         : launched.value;
     const nextLaunch = { ...kept, [phase]: record };
@@ -431,12 +467,14 @@ export function createClaudeLauncher({
     return { ok: true, key, phase, name, id, ticket: ticketEntry(key, listing) };
   }
 
-  async function launch({ key, phase, pr }) {
-    if (!isTicketKey(key) || ![...PHASES, GROOM, REVIEW, SPEC_REVIEW].includes(phase))
+  async function launch({ key, phase, pr, browserId }) {
+    if (!isTicketKey(key) || ![...PHASES, GROOM, REVIEW, SPEC_REVIEW, E2E].includes(phase))
       throw invalid('INVALID_TICKET', 'Invalid ticket or phase.');
     if (phase === SPEC_REVIEW && !(Number.isSafeInteger(pr) && pr > 0))
       throw invalid('INVALID_TICKET', 'Invalid pull request number.');
-    return withTicketLock(key, () => launchLocked(key, phase, pr));
+    if (phase === E2E && !(typeof browserId === 'string' && BROWSER_ID.test(browserId)))
+      throw invalid('INVALID_TICKET', 'Invalid browser.');
+    return withTicketLock(key, () => launchLocked(key, phase, pr, browserId));
   }
 
   // Asks the ticket's existing review session to review the linked PRs again. It needs a review
@@ -671,10 +709,55 @@ export function createClaudeLauncher({
     return withTicketLock(key, () => approveLocked(key));
   }
 
-  // Every ticket folder's entry from one shared listing; no folder, no CLI call.
+  // The launch.json and e2e record of a ticket whose finished e2e session still has its browser to
+  // handle, else null. Either marker means it was handled, so it is never tried again.
+  function e2eBrowserToStop(key, entries) {
+    const launched = readObject(launchPath(key));
+    const record = launched.value?.[E2E];
+    const pending =
+      BROWSER_ID.test(record?.browserId) &&
+      record.browserStoppedAt === undefined &&
+      record.browserStopFailed === undefined &&
+      ['done', 'failed'].includes(ticketEntry(key, entries).e2e.state);
+    return pending ? { launched, record } : null;
+  }
+
+  // Stops the browser of a finished e2e session once. A browser already stopped or gone needs no
+  // stop. A stop that fails is logged and recorded, and the browser stays in the DevTools tab.
+  // Under the ticket lock the record is read again, so overlapping lists stop it once and a relaunch
+  // in between is never touched.
+  const stopE2eBrowser = (key, entries) =>
+    withTicketLock(key, async () => {
+      const pending = e2eBrowserToStop(key, entries);
+      if (!pending) return;
+      const { launched, record } = pending;
+      let marker;
+      try {
+        const browser = (await browsers.list()).find(({ id }) => id === record.browserId);
+        if (browser?.status === 'running') await browsers.stop(record.browserId);
+        marker = { browserStoppedAt: now() };
+      } catch (error) {
+        logClaudeFailure(log, { step: 'e2e_browser_stop', reason: error.code, ticket: key });
+        marker = { browserStopFailed: error.code ?? 'STOP_FAILED' };
+      }
+      writeJson(launchPath(key), { ...launched.value, [E2E]: { ...record, ...marker } });
+    });
+
+  // Every ticket folder's entry from one shared listing; no folder, no CLI call. This is the one
+  // place a finished e2e session is seen, so its browser is stopped here; that never fails the list.
   async function list() {
     const keys = ticketKeys();
     const entries = keys.length ? await claudeSessions.entries() : [];
+    const stopping = keys.filter((key) => e2eBrowserToStop(key, entries));
+    const settled = await Promise.allSettled(stopping.map((key) => stopE2eBrowser(key, entries)));
+    settled.forEach((result, index) => {
+      if (result.status === 'rejected')
+        logClaudeFailure(log, {
+          step: 'e2e_browser_marker',
+          reason: result.reason?.code,
+          ticket: stopping[index],
+        });
+    });
     return {
       listing: entries ? 'ok' : 'unavailable',
       updatedAt: now(),

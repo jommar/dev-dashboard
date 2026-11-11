@@ -290,11 +290,17 @@ export const getClaudeTickets = (surface) =>
 export const getActiveSprintTickets = (keys) =>
   watchRequest(`/api/active-sprint-tickets?keys=${encodeURIComponent(keys.join(','))}`);
 
-// `pr` names the spec PR a spec-review launch reviews; no other phase sends it.
-export const launchClaude = (key, phase, { pr } = {}) =>
+// `pr` names the spec PR a spec-review launch reviews, `browserId` the DevTools browser an e2e check
+// attaches to; no other phase sends either.
+export const launchClaude = (key, phase, { pr, browserId } = {}) =>
   watchRequest('/api/claude/launch', {
     method: 'POST',
-    body: { key, phase, ...(pr !== undefined && { pr }) },
+    body: {
+      key,
+      phase,
+      ...(pr !== undefined && { pr }),
+      ...(browserId !== undefined && { browserId }),
+    },
   });
 
 // `resend` asks for the saved answers to go to the session again even when nothing changed.

@@ -161,10 +161,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const slackWatchStore = integrations.slackWatchStore || createSlackWatchStore();
   const claudeSessions =
     integrations.claudeSessions || createClaudeSessions({ store: slackWatchStore });
-  const claudeLauncher = integrations.claudeLauncher || createClaudeLauncher({ claudeSessions });
   const claudePrompts = integrations.claudePrompts || createPromptStore();
   const claudeArtifacts = integrations.claudeArtifacts || createClaudeArtifacts();
   const browserDevtools = integrations.browserDevtools || createBrowserDevtools();
+  const claudeLauncher =
+    integrations.claudeLauncher ||
+    createClaudeLauncher({ claudeSessions, browsers: browserDevtools });
   const browserScreencast =
     integrations.browserScreencast || createBrowserScreencast({ devtools: browserDevtools });
   const devtoolsStreams =
@@ -279,8 +281,8 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const claudeRoutes = {
     'GET /api/claude/tickets': () => claudeLauncher.list(),
     'POST /api/claude/launch': async (req) => {
-      const { key, phase, pr } = await readJson(req);
-      return claudeLauncher.launch({ key, phase, pr });
+      const { key, phase, pr, browserId } = await readJson(req);
+      return claudeLauncher.launch({ key, phase, pr, browserId });
     },
     'POST /api/claude/answers': async (req) => {
       const { key, answers, resend } = await readJson(req);

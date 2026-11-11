@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added an E2E check action to the Claude dialog (`POST /api/claude/launch` with `phase:
+'e2e-ticket-check'` and a `browserId`). Its button opens a two-step dialog: enter the address, which
+  launches a new DevTools browser, then sign in there (in the real window or the embedded live view)
+  and press Start. The session `<KEY>-e2e-ticket-check` runs the `e2e-ticket-check` skill from
+  `~/pathwise`, attaches to the browser by its debug port and writes `e2e.md`, which the row opens in
+  the artifact viewer once done. The prompt is server-owned and carries only the ticket key and the
+  port. The dashboard stops the browser (never removes it) when the session finishes, found by the
+  next ticket poll and done once, and when the dialog closes before Start. Each ticket entry gains
+  `e2e`, with `blocks.e2e` and `goTo.e2e` for a ticket with a record; e2e sessions get a bot in the
+  bot bar and the card icon follows them after groom. An unknown or stopped browser is 409
+  `browser_not_found` or `browser_not_running`, a malformed id is 400, and a `timed_out` launch is 502
+  with the browser left for the finish-time stop. The first real launch is still to be run.
+
 - Added a Spec review lane to the Pull Requests board: one card per open `ezat-specs` spec PR labelled
   `spec` whose title names a TAP or TRIPS ticket with no open or merged code PR in Portage-backend,
   Portage-frontend or TravelTracker. Its Claude button starts a spec review against the ticket's

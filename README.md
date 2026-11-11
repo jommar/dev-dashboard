@@ -1096,13 +1096,15 @@ the ticket stands with Claude and opens a dialog with one row per action, each h
 - **Groom ticket** starts a third, independent session that runs your `groom-ticket` skill on
   the ticket, whatever its Jira status. It is not part of the investigate and implement
   workflow: see [Groom ticket](#groom-ticket).
+- **E2E check** opens a new browser for you to sign in to, then starts a fourth, independent
+  session that runs your `e2e-ticket-check` skill against it: see [E2E check](#e2e-check).
 - **Go to session**, one beside each of those, copies the command that joins or resumes that
   row's own session in a terminal. Its accessible name is the full one, `Go to investigate and
-plan session`, `Go to implement plan session` or `Go to groom ticket session`.
+plan session`, `Go to implement plan session`, `Go to groom ticket session` or `Go to e2e check session`.
 
 Each of these My Tickets launches is fire and forget. The dashboard runs `claude --bg` from `~/pathwise`, names the
-session after the ticket and the phase, `<KEY>-investigate-and-plan`, `<KEY>-implement-plan` or
-`<KEY>-groom`, and returns. It never opens a terminal and never removes a session. It stops and resumes a session
+session after the ticket and the phase, `<KEY>-investigate-and-plan`, `<KEY>-implement-plan`,
+`<KEY>-groom` or `<KEY>-e2e-ticket-check`, and returns. It never opens a terminal and never removes a session. It stops and resumes a session
 only to send a message to it: your saved answers (and a resend) or your approval to the planning
 session (see [Saving and sending answers](#saving-and-sending-answers) and
 [Approving the plan](#approving-the-plan)), or a re-review to the review session (see
@@ -1154,7 +1156,7 @@ changes in a worktree with a short report beside the plan.
 - **Local state.** Everything the dashboard knows about a ticket's Claude work is in
   `claude/<KEY>/` in the dashboard directory. `/claude/` is gitignored and `claude` is in
   `.dockerignore`. Workflow sessions get that folder (and only it, not the dashboard's source)
-  through `--add-dir`. Groom and review sessions get no `--add-dir` and are not instructed to
+  through `--add-dir`. Groom, review and e2e check sessions get no `--add-dir` and are not instructed to
   write workflow state there.
 
 ### Icon and dialog
@@ -1174,7 +1176,9 @@ label and tooltip read `Claude: <state word>`.
 
 The icon shows the ticket's current phase, the one launched last. Grooming does not count: it
 shows only for a ticket with no workflow record, then with the same four looks, from the groom
-session's own state, and its label and tooltip read `Claude grooming: <phrase>`. The dialog opens
+session's own state, and its label and tooltip read `Claude grooming: <phrase>`. An e2e check
+does the same after groom (a ticket with a workflow record or a groom record keeps that icon), and
+its label reads `Claude e2e check: <phrase>`. The dialog opens
 from it as a native modal. The header holds the ticket key and summary and the state as a pill (a
 mark and a word, never colour alone; workflow state only). The body opens with the workflow as a
 strip of three steps in order, **Investigate and plan**, **Approve plan**, **Implement plan** (one
@@ -1190,7 +1194,8 @@ while a session works or the status is unavailable the pill and the steps alread
 lines are only for screen readers (each button points at its reason with `aria-describedby`). When
 the state is `plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows
 in the Implement step, because starting it is your approval. **Groom ticket** sits apart under a
-hairline, labelled `Independent`, with its note and, once it has a session, its own chip. The
+hairline, labelled `Independent`, with its note and, once it has a session, its own chip; the
+**E2E check** row follows it with its own chip and, once done, a **View e2e result** link. The
 outcome of an approval or a save is a short inline message beside what caused it, with a **×** to
 dismiss it; it also clears by itself once the ticket stops working, so it never outlives the state
 it described.
@@ -1301,6 +1306,13 @@ which session belongs to which phase and a re-run reuses its session name.
   },
   "implement-plan": { "name": "ABC-123-implement-plan", "launchedAt": 1731100500000, "id": null },
   "groom": { "name": "ABC-123-groom", "launchedAt": 1731100900000, "id": "ef56ab78" },
+  "e2e-ticket-check": {
+    "name": "ABC-123-e2e-ticket-check",
+    "launchedAt": 1731100950000,
+    "id": "cd78ef90",
+    "browserId": "b-0a1b2c3d",
+    "browserStoppedAt": 1731101900000
+  },
   "pr-review-transact": {
     "name": "ABC-123-pr-review-transact",
     "launchedAt": 1731101000000,
@@ -1317,8 +1329,8 @@ one phase's session is never taken for the other's, and a session of the same na
 earlier is never taken for either. Sessions launched before names were per phase keep their old
 name and are still tracked by their saved `id` (or, with none saved, by that recorded name). An
 Investigate launch drops the `implement-plan` entry, and with the rest of the investigate record
-whatever `sent` it held; it keeps both `groom` and `pr-review-transact` entries. Groom and review
-launches each replace only their own record, have no flags or answers, and leave `status.json`
+whatever `sent` it held; it keeps the `groom`, `pr-review-transact`, `spec-review` and `e2e-ticket-check` entries. Groom,
+review and e2e check launches each replace only their own record, have no flags or answers, and leave `status.json`
 alone. Relaunch uses the existing record/session tracking, not a separate review-history store.
 `answered` appears once you save an answer (see below). `sent` is on the
 investigate record only. It is written when answers were really delivered to the session, and again
@@ -1531,6 +1543,52 @@ another Groom launch (`session_running`, and `listing_unavailable` when the CLI 
   `prompt_unreadable`), records the session in `launch.json` and starts it with no `--add-dir`.
   A failed start rolls the record back, except after `timed_out`.
 
+### E2E check
+
+**E2E check** runs your `e2e-ticket-check` skill (from `~/pathwise/.claude/skills/e2e-ticket-check/`)
+against a browser you have already signed in to. It is independent of the workflow, like grooming:
+any ticket, no flags, no `status.json`, no gates either way. Only a running e2e session of the same
+ticket refuses another (`session_running`).
+
+- **Dialog.** The row's button opens a two-step dialog over the Claude dialog. Step 1 takes the
+  address (the DevTools tab's default is the placeholder) and **Launch browser** starts a new,
+  visible DevTools browser labelled `E2E <KEY>`; a server rejection such as an invalid URL shows
+  inline. Step 2 names its port. Sign in there, in the real browser window or in **Open live view**
+  (the DevTools viewer, view-only until Take control), using a throw-away test client, never a real
+  one. **I've logged in, start check** is the only thing that starts the session. The live view is a
+  modal over the dialog, so Start cannot be reached while it is open. The dialog opens no event
+  stream of its own.
+- **Session.** `POST /api/claude/launch` with `phase` `e2e-ticket-check` and the `browserId`,
+  from `~/pathwise` with no tool limits and no `--add-dir`. The prompt is built by the server from the
+  ticket key and the browser's port (looked up in the DevTools registry, never taken from the
+  client) and nothing else: it names the skill, says the session is unattended, and tells it to attach
+  with `agent-browser connect <port>`. The session writes
+  `~/pathwise/.orchestrator/<key in lower case>/e2e.md`, whose first line is `Verdict: PASS`,
+  `FAIL`, `PARTIAL` or `BLOCKED: <reason>`. The dashboard does not read the verdict: the row shows the
+  session's state, a **Go to e2e check session** chip, and once `done` a **View e2e result** link
+  that opens `e2e.md` in the artifact viewer.
+- **Browser.** The dashboard stops the browser, never removes it (the signed-in profile stays on
+  disk and the browser stays in the DevTools tab as stopped), in two cases. Closing the dialog at
+  step 2 before Start (Close, Esc, the backdrop; also closing while Launch browser is still
+  opening) stops it, and a failed stop is ignored. And when the next `GET /api/claude/tickets` finds
+  the session `done` or `failed`, it stops the browser once, under the ticket's lock, and writes
+  `browserStoppedAt` (or `browserStopFailed` with the error code, which is logged and not retried)
+  into the record; a browser that is already stopped or gone is only marked, and a failed stop never
+  fails the listing. While Start is in flight, closing does nothing and the dialog going away stops nothing: the launch
+  outcome decides. After a `timed_out` start no close path stops it, because a session may exist:
+  only the finish-time stop does. A relaunch
+  before a poll saw the earlier session finish, or closing the dashboard tab at step 2, leaves a
+  browser running; stop it in the DevTools tab.
+- **State.** The ticket entry gains `e2e: { state, reason }`, always present and read like `groom`,
+  `blocks.e2e` and `goTo.e2e`, the last two only for a ticket with an e2e record. `blocks.e2e` is
+  `listing_unavailable`, `session_running` or `null`. A bot appears for the session on the
+  [bot bar](#bot-bar).
+- **Launch refusals.** A malformed `browserId` (not `b-` and eight hex digits) is `400`
+  `INVALID_TICKET`. An id the registry does not list is `409` `CLAUDE_REFUSED` `browser_not_found`,
+  and one that is stopped (or on a port outside 9300-9399) `browser_not_running`; the dialog then
+  returns to step 1 with `That browser is no longer running. Launch a new one.` Nothing is
+  written on a refusal.
+
 ### Code review
 
 **Start code review** in the Pull Requests dialog launches a background session named
@@ -1699,20 +1757,21 @@ to default** or delete the file.
 
 ### Routes and errors
 
-| Route                               | Purpose                                                                                                                                        |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below) |
-| `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }`         |
-| `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                             |
-| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; `prompts` is the four entries below, in the order investigate, implement, answers, groom                              |
-| `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                         |
-| `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                            |
+| Route                               | Purpose                                                                                                                                                                           |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below)                                    |
+| `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, `e2e-ticket-check` also takes `browserId`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }` |
+| `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                                                                |
+| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; `prompts` is the four entries below, in the order investigate, implement, answers, groom                                                                 |
+| `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                                                            |
+| `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                                                               |
 
 `tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
 board shows it as not started). With no ticket folder the route answers without running the CLI;
 otherwise concurrent callers share one `claude agents --json --all`. An entry is
-`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, review, specReview, blocks, goTo }`
+`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, review, specReview, e2e, blocks, goTo }`
 (`groom` and `blocks.groom` are described under [Groom ticket](#groom-ticket);
+`e2e`, `blocks.e2e` and `goTo.e2e` under [E2E check](#e2e-check);
 `review` and `blocks.review` under [Code review](#code-review), `specReview` and `blocks.specReview` under [Spec review lane](#spec-review-lane)):
 
 - `phase` is `investigate-and-plan`, `implement-plan` or `null` (no workflow launched). `flags` holds
@@ -1731,7 +1790,7 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
   listing failed, and `null` otherwise.
 - Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
   `unanswered` counts the open ones.
-- `blocks` is `{ investigate, implement, answer, groom, review }`, each a reason string or `null` (why that
+- `blocks` is `{ investigate, implement, answer, groom, review }` (plus `specReview` and `e2e` for a ticket with that record), each a reason string or `null` (why that
   action is refused now). It is what the dialog words beside a disabled item. While Investigate
   and plan runs it is `session_running`, `investigate_running` and `session_running`; while
   Implement plan runs it is `implement_running`, `session_running` and `session_running`. The
@@ -1742,13 +1801,13 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
 - `unsent` is `true` when the answers are complete, the plan flag is `true`, Implement plan was
   never launched, they differ from the last send and no session works: the conditions under which
   a **Save answers** would send. The same conditions make `answers_not_sent` the Implement block.
-- `goTo` is always `{ investigate, implement, groom }`, each side `{ kind, command }` (`kind` is `attach`
+- `goTo` is always `{ investigate, implement, groom }` (plus `e2e` for a ticket with an e2e record), each side `{ kind, command }` (`kind` is `attach`
   or `resume`) or `null`: `null` for a phase with no launch record, a session that cannot be
   joined, or an unavailable listing, so a ticket never launched has every side `null`. It used to
   be one `{ kind, command }` or `null` for the current phase only, so anything reading `goTo`
   must now read a side.
 
-`launch` takes `phase` `investigate-and-plan`, `implement-plan`, `groom` or `pr-review-transact`;
+`launch` takes `phase` `investigate-and-plan`, `implement-plan`, `groom`, `pr-review-transact`, `spec-review` or `e2e-ticket-check`;
 extra properties such as `summary` or `prompt` in the body are ignored. Its answer has `name`
 (the action's session name), `id` (the session's
 8-character id, or `null` while the listing does not show the session yet) and `ticket` (the
@@ -1776,13 +1835,13 @@ Slack routes, because they need neither GitHub nor Jira. They run behind the sam
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 `Cache-Control: no-store`. Failures answer `{ code, error, errors[] }`, with `errors[0]` the reason:
 
-| Status | Code             | When                                                                                                                                                                                                                                                             |
-| ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the four supported launch actions                                                                                                                                                               |
-| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record                                    |
-| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                                     |
-| `409`  | `CLAUDE_REFUSED` | `session_running` (the action asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable`, `status_unreadable` or `unrecognised_state` (review) |
-| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused)                      |
+| Status | Code             | When                                                                                                                                                                                                                                                                                                                         |
+| ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the supported launch actions, `pr` is bad for `spec-review`, or `browserId` is not `b-` and eight hex digits for `e2e-ticket-check`                                                                                                                         |
+| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record                                                                                                |
+| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                                                                                                 |
+| `409`  | `CLAUDE_REFUSED` | `session_running` (the action asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable`, `status_unreadable`, `unrecognised_state` (review), or `browser_not_found` and `browser_not_running` (e2e check) |
+| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist; for an e2e check the browser is left for the finish-time stop), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused)                   |
 
 `INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt a
 launch sends and the name are never logged or returned beyond the validated `id` and the computed
@@ -1844,6 +1903,12 @@ nothing was sent.` and that the session received nothing (attach to it).
     confirm the groom row's **Go to session** still works, and that a question the session writes
     has lettered options inline.
 
+12. **Not yet done:** one real E2E check, against a running DevTools browser, on a throwaway ticket.
+    Confirm the session starts and attaches (`agent-browser connect <port>`) without stalling on a
+    permission prompt, `e2e.md` is written under `~/pathwise/.orchestrator/<key in lower case>/`, the
+    next ticket poll after it ends stops the browser with its profile left on disk, and the skill's
+    `scratch` location works in a background session.
+
 Also taken as assumptions until then: `--bg` prints a standalone 8-character id, a session name of
 39 characters or fewer is listed unabbreviated, a tool call denied in a background session ends it
 without the flag (shown as `ended without finishing`) or blocks it (shown as `blocked, needs you`),
@@ -1863,9 +1928,10 @@ review**, so you can see at a glance which ones are working and which need you. 
 never scrolls the page and leaves every screen's height and viewport fill unchanged. It is hidden
 while there is no session to show.
 
-- **Which sessions.** The implement and review sessions of each ticket (the ones tied to PRs and code
-  review), **of tickets in an active Jira sprint only**. The phases live in one constant, `BOT_PHASES`
-  in [`ui/bot-bar.js`](ui/bot-bar.js); the investigate and groom sessions are not shown. A session whose
+- **Which sessions.** The implement, review and e2e check sessions of each ticket (the ones tied to PRs
+  and code review, and the [E2E check](#e2e-check)), **of tickets in an active Jira sprint only**. The
+  phases live in one constant, `BOT_PHASES` in [`ui/bot-bar.js`](ui/bot-bar.js); the investigate and
+  groom sessions are not shown. An e2e bot is keyed `<KEY>:e2e` and drawn after the ticket's review bot. A session whose
   state is `none` (never started) or `unknown` (the CLI listing could not be read) has no bot, and neither
   does a session of a ticket outside the active sprint, which also keeps old finished sessions off the bar.
 - **The active sprint.** "Active" is the rule My Tickets and Home use (a sprint Jira reports as
@@ -1922,7 +1988,7 @@ while there is no session to show.
   stays the only target. It stands under the callout and the hover popup (both clear it), over a bot's
   head, and a pointed-at or focused bot comes to the front with its poster.
 - **Click a bot** to open the Claude dialog of that session: the code review dialog for a review bot,
-  the workflow dialog for an implement bot. Its accessible name reads `<KEY> <phase>: <state>`
+  the workflow dialog for an implement or e2e bot (the E2E check row is in it). Its accessible name reads `<KEY> <phase>: <state>`
   (`TAP-1234 review: idle`). Hovering or focusing it shows the dashboard's own popup (the same
   `DashboardTooltip` the boards use, so it works from the keyboard as well) with the same words and the
   reason, for example `TAP-1451 review: done · finished`; no bot carries a native `title` tooltip. The

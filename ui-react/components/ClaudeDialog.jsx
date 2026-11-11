@@ -10,17 +10,20 @@
 // step ("Approved 7:39 AM") rather than a disabled button. Why a step is off is one line under the
 // strip (a reason that two steps share is said once). A send's outcome is a short inline message
 // beside its action that can be dismissed and clears once the ticket stops working. Groom ticket sits
-// apart, as the independent action it is. When the planning session asked questions they follow as
-// cards, with the progress, the bar and Resend answers (sends the saved answers again, even
-// unchanged) above them. The footer stays in view beside the body's scroll: Prompts (on the left),
-// the progress and the last save's result, Save answers (linked to the questions form by its id) and
-// Close. Prompts swaps the body for the prompt editor, still in this one dialog: the footer then
-// holds Back (the same button, so it keeps focus) and Close, and everything this component holds
-// (answer drafts, copy status, the last send result) is there when Back returns.
+// apart, as the independent action it is, and the E2E check row follows it (its button opens
+// E2eCheckDialog over this one, and it keeps its own session chip and result link). When the
+// planning session asked questions they follow as cards, with the progress, the bar and Resend
+// answers (sends the saved answers again, even unchanged) above them. The footer stays in view
+// beside the body's scroll: Prompts (on the left), the progress and the last save's result, Save
+// answers (linked to the questions form by its id) and Close. Prompts swaps the body for the prompt
+// editor, still in this one dialog: the footer then holds Back (the same button, so it keeps focus)
+// and Close, and everything this component holds (answer drafts, copy status, the last send result)
+// is there when Back returns.
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { ClaudePromptsEditor } from './ClaudePromptsEditor.jsx';
 import { ArtifactViewer } from './ArtifactViewer.jsx';
+import { E2eCheckDialog } from './E2eCheckDialog.jsx';
 import {
   BUTTON_CLASS,
   DismissButton,
@@ -34,6 +37,10 @@ import { copyText } from '../../ui/dom.js';
 const INVESTIGATE = 'investigate-and-plan';
 const IMPLEMENT = 'implement-plan';
 const GROOM = 'groom';
+const E2E = 'e2e-ticket-check';
+const BROWSER_GONE_TEXT = 'That browser is no longer running. Launch a new one.';
+// The refusals that say the e2e check's browser is gone, so the dialog starts over from step 1.
+const BROWSER_GONE = ['browser_not_found', 'browser_not_running'];
 
 // Why an action is blocked or failed, as one sentence. The server sends the reason; the wording is
 // the dashboard's, and it serves both the hint beside a disabled item and the line after a failure.
@@ -44,6 +51,8 @@ const REASON_TEXT = {
   spawn_failed: 'Could not start Claude. Is the claude command installed?',
   listing_unavailable: 'Claude status is unavailable.',
   session_running: 'A Claude session is already running for this ticket.',
+  browser_not_found: BROWSER_GONE_TEXT,
+  browser_not_running: BROWSER_GONE_TEXT,
   investigate_running: 'Investigate and plan is still running.',
   implement_running: 'Implement plan is running.',
   session_not_found: 'The Claude session could not be found.',
@@ -156,6 +165,8 @@ export function ClaudeDialog({
   const [editingPrompts, setEditingPrompts] = useState(false);
   // The Markdown viewer opened over this dialog: `{ name }` is the file to open first (or null).
   const [viewing, setViewing] = useState(null);
+  // The e2e check's two-step dialog, opened over this one.
+  const [checking, setChecking] = useState(false);
 
   // Open once, trap focus (the browser does that for a modal) and give focus back to the ticket's
   // icon, which the key fully determines (a click does not focus a button in every browser).
@@ -182,7 +193,15 @@ export function ClaudeDialog({
   useEffect(() => {
     const focused = document.activeElement;
     if (!focused || focused === document.body || focused.disabled) closeButton.current?.focus();
-  }, [busy, blocks.investigate, blocks.implement, blocks.answer, blocks.approve, blocks.groom]);
+  }, [
+    busy,
+    blocks.investigate,
+    blocks.implement,
+    blocks.answer,
+    blocks.approve,
+    blocks.groom,
+    blocks.e2e,
+  ]);
 
   // A send's message is about the session that was working on it: once the ticket stops working it
   // is out of date ("Approval sent. Claude is checking the plan." under a plan that is ready), so it
@@ -236,6 +255,19 @@ export function ClaudeDialog({
     setApproveResult('');
     const result = await run(() => approve(ticketKey));
     if (result.ok) setApproveResult(approveText(result));
+  };
+
+  // The e2e dialog's Start: a refusal comes back as the sentence to show, whether to start over and
+  // whether the browser is no longer the dialog's to stop (after a timeout a session may exist).
+  const startE2e = async (browserId) => {
+    const result = await launch(ticketKey, E2E, { browserId });
+    if (result.ok) return result;
+    return {
+      ok: false,
+      gone: BROWSER_GONE.includes(result.errors?.[0]),
+      handedOver: result.errors?.[0] === 'timed_out',
+      message: failureText(result),
+    };
   };
 
   const copyCommand = async (side) => {
@@ -462,6 +494,40 @@ export function ClaudeDialog({
                 )}
               </section>
 
+              {/* The e2e check is another independent action: a new browser to sign in to, then a session. */}
+              <section className="claude-groom claude-e2e" aria-label="E2E check">
+                <div className="claude-groom-main">
+                  <Button
+                    className="subtle claude-groom-run"
+                    data-testid="claude-action-e2e"
+                    disabled={busy || Boolean(blocks.e2e)}
+                    onClick={() => setChecking(true)}
+                  >
+                    E2E check
+                  </Button>
+                  {goTo.e2e && <SessionChip phase="e2e" onGoTo={() => copyCommand('e2e')} />}
+                </div>
+                {REASON_TEXT[blocks.e2e] && (
+                  <span className="claude-action-hint" data-testid="claude-action-hint-e2e">
+                    {REASON_TEXT[blocks.e2e]}
+                  </span>
+                )}
+                <span className="claude-action-hint">
+                  Opens a new browser for you to sign in to, then runs the check on this ticket
+                  without you.
+                </span>
+                {entry.e2e?.state === 'done' && (
+                  <button
+                    type="button"
+                    className="artifact-link"
+                    data-testid="claude-view-e2e"
+                    onClick={() => setViewing({ name: 'e2e.md' })}
+                  >
+                    View e2e result
+                  </button>
+                )}
+              </section>
+
               {entry.reason === 'answers_not_sent' && (
                 <p className="claude-note" data-testid="claude-answers-hint">
                   {REASON_TEXT.answers_not_sent}
@@ -627,6 +693,9 @@ export function ClaudeDialog({
           </Button>
         </footer>
       </dialog>
+      {checking && (
+        <E2eCheckDialog ticketKey={ticketKey} start={startE2e} onClose={() => setChecking(false)} />
+      )}
       {viewing && (
         <ArtifactViewer
           ticketKey={ticketKey}

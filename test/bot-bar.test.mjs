@@ -51,12 +51,13 @@ const SIX = [...FIVE, 'moss'];
 const keys = (count) => Array.from({ length: count }, (_, i) => `TAP-${1000 + i}:review`);
 
 // The shape of one GET /api/claude/tickets entry, only the parts the bar reads.
-const entry = (phase, state, { review, groom } = {}) => ({
+const entry = (phase, state, { review, groom, e2e } = {}) => ({
   phase,
   state,
   reason: 'r',
   review: review ?? { state: 'none', reason: null },
   groom: groom ?? { state: 'none', reason: null },
+  ...(e2e && { e2e }),
 });
 
 test('pickMascot is stable, always one of the ids and uses every id', () => {
@@ -201,13 +202,14 @@ test('restingSpots keep done and failed bots apart and never reorder them', () =
   );
 });
 
-test('only the implement and review sessions get a bot', () => {
-  assert.deepEqual(BOT_PHASES, ['implement', 'review']);
+test('only the implement, review and e2e sessions get a bot', () => {
+  assert.deepEqual(BOT_PHASES, ['implement', 'review', 'e2e']);
   const tickets = {
     'TAP-1': entry('investigate-and-plan', 'working'),
     'TAP-2': entry('implement-plan', 'working', {
       review: { state: 'done', reason: 'finished' },
       groom: { state: 'working', reason: 'running' },
+      e2e: { state: 'working', reason: 'running' },
     }),
     'TAP-3': entry('implement-plan', 'none'),
     'TAP-4': entry(null, 'none', { groom: { state: 'done', reason: 'finished' } }),
@@ -217,7 +219,71 @@ test('only the implement and review sessions get a bot', () => {
     [
       ['TAP-2:implement', 'working'],
       ['TAP-2:review', 'done'],
+      ['TAP-2:e2e', 'working'],
     ],
+  );
+});
+
+test('e2e: a working, waiting, done or failed e2e session is a bot after the review one; none and unknown are not', () => {
+  const tickets = Object.fromEntries(
+    ['working', 'waiting', 'done', 'failed', 'none', 'unknown'].map((state, i) => [
+      `TAP-${i + 1}`,
+      entry(null, 'none', { e2e: { state, reason: 'x' } }),
+    ]),
+  );
+  assert.deepEqual(
+    botsFromTickets({ tickets }).map(({ key, ticket, phase, state }) => [
+      key,
+      ticket,
+      phase,
+      state,
+    ]),
+    [
+      ['TAP-1:e2e', 'TAP-1', 'e2e', 'working'],
+      ['TAP-2:e2e', 'TAP-2', 'e2e', 'waiting'],
+      ['TAP-3:e2e', 'TAP-3', 'e2e', 'done'],
+      ['TAP-4:e2e', 'TAP-4', 'e2e', 'failed'],
+    ],
+  );
+  // A ticket with an entry that has no e2e record at all gets none.
+  assert.deepEqual(botsFromTickets({ 'TAP-9': entry(null, 'none') }), []);
+  // Drawn after the ticket's implement and review bots.
+  assert.deepEqual(
+    botsFromTickets({
+      'TAP-1': entry('implement-plan', 'working', {
+        review: { state: 'done', reason: 'finished' },
+        e2e: { state: 'done', reason: 'finished' },
+      }),
+    }).map(({ phase }) => phase),
+    ['implement', 'review', 'e2e'],
+  );
+});
+
+test('e2e: a ticket outside the active sprint gets no e2e bot', () => {
+  const bots = botsFromTickets({
+    'TAP-1': entry(null, 'none', { e2e: { state: 'working', reason: 'running' } }),
+    'TAP-2': entry(null, 'none', { e2e: { state: 'done', reason: 'finished' } }),
+  });
+  assert.deepEqual(
+    inActiveSprint(bots, new Set(['TAP-2'])).map(({ key }) => key),
+    ['TAP-2:e2e'],
+  );
+  assert.deepEqual(inActiveSprint(bots, new Set(['TAP-99'])), []);
+});
+
+test('e2e: working to done is a state change that raises one callout', () => {
+  const at = (state) =>
+    sessionStates({ 'TAP-1': entry(null, 'none', { e2e: { state, reason: 'x' } }) });
+  assert.equal(at('working').get('TAP-1:e2e'), 'working');
+  const changes = stateChanges(at('working'), at('done'));
+  assert.deepEqual(
+    changes.map(({ key, ticket, phase, from, to }) => [key, ticket, phase, from, to]),
+    [['TAP-1:e2e', 'TAP-1', 'e2e', 'working', 'done']],
+  );
+  const callouts = addCallouts([], changes, 1000);
+  assert.deepEqual(
+    callouts.map(({ key, state }) => [key, state]),
+    [['TAP-1:e2e', 'done']],
   );
 });
 

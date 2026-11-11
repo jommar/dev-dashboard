@@ -138,6 +138,12 @@ export const INVESTIGATE_NAME = 'TAP-1234-investigate-and-plan';
 export const IMPLEMENT_NAME = 'TAP-1234-implement-plan';
 export const GROOM_NAME = 'TAP-1234-groom';
 export const HOUR_MS = 3_600_000;
+// The e2e check: a side action on a DevTools browser. Literal wire contract, like REVIEW above.
+export const E2E = 'e2e-ticket-check';
+export const E2E_NAME = `${KEY}-${E2E}`;
+export const E2E_ID = 'eeee0007';
+export const BROWSER_ID = 'b-0a1b2c3d';
+export const BROWSER_PORT = 9301;
 export const FIRST_ID = 'ab12cd34';
 export const EARLIER_ID = 'aaaa1111';
 export const UNTRUSTED_OUTPUT =
@@ -234,6 +240,58 @@ export const launchRecord = ({
   ...(answered && Object.keys(answered).length ? { answered } : {}),
   ...(sent ? { sent } : {}),
 });
+
+// A DevTools registry record as the launcher sees it: `running` on a port, or `stopped`.
+export const runningBrowser = (extra = {}) => ({
+  id: BROWSER_ID,
+  label: `E2E ${KEY}`,
+  port: BROWSER_PORT,
+  status: 'running',
+  ...extra,
+});
+
+// The e2e record in launch.json: the usual three fields and the browser it was started on.
+export const e2eRecord = (extra = {}) => ({
+  ...launchRecord({ name: E2E_NAME, id: E2E_ID }),
+  browserId: BROWSER_ID,
+  ...extra,
+});
+export const e2eEntry = (extra = {}) => listed({ id: E2E_ID, name: E2E_NAME, ...extra });
+
+// The DevTools registry the launcher is given: `{ list, stop }` and nothing else, so a launcher
+// that asked for a `remove` would fail. `stops` holds the id of every stop call, in order.
+// `failStop(code)` makes a stop reject with that code; `holdStop()` makes a stop wait for `release()`.
+export function createFakeBrowsers() {
+  let records = [];
+  const stops = [];
+  const state = { failure: null, gate: null };
+  return {
+    stops,
+    set(next) {
+      records = next.map((record) => ({ ...record }));
+    },
+    failStop(code) {
+      state.failure = code;
+    },
+    holdStop() {
+      state.gate = deferred();
+      const gate = state.gate;
+      return { release: () => gate.resolve() };
+    },
+    async list() {
+      return records.map((record) => ({ ...record }));
+    },
+    async stop(id) {
+      stops.push(id);
+      if (state.gate) await state.gate.promise;
+      if (state.failure) throw Object.assign(new Error('stop failed'), { code: state.failure });
+      records = records.map((record) =>
+        record.id === id ? { ...record, status: 'stopped', port: null } : record,
+      );
+      return records.find((record) => record.id === id);
+    },
+  };
+}
 
 export const reviewRecord = (extra = {}) =>
   launchRecord({ name: REVIEW_NAME, id: REVIEW_ID, ...extra });
@@ -683,6 +741,7 @@ export async function launcherEnvironment(t, { claudeSessions, stateFolder = 'cl
   const cli = createStubCli({ clock });
   const recorder = recordingFs(fs);
   const timers = createCountingTimers(clock);
+  const browsers = createFakeBrowsers();
   const store = createSlackWatchStore({ home, fs, now: clock.now });
   const sessions =
     claudeSessions ??
@@ -700,6 +759,7 @@ export async function launcherEnvironment(t, { claudeSessions, stateFolder = 'cl
       now: clock.now,
       timers,
       promptsDir,
+      browsers,
     }),
   );
 
@@ -725,6 +785,7 @@ export async function launcherEnvironment(t, { claudeSessions, stateFolder = 'cl
     clock,
     timers,
     cli,
+    browsers,
     recorder,
     store,
     sessions,

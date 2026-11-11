@@ -92,6 +92,37 @@ test('a bot opens the Claude dialog of its session, and a finished one can be di
   await expect(page.getByRole('button', { name: 'BOT-3 review: done' })).toHaveCount(0);
 });
 
+test('an e2e bot opens the Claude dialog on the E2E row, and a finished one can be dismissed', async ({
+  page,
+  dashboard,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  seed(dashboard, {
+    sessions: {
+      'BOT-9': claudeEntry('none', null, { e2e: { state: 'working', reason: 'running' } }),
+      'BOT-10': claudeEntry('none', null, { e2e: { state: 'done', reason: 'finished' } }),
+    },
+    sprint: ['BOT-9', 'BOT-10'],
+  });
+  await page.goto('/#/services');
+  await expect(bots(page)).toHaveCount(2);
+  await expect(page.getByTestId('bot-bar-bot-BOT-9-e2e')).toHaveAccessibleName(
+    'BOT-9 e2e: working',
+  );
+  await page.getByTestId('bot-bar-bot-BOT-9-e2e').click();
+  const dialog = page.getByTestId('claude-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId('claude-dialog-title')).toContainText('BOT-9');
+  // The E2E row is where this session lives: its own session is running, so it is held.
+  await expect(dialog.getByTestId('claude-action-e2e')).toBeDisabled();
+  await page.getByTestId('claude-dialog-close').click();
+  // A working bot has no dismiss control; a done one does.
+  await expect(page.getByTestId('bot-bar-dismiss-BOT-9-e2e')).toHaveCount(0);
+  await page.getByTestId('bot-bar-dismiss-BOT-10-e2e').click();
+  await expect(bots(page)).toHaveCount(1);
+  await expect(page.getByTestId('bot-bar-bot-BOT-10-e2e')).toHaveCount(0);
+});
+
 test('the bar is absent when no session qualifies, and a session appears on the next poll', async ({
   page,
   dashboard,

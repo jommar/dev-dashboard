@@ -701,3 +701,49 @@
     animation: none;
   }
 }
+
+/* ---- E2E check ------------------------------------------------------------
+   The row under Groom ticket (it borrows the groom row's look) and the two-step dialog it opens,
+   which is a .claude-dialog: step 1 is the address field, step 2 the port and the two actions. */
+.claude-e2e {
+  border-top: 0;
+  padding-top: 0;
+}
+.claude-e2e-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin: 0;
+}
+.claude-e2e-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.claude-e2e-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.claude-e2e-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.claude-e2e-port {
+  margin: 0;
+  color: var(--strong);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+.claude-e2e-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+}

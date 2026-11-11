@@ -15,6 +15,7 @@ export const PHASES = [INVESTIGATE, IMPLEMENT];
 export const GROOM = 'groom';
 export const REVIEW = 'pr-review-transact';
 export const SPEC_REVIEW = 'spec-review';
+export const E2E = 'e2e-ticket-check';
 
 const TICKET_KEY = /^[A-Z]{1,10}-\d{1,7}$/;
 const QUESTION_ID = /^[A-Za-z0-9_-]{1,32}$/;
@@ -189,6 +190,8 @@ export function readLaunch(launch) {
 export const readGroom = (launch) => readRecord(launch?.[GROOM]);
 // The spec review record of launch.json, shaped like a phase record, or null.
 export const readSpecReview = (launch) => readRecord(launch?.[SPEC_REVIEW]);
+// The e2e check record of launch.json, shaped like a phase record, or null.
+export const readE2e = (launch) => readRecord(launch?.[E2E]);
 // The review record, with `rereview` ({ at } once a Re-review was delivered to its session, else null).
 export function readReview(launch) {
   const base = readRecord(launch?.[REVIEW]);
@@ -291,16 +294,19 @@ function goToFor(session) {
     : null;
 }
 
-// How to join each own session: `{ investigate, implement, groom }`, each a goToFor result for the
-// session its record resolves to. A record that is missing, or no listing, has nothing to join.
+// How to join each own session: `{ investigate, implement, groom }` (plus `e2e` for a ticket with an
+// e2e check record), each a goToFor result for the session its record resolves to. A record that is
+// missing, or no listing, has nothing to join.
 function goToAll(launch, entries) {
   const records = readLaunch(launch);
   const join = (record) => (record && entries ? goToFor(resolveSession(entries, record)) : null);
   const phase = (name) => join(records.find((found) => found.phase === name));
+  const e2e = readE2e(launch);
   return {
     investigate: phase(INVESTIGATE),
     implement: phase(IMPLEMENT),
     groom: join(readGroom(launch)),
+    ...(e2e && { e2e: join(e2e) }),
   };
 }
 
@@ -376,6 +382,8 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
   const review = sideActionState(readReview(launch), entries, now);
   const specReviewRecord = readSpecReview(launch);
   const specReview = sideActionState(specReviewRecord, entries, now);
+  const e2eRecord = readE2e(launch);
+  const e2e = sideActionState(e2eRecord, entries, now);
   const blocks = {
     investigate: busy(INVESTIGATE) || null,
     implement: busy(IMPLEMENT) || implementBlock(status, launch, planPresent),
@@ -393,6 +401,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     // The key is there only for a ticket with a spec review record, so the blocks of every other
     // ticket keep the shape they had.
     ...(specReviewRecord && { specReview: ownSessionBlock(specReview, entries) }),
+    ...(e2eRecord && { e2e: ownSessionBlock(e2e, entries) }),
   };
   return {
     phase: record?.phase ?? null,
@@ -407,6 +416,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     groom,
     review,
     specReview,
+    e2e,
     blocks,
     goTo: goToAll(launch, entries),
   };

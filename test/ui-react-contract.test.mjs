@@ -1046,3 +1046,31 @@ test('the green card, the comment chips and the attached chip take their colours
   assert.match(open, /var\(--amber\)/, 'an open comment chip is amber');
   assert.match(open, /var\(--muted\)/, 'a resolved comment chip is muted');
 });
+
+test('the e2e check dialog uses the app tooltip and the shared stream, never a native title or its own stream', () => {
+  const source = read('components/E2eCheckDialog.jsx');
+  assert.doesNotMatch(source, /\btitle=/, 'no native title attribute');
+  assert.doesNotMatch(source, /data-tooltip/, 'no data-tooltip');
+  assert.doesNotMatch(
+    source,
+    /new EventSource|openDevtoolsStream/,
+    'it opens no stream of its own',
+  );
+});
+
+test('the e2e check styles in the Claude launcher sheet use tokens only and short transitions', () => {
+  const css = read('styles/claude-launcher.css');
+  const rules = [...css.matchAll(/([^{}]*)\{([^}]*)\}/g)].filter(([, selector]) =>
+    selector.includes('.claude-e2e'),
+  );
+  assert.ok(rules.length > 0, 'the sheet styles the e2e check dialog');
+  const body = rules.map(([, , declarations]) => declarations).join('\n');
+  assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b/i, 'colours come from tokens, never a hex literal');
+  for (const [, value] of body.matchAll(/transition(?:-duration|-property)?\s*:\s*([^;}]+)/g)) {
+    for (const [, amount, unit] of value.matchAll(/(\d*\.?\d+)\s*(ms|s)\b/g)) {
+      const ms = unit === 's' ? Number(amount) * 1000 : Number(amount);
+      assert.ok(ms <= 200, `transition "${value.trim()}" stays within 200 ms`);
+    }
+    assert.doesNotMatch(value, /\ball\b/, 'transition names its properties');
+  }
+});
