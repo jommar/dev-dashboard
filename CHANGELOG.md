@@ -15,8 +15,8 @@
   launches a new DevTools browser, then sign in there (in the embedded live view, or the window if shown)
   and press Start. The session `<KEY>-e2e-ticket-check` runs the `e2e-ticket-check` skill from
   `~/pathwise`, attaches to the browser by its debug port and writes `e2e.md`, which the row opens in
-  the artifact viewer once done. The prompt is server-owned and carries only the ticket key and the
-  port. The dashboard stops the browser (never removes it) when the session finishes, found by the
+  the artifact viewer once done. The prompt is server-owned and carries only the ticket key (also as its
+  agent-browser session name) and the port. The dashboard stops the browser (never removes it) when the session finishes, found by the
   next ticket poll and done once, and when the dialog closes before Start. Each ticket entry gains
   `e2e`, with `blocks.e2e` and `goTo.e2e` for a ticket with a record; e2e sessions get a bot in the
   bot bar and the card icon follows them after groom. An unknown or stopped browser is 409

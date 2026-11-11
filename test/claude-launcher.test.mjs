@@ -4221,7 +4221,7 @@ test('e2e check prompt: names the skill, key, port, report path and verdict line
 
   assert.match(prompt, /e2e-ticket-check/, 'the skill');
   assert.match(prompt, /TAP-1234/, 'the key');
-  assert.match(prompt, /agent-browser connect 9301/, 'the attach command');
+  assert.match(prompt, /connect 9301/, 'the attach command');
   assert.ok(prompt.includes('.orchestrator/tap-1234/e2e.md'), 'the report path');
   for (const verdict of ['PASS', 'FAIL', 'PARTIAL', 'BLOCKED'])
     assert.ok(prompt.includes(`Verdict: ${verdict}`), `the ${verdict} first line`);
@@ -4233,6 +4233,23 @@ test('e2e check prompt: names the skill, key, port, report path and verdict line
       .replaceAll('tap-1234', 'tap-77')
       .replaceAll('9301', '9350'),
     'another key and port change only those values',
+  );
+});
+
+test('e2e check prompt: every agent-browser command carries a session named from the key alone', async () => {
+  const { e2ePrompt } = await import('../backend/claude-launcher.mjs');
+
+  const prompt = e2ePrompt('TAP-1234', 9301);
+
+  assert.match(prompt, /--session e2e-tap-1234\b/, 'the key-derived session name');
+  assert.match(prompt, /agent-browser --session e2e-tap-1234 connect 9301/, 'the attach command');
+  assert.ok(
+    e2ePrompt('TAP-77', 9301).includes('--session e2e-tap-77'),
+    'another key gives another session name',
+  );
+  assert.ok(
+    !e2ePrompt('TAP-77', 9301).includes('e2e-tap-1234'),
+    'one key never leaks into another key’s name',
   );
 });
 

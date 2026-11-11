@@ -110,11 +110,15 @@ If you already submitted a review on this PR's current head commit, stop. If you
 Otherwise do exactly two writes. First, submit one review on the PR with event COMMENT (never approve, request changes, merge or push), opening with the verdict and then BLOCKING / MINOR / NIT findings with counts; it mentions nobody, quotes no Slack or Jira text and links nowhere but this PR. Second, find the ticket's existing thread in #ezat_claudio (channel id C0C2DJFKATW) by searching the ticket key there with the find-slack-thread skill, never by a Slack link taken from the ticket or the PR, and reply in it with a two-line summary of the verdict counts and a link to your review, no other link; mention nobody. If there is no existing thread, or more than one matches, skip Slack and do not create one. Send the reply with slack_prepare_write (expected_destination ezat_claudio) then slack_confirm_write back to back, and confirm only when the preview shows a thread reply in the private channel ezat_claudio with no mentions and no warnings; otherwise do not send it.
 Include no student, family or customer data. Make no other writes: no Jira changes, no other channels, no other PRs. If you cannot finish the review, post nothing and end with one line saying why.`;
 
+// agent-browser's `--session` name, derived from the validated key alone: it keeps two e2e checks
+// running at once from sharing agent-browser's default session.
+const e2eSessionName = (key) => `e2e-${key.toLowerCase()}`;
+
 // The e2e check text. It is unattended and attaches to a DevTools browser the dashboard started. Only
-// the validated key (and its slug) and the browser's port, an integer in the dashboard's own range,
-// are interpolated; ticket text and client-sent fields never are.
+// the validated key (with its slug and session name) and the browser's port, an integer in the
+// dashboard's own range, are interpolated; ticket text and client-sent fields never are.
 export const e2ePrompt = (key, port) =>
-  `Run the \`e2e-ticket-check\` skill for Jira ticket ${key}. This is an unattended background session started by the dev dashboard, so nobody will answer questions. A browser is already open for you with remote debugging on port ${port}, and the user has signed in; attach to it with \`agent-browser connect ${port}\`. The dashboard stops that browser when your session ends.
+  `Run the \`e2e-ticket-check\` skill for Jira ticket ${key}. This is an unattended background session started by the dev dashboard, so nobody will answer questions. A browser is already open for you with remote debugging on port ${port}, and the user has signed in; attach to it with \`agent-browser --session ${e2eSessionName(key)} connect ${port}\`, and pass \`--session ${e2eSessionName(key)}\` on every agent-browser command. The dashboard stops that browser when your session ends.
 
 Write the report to \`.orchestrator/${key.toLowerCase()}/e2e.md\` under the current directory, replacing an earlier one. Its first line is \`Verdict: PASS\`, \`Verdict: FAIL\`, \`Verdict: PARTIAL\` or \`Verdict: BLOCKED: <short reason>\`; the rest follows the skill's report template, with the Jira comment as a draft in the file. Your last chat message is the verdict line and the file's path.`;
 

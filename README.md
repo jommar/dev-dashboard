@@ -1566,7 +1566,8 @@ ticket refuses another (`session_running`).
   from `~/pathwise` with no tool limits and no `--add-dir`. The prompt is built by the server from the
   ticket key and the browser's port (looked up in the DevTools registry, never taken from the
   client) and nothing else: it names the skill, says the session is unattended, and tells it to attach
-  with `agent-browser connect <port>`. The session writes
+  with `agent-browser --session e2e-<key in lower case> connect <port>` and to pass that `--session`
+  on every agent-browser command, so concurrent checks stay apart. The session writes
   `~/pathwise/.orchestrator/<key in lower case>/e2e.md`, whose first line is `Verdict: PASS`,
   `FAIL`, `PARTIAL` or `BLOCKED: <reason>`. The dashboard does not read the verdict: the row shows the
   session's state, a **Go to e2e check session** chip, and once `done` a **View e2e result** link
@@ -1908,7 +1909,7 @@ nothing was sent.` and that the session received nothing (attach to it).
     has lettered options inline.
 
 12. **Not yet done:** one real E2E check, against a running DevTools browser, on a throwaway ticket.
-    Confirm the session starts and attaches (`agent-browser connect <port>`) without stalling on a
+    Confirm the session starts and attaches (`agent-browser --session <name> connect <port>`) without stalling on a
     permission prompt, `e2e.md` is written under `~/pathwise/.orchestrator/<key in lower case>/`, the
     next ticket poll after it ends stops the browser with its profile left on disk, and the skill's
     `scratch` location works in a background session.

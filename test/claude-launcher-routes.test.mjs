@@ -948,7 +948,7 @@ test('e2e check route: the launch endpoint forwards browserId and starts the ses
   assert.equal(f.cli.launches().length, 1);
   const { args } = f.cli.launches()[0];
   assert.deepEqual(args.slice(0, 3), ['--bg', '-n', E2E_NAME]);
-  assert.match(args.at(-1), new RegExp(`agent-browser connect ${BROWSER_PORT}\\b`));
+  assert.match(args.at(-1), new RegExp(`connect ${BROWSER_PORT}\\b`));
   assert.equal(f.parsed().launch[E2E].browserId, BROWSER_ID);
 });
 
