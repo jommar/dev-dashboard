@@ -22,7 +22,18 @@
    done ones stroll (the slowest: a rest at each end and one on the way out) and failed ones stand
    slumped at --bot-rest. Walking is two keyframe sets on one clock: the lane slides (translateX), and
    the face flips (scaleX) at the same percentages, so a bot turns exactly at each end. Transform
-   only, no script. Without motion every bot stands still at its --bot-rest. */
+   only, no script. Without motion every bot stands still at its --bot-rest.
+
+   Every bot carries a poster (BotPoster.jsx; the sign itself is posters.css) above its head, with its
+   ticket key. It is a child of the lane beside the face, so it rides with the bot and is never
+   mirrored when the bot turns; it stands on a pole whose foot is just over the head, and so reaches
+   --bot-poster-h less --bot-poster-overlap above the lane, out of the strip (only the x axis clips)
+   and over the bar's own box without taking room. The callout sits above it. */
+.bot-bar {
+  --bot-poster-w: 84px;
+  --bot-poster-h: 50px;
+  --bot-poster-overlap: 10px;
+}
 .bot-bar {
   --bot-bar-size: 56px;
   /* Walkers keep this far from each side, so a callout (centred on its bot, at most twice this plus
@@ -83,8 +94,27 @@
   z-index: 100;
 }
 .bot-bar-face {
+  /* Positioned so that it paints over the poster's pole foot, which stands just behind the head. */
+  position: relative;
   width: var(--bot-bar-size);
   height: var(--bot-bar-size);
+}
+
+/* The poster: centred over the bot, its pole foot --bot-poster-overlap into the lane. No pointer, so
+   the bot stays the only target; it is drawn before the face (behind it) and before the callout. */
+.bot-bar-poster {
+  position: absolute;
+  bottom: calc(100% - var(--bot-poster-overlap));
+  left: calc(var(--bot-bar-size) / 2);
+  width: var(--bot-poster-w);
+  height: var(--bot-poster-h);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.bot-bar-poster > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .bot-bar-bot {
@@ -115,10 +145,10 @@
 
 /* The callout: a speech bubble above a bot saying what just happened, in the tooltip's look. It is a
    child of the lane, so it rides with the bot, and outside the face wrapper, so it is never
-   mirrored when the bot turns. It takes no room and no pointer. */
+   mirrored when the bot turns. It takes no room and no pointer. It sits above the bot's poster. */
 .bot-bar-callout {
   position: absolute;
-  bottom: calc(100% + var(--s2));
+  bottom: calc(100% + var(--s2) + var(--bot-poster-h) - var(--bot-poster-overlap));
   left: calc(var(--bot-bar-size) / 2);
   width: max-content;
   max-width: calc(2 * (var(--bot-bar-edge, 0px) + var(--bot-bar-size) / 2));
@@ -274,7 +304,8 @@
   }
   /* A bot you are about to click stands still. */
   .bot-bar-lane[data-state]:is(:hover, :focus-within),
-  .bot-bar-lane[data-state]:is(:hover, :focus-within) .bot-bar-face {
+  .bot-bar-lane[data-state]:is(:hover, :focus-within) .bot-bar-face,
+  .bot-bar-lane[data-state]:is(:hover, :focus-within) .bot-bar-poster * {
     animation-play-state: paused;
   }
 }

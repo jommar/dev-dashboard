@@ -82,8 +82,12 @@
    bar's own (.bot-bar-lane), positioned inside this box instead of the viewport. */
 .mascots-roam {
   --bot-bar-size: 56px;
+  /* The poster's size, as on the bar (bot-bar.css: keep equal), and room above the bots for it. */
+  --bot-poster-w: 84px;
+  --bot-poster-h: 50px;
+  --bot-poster-overlap: 10px;
   position: relative;
-  height: calc(var(--bot-bar-size) + var(--s3));
+  height: calc(var(--bot-bar-size) + var(--s3) + var(--bot-poster-h) - var(--bot-poster-overlap));
   overflow-x: clip;
   border-radius: var(--radius);
   background: var(--bg);
@@ -96,6 +100,21 @@
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* The poster samples: a figure is as wide as its poster (84 x 50 px at bar size, scaled by the size it
+   is captioned with), and the columns leave room for the sway to turn without clipping. The large row
+   keeps the two columns of .mascots-states[data-size='large']. */
+.mascots-states.mascots-posters {
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+}
+.mascots-states.mascots-posters[data-size='large'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.mascots-poster-art > svg {
+  width: calc(84px * var(--mascots-scale, 1));
+  height: auto;
+  max-width: 100%;
 }
 
 /* The cards: one column, then two, then three. */

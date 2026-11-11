@@ -1824,6 +1824,18 @@ while there is no session to show.
   matched to a mascot by highest-random-weight hashing, so adding a mascot moves only about one
   session in N to it and leaves the rest as they were. See
   [Adding a mascot](ui-react/components/mascots/README.md).
+- **Poster.** Every bot carries a small sign on a pole above its head with its ticket key
+  (`TAP-1451`; the key is fitted to the board, so `AB-1` to `TRIPS-12345` all fit). Like the mascot, the
+  poster is one of a registry for life, picked by its own hash of the session key (`pickPoster` in
+  `ui/bot-bar.js`, independent of the mascot), with nothing stored, so a session keeps its poster and
+  adding one moves only about one session in N. The poster list lives only in
+  [`ui-react/components/posters/index.js`](ui-react/components/posters/index.js); see
+  [Adding a poster](ui-react/components/posters/README.md). The sign rides with its bot beside the
+  mirrored face, so its key is never reversed when the bot turns; it sways gently while the bot walks
+  (working, idle and done bots) and is still for a failed one, and never sways with reduced motion. It is
+  decorative: hidden from assistive technology, no native tooltip, and it takes no pointer, so the bot
+  stays the only target. It stands under the callout and the hover popup (both clear it), over a bot's
+  head, and a pointed-at or focused bot comes to the front with its poster.
 - **Click a bot** to open the Claude dialog of that session: the code review dialog for a review bot,
   the workflow dialog for an implement bot. Its accessible name reads `<KEY> <phase>: <state>`
   (`TAP-1234 review: idle`). Hovering or focusing it shows the dashboard's own popup (the same
@@ -1868,7 +1880,12 @@ mascot you register appears on it with no page change.
   a startled duck into the shell); with reduced motion it shows a still cue instead.
 - **Roaming preview**: a fake bottom bar where each mascot has a working bot and one in another
   state. It uses the real bar's lane classes and keyframes, so it walks, pauses and stands as the bar
-  does, and stands still with reduced motion.
+  does, and stands still with reduced motion. Each of its bots carries a poster, drawn by the bar's own
+  `BotPoster`.
+- **Posters**: below the mascots, a card per registered poster (`POSTERS` in
+  [`ui-react/components/posters/index.js`](ui-react/components/posters/index.js)) with its name and id,
+  shown still and swaying at the bar's size and at 2x with a sample key, and with the shortest (`AB-1`)
+  and longest (`TRIPS-12345`) key a poster must fit. A poster you register appears with no page change.
 - **Which mascot would a session get?** Type a session key (`<TICKET>:<phase>`, such as
   `TAP-1234:implement`) to see the mascot the bar would give it, and its card is marked **Picked**.
 

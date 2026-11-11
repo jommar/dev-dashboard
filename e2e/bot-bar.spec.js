@@ -387,7 +387,7 @@ test('the hover detail is the app popup, on pointer and on keyboard focus, never
   const walker = page.getByTestId('bot-bar-bot-BOT-1-implement');
   const box = await walker.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(page.getByRole('tooltip')).toHaveText('BOT-1 implement: working · working');
+  await expect(page.getByRole('tooltip')).toHaveText('BOT-1 implement: working');
   await page.mouse.move(5, 5);
   await expect(page.getByRole('tooltip')).toHaveCount(0);
   // Keyboard focus shows it too (and the name of the button stays its own label).
@@ -396,7 +396,7 @@ test('the hover detail is the app popup, on pointer and on keyboard focus, never
   await page.keyboard.press('Shift+Tab');
   await page.keyboard.press('Tab');
   await expect(walker).toBeFocused();
-  await expect(page.getByRole('tooltip')).toHaveText('BOT-1 implement: working · working');
+  await expect(page.getByRole('tooltip')).toHaveText('BOT-1 implement: working');
   await expect(walker).toHaveAccessibleName('BOT-1 implement: working');
   await expect(walker).not.toHaveAttribute('title', /.*/);
 });
@@ -684,4 +684,223 @@ test('many bots in one zone overlap, and the one you point at comes to the front
   }
   await page.getByTestId('bot-bar-dismiss-BOT-27-review').click();
   await expect(bots(page)).toHaveCount(7);
+});
+
+// ---- posters ------------------------------------------------------------------------------------
+// Every bot carries a poster with its ticket key above its head (BotPoster.jsx, the registry in
+// ui-react/components/posters/index.js, which this runner cannot import: the checks are generic).
+const poster = (page, key) => page.getByTestId(`bot-bar-poster-${key}`);
+const posters = (page) => page.getByTestId('bot-bar').locator('[data-testid^="bot-bar-poster-"]');
+const POSTER_KEYS = [
+  ['BOT-1', 'implement', 'working'],
+  ['BOT-2', 'review', 'waiting'],
+  ['BOT-3', 'review', 'done'],
+  ['BOT-4', 'implement', 'failed'],
+];
+
+test('every bot carries exactly one poster with its ticket key, the same one after a re-poll', async ({
+  page,
+  dashboard,
+}) => {
+  await page.clock.install();
+  seed(dashboard);
+  await page.goto('/#/home');
+  await expect(bots(page)).toHaveCount(4);
+  await expect(posters(page)).toHaveCount(4);
+  const read = () =>
+    posters(page).evaluateAll((all) =>
+      all.map((el) => ({
+        id: el.dataset.testid.replace('bot-bar-poster-', ''),
+        poster: el.dataset.poster,
+        text: [...el.querySelectorAll('svg text')].map((node) => node.textContent),
+        svgs: el.querySelectorAll('svg').length,
+        lane: el.closest('.bot-bar-lane').querySelectorAll('.bot-bar-poster').length,
+      })),
+    );
+  const before = await read();
+  for (const { id, poster: kind, text, svgs, lane } of before) {
+    expect(text, id).toEqual([id.replace(/-(implement|review)$/, '')]);
+    expect(svgs).toBe(1);
+    expect(lane, 'one poster per bot').toBe(1);
+    expect(kind).toMatch(/^[a-z0-9]+$/);
+  }
+  // A poll that finds nothing new changes nothing: same posters, same text.
+  await page.clock.runFor(POLL);
+  await page.clock.runFor(POLL);
+  expect(await read()).toEqual(before);
+  // It is decorative: hidden from assistive tech, no native tooltip source anywhere in the bar.
+  await expect(posters(page).first()).toHaveAttribute('aria-hidden', 'true');
+  await expect(posters(page).first().locator('svg')).toHaveAttribute('focusable', 'false');
+  await expect(page.getByTestId('bot-bar').locator('[title]')).toHaveCount(0);
+  await expect(page.getByTestId('bot-bar').locator('svg title, svg desc')).toHaveCount(0);
+  // No poster adds a name: the bots are still the only buttons.
+  await expect(bots(page)).toHaveCount(4);
+});
+
+test('a poster is never inside the mirrored face and is not mirrored when the bot faces left', async ({
+  page,
+  dashboard,
+}) => {
+  seed(dashboard);
+  await page.goto('/#/home');
+  await expect(posters(page)).toHaveCount(4);
+  for (const [ticket, phase] of POSTER_KEYS) {
+    const node = poster(page, `${ticket}-${phase}`);
+    expect(await node.evaluate((el) => el.closest('.bot-bar-face'))).toBeNull();
+    expect(await node.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('none');
+  }
+  // Hold the patrol at its far end, where the face is turned to look left: the face is mirrored, the
+  // poster and its text are not (their screen transform keeps a positive x scale).
+  const held = await page.evaluate(() => {
+    const lane = document
+      .querySelector('[data-testid="bot-bar-bot-BOT-1-implement"]')
+      .closest('.bot-bar-lane');
+    const face = lane.querySelector('.bot-bar-face');
+    const turn = face.getAnimations().find((a) => a.animationName === 'bot-bar-patrol-turn');
+    turn.pause();
+    const { duration } = turn.effect.getComputedTiming();
+    turn.effect.updateTiming({ delay: 0 });
+    turn.currentTime = duration * 0.75;
+    const text = lane.querySelector('.bot-bar-poster svg text');
+    return {
+      face: getComputedStyle(face).transform,
+      scale: text.getScreenCTM().a,
+      shear: text.getScreenCTM().c,
+    };
+  });
+  expect(held.face.startsWith('matrix(-1')).toBe(true);
+  expect(held.scale).toBeGreaterThan(0);
+  expect(Math.abs(held.shear)).toBeLessThan(0.2);
+});
+
+test('a poster sways only while its bot walks, and not at all with reduced motion', async ({
+  page,
+  dashboard,
+}) => {
+  seed(dashboard);
+  await page.goto('/#/home');
+  await expect(posters(page)).toHaveCount(4);
+  const sway = (key) =>
+    poster(page, key).evaluate((el) => {
+      const root = el.querySelector('svg');
+      const group = root.querySelector('[class$="-sway"]');
+      return {
+        moving: /--moving(\s|$)/.test(root.getAttribute('class')),
+        animation: getComputedStyle(group).animationName,
+      };
+    });
+  // Working, idle and done bots walk; the failed one stands.
+  for (const [ticket, phase, state] of POSTER_KEYS) {
+    const now = await sway(`${ticket}-${phase}`);
+    expect(now.moving, state).toBe(state !== 'failed');
+    expect(now.animation === 'none', state).toBe(state === 'failed');
+  }
+  // A walking bot you point at stands still, and so does its poster.
+  const walker = page.getByTestId('bot-bar-bot-BOT-1-implement');
+  const box = await walker.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  expect(
+    await poster(page, 'BOT-1-implement').evaluate(
+      (el) => getComputedStyle(el.querySelector('[class$="-sway"]')).animationPlayState,
+    ),
+  ).toBe('paused');
+  await page.mouse.move(5, 5);
+  // Reduced motion: no bot walks and no poster sways, whatever the modifier class says.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  for (const [ticket, phase] of POSTER_KEYS)
+    expect((await sway(`${ticket}-${phase}`)).animation).toBe('none');
+});
+
+test('a poster stands over its bot, inside the viewport, and the callout sits above it', async ({
+  page,
+  dashboard,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.clock.install();
+  seed(dashboard, { sessions: { 'BOT-1': WORKING_IMPLEMENT } });
+  await page.goto('/#/home');
+  await expect(bots(page)).toHaveCount(1);
+  dashboard.data.claude.tickets['BOT-1'] = DONE_IMPLEMENT;
+  await page.clock.runFor(POLL);
+  const bubble = callout(page, 'BOT-1-implement');
+  await expect(bubble).toBeVisible();
+  const bot = await page.getByTestId('bot-bar-bot-BOT-1-implement').boundingBox();
+  const sign = await poster(page, 'BOT-1-implement').boundingBox();
+  const bubbleBox = await bubble.boundingBox();
+  // Centred over the bot, its foot on the bot's head (a little overlap), none of it clipped.
+  expect(Math.abs(sign.x + sign.width / 2 - (bot.x + bot.width / 2))).toBeLessThan(1);
+  expect(sign.y + sign.height).toBeGreaterThan(bot.y);
+  expect(sign.y + sign.height).toBeLessThan(bot.y + bot.height / 2);
+  expect(sign.y).toBeGreaterThanOrEqual(0);
+  expect(sign.x).toBeGreaterThanOrEqual(0);
+  expect(sign.x + sign.width).toBeLessThanOrEqual(1440);
+  // The bubble clears the poster instead of covering it.
+  expect(bubbleBox.y + bubbleBox.height).toBeLessThanOrEqual(sign.y + 1);
+  expect(bubbleBox.x).toBeGreaterThanOrEqual(0);
+});
+
+test('on a narrow screen every poster is drawn and nothing overflows sideways', async ({
+  page,
+  dashboard,
+}) => {
+  await page.setViewportSize({ width: 480, height: 800 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  seed(dashboard);
+  await page.goto('/#/home');
+  await expect(posters(page)).toHaveCount(4);
+  for (const box of await posters(page).evaluateAll((all) =>
+    all.map((el) => el.getBoundingClientRect().toJSON()),
+  )) {
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.right).toBeLessThanOrEqual(480);
+    expect(box.top).toBeGreaterThanOrEqual(0);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('the focused bot comes to the front with its poster, and no poster covers an x', async ({
+  page,
+  dashboard,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const keys = Array.from({ length: 6 }, (_, i) => `BOT-${40 + i}`);
+  seed(dashboard, {
+    sessions: Object.fromEntries(keys.map((key) => [key, review('done', 'finished')])),
+    sprint: keys,
+  });
+  await page.goto('/#/home');
+  await expect(bots(page)).toHaveCount(6);
+  const lane = (key) =>
+    page.getByTestId(`bot-bar-poster-${key}-review`).locator('xpath=ancestor::*[@data-state]');
+  // A focused bot is raised, and its poster rides in its lane.
+  for (const key of keys) {
+    await page.getByTestId(`bot-bar-bot-${key}-review`).focus();
+    expect(await lane(key).evaluate((el) => getComputedStyle(el).zIndex)).toBe('100');
+  }
+  // The board of every poster ends above every dismiss button (only a pole foot reaches the bots).
+  const xs = await page
+    .locator('.bot-bar-dismiss')
+    .evaluateAll((all) => all.map((el) => el.getBoundingClientRect().top));
+  expect(xs).toHaveLength(6);
+  for (const board of await posters(page).evaluateAll((all) =>
+    all.map((el) => {
+      const box = el.getBoundingClientRect();
+      return box.top + (box.height * 32) / 50;
+    }),
+  ))
+    for (const top of xs) expect(board).toBeLessThanOrEqual(top);
+});
+
+test('the hover popup stands above the poster instead of covering it', async ({
+  page,
+  dashboard,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  seed(dashboard);
+  await page.goto('/#/home');
+  await expect(posters(page)).toHaveCount(4);
+  await page.getByTestId('bot-bar-bot-BOT-4-implement').hover();
+  const tip = await page.getByRole('tooltip').boundingBox();
+  const sign = await poster(page, 'BOT-4-implement').boundingBox();
+  expect(tip.y + tip.height).toBeLessThanOrEqual(sign.y + 1);
 });

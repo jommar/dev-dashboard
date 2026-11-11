@@ -148,7 +148,19 @@ over the registry ids), so a session keeps it for life; the mascot list lives on
 mascot"), so do not hard-code a mascot count or order. The bar polls `GET /api/claude/tickets`
 itself on every screen (its own `useClaudeTickets({ active: true, source: 'bot-bar' })`, 15 s,
 paused while the page is hidden, requests marked `?surface=bot-bar`): specs that count a board's own
-Claude reads must exclude that marker. Its styles are in `ui-react/styles/bot-bar.css` (tokens only,
+Claude reads must exclude that marker.
+
+Every bot carries a poster (`BotPoster.jsx`) with its ticket key above its head: picked per session by
+`pickPoster` in `ui/bot-bar.js` (rendezvous hashing with its own salt, independent of the mascot), from the
+registry that lives only in `ui-react/components/posters/index.js` (see
+`ui-react/components/posters/README.md`, "Adding a poster"; never hard-code a poster id or count). A
+poster is decorative: `aria-hidden`, no `<title>`, `<desc>` or native `title`, `pointer-events: none` (the
+bot stays the only target). It is a sibling of `.bot-bar-face` inside the lane, never inside the
+mirrored face, so it is never mirrored; it sways only while the bot walks (`walks(state)`) and only
+under `prefers-reduced-motion: no-preference`. The callout and the hover popup (`POSTER_RISE_PX`) stand
+above it; `--bot-poster-*` in `bot-bar.css` and `POSTER_RISE_PX` change together.
+
+Its styles are in `ui-react/styles/bot-bar.css` (tokens only,
 `bot-bar-*` names, transform-only keyframes, a reduced-motion block). It never calls
 `/api/team-velocity`, so the Home velocity rule above is unaffected.
 

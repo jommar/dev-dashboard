@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { BoardPanel, BoardSection } from '../components/BoardShell.jsx';
-import { MascotGallery, RoamingPreview } from '../components/MascotGallery.jsx';
+import { MascotGallery, PosterGallery, RoamingPreview } from '../components/MascotGallery.jsx';
 import { Button } from '../components/Primitives.jsx';
 import { MASCOTS } from '../components/mascots/index.js';
+import { POSTERS } from '../components/posters/index.js';
 import { mascotFor } from '../lib/mascot-for.js';
 
 const FACINGS = ['left', 'right'];
 
-// The Mascots tab: every registered mascot in all four states, for looking and picking. It is a
+// The Mascots tab: every registered mascot in all four states, for looking and picking, then every
+// registered poster (the sign a bot carries with its ticket key), still and swaying. It is a
 // static page: no session data, no fetch, no polling. Replay remounts the pictures, so the one-time
 // done hop and failed shake can be watched again.
 export function MascotsPanel({ active }) {
@@ -84,11 +86,22 @@ export function MascotsPanel({ active }) {
               </h3>
               <p className="mascots-note">
                 A fake bottom bar: the real bar&apos;s walking, pausing and standing, with a working
-                bot and one of another state per mascot.
+                bot and one of another state per mascot, each carrying its poster.
               </p>
               <RoamingPreview />
             </section>
             <MascotGallery facing={facing} moving={moving} pickedId={picked?.id} />
+            <section className="mascots-section" aria-labelledby="mascots-posters-title">
+              <h3 id="mascots-posters-title" className="mascots-heading">
+                Posters
+              </h3>
+              <p className="mascots-note">
+                <span data-testid="posters-sub">{`${POSTERS.length} ${POSTERS.length === 1 ? 'poster' : 'posters'} registered`}</span>
+                . Every bot carries one with its ticket key, picked by its session; it sways while
+                the bot walks.
+              </p>
+              <PosterGallery />
+            </section>
           </div>
         </div>
       </BoardSection>

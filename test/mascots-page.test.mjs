@@ -17,6 +17,8 @@ const WORDS = ['working', 'idle', 'done', 'failed'];
 
 let server;
 let MASCOTS;
+let POSTERS;
+let PosterGallery;
 let MascotGallery;
 let RoamingPreview;
 let MascotsPanel;
@@ -30,7 +32,8 @@ before(async () => {
     logLevel: 'error',
   });
   ({ MASCOTS } = await server.ssrLoadModule('/ui-react/components/mascots/index.js'));
-  ({ MascotGallery, RoamingPreview } = await server.ssrLoadModule(
+  ({ POSTERS } = await server.ssrLoadModule('/ui-react/components/posters/index.js'));
+  ({ MascotGallery, PosterGallery, RoamingPreview } = await server.ssrLoadModule(
     '/ui-react/components/MascotGallery.jsx',
   ));
   ({ MascotsPanel } = await server.ssrLoadModule('/ui-react/panels/MascotsPanel.jsx'));
@@ -145,6 +148,52 @@ test('the panel is a board screen with the registry count, toolbar controls and 
     source,
     /useActivePolling|useEffect|setInterval|setTimeout|fetch\(|EventSource|lib\/api/,
   );
+});
+
+test('the posters section has one card per registered poster, still and swaying', () => {
+  const markup = html(PosterGallery, {});
+  assert.equal(markup.match(/data-testid="poster-card-/g).length, POSTERS.length);
+  for (const { id, name } of POSTERS) {
+    const card = markup.match(
+      new RegExp(`<li[^>]*data-testid="poster-card-${id}"[\\s\\S]*?</li>`),
+    )?.[0];
+    assert.ok(card, `${id} has a card`);
+    assert.ok(card.includes(`>${name}</h3>`), `${id} card names ${name}`);
+    assert.ok(card.includes(`<code class="mascots-card-id">${id}</code>`), `${id} shows its id`);
+    // Still and swaying, at two sizes, plus the shortest and the longest key.
+    for (const size of ['bar', 'large'])
+      for (const mode of ['still', 'swaying'])
+        assert.ok(card.includes(`data-testid="poster-figure-${id}-${size}-${mode}"`), mode);
+    assert.equal(card.match(/<svg /g).length, 6);
+    assert.equal(
+      card.match(new RegExp(`class="poster-${id} poster-${id}--moving"`, 'g')).length,
+      2,
+    );
+    assert.ok(card.includes('>AB-1</text>') && card.includes('>TRIPS-12345</text>'));
+    assert.doesNotMatch(card, /<title|<desc|\stitle=/, 'no native tooltip source');
+  }
+  assert.ok(markup.includes('aria-label="Registered posters"'));
+  const panel = html(MascotsPanel, { active: true });
+  assert.match(
+    panel,
+    new RegExp(`data-testid="posters-sub">${POSTERS.length} posters registered<`),
+  );
+  assert.equal(panel.match(/data-testid="poster-card-/g).length, POSTERS.length);
+});
+
+test('every bot of the roaming preview carries a poster, outside its mirrored face', () => {
+  const markup = html(RoamingPreview, {});
+  const lanes = markup.split('<div class="bot-bar-lane"').slice(1);
+  assert.ok(lanes.length >= MASCOTS.length);
+  for (const lane of lanes) {
+    assert.equal(lane.match(/class="bot-bar-poster"/g).length, 1, 'one poster per bot');
+    assert.ok(
+      lane.indexOf('class="bot-bar-poster"') < lane.indexOf('class="bot-bar-face'),
+      'the poster is a sibling before the face, never inside it',
+    );
+    assert.match(lane, /class="bot-bar-poster" aria-hidden="true"/);
+    assert.match(lane, />TAP-\d+<\/text>/);
+  }
 });
 
 test('the tab is registered after DevTools, with a nav icon', () => {

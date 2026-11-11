@@ -155,3 +155,91 @@ test('with reduced motion the roaming preview stands still', async ({ page }) =>
     'none',
   );
 });
+
+test('the Posters section lists one card per registered poster, still and swaying', async ({
+  page,
+}) => {
+  await page.goto('/#/mascots');
+  const posterCards = page.getByTestId('posters-grid').getByTestId(/^poster-card-/);
+  await expect(posterCards.first()).toBeVisible();
+  // The registry is JSX this runner cannot import, so the count comes from the page's own line.
+  const sub = await page.getByTestId('posters-sub').textContent();
+  const count = Number(sub.match(/^(\d+) posters? registered$/)[1]);
+  expect(count).toBeGreaterThan(0);
+  await expect(posterCards).toHaveCount(count);
+  const ids = [];
+  for (const card of await posterCards.all()) {
+    await expect(card.locator('h3')).not.toBeEmpty();
+    await expect(card.locator('code')).not.toBeEmpty();
+    ids.push(await card.locator('code').textContent());
+    // Bar size and large, still and swaying, plus the shortest and the longest key.
+    await expect(card.locator('figure svg')).toHaveCount(6);
+    await expect(card.locator('figure svg text')).toHaveText([
+      'TAP-1451',
+      'TAP-1451',
+      'TAP-1451',
+      'TAP-1451',
+      'AB-1',
+      'TRIPS-12345',
+    ]);
+    await expect(card.locator('svg[class*="--moving"]')).toHaveCount(2);
+    await expect(card.locator('[title], svg title, svg desc')).toHaveCount(0);
+    for (const box of await card
+      .locator('figure svg')
+      .evaluateAll((all) => all.map((el) => el.getBoundingClientRect().toJSON()))) {
+      expect(box.width).toBeGreaterThan(80);
+      expect(box.left).toBeGreaterThanOrEqual(0);
+    }
+  }
+  expect(new Set(ids).size).toBe(count);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // A swaying copy sways, a still copy does not.
+  const sway = (testId) =>
+    page
+      .getByTestId(testId)
+      .locator('svg')
+      .evaluate((svg) => getComputedStyle(svg.querySelector('[class$="-sway"]')).animationName);
+  expect(await sway(`poster-figure-${ids[0]}-bar-swaying`)).toMatch(/-sway$/);
+  expect(await sway(`poster-figure-${ids[0]}-bar-still`)).toBe('none');
+});
+
+test('every bot of the roaming preview carries a poster with its own ticket key', async ({
+  page,
+}) => {
+  await page.goto('/#/mascots');
+  const roam = page.getByTestId('mascots-roam');
+  await expect(roam).toBeVisible();
+  const lanes = await roam.locator('.bot-bar-lane').count();
+  await expect(roam.locator('.bot-bar-poster')).toHaveCount(lanes);
+  const texts = await roam.locator('.bot-bar-poster svg text').allTextContents();
+  expect(new Set(texts).size).toBe(lanes);
+  for (const text of texts) expect(text).toMatch(/^TAP-\d+$/);
+  // Outside the mirrored face, and inside the strip.
+  expect(
+    await roam
+      .locator('.bot-bar-poster')
+      .evaluateAll((all) => all.some((el) => el.closest('.bot-bar-face'))),
+  ).toBe(false);
+  const strip = await roam.boundingBox();
+  for (const box of await roam
+    .locator('.bot-bar-poster')
+    .evaluateAll((all) => all.map((el) => el.getBoundingClientRect().toJSON()))) {
+    expect(box.top).toBeGreaterThanOrEqual(strip.y - 1);
+  }
+});
+
+test('with reduced motion no poster on the Mascots page sways', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/#/mascots');
+  await expect(page.getByTestId('posters-grid')).toBeVisible();
+  const swaying = await page
+    .getByTestId('panel-mascots')
+    .locator('svg[class^="poster-"][class*="--moving"]')
+    .evaluateAll(
+      (all) =>
+        all.filter(
+          (svg) => getComputedStyle(svg.querySelector('[class$="-sway"]')).animationName !== 'none',
+        ).length,
+    );
+  expect(swaying).toBe(0);
+});

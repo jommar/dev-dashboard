@@ -1,0 +1,368 @@
+/* Poster sheet: one block per poster, each opened by a "poster: <slug>" marker. See components/posters/README.md.
+   A poster is the small sign a bot carries above its head, showing its ticket key. Every selector, keyframe and custom property is poster-<slug>-*; palette hex lives only in the :root block (one dark set, the dashboard is dark-only). The sway runs only with the --moving modifier and only without a reduced-motion preference; otherwise a poster is perfectly still. */
+
+/* poster: paper (First Class, an airmail stamp on a wooden pole) */
+:root {
+  --poster-paper-board: #f3ead2;
+  --poster-paper-hole: var(--bg, #111113);
+  --poster-paper-red: #c8423a;
+  --poster-paper-blue: #2f5aa8;
+  --poster-paper-ink: #1b2130;
+  --poster-paper-mark: #4a4f5c;
+  --poster-paper-pole: #a77a4a;
+  --poster-paper-pole-dark: #6e4c2b;
+}
+.poster-paper {
+  display: block;
+  overflow: visible;
+}
+.poster-paper-sway {
+  transform-box: view-box;
+  transform-origin: 42px 50px;
+}
+.poster-paper-pole {
+  fill: var(--poster-paper-pole);
+}
+.poster-paper-tack {
+  fill: var(--poster-paper-pole-dark);
+}
+.poster-paper-stamp {
+  fill: var(--poster-paper-board);
+  stroke: var(--poster-paper-hole);
+  stroke-width: 3;
+  stroke-dasharray: 0 4;
+  stroke-linecap: round;
+}
+.poster-paper-air {
+  fill: none;
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+}
+.poster-paper-red {
+  stroke: var(--poster-paper-red);
+}
+.poster-paper-blue {
+  stroke: var(--poster-paper-blue);
+  stroke-dashoffset: 4;
+}
+.poster-paper-mark {
+  fill: none;
+  stroke: var(--poster-paper-mark);
+  stroke-width: 0.8;
+  opacity: 0.55;
+}
+.poster-paper-key {
+  fill: var(--poster-paper-ink);
+  font:
+    700 12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+@keyframes poster-paper-sway {
+  from {
+    transform: rotate(-4deg);
+  }
+  to {
+    transform: rotate(4deg);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .poster-paper--moving .poster-paper-sway {
+    animation: poster-paper-sway 2.6s ease-in-out infinite alternate;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-paper--moving .poster-paper-sway {
+    animation: none;
+  }
+}
+
+/* poster: glow (Open Late, a neon sign on a metal pole) */
+:root {
+  --poster-glow-board: #16121e;
+  --poster-glow-edge: #3b3247;
+  --poster-glow-tube: #ff5cbf;
+  --poster-glow-halo: rgba(255, 92, 191, 0.6);
+  --poster-glow-ink: #effcff;
+  --poster-glow-ink-halo: rgba(80, 225, 255, 0.35);
+  --poster-glow-metal: #8d91a0;
+  --poster-glow-cap: #cdd0da;
+}
+.poster-glow {
+  display: block;
+  overflow: visible;
+}
+.poster-glow-sway {
+  transform-box: view-box;
+  transform-origin: 42px 50px;
+}
+.poster-glow-metal {
+  fill: var(--poster-glow-metal);
+}
+.poster-glow-board {
+  fill: var(--poster-glow-board);
+  stroke: var(--poster-glow-edge);
+}
+.poster-glow-tube {
+  fill: none;
+  stroke: var(--poster-glow-tube);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 2px var(--poster-glow-halo));
+}
+.poster-glow-cap {
+  fill: var(--poster-glow-cap);
+}
+.poster-glow-key {
+  fill: var(--poster-glow-ink);
+  stroke: var(--poster-glow-ink-halo);
+  stroke-width: 1.2;
+  paint-order: stroke;
+  font:
+    700 11px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+@keyframes poster-glow-sway {
+  from {
+    transform: rotate(-4deg);
+  }
+  to {
+    transform: rotate(4deg);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .poster-glow--moving .poster-glow-sway {
+    animation: poster-glow-sway 2.6s ease-in-out infinite alternate;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-glow--moving .poster-glow-sway {
+    animation: none;
+  }
+}
+
+/* poster: pixel (Pixel Dialog, an RPG text box clamped to a wooden pole) */
+:root {
+  --poster-pixel-frame: #f2f5ff;
+  --poster-pixel-board: #1b2a8c;
+  --poster-pixel-board-lit: #3550d0;
+  --poster-pixel-ink: #ffffff;
+  --poster-pixel-caret: #ffd23f;
+  --poster-pixel-shadow: #000000;
+  --poster-pixel-pole: #a8662e;
+  --poster-pixel-pole-lit: #e09a58;
+  --poster-pixel-clamp: #8a93b8;
+}
+.poster-pixel {
+  display: block;
+  overflow: visible;
+  shape-rendering: crispEdges;
+}
+.poster-pixel-sway {
+  transform-box: view-box;
+  transform-origin: 42px 50px;
+}
+.poster-pixel-shadow {
+  fill: var(--poster-pixel-shadow);
+  opacity: 0.45;
+}
+.poster-pixel-frame {
+  fill: var(--poster-pixel-frame);
+}
+.poster-pixel-board {
+  fill: var(--poster-pixel-board);
+}
+.poster-pixel-lit {
+  fill: var(--poster-pixel-board-lit);
+}
+.poster-pixel-caret {
+  fill: var(--poster-pixel-caret);
+}
+.poster-pixel-pole {
+  fill: var(--poster-pixel-pole);
+}
+.poster-pixel-pole-lit {
+  fill: var(--poster-pixel-pole-lit);
+}
+.poster-pixel-clamp {
+  fill: var(--poster-pixel-clamp);
+}
+.poster-pixel-key {
+  fill: var(--poster-pixel-ink);
+  font:
+    700 12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+@keyframes poster-pixel-sway {
+  from {
+    transform: rotate(-4deg);
+  }
+  to {
+    transform: rotate(4deg);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .poster-pixel--moving .poster-pixel-sway {
+    animation: poster-pixel-sway 1.6s ease-in-out infinite alternate;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-pixel--moving .poster-pixel-sway {
+    animation: none;
+  }
+}
+
+/* poster: craft (Picket Sign, a cardboard placard on a wooden stick) */
+:root {
+  --poster-craft-board: #cfa76a;
+  --poster-craft-edge: #8a6337;
+  --poster-craft-flute: #b88d52;
+  --poster-craft-ink: #23160b;
+  --poster-craft-stick: #e2c290;
+  --poster-craft-grain: #b5915c;
+  --poster-craft-tape: #f1e6c4;
+}
+.poster-craft {
+  display: block;
+  overflow: visible;
+}
+.poster-craft-sway {
+  transform-box: view-box;
+  transform-origin: 50% 100%;
+}
+.poster-craft-stick {
+  fill: var(--poster-craft-stick);
+  stroke: var(--poster-craft-grain);
+  stroke-width: 0.8;
+}
+.poster-craft-grain {
+  fill: none;
+  stroke: var(--poster-craft-grain);
+  stroke-width: 0.6;
+}
+.poster-craft-board {
+  fill: var(--poster-craft-board);
+  stroke: var(--poster-craft-edge);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+.poster-craft-flute {
+  fill: none;
+  stroke: var(--poster-craft-flute);
+  stroke-width: 0.8;
+  stroke-dasharray: 1.5 1.5;
+}
+.poster-craft-tape {
+  fill: var(--poster-craft-tape);
+  opacity: 0.85;
+}
+.poster-craft-key {
+  fill: var(--poster-craft-ink);
+  font:
+    700 12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+@keyframes poster-craft-sway {
+  from {
+    transform: rotate(-4deg);
+  }
+  to {
+    transform: rotate(4deg);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .poster-craft--moving .poster-craft-sway {
+    animation: poster-craft-sway 1.6s ease-in-out infinite alternate;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-craft--moving .poster-craft-sway {
+    animation: none;
+  }
+}
+
+/* poster: wild (Next Stop, a transit sign on a grey pole) */
+:root {
+  --poster-wild-board: #1d4f91;
+  --poster-wild-rim: #eef3f8;
+  --poster-wild-text: #ffffff;
+  --poster-wild-dot: #ffc72c;
+  --poster-wild-arrow: #0f2a4d;
+  --poster-wild-pole: #a3afbd;
+  --poster-wild-clamp: #5f6b7a;
+}
+.poster-wild {
+  display: block;
+  overflow: visible;
+}
+.poster-wild-sway {
+  transform-box: view-box;
+  transform-origin: 42px 50px;
+}
+.poster-wild-pole {
+  fill: var(--poster-wild-pole);
+}
+.poster-wild-clamp {
+  fill: var(--poster-wild-clamp);
+}
+.poster-wild-board {
+  fill: var(--poster-wild-board);
+}
+.poster-wild-rim {
+  fill: none;
+  stroke: var(--poster-wild-rim);
+  stroke-width: 1.4;
+}
+.poster-wild-dot {
+  fill: var(--poster-wild-dot);
+}
+.poster-wild-arrow {
+  fill: none;
+  stroke: var(--poster-wild-arrow);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.poster-wild-key {
+  fill: var(--poster-wild-text);
+  font:
+    700 12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+/* A bus-stop sway: it eases out to each side and back through the middle. */
+@keyframes poster-wild-sway {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: ease-out;
+  }
+  25% {
+    transform: rotate(-4deg);
+    animation-timing-function: ease-in-out;
+  }
+  75% {
+    transform: rotate(4deg);
+    animation-timing-function: ease-in;
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .poster-wild--moving .poster-wild-sway {
+    animation: poster-wild-sway 2.8s infinite;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-wild--moving .poster-wild-sway {
+    animation: none;
+  }
+}

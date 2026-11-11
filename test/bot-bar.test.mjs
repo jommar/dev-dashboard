@@ -39,6 +39,7 @@ import {
   normalizeTicketKey,
   nextBotChange,
   pickMascot,
+  pickPoster,
   rememberBots,
   restingSpots,
   walks,
@@ -94,6 +95,69 @@ test('removing a mascot moves only the sessions that had it', () => {
     if (was !== 'glim') assert.equal(pickMascot(key, without), was);
     else assert.notEqual(pickMascot(key, without), 'glim');
   }
+});
+
+const POSTERS_FIVE = ['paper', 'glow', 'pixel', 'craft', 'wild'];
+const POSTERS_SIX = [...POSTERS_FIVE, 'neon'];
+
+test('pickPoster is stable, always one of the ids and uses every id', () => {
+  const picks = keys(1000).map((key) => pickPoster(key, POSTERS_FIVE));
+  assert.deepEqual(
+    picks,
+    keys(1000).map((key) => pickPoster(key, POSTERS_FIVE)),
+  );
+  assert.ok(picks.every((id) => POSTERS_FIVE.includes(id)));
+  for (const id of POSTERS_FIVE)
+    assert.ok(picks.filter((p) => p === id).length > 100, `${id} is used`);
+  assert.equal(pickPoster('TAP-1:review', ['only']), 'only');
+  assert.equal(pickPoster('TAP-1:review', []), null);
+});
+
+test('pickPoster does not depend on the order of the ids', () => {
+  for (const key of keys(200))
+    assert.equal(pickPoster(key, POSTERS_FIVE), pickPoster(key, [...POSTERS_FIVE].reverse()));
+});
+
+test('adding a poster moves about a sixth of the sessions, all of them to the new one', () => {
+  const all = keys(1000);
+  const before = all.map((key) => pickPoster(key, POSTERS_FIVE));
+  const after = all.map((key) => pickPoster(key, POSTERS_SIX));
+  const moved = all.filter((_, i) => before[i] !== after[i]);
+  assert.ok(moved.length > 0, 'the new poster is used');
+  assert.ok(moved.length <= 1000 / 6 + 60, `${moved.length} of 1000 moved`);
+  for (const key of moved) assert.equal(pickPoster(key, POSTERS_SIX), 'neon');
+  assert.ok(after.every((id, i) => id === 'neon' || id === before[i]));
+});
+
+test('removing a poster moves only the sessions that had it', () => {
+  const without = POSTERS_FIVE.filter((id) => id !== 'pixel');
+  for (const key of keys(500)) {
+    const was = pickPoster(key, POSTERS_FIVE);
+    if (was !== 'pixel') assert.equal(pickPoster(key, without), was);
+    else assert.notEqual(pickPoster(key, without), 'pixel');
+  }
+});
+
+test('the poster a session carries is independent of its mascot', () => {
+  // Were the picks tied, each mascot would always come with the same poster: a chi-square test of the
+  // 5 x 5 table of pairs (16 degrees of freedom; 39.3 is the 99.9% mark).
+  const mascots = ['dux', 'wick', 'glim', 'pinch', 'pinch-crab'];
+  const all = keys(5000);
+  const count = new Map();
+  for (const key of all) {
+    const pair = `${pickMascot(key, mascots)}/${pickPoster(key, POSTERS_FIVE)}`;
+    count.set(pair, (count.get(pair) ?? 0) + 1);
+  }
+  assert.equal(count.size, 25, 'every mascot is seen with every poster');
+  const total = (side, id) =>
+    [...count].filter(([pair]) => pair.split('/')[side] === id).reduce((n, [, c]) => n + c, 0);
+  let chi = 0;
+  for (const m of mascots)
+    for (const p of POSTERS_FIVE) {
+      const expected = (total(0, m) * total(1, p)) / all.length;
+      chi += ((count.get(`${m}/${p}`) ?? 0) - expected) ** 2 / expected;
+    }
+  assert.ok(chi < 39.3, `the picks look independent (chi-square ${chi.toFixed(1)})`);
 });
 
 test('roamFor is deterministic and keeps every walk inside the bar', () => {

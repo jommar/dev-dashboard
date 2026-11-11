@@ -1,9 +1,19 @@
-// MascotGallery.jsx — the Mascots screen's two views of the registry (MASCOTS): a card per mascot
-// showing all four states at two sizes, and a fake bottom bar where a few of them roam. Static: no
-// session data, no polling. Both read the registry, so a newly registered mascot appears with no
-// edit here. Styles: ui-react/styles/mascots-page.css; the roaming reuses bot-bar.css.
+// MascotGallery.jsx — the Mascots screen's views of the registries: a card per mascot (MASCOTS)
+// showing all four states at two sizes, a fake bottom bar where a few of them roam, and a card per
+// poster (POSTERS) still and swaying. Static: no session data, no polling. All read their registry,
+// so a newly registered mascot or poster appears with no edit here. Styles:
+// ui-react/styles/mascots-page.css; the roaming reuses bot-bar.css.
+import { BotPoster } from './BotPoster.jsx';
 import { MASCOTS } from './mascots/index.js';
-import { BOT_STATE_WORDS, botPose, laneStyle, restingSpots, roamFor } from '../../ui/bot-bar.js';
+import { POSTERS } from './posters/index.js';
+import {
+  BOT_STATE_WORDS,
+  botPose,
+  laneStyle,
+  restingSpots,
+  roamFor,
+  walks,
+} from '../../ui/bot-bar.js';
 
 export const STATES = ['working', 'waiting', 'done', 'failed'];
 // The bar's own height, and a size to look closely.
@@ -85,18 +95,21 @@ export function MascotGallery({ facing, moving, pickedId }) {
 }
 
 // Every mascot twice: working, and one of the other states in turn, so a roaming, an idle and a
-// finished bot are all in view. The keys are invented (nothing here is a session).
+// finished bot are all in view. The keys are invented (nothing here is a session), and so are the
+// ticket keys on the posters they carry.
 const PREVIEW_BOTS = MASCOTS.flatMap((mascot, index) =>
-  ['working', ['waiting', 'done', 'failed'][index % 3]].map((state) => ({
+  ['working', ['waiting', 'done', 'failed'][index % 3]].map((state, which) => ({
     key: `preview:${mascot.id}:${state}`,
+    ticket: `TAP-${1400 + index * 2 + which}`,
     mascot,
     state,
   })),
 );
 
 // A fake bottom bar. It uses the real bar's lane classes and custom properties (bot-bar.css), set by
-// the same helpers (roamFor, restingSpots, laneStyle, botPose), so it walks, pauses and stands as the
-// real one does, and stands still under reduced motion.
+// the same helpers (roamFor, restingSpots, laneStyle, botPose) and the same BotPoster, so it walks,
+// pauses and stands as the real one does, with its poster on each bot, and stands still under reduced
+// motion.
 export function RoamingPreview() {
   const spots = restingSpots(PREVIEW_BOTS);
   return (
@@ -106,7 +119,7 @@ export function RoamingPreview() {
       aria-label="Roaming preview"
       data-testid="mascots-roam"
     >
-      {PREVIEW_BOTS.map(({ key, mascot, state }) => {
+      {PREVIEW_BOTS.map(({ key, ticket, mascot, state }) => {
         const roam = roamFor(key);
         const pose = botPose(state, roam);
         const { Component, name } = mascot;
@@ -118,6 +131,7 @@ export function RoamingPreview() {
             data-testid={`mascots-roam-${mascot.id}-${state}`}
             style={laneStyle(roam, spots.get(key))}
           >
+            <BotPoster botKey={key} text={ticket} moving={walks(state)} />
             <div className="bot-bar-face mascots-roam-bot">
               <Component
                 state={state}
@@ -130,5 +144,90 @@ export function RoamingPreview() {
         );
       })}
     </div>
+  );
+}
+
+// The poster samples: a typical key twice at the bar's size and twice enlarged (still, then swaying),
+// and the shortest and longest keys a poster must fit.
+export const POSTER_SIZES = [
+  { id: 'bar', scale: 1, caption: 'Bar size, 84 x 50 px' },
+  { id: 'large', scale: 2, caption: 'Large, 2x' },
+];
+export const POSTER_SAMPLE_KEY = 'TAP-1451';
+export const POSTER_EXTREME_KEYS = ['AB-1', 'TRIPS-12345'];
+
+function PosterFigure({ poster, size, mode, text, moving, testId }) {
+  const { Component } = poster;
+  return (
+    <figure className="mascots-figure mascots-poster-figure" data-testid={testId}>
+      <div className="mascots-art mascots-poster-art" style={{ '--mascots-scale': size.scale }}>
+        <Component text={text} moving={moving} />
+      </div>
+      <figcaption>{mode}</figcaption>
+    </figure>
+  );
+}
+
+function PosterCard({ poster }) {
+  return (
+    <li className="mascots-card" data-testid={`poster-card-${poster.id}`}>
+      <div className="mascots-card-head">
+        <h3 className="mascots-card-name">{poster.name}</h3>
+        <code className="mascots-card-id">{poster.id}</code>
+      </div>
+      {POSTER_SIZES.map((size) => (
+        <div key={size.id} className="mascots-size">
+          <p className="mascots-size-caption">{size.caption}</p>
+          <div className="mascots-states mascots-posters" data-size={size.id}>
+            {[
+              ['still', false],
+              ['swaying', true],
+            ].map(([mode, moving]) => (
+              <PosterFigure
+                key={mode}
+                poster={poster}
+                size={size}
+                mode={mode}
+                text={POSTER_SAMPLE_KEY}
+                moving={moving}
+                testId={`poster-figure-${poster.id}-${size.id}-${mode}`}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+      <div className="mascots-size">
+        <p className="mascots-size-caption">Shortest and longest key</p>
+        <div className="mascots-states mascots-posters" data-size="bar">
+          {POSTER_EXTREME_KEYS.map((key) => (
+            <PosterFigure
+              key={key}
+              poster={poster}
+              size={POSTER_SIZES[0]}
+              mode={key}
+              text={key}
+              moving={false}
+              testId={`poster-figure-${poster.id}-key-${key}`}
+            />
+          ))}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+// One card per registered poster, each shown still and swaying with a sample ticket key.
+export function PosterGallery() {
+  return (
+    <ul
+      className="mascots-grid"
+      role="list"
+      aria-label="Registered posters"
+      data-testid="posters-grid"
+    >
+      {POSTERS.map((poster) => (
+        <PosterCard key={poster.id} poster={poster} />
+      ))}
+    </ul>
   );
 }

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Added posters to the bot bar: every bot now carries a small sign on a pole above its head with its
+  ticket key (`TAP-1451`), in one of five designs (First Class, an airmail stamp; Open Late, a neon sign;
+  Pixel Dialog, an RPG text box; Picket Sign, a cardboard placard; Next Stop, a transit sign). A session
+  keeps its poster for life, chosen by rendezvous hashing of its session key with its own salt
+  (`pickPoster` in `ui/bot-bar.js`, independent of the mascot), from the one registry in
+  `ui-react/components/posters/index.js` (see `ui-react/components/posters/README.md`, "Adding a
+  poster"). The poster sways gently while its bot walks and is still for a failed bot or with reduced
+  motion; it is decorative (hidden from assistive technology, no native tooltip), takes no pointer, is
+  never mirrored when the bot turns, and the callout and the hover popup now stand above it. The
+  Mascots tab shows a card per poster (still and swaying, with the shortest and longest key) and the
+  roaming preview's bots carry posters too.
+
 - Added a Mascots tab (after DevTools) that shows every registered mascot for viewing and picking: a
   card per entry of `MASCOTS` with its name and id and all four states (working, idle, done, failed)
   at the bar's 56 px and at 160 px, each captioned in words. Toolbar controls flip the facing

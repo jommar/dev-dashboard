@@ -286,16 +286,16 @@ export function hashOf(text, salt = '') {
 // A number in [0, 1) from the key, a different one for each salt.
 const unit = (key, salt) => hashOf(key, salt) / 2 ** 32;
 
-// The mascot a session is: the id, out of `ids` (the registry's mascot ids), whose hash with the
-// session key is the highest (rendezvous hashing). The same key is the same mascot on every render
-// and every reload, with nothing stored; adding a mascot moves only the sessions that now score
-// highest with it (about 1 in N), and removing one moves only that mascot's sessions. The order of
-// `ids` does not matter, and a tie goes to the id that sorts first. Null when there are no ids.
-export function pickMascot(sessionKey, ids) {
+// The id, out of `ids`, whose hash with the session key is the highest (rendezvous hashing). The same
+// key is the same id on every render and every reload, with nothing stored; adding an id moves only
+// the sessions that now score highest with it (about 1 in N), and removing one moves only that id's
+// sessions. The order of `ids` does not matter, and a tie goes to the id that sorts first. Null when
+// there are no ids. `salt` makes each use of one session key an independent pick.
+function rendezvous(sessionKey, ids, salt = '') {
   let best = null;
   let bestWeight = -1;
   for (const id of [...ids].sort()) {
-    const weight = hashOf(`${sessionKey}:${id}`);
+    const weight = hashOf(`${sessionKey}:${id}`, salt);
     if (weight > bestWeight) {
       best = id;
       bestWeight = weight;
@@ -303,6 +303,13 @@ export function pickMascot(sessionKey, ids) {
   }
   return best;
 }
+
+// The mascot a session is: one of `ids` (the registry's mascot ids), by rendezvous hashing.
+export const pickMascot = (sessionKey, ids) => rendezvous(sessionKey, ids);
+
+// The poster a session carries: one of `ids` (the poster registry's ids), by rendezvous hashing with
+// its own salt, so it is independent of the session's mascot.
+export const pickPoster = (sessionKey, ids) => rendezvous(sessionKey, ids, 'poster:');
 
 const between = (low, high, amount) => low + (high - low) * amount;
 
@@ -401,6 +408,11 @@ export function walkStretch(roam, state, barWidth, { edge = 88, size = 56 } = {}
 export function botPose(state, roam) {
   return { facing: walks(state) ? 'right' : roam.facing, stepping: state === 'working' };
 }
+
+// How far a bot's poster reaches above the bot, in px: the poster's height less how far its pole foot
+// overlaps the bot's head (--bot-poster-h and --bot-poster-overlap in ui-react/styles/bot-bar.css; change
+// them together). The hover popup stands this much higher so it never covers the poster.
+export const POSTER_RISE_PX = 40;
 
 // The custom properties ui-react/styles/bot-bar.css reads to place and move one bot's lane: where it
 // walks and how long (`roam`, from roamFor, as percentages of the room its zone gives it), and where

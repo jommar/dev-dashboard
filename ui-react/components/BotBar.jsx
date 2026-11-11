@@ -13,7 +13,8 @@
 // a finished or failed bot can be dismissed; both are remembered in memory only.
 //
 // Working bots patrol, waiting (idle) ones wander, done ones stroll and failed ones stand slumped;
-// under reduced motion every bot stands still.
+// under reduced motion every bot stands still. Each bot carries a poster with its ticket key above
+// its head (BotPoster), swaying while it walks.
 //
 // A bot is memoized on plain values, so a poll that finds nothing new, or a re-render of the app,
 // never restarts its walk, and a state change replays its own pose (the hop, the shake) once.
@@ -21,6 +22,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useActiveSprintKeys } from '../hooks/useActiveSprintKeys.js';
 import { useBotCallouts } from '../hooks/useBotCallouts.js';
 import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
+import { BotPoster } from './BotPoster.jsx';
 import { ClaudeDialog } from './ClaudeDialog.jsx';
 import { ClaudePlaceholderDialog } from './ClaudePlaceholderDialog.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
@@ -37,7 +39,9 @@ import {
   laneStyle,
   liveBots,
   nextBotChange,
+  POSTER_RISE_PX,
   rememberBots,
+  walks,
   ZONES_MIN_WIDTH_PX,
   zoneSpots,
   roamFor,
@@ -81,6 +85,9 @@ const Bot = memo(function Bot({
   const roam = roamFor(botKey);
   const pose = botPose(state, roam);
   const label = `${ticket} ${phase}: ${BOT_STATE_WORDS[state]}`;
+  // The popup adds the reason, unless it only repeats the state word (a running session reads "working").
+  const reasonPhrase = claudePhrase({ state, reason });
+  const detail = reasonPhrase === BOT_STATE_WORDS[state] ? label : `${label} · ${reasonPhrase}`;
   const { Component } = mascot;
   return (
     <div
@@ -89,13 +96,26 @@ const Bot = memo(function Bot({
       data-fading={fading ? 'true' : undefined}
       style={{ ...laneStyle(roam, rest), '--bot-layer': layer }}
     >
+      {/* Beside the face, not inside it, like the callout: the face is mirrored when the bot turns, and
+          the poster's key must never be. It sways while the bot walks and stands still otherwise. */}
+      <BotPoster
+        botKey={botKey}
+        text={ticket}
+        moving={walks(state)}
+        testId={`bot-bar-poster-${ticket}-${phase}`}
+      />
       <div className="bot-bar-face">
         {/* The app's own popup (the board's DashboardTooltip: it shows on keyboard focus too), never a
             native title attribute: MUI adds one when a tooltip is declared the description of its
             child, so that option stays off, and the button keeps its own aria-label. */}
         <DashboardTooltip
-          title={`${label} · ${claudePhrase({ state, reason })}`}
-          slotProps={{ transition: { timeout: 0 } }}
+          title={detail}
+          placement="top"
+          slotProps={{
+            transition: { timeout: 0 },
+            // Above the bot's poster, not over it.
+            popper: { modifiers: [{ name: 'offset', options: { offset: [0, POSTER_RISE_PX] } }] },
+          }}
         >
           <button
             type="button"
