@@ -81,7 +81,8 @@ click. All seven views remain available:
   (the My Tickets layout) next to the thread watcher. Nothing else in the app
   depends on it. See [Slack](#slack).
 - **Pull Requests** — other-assigned Jira tickets in Ready For Code Review, grouped
-  automatically into To Review, Reviewing and Reviewed, including tickets without PRs.
+  automatically into To Review, Reviewing and Reviewed, including tickets without PRs,
+  and a Spec review lane of open `ezat-specs` spec PRs with no code PR yet.
   See [PR review board](#open-prs).
 - **Releases** — the tickets of one Jira fix version (the picker defaults to the
   earliest unreleased EZAT version), each with its GitHub PRs, grouped by
@@ -379,6 +380,7 @@ An agent can read the same logs three ways:
    - `GET /api/events` (SSE live status)
    - `GET /api/prs`
    - `GET /api/review-tickets` (other-assigned review-ready Jira tickets with all linked open PRs in watched repos; see [PR review board](#open-prs))
+   - `GET /api/spec-reviews` (open `ezat-specs` spec PRs with a ticket key and no open or merged code PR; see [Spec review lane](#spec-review-lane))
    - `GET /api/my-tickets?includeDone=0|1`
    - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
@@ -578,6 +580,28 @@ Next to **Start code review**, **Re-review** sends a message to the ticket's exi
 session, asking it to review the linked PRs again (see [Code review](#code-review)). It is off
 until a review session exists and is idle, and says why (`Start a code review first.`, or that the
 session is running). After it is sent the dialog shows when it was last requested.
+
+### Spec review lane
+
+The fourth column, **Spec review**, lists open PRs in `TransActComm/ezat-specs` that carry
+the `spec` label and whose title names a ticket (`TAP-n` or `TRIPS-n`). A spec drops out when
+an open or merged PR in Portage-backend, Portage-frontend or TravelTracker names the same key
+in its title or head branch. Specs with no ticket key are not listed. Each card shows its keys
+as Jira links, the PR, its author, age in days, reviews by others and a Draft chip on a draft PR. The repos
+and label are fixed in code, not the Settings watched list, and spec cards ignore the work filters.
+
+The feed is `GET /api/spec-reviews`. It always answers 200 with `{ available, total, specs, updatedAt }`;
+each spec carries `number`, `title`, `url`, `author`, `draft`, `keys`, `ageDays` and `reviewsByOthers`.
+`available: false` means the lookup failed or was incomplete, and then `specs` is empty. A cross-site or
+same-site browser request gets `403 OPERATION_FAILED` before any GitHub call.
+
+The lookup is cached for 10 minutes; Refresh does not bypass it, so a new code PR hides its
+spec within 10 minutes. If the lookup fails or is incomplete, the lane is empty and a note says
+so, and the ticket lanes are unaffected. The card's **Claude** button opens a dialog with one
+action, **Start spec review**, which posts `{ key, phase: 'spec-review', pr }`; `pr` is required. The
+server builds the review prompt, and the session is named `<KEY>-spec-review`. Its state is in the
+ticket's [Claude launcher](#claude-launcher) entry, where `blocks.specReview` appears only once a spec
+review was launched.
 
 ### Local work filters
 
@@ -1621,7 +1645,7 @@ to default** or delete the file.
 | Route                               | Purpose                                                                                                                                        |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below) |
-| `POST /api/claude/launch`           | body `{ key, phase }`; answers `{ ok: true, key, phase, name, id, ticket }`                                                                    |
+| `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }`         |
 | `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                             |
 | `GET /api/claude/prompts`           | `{ ok: true, prompts }`; `prompts` is the four entries below, in the order investigate, implement, answers, groom                              |
 | `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                         |
@@ -1630,9 +1654,9 @@ to default** or delete the file.
 `tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
 board shows it as not started). With no ticket folder the route answers without running the CLI;
 otherwise concurrent callers share one `claude agents --json --all`. An entry is
-`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, review, blocks, goTo }`
+`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, review, specReview, blocks, goTo }`
 (`groom` and `blocks.groom` are described under [Groom ticket](#groom-ticket);
-`review` and `blocks.review` under [Code review](#code-review)):
+`review` and `blocks.review` under [Code review](#code-review), `specReview` and `blocks.specReview` under [Spec review lane](#spec-review-lane)):
 
 - `phase` is `investigate-and-plan`, `implement-plan` or `null` (no workflow launched). `flags` holds
   the two phase flags and `done`, as read (`done` is `false` when missing).
@@ -1644,6 +1668,10 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
   A session the CLI lists as `working`, `blocked`, `done` or `stopped` (ended with `claude stop`,
   listed with a null pid) is recognised; `stopped` is a finished, resumable session exactly like
   `done`. Any other listed state is `unrecognised_state`.
+- `specReview` is `{ state, reason }`, read like `review` from the spec-review record: `none` with a
+  null reason until a spec review is launched. `blocks.specReview` is present only for a ticket with
+  that record; it is `session_running` while the spec review works, `listing_unavailable` when the CLI
+  listing failed, and `null` otherwise.
 - Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
   `unanswered` counts the open ones.
 - `blocks` is `{ investigate, implement, answer, groom, review }`, each a reason string or `null` (why that

@@ -14,6 +14,7 @@ export const PHASES = [INVESTIGATE, IMPLEMENT];
 // Side actions have their own records and sessions; workflow flags, answers and gates ignore them.
 export const GROOM = 'groom';
 export const REVIEW = 'pr-review-transact';
+export const SPEC_REVIEW = 'spec-review';
 
 const TICKET_KEY = /^[A-Z]{1,10}-\d{1,7}$/;
 const QUESTION_ID = /^[A-Za-z0-9_-]{1,32}$/;
@@ -186,6 +187,8 @@ export function readLaunch(launch) {
 
 // The groom record of launch.json, shaped like a phase record, or null.
 export const readGroom = (launch) => readRecord(launch?.[GROOM]);
+// The spec review record of launch.json, shaped like a phase record, or null.
+export const readSpecReview = (launch) => readRecord(launch?.[SPEC_REVIEW]);
 // The review record, with `rereview` ({ at } once a Re-review was delivered to its session, else null).
 export function readReview(launch) {
   const base = readRecord(launch?.[REVIEW]);
@@ -316,6 +319,10 @@ export function sideActionState(record, entries, now) {
     : { state: 'done', reason: 'finished' };
 }
 
+// The block on a side action's own launch: no listing, its own session working, or none.
+const ownSessionBlock = (side, entries) =>
+  !entries ? 'listing_unavailable' : side.state === 'working' ? 'session_running' : null;
+
 export function reviewBlock(review, entries) {
   if (!entries) return 'listing_unavailable';
   if (review.state === 'unknown') return review.reason;
@@ -367,6 +374,8 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
   const groomRecord = readGroom(launch);
   const groom = sideActionState(groomRecord, entries, now);
   const review = sideActionState(readReview(launch), entries, now);
+  const specReviewRecord = readSpecReview(launch);
+  const specReview = sideActionState(specReviewRecord, entries, now);
   const blocks = {
     investigate: busy(INVESTIGATE) || null,
     implement: busy(IMPLEMENT) || implementBlock(status, launch, planPresent),
@@ -378,9 +387,12 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     resend: busy(running) || resendBlock(status, launch),
     approve: busy(running) || approveBlock(status, launch, planPresent),
     // Only a groom session of its own blocks grooming; the workflow never does.
-    groom: !entries ? 'listing_unavailable' : groom.state === 'working' ? 'session_running' : null,
+    groom: ownSessionBlock(groom, entries),
     review: reviewBlock(review, entries),
     rereview: rereviewBlock(review, entries),
+    // The key is there only for a ticket with a spec review record, so the blocks of every other
+    // ticket keep the shape they had.
+    ...(specReviewRecord && { specReview: ownSessionBlock(specReview, entries) }),
   };
   return {
     phase: record?.phase ?? null,
@@ -394,6 +406,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     unsent: sendable && state !== 'working' && state !== 'unknown',
     groom,
     review,
+    specReview,
     blocks,
     goTo: goToAll(launch, entries),
   };

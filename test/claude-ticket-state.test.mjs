@@ -1716,3 +1716,30 @@ test('stopped: any other unfamiliar state is still unrecognised', async () => {
   assert.deepEqual(entry.review, { state: 'unknown', reason: 'unrecognised_state' });
   assert.equal(entry.blocks.rereview, 'unrecognised_state');
 });
+
+// ---- spec review: its own record, state and block, independent of code review and groom ----
+
+const SPEC_REVIEW = 'spec-review';
+const SPEC_REVIEW_NAME = `${KEY}-${SPEC_REVIEW}`;
+const SPEC_REVIEW_ID = 'ffff0006';
+
+test('spec review state: a working session is reported and blocks only itself', async () => {
+  const state = await import('../backend/claude-ticket-state.mjs');
+  assert.equal(state.SPEC_REVIEW, SPEC_REVIEW);
+  assert.deepEqual(state.PHASES, [INVESTIGATE, IMPLEMENT], 'not a workflow phase');
+  assert.equal(state.sessionName(KEY, SPEC_REVIEW), SPEC_REVIEW_NAME);
+
+  const entry = await derive({
+    status: null,
+    planPresent: false,
+    launch: { [SPEC_REVIEW]: launchRecord({ name: SPEC_REVIEW_NAME, id: SPEC_REVIEW_ID }) },
+    entries: [workingEntry({ id: SPEC_REVIEW_ID, name: SPEC_REVIEW_NAME })],
+  });
+
+  assert.deepEqual(entry.specReview, { state: 'working', reason: 'running' });
+  assert.equal(entry.blocks.specReview, 'session_running');
+  assert.equal(entry.blocks.review, null);
+  assert.equal(entry.blocks.groom, null);
+  assert.deepEqual(entry.review, { state: 'none', reason: null });
+  assert.equal(entry.phase, null);
+});

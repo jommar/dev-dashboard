@@ -3,6 +3,7 @@ import { Button } from './Primitives.jsx';
 import { DismissButton, StatePill, stampOf } from './ClaudeSteps.jsx';
 
 const REVIEW = 'pr-review-transact';
+const SPEC_REVIEW = 'spec-review';
 const REASON_TEXT = {
   untrusted_workspace:
     'Claude does not trust ~/pathwise yet. Run claude there once and accept the trust prompt.',
@@ -19,6 +20,11 @@ const REASON_TEXT = {
   prompt_unreadable:
     "A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.",
 };
+// The spec variant's own wording for the one reason it shares with code review.
+const SPEC_REASON_TEXT = {
+  session_running: 'A spec review session is already running for this ticket.',
+};
+const reasonText = (code, spec) => (spec && SPEC_REASON_TEXT[code]) || REASON_TEXT[code];
 
 function rereviewText({ send }) {
   if (send?.status === 'sent') return 'Re-review requested. Claude is checking the linked PRs.';
@@ -34,6 +40,7 @@ export function ClaudePlaceholderDialog({
   rereview,
   onClose,
   resolveOpener,
+  specNumber,
 }) {
   const dialogRef = useRef(null);
   const closeButton = useRef(null);
@@ -45,21 +52,25 @@ export function ClaudePlaceholderDialog({
   const [error, setError] = useState('');
   const [resultText, setResultText] = useState('');
   const [busyText, setBusyText] = useState('');
-  const block = entry?.blocks.review;
+  // A spec review is the panel's one action on a spec card: no re-review, and its own state and block.
+  const spec = Boolean(specNumber);
+  const label = spec ? 'Spec review' : 'Code review';
+  const block = spec ? entry?.blocks.specReview : entry?.blocks.review;
   const rereviewBlock = entry?.blocks.rereview;
   const resentAt = entry?.reviewResentAt;
-  const reviewState = entry?.review?.state;
+  const reviewState = (spec ? entry?.specReview : entry?.review)?.state;
   // Start code review is the one primary button until a review session exists (a ticket the server
   // lists nothing for has none); after that the re-review is, and starting another review is the
   // quiet choice. While a session works or the status is unknown neither is.
-  const startPrimary = !entry || (block === null && rereviewBlock === 'no_review_session');
+  const startPrimary = spec || !entry || (block === null && rereviewBlock === 'no_review_session');
   const rereviewPrimary = rereviewBlock === null;
   // Once a review session exists and can take a message, starting another review is the quiet choice.
-  const startQuiet = block === null && rereviewBlock === null;
+  const startQuiet = !spec && block === null && rereviewBlock === null;
   const reasonId = useId();
-  const startReason = REASON_TEXT[block] ?? (block ? 'Code review cannot start right now.' : '');
-  const rereviewReason =
-    REASON_TEXT[rereviewBlock] ?? (rereviewBlock ? 'Re-review cannot be sent right now.' : '');
+  const startReason = reasonText(block, spec) ?? (block ? `${label} cannot start right now.` : '');
+  const rereviewReason = spec
+    ? ''
+    : (REASON_TEXT[rereviewBlock] ?? (rereviewBlock ? 'Re-review cannot be sent right now.' : ''));
   // "Start a code review first." only repeats the primary button beside it, so it is for assistive
   // tech alone then.
   const reasons = [];
@@ -112,21 +123,22 @@ export function ClaudePlaceholderDialog({
     if (!focused || focused === document.body || focused.disabled) closeButton.current?.focus();
   }, [busy, block]);
 
+  // Starts the code review, or the spec review of `specNumber` (the one action on a spec card).
   const startReview = async () => {
     if (busy || block) return;
     setBusy(true);
-    setBusyText('Starting code review…');
+    setBusyText(`Starting ${label.toLowerCase()}…`);
     setError('');
     setResultText('');
-    const result = await launch(ticketKey, REVIEW);
+    const result = await launch(ticketKey, spec ? SPEC_REVIEW : REVIEW, { pr: specNumber });
     setBusy(false);
     if (!result.ok) {
       setError(
-        REASON_TEXT[result.errors?.[0]] ?? result.error ?? 'The Claude review request failed.',
+        reasonText(result.errors?.[0], spec) ?? result.error ?? 'The Claude review request failed.',
       );
       return;
     }
-    setResultText('Code review session started. Completion does not mean the review passed.');
+    setResultText(`${label} session started. Completion does not mean the review passed.`);
   };
 
   // Sends the re-review message to the ticket's existing review session.
@@ -165,8 +177,8 @@ export function ClaudePlaceholderDialog({
           <span className="claude-dialog-key">{ticketKey}</span> {summary}
         </h3>
         <StatePill
-          entry={entry?.review}
-          label="Code review"
+          entry={spec ? entry?.specReview : entry?.review}
+          label={label}
           data-testid="prs-claude-dialog-state"
         />
       </header>
@@ -175,25 +187,27 @@ export function ClaudePlaceholderDialog({
           <li className="claude-review-action">
             <Button
               className={startPrimary ? 'primary' : startQuiet ? 'subtle' : ''}
-              data-testid="prs-claude-action-review"
+              data-testid={spec ? 'prs-claude-action-spec-review' : 'prs-claude-action-review'}
               disabled={busy || Boolean(block)}
               aria-describedby={startReason ? `${reasonId}-start` : undefined}
               onClick={startReview}
             >
-              {startQuiet ? 'Start new review' : 'Start code review'}
+              {spec ? 'Start spec review' : startQuiet ? 'Start new review' : 'Start code review'}
             </Button>
           </li>
-          <li className="claude-review-action">
-            <Button
-              className={rereviewPrimary ? 'primary' : ''}
-              data-testid="prs-claude-action-rereview"
-              disabled={busy || Boolean(rereviewBlock)}
-              aria-describedby={rereviewReason ? `${reasonId}-rereview` : undefined}
-              onClick={requestRereview}
-            >
-              Re-review
-            </Button>
-          </li>
+          {!spec && (
+            <li className="claude-review-action">
+              <Button
+                className={rereviewPrimary ? 'primary' : ''}
+                data-testid="prs-claude-action-rereview"
+                disabled={busy || Boolean(rereviewBlock)}
+                aria-describedby={rereviewReason ? `${reasonId}-rereview` : undefined}
+                onClick={requestRereview}
+              >
+                Re-review
+              </Button>
+            </li>
+          )}
         </ul>
         {/* Why an action is off, one line (a reason both share is said once; the other stays for
             assistive tech), then when the last re-review was asked for. */}
@@ -207,7 +221,7 @@ export function ClaudePlaceholderDialog({
             </li>
           ))}
         </ul>
-        {resentAt && (
+        {!spec && resentAt && (
           <p className="claude-note" data-testid="prs-claude-rereview-at">
             {`Last re-review requested ${stampOf(resentAt)}.`}
           </p>

@@ -49,7 +49,7 @@ for (const [width, height] of [
         }
       }
       if (route === 'prs') {
-        await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(3);
+        await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(4);
         const column = await page.getByTestId('prs-column-to-review').boundingBox();
         expect(column.width).toBeCloseTo(width <= 599 ? width * 0.82 : 280, 0);
       }
@@ -205,13 +205,13 @@ test('dense ticket PR lists retain consistent alignment inside one board column 
   await page.screenshot({ path: `${prScreenshots}/mocked-prs-dense.png`, fullPage: true });
 });
 
-test('PR review board retains exactly three fixed-width columns at wide viewports @regression', async ({
+test('PR review board retains exactly four fixed-width columns at wide viewports @regression', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1700, height: 900 });
   await page.goto('/#/prs');
   await expect(page.getByTestId('prs-ticket-DEMO-1')).toBeVisible();
-  await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(3);
+  await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(4);
   for (const lane of ['to-review', 'reviewing', 'reviewed'])
     expect((await page.getByTestId(`prs-column-${lane}`).boundingBox()).width).toBe(280);
 });
@@ -224,7 +224,7 @@ test('review columns share a top edge and scroll-snap across breakpoints @regres
   for (const width of [390, 599, 600, 1440, 1700]) {
     await page.setViewportSize({ width, height: 900 });
     const board = page.getByTestId('prs-board');
-    await expect(board.getByRole('group')).toHaveCount(3);
+    await expect(board.getByRole('group')).toHaveCount(4);
     const boxes = await Promise.all(
       ['to-review', 'reviewing', 'reviewed'].map((lane) =>
         page.getByTestId(`prs-column-${lane}`).boundingBox(),

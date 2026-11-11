@@ -68,7 +68,7 @@ export function useClaudeTickets({ active, source }) {
   );
 
   const launch = useCallback(
-    async (key, phase) => settle(key, await launchClaude(key, phase)),
+    async (key, phase, options) => settle(key, await launchClaude(key, phase, options)),
     [settle],
   );
   const answer = useCallback(

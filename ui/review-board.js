@@ -5,6 +5,8 @@ const REVIEW_LANES = [
   { id: 'reviewing', label: 'Reviewing' },
   { id: 'reviewed', label: 'Reviewed' },
 ];
+// Not a ticket lane: its cards are spec PRs from GET /api/spec-reviews, so reviewColumns leaves it out.
+export const SPEC_REVIEW_LANE = { id: 'spec-review', label: 'Spec review' };
 
 export const hasCompletePrCoverage = (prCoverage) =>
   prCoverage?.available === true && prCoverage.complete === true;

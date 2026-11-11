@@ -8,6 +8,7 @@ import { enrichOpenPRs } from './review.mjs';
 import { fetchPrDashboard } from './prs.mjs';
 import { fetchTicketPrs } from './ticket-prs.mjs';
 import { fetchReviewTickets } from './review-tickets.mjs';
+import { fetchSpecReviews } from './spec-reviews.mjs';
 import { fetchHomeVelocity } from './home-velocity.mjs';
 import { getOriginDiff } from './diff.mjs';
 import { fetchRelease } from './releases.mjs';
@@ -133,6 +134,27 @@ function reviewQueueResponse(data) {
   };
 }
 
+// The Spec review feed with the fields the lane reads, and nothing else the feed holds.
+function specReviewResponse(data) {
+  return {
+    available: data.available,
+    total: data.total,
+    specs: data.specs.map(
+      ({ number, title, url, author, draft, keys, ageDays, reviewsByOthers }) => ({
+        number,
+        title,
+        url,
+        author,
+        draft,
+        keys,
+        ageDays,
+        reviewsByOthers,
+      }),
+    ),
+    updatedAt: data.updatedAt,
+  };
+}
+
 export function createHttpHandler({ settings, manager, integrations = {} }) {
   const slack = integrations.slack || slackIntegration;
   const slackWatchStore = integrations.slackWatchStore || createSlackWatchStore();
@@ -160,6 +182,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     fetchRelease,
     fetchTicketPrs,
     fetchReviewTickets,
+    fetchSpecReviews,
     fetchHomeVelocity,
     ...integrations,
   };
@@ -255,8 +278,8 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   const claudeRoutes = {
     'GET /api/claude/tickets': () => claudeLauncher.list(),
     'POST /api/claude/launch': async (req) => {
-      const { key, phase } = await readJson(req);
-      return claudeLauncher.launch({ key, phase });
+      const { key, phase, pr } = await readJson(req);
+      return claudeLauncher.launch({ key, phase, pr });
     },
     'POST /api/claude/answers': async (req) => {
       const { key, answers, resend } = await readJson(req);
@@ -592,6 +615,12 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
           throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
         json(res, 200, reviewQueueResponse(await api.fetchReviewTickets(options)));
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/spec-reviews') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        json(res, 200, specReviewResponse(await api.fetchSpecReviews(options)));
         return;
       }
       // Never fails the board: an unavailable result is still a 200 the board can render. A load

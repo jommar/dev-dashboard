@@ -92,6 +92,7 @@ export async function getPrs() {
 }
 
 export const getReviewTickets = () => getJson('/api/review-tickets');
+export const getSpecReviews = () => getJson('/api/spec-reviews');
 export const getTeamVelocity = () => getJson('/api/team-velocity');
 
 export async function getMyTickets(includeDone = false) {
@@ -289,8 +290,12 @@ export const getClaudeTickets = (surface) =>
 export const getActiveSprintTickets = (keys) =>
   watchRequest(`/api/active-sprint-tickets?keys=${encodeURIComponent(keys.join(','))}`);
 
-export const launchClaude = (key, phase) =>
-  watchRequest('/api/claude/launch', { method: 'POST', body: { key, phase } });
+// `pr` names the spec PR a spec-review launch reviews; no other phase sends it.
+export const launchClaude = (key, phase, { pr } = {}) =>
+  watchRequest('/api/claude/launch', {
+    method: 'POST',
+    body: { key, phase, ...(pr !== undefined && { pr }) },
+  });
 
 // `resend` asks for the saved answers to go to the session again even when nothing changed.
 export const answerClaude = (key, answers, { resend = false } = {}) =>

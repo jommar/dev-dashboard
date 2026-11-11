@@ -73,7 +73,7 @@ test('draft tickets retain amber cues, wrapping sprints, working diff and draft-
   for (const width of [390, 599, 600, 759, 760, 1699, 1700]) {
     await page.setViewportSize({ width, height: 1000 });
     const columns = board.getByRole('group');
-    await expect(columns).toHaveCount(3);
+    await expect(columns).toHaveCount(4);
     const boxes = await Promise.all(
       ['to-review', 'reviewing', 'reviewed'].map((lane) =>
         page.getByTestId(`prs-column-${lane}`).boundingBox(),

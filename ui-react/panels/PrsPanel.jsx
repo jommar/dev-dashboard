@@ -11,16 +11,18 @@ import {
 import { DashboardTooltip } from '../components/Primitives.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
 import { ReviewTicketCard } from '../components/ReviewTicketCard.jsx';
+import { SpecReviewCard } from '../components/SpecReviewCard.jsx';
 import { ClaudePlaceholderDialog } from '../components/ClaudePlaceholderDialog.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
-import { hasCompletePrCoverage, reviewColumns } from '../../ui/review-board.js';
+import { hasCompletePrCoverage, reviewColumns, SPEC_REVIEW_LANE } from '../../ui/review-board.js';
 import { ticketPrefix } from '../../ui/work-filters.js';
 import { PR_POLL_MS } from '../../ui/polling.js';
 
 const NO_TICKETS = Object.freeze([]);
+const NO_SPECS = Object.freeze([]);
 const LANE_HINTS = {
   'to-review':
     'No current approval or changes-request activity, no linked open PRs, or incomplete PR/review data. Evaluated across all linked open PRs in watched repositories; unknown data stays here.',
@@ -28,6 +30,8 @@ const LANE_HINTS = {
     'PR/review data is complete and at least one linked open PR has an approval or standing changes request, but the ticket is not fully reviewed: another PR may await approval, a changes request may stand, or a draft may remain. Covers all linked open PRs in watched repositories; not live reviewer activity.',
   reviewed:
     'At least one linked open PR, and every linked open PR across watched repositories is currently approved by anyone, with complete PR/review data, no drafts and no standing changes requests.',
+  'spec-review':
+    'Open ezat-specs PRs labelled spec whose title names a TAP or TRIPS ticket that has no open or merged code PR in Portage-backend, Portage-frontend or TravelTracker. Process specs with no ticket key are not listed.',
 };
 
 export function PrsPanel({ config, active }) {
@@ -38,6 +42,10 @@ export function PrsPanel({ config, active }) {
   const [failure, setFailure] = useState('');
   const [filters, setFilters] = useState({ search: '', prefix: '', repo: '', review: '' });
   const [openClaudeKey, setOpenClaudeKey] = useState(null);
+  const [specs, setSpecs] = useState(NO_SPECS);
+  const [specFailed, setSpecFailed] = useState(false);
+  // The spec whose dialog is open, held as the object it was opened with.
+  const [openSpec, setOpenSpec] = useState(null);
   const boardRef = useRef(null);
   const resolveThreadOpener = useCallback((ts) => {
     const panel = document.getElementById('panel-prs');
@@ -61,10 +69,28 @@ export function PrsPanel({ config, active }) {
   });
   const dataRef = useRef(data);
   dataRef.current = data;
+  const specRequest = useRef(0);
+  // An unavailable or failed spec answer lists no spec and sets the lane's note; it never fails tickets.
+  // Only the newest request writes, so a slow earlier answer cannot overwrite a newer one.
+  const loadSpecs = useCallback(async () => {
+    const id = ++specRequest.current;
+    try {
+      const result = await api.getSpecReviews();
+      if (id !== specRequest.current) return;
+      setSpecs(result.available ? result.specs : NO_SPECS);
+      setSpecFailed(!result.available);
+    } catch {
+      if (id !== specRequest.current) return;
+      setSpecs(NO_SPECS);
+      setSpecFailed(true);
+    }
+  }, [api]);
   const load = useCallback(
     async ({ silent = false } = {}) => {
       // Fired, never awaited: Slack is optional and slow, and its outage is not a failed refresh.
       loadSlack();
+      // The spec lane settles on its own for the same reason.
+      loadSpecs();
       setLoading(true);
       if (!silent) setMeta(dataRef.current ? 'Refreshing…' : 'loading…');
       try {
@@ -81,7 +107,7 @@ export function PrsPanel({ config, active }) {
         setLoading(false);
       }
     },
-    [api, loadSlack],
+    [api, loadSlack, loadSpecs],
   );
   const { load: refresh, countdown } = useActivePolling({
     active,
@@ -95,6 +121,8 @@ export function PrsPanel({ config, active }) {
     [rows, data?.prCoverage, filters],
   );
   const shown = columns.reduce((total, column) => total + column.tickets.length, 0);
+  // The spec lane is shown with the board, beside the ticket lanes or alone when no ticket is listed.
+  const showBoard = rows.length > 0 || specs.length > 0 || specFailed;
   const options = useMemo(
     () => ({
       prefix: [...new Set(rows.map((ticket) => ticketPrefix(ticket.key)).filter(Boolean))].sort(),
@@ -109,19 +137,31 @@ export function PrsPanel({ config, active }) {
     [rows],
   );
   const openClaudeTicket = openClaudeKey && rows.find((ticket) => ticket.key === openClaudeKey);
-  const claude = useClaudeTickets({ active: active && Boolean(openClaudeTicket) });
+  const claude = useClaudeTickets({ active: active && Boolean(openClaudeTicket || openSpec) });
   useEffect(() => {
     if (openClaudeKey && (!active || !openClaudeTicket)) setOpenClaudeKey(null);
   }, [active, openClaudeKey, openClaudeTicket]);
-  const resolveOpener = useCallback((key) => {
+  // A failed or unavailable answer says nothing about the spec, so its dialog stays open through it
+  // (and any launch result with it). Only a successful answer that no longer lists it closes it.
+  useEffect(() => {
+    if (!openSpec) return;
+    const listed = specs.some((spec) => spec.number === openSpec.number);
+    if (!active || (!specFailed && !listed)) setOpenSpec(null);
+  }, [active, openSpec, specs, specFailed]);
+  // Where a dialog returns focus: the card's own action, else the board, else the refresh button.
+  const findOpener = useCallback((testId) => {
     const panel = document.getElementById('panel-prs');
     if (!panel || panel.hidden) return null;
     return (
-      boardRef.current?.querySelector(`[data-testid="prs-claude-icon-${CSS.escape(key)}"]`) ||
+      boardRef.current?.querySelector(`[data-testid="${testId}"]`) ||
       panel.querySelector('[data-testid="prs-board"]') ||
       panel.querySelector('[data-testid="prs-refresh"]')
     );
   }, []);
+  const resolveOpener = useCallback(
+    (key) => findOpener(`prs-claude-icon-${CSS.escape(key)}`),
+    [findOpener],
+  );
   const board = useMemo(
     () => (
       <Board label="PR review board" testId="prs-board" frameRef={boardRef}>
@@ -148,9 +188,22 @@ export function PrsPanel({ config, active }) {
             ))}
           </BoardColumn>
         ))}
+        <BoardColumn
+          id={SPEC_REVIEW_LANE.id}
+          label={SPEC_REVIEW_LANE.label}
+          hint={LANE_HINTS[SPEC_REVIEW_LANE.id]}
+          count={specs.length}
+          testIdPrefix="prs-column-"
+        >
+          {specs.map((spec) => (
+            <li key={spec.number}>
+              <SpecReviewCard spec={spec} jiraBase={config.jiraBase} onOpenClaude={setOpenSpec} />
+            </li>
+          ))}
+        </BoardColumn>
       </Board>
     ),
-    [columns, config.jiraBase, data?.prCoverage, linksByTicket, openThread],
+    [columns, specs, config.jiraBase, data?.prCoverage, linksByTicket, openThread],
   );
   const coverageIncomplete = data && !hasCompletePrCoverage(data.prCoverage);
   return (
@@ -195,6 +248,12 @@ export function PrsPanel({ config, active }) {
                 shown; every ticket remains To Review until discovery completes.
               </BoardNote>
             )}
+            {specFailed && (
+              <BoardNote testId="prs-spec-error">
+                Spec review lookup unavailable or incomplete. No spec PRs are shown until it
+                answers.
+              </BoardNote>
+            )}
           </>
         }
       >
@@ -206,18 +265,19 @@ export function PrsPanel({ config, active }) {
           ) : (
             <BoardState kind="loading" label="Loading review tickets…" testId="prs-loading" />
           )
-        ) : !rows.length ? (
-          <BoardState testId="prs-empty">
-            No tickets assigned to others in Ready For Code Review.
-          </BoardState>
         ) : (
           <>
-            {!shown && (
+            {!rows.length && (
+              <BoardState testId="prs-empty">
+                No tickets assigned to others in Ready For Code Review.
+              </BoardState>
+            )}
+            {rows.length > 0 && !shown && (
               <BoardState testId="prs-no-matches">
                 No matches. Try changing or clearing filters.
               </BoardState>
             )}
-            {board}
+            {showBoard && board}
           </>
         )}
       </BoardSection>
@@ -232,6 +292,18 @@ export function PrsPanel({ config, active }) {
           rereview={claude.rereview}
           onClose={() => setOpenClaudeKey(null)}
           resolveOpener={resolveOpener}
+        />
+      )}
+      {active && openSpec && (
+        <ClaudePlaceholderDialog
+          key={`spec-${openSpec.number}`}
+          ticketKey={openSpec.keys[0]}
+          summary={openSpec.title}
+          specNumber={openSpec.number}
+          entry={claude.byTicket[openSpec.keys[0]]}
+          launch={claude.launch}
+          onClose={() => setOpenSpec(null)}
+          resolveOpener={() => findOpener(`prs-spec-claude-icon-${openSpec.number}`)}
         />
       )}
     </BoardPanel>

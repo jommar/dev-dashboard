@@ -625,6 +625,8 @@ export function dashboardData() {
       approvalGroups: { Unticketed: [other] },
       approvalTicketStatuses: {},
     },
+    // The Spec review lane's feed: available and empty by default; a spec overrides it per test.
+    specReviews: { available: true, total: 0, specs: [], updatedAt: '2026-11-09T10:00:00Z' },
     reviewTickets: {
       total: 3,
       tickets: [
@@ -2066,6 +2068,7 @@ export function apiResponse(url, method, data, body) {
     if (url.pathname === '/api/team-velocity') return { json: data.teamVelocity };
     if (url.pathname === '/api/prs') return { json: data.prs };
     if (url.pathname === '/api/review-tickets') return { json: data.reviewTickets };
+    if (url.pathname === '/api/spec-reviews') return { json: data.specReviews };
     if (url.pathname === '/api/ticket-prs') return { json: data.ticketPrs };
     if (url.pathname === '/api/my-tickets') {
       const includeDone = url.searchParams.get('includeDone') === '1';

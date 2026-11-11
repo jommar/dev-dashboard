@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a Spec review lane to the Pull Requests board: one card per open `ezat-specs` spec PR labelled
+  `spec` whose title names a TAP or TRIPS ticket with no open or merged code PR in Portage-backend,
+  Portage-frontend or TravelTracker. Its Claude button starts a spec review against the ticket's
+  acceptance criteria (`GET /api/spec-reviews`; `POST /api/claude/launch` with `phase: 'spec-review'`).
+
 - Added posters to the bot bar: every bot now carries a small sign on a pole above its head with its
   ticket key (`TAP-1451`), in one of five designs (First Class, an airmail stamp; Open Late, a neon sign;
   Pixel Dialog, an RPG text box; Picket Sign, a cardboard placard; Next Stop, a transit sign). A session

@@ -648,7 +648,7 @@ for (const width of [390, 1024, 1440]) {
     });
     expect(geometry.direct).toBe(true);
     expect(geometry.width).toBeCloseTo(width <= 599 ? width * 0.82 : 280, 0);
-    expect(geometry.columnCount).toBe(3);
+    expect(geometry.columnCount).toBe(4);
     expect(geometry.trackOverflow).toBe('auto');
     expect(geometry.bodyOverflow).toBe('auto');
     if (width <= 599) expect(geometry.snap).toBe('x mandatory');
@@ -1161,4 +1161,150 @@ test('a thread someone else started and mentioned the user in gets its Slack but
   await expect(
     page.getByTestId('panel-my-tickets').getByTestId(`slack-thread-link-${mentioned.ts}`),
   ).toHaveCount(0);
+});
+
+test.describe('Spec review lane', () => {
+  const specLane = (page) => lane(page, 'spec-review');
+  const spec = (page, number) => page.getByTestId(`prs-spec-${number}`);
+  const specFeed = (specs, extra = {}) => ({
+    available: true,
+    total: specs.length,
+    specs,
+    updatedAt: '2026-11-09T10:00:00Z',
+    ...extra,
+  });
+  const specPr = (number, title, keys, extra = {}) => ({
+    number,
+    title,
+    url: `https://github.com/TransActComm/ezat-specs/pull/${number}`,
+    author: 'alice',
+    draft: false,
+    keys,
+    ageDays: 3,
+    reviewsByOthers: 2,
+    ...extra,
+  });
+  const SINGLE = specPr(321, '[TAP-100] Trip export spec', ['TAP-100']);
+  const SHARED = specPr(330, '[TAP-1][TAP-2] Shared spec', ['TAP-1', 'TAP-2']);
+
+  test('shows one card per spec with its content', async ({ page, dashboard }) => {
+    dashboard.data.specReviews = specFeed([SINGLE, SHARED]);
+    await page.goto('/#/prs');
+    await expect(
+      specLane(page).getByRole('heading', { name: 'Spec review', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByTestId('prs-column-count-spec-review')).toHaveText('2');
+    const card = spec(page, 321);
+    await expect(specLane(page).getByTestId('prs-spec-321')).toBeVisible();
+    const key = card.getByTestId('prs-spec-key-321-TAP-100');
+    await expect(key).toHaveText('TAP-100');
+    await expect(key).toHaveAttribute('href', 'https://example.invalid/browse/TAP-100');
+    const link = card.getByTestId('prs-spec-pr-321');
+    await expect(link).toContainText('#321');
+    await expect(link).toContainText('Trip export spec');
+    await expect(link).toHaveAttribute('href', SINGLE.url);
+    await expect(card.getByTestId('prs-spec-author-321')).toContainText('alice');
+    await expect(card.getByTestId('prs-spec-age-321')).toContainText('3 d');
+    await expect(card.getByTestId('prs-spec-reviews-321')).toContainText('2 reviews');
+    const shared = spec(page, 330);
+    for (const key of ['TAP-1', 'TAP-2']) {
+      await expect(shared.getByTestId(`prs-spec-key-330-${key}`)).toHaveAttribute(
+        'href',
+        `https://example.invalid/browse/${key}`,
+      );
+    }
+  });
+
+  test('leaves the three existing lanes as they were', async ({ page, dashboard }) => {
+    dashboard.data.specReviews = specFeed([SINGLE, SHARED]);
+    await page.goto('/#/prs');
+    const groups = page.getByTestId('prs-board').getByRole('group');
+    await expect(groups).toHaveCount(4);
+    await expect(groups.getByRole('heading')).toHaveText([
+      'To Review',
+      'Reviewing',
+      'Reviewed',
+      'Spec review',
+    ]);
+    await expect(lane(page, 'reviewing').getByTestId('prs-ticket-DEMO-1')).toBeVisible();
+    for (const key of ['DEMO-2', 'DEMO-3'])
+      await expect(lane(page, 'to-review').getByTestId(`prs-ticket-${key}`)).toBeVisible();
+    for (const [id, expected] of [
+      ['to-review', '2'],
+      ['reviewing', '1'],
+      ['reviewed', '0'],
+    ])
+      await expect(page.getByTestId(`prs-column-count-${id}`)).toHaveText(expected);
+    for (const id of ['to-review', 'reviewing', 'reviewed'])
+      await expect(lane(page, id).getByTestId(/^prs-spec-\d+$/)).toHaveCount(0);
+  });
+
+  for (const [failure, outage] of [
+    [
+      'an unavailable answer',
+      (route) => route.fulfill({ json: specFeed([], { available: false }) }),
+    ],
+    ['an HTTP 500', (route) => route.fulfill({ status: 500, json: { error: 'Synthetic outage' } })],
+  ]) {
+    test(`a failed lookup (${failure}) empties the lane and says so`, async ({
+      page,
+      dashboard,
+    }) => {
+      dashboard.data.specReviews = specFeed([SINGLE]);
+      await page.goto('/#/prs');
+      await expect(spec(page, 321)).toBeVisible();
+      const meta = await page.getByTestId('prs-meta').innerText();
+      await page.route('**/api/spec-reviews', outage);
+      await page.getByTestId('prs-refresh').click();
+      await expect(page.getByTestId('prs-spec-error')).toBeVisible();
+      await expect(page.getByTestId('prs-column-count-spec-review')).toHaveText('0');
+      await expect(spec(page, 321)).toHaveCount(0);
+      await expect(ticket(page)).toBeVisible();
+      await expect(page.getByTestId('prs-meta')).toHaveText(meta);
+    });
+  }
+
+  test('the Claude action launches the spec review for the first key', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.specReviews = specFeed([SINGLE, SHARED]);
+    const bodies = [];
+    await page.route('**/api/claude/launch', async (route) => {
+      bodies.push(route.request().postDataJSON());
+      await route.fulfill({
+        json: {
+          ok: true,
+          key: 'TAP-1',
+          phase: 'spec-review',
+          name: 'TAP-1-spec-review',
+          id: 'ab12cd34',
+          ticket: claudeEntry('none', null, {
+            phase: null,
+            specReview: { state: 'working', reason: 'starting' },
+          }),
+        },
+      });
+    });
+    await page.goto('/#/prs');
+    await spec(page, 330).getByTestId('prs-spec-claude-icon-330').click();
+    await expect(page.getByTestId('prs-claude-dialog')).toBeVisible();
+    await expect(page.getByTestId('prs-claude-action-spec-review')).toBeEnabled();
+    await expect(page.getByTestId('prs-claude-action-rereview')).toHaveCount(0);
+    await expect(page.getByTestId('prs-claude-action-review')).toHaveCount(0);
+    await page.getByTestId('prs-claude-action-spec-review').click();
+    await expect.poll(() => bodies.length).toBe(1);
+    expect(bodies).toEqual([{ key: 'TAP-1', phase: 'spec-review', pr: 330 }]);
+  });
+
+  test('shows spec cards beside the empty state when there are no review tickets', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.reviewTickets = { ...dashboard.data.reviewTickets, total: 0, tickets: [] };
+    dashboard.data.specReviews = specFeed([SINGLE]);
+    await page.goto('/#/prs');
+    await expect(page.getByTestId('prs-empty')).toBeVisible();
+    await expect(specLane(page).getByTestId('prs-spec-321')).toBeVisible();
+  });
 });
