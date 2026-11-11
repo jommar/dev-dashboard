@@ -507,3 +507,52 @@ export function restingSpots(bots, gap = 12) {
     spots[i].at = Math.min(spots[i].at, spots[i + 1].at - step);
   return new Map(spots.map(({ key, at }) => [key, Math.round(at * 10) / 10]));
 }
+
+// The session list (the drawer behind the bar's edge tab): every session of the bar's sprint-filtered
+// bots, the ones a person can still continue, grouped by what they need. Unlike the bar it does not
+// forget a done bot after DONE_TTL_MS or a dismissed one, so a finished session stays reachable.
+// Needs-you sessions come first, then working, failed and done ones.
+export const SESSION_GROUPS = Object.freeze([
+  { state: 'waiting', title: 'Needs you' },
+  { state: 'working', title: 'Working' },
+  { state: 'failed', title: 'Failed' },
+  { state: 'done', title: 'Done' },
+]);
+
+// The groups of `bots` (what `inActiveSprint` returns), each `{ state, title, rows }` and none of them
+// empty. A row is the bot plus `goTo`, the `{ kind, command }` that joins its session in a terminal
+// (the entry's own `goTo` for that phase; a review session has none), or null. Rows keep the order of
+// `bots`: by ticket, then by phase.
+export function sessionGroups(bots, response) {
+  const tickets = response?.tickets ?? response ?? {};
+  const rows = bots.map((bot) => {
+    const goTo = tickets[bot.ticket]?.goTo?.[bot.phase];
+    return { ...bot, goTo: typeof goTo?.command === 'string' ? goTo : null };
+  });
+  return SESSION_GROUPS.map((group) => ({
+    ...group,
+    rows: rows.filter(({ state }) => state === group.state),
+  })).filter(({ rows: found }) => found.length > 0);
+}
+
+// The groups left after a search: one box, matched against everything a row shows. `textOf(row)` is the
+// row's visible words (its ticket, phase, state and reason); a group's own title counts for every row in
+// it, since it is on screen too. The query is split on whitespace and every term must appear somewhere
+// (case-insensitive), so "TAP-12 done" finds the done session of TAP-12. A blank query keeps everything;
+// a group left with no row is dropped.
+export function filterSessionGroups(groups, query, textOf) {
+  const terms = String(query ?? '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (terms.length === 0) return groups;
+  return groups
+    .map((group) => ({
+      ...group,
+      rows: group.rows.filter((row) => {
+        const text = `${group.title} ${textOf(row)}`.toLowerCase();
+        return terms.every((term) => text.includes(term));
+      }),
+    }))
+    .filter(({ rows }) => rows.length > 0);
+}

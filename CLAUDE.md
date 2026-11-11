@@ -173,6 +173,15 @@ Its styles are in `ui-react/styles/bot-bar.css` (tokens only,
 `bot-bar-*` names, transform-only keyframes, a reduced-motion block). It never calls
 `/api/team-velocity`, so the Home velocity rule above is unaffected.
 
+**The session list drawer.** `SessionsDrawer.jsx` (mounted by `BotBar`, so on every screen once ready) is
+a right-edge tab plus a non-modal fixed drawer listing the same sessions as the bar, from the bar's own
+data: `sessionGroups(bots, byTicket)` in `ui/bot-bar.js` over the sprint-filtered `bots`, deliberately
+NOT the TTL/dismissal-filtered `visible`, so a faded or dismissed session stays reachable. Rows open the
+same dialog as a bot and copy the entry's `goTo[phase]` command (review has none). It makes no request,
+mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
+`Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`), and its styles live in
+`ui-react/styles/sessions-drawer.css` because `bot-bar.css` selectors must all start `.bot-bar`.
+
 ## DevTools: a wall of live tiles
 
 DevTools is a `.board-pane` holding `.devtools-wall`, a real grid

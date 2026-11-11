@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added a **Sessions** drawer for every screen: a tab on the right edge opens a list of the bot lane's
+  Claude sessions (tickets in an active sprint), grouped Needs you / Working / Failed / Done, kept past a
+  bot's fade or dismissal. A row opens the session's Claude dialog; a joinable session also has a button
+  copying its `claude attach` / `claude --resume` command. No new request or route: it reads the bar's
+  `GET /api/claude/tickets` data (`sessionGroups` in `ui/bot-bar.js`, `SessionsDrawer.jsx`). Rows are
+  one compact line, and one search box filters by anything a row shows (`filterSessionGroups`).
 - A done **implement** bot now stays on the bot bar while its ticket is still open in Jira, instead of
   leaving after 10 minutes: it leaves when the ticket reaches a done-kind status (Deployed, Complete,
   Closed, ... per `jiraStatusKind`), so finished-but-unshipped work keeps its mascot. Only implement

@@ -958,3 +958,88 @@ test('the hover popup stands above the poster instead of covering it', async ({
   const sign = await poster(page, 'BOT-4-implement').boundingBox();
   expect(tip.y + tip.height).toBeLessThanOrEqual(sign.y + 1);
 });
+
+test('the session list drawer lists every bot-lane session from any screen and opens one', async ({
+  page,
+  dashboard,
+}) => {
+  seed(dashboard);
+  await page.goto('/#/services');
+  const tab = page.getByTestId('sessions-tab');
+  await expect(tab).toHaveAttribute('aria-label', /Claude sessions, 4, 1 need you/);
+  // Shut, no row is on the page.
+  await expect(page.getByTestId('sessions-drawer')).toBeHidden();
+  await expect(page.getByTestId('sessions-body')).toHaveCount(0);
+  await tab.click();
+  await expect(page.getByTestId('sessions-drawer')).toBeVisible();
+  await expect(page.getByTestId('sessions-close')).toBeFocused();
+  // Grouped by what they need: BOT-2 waits, BOT-1 works, BOT-4 failed, BOT-3 is done.
+  for (const [state, key] of [
+    ['waiting', 'BOT-2:review'],
+    ['working', 'BOT-1:implement'],
+    ['failed', 'BOT-4:implement'],
+    ['done', 'BOT-3:review'],
+  ])
+    await expect(
+      page.getByTestId(`sessions-${state}`).getByTestId(`sessions-row-${key}`),
+    ).toBeVisible();
+  // It overlays: the page keeps its width.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  // A row opens the same dialog its bot does (a review bot opens the review dialog).
+  await page.getByTestId('sessions-open-BOT-2:review').click();
+  await expect(page.getByTestId('prs-claude-dialog-title')).toContainText('BOT-2');
+  await page.getByTestId('prs-claude-dialog-close').click();
+  await page.getByTestId('sessions-open-BOT-1:implement').click();
+  await expect(page.getByTestId('claude-dialog')).toBeVisible();
+  await page.getByTestId('claude-dialog-close').click();
+  // Escape closes the drawer and returns focus to the tab; the list stays on every screen.
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('sessions-drawer')).toBeHidden();
+  await expect(tab).toBeFocused();
+  await page.goto('/#/prs');
+  await expect(tab).toBeVisible();
+});
+
+test('a dismissed bot leaves the bar but stays in the session list', async ({
+  page,
+  dashboard,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  seed(dashboard);
+  await page.goto('/#/services');
+  await page.getByRole('button', { name: 'Dismiss BOT-3 review: done' }).click();
+  await expect(bots(page)).toHaveCount(3);
+  await page.getByTestId('sessions-tab').click();
+  await expect(page.getByTestId('sessions-row-BOT-3:review')).toBeVisible();
+});
+
+test('the session list has one search over everything a row shows', async ({ page, dashboard }) => {
+  seed(dashboard);
+  await page.goto('/#/services');
+  await page.getByTestId('sessions-tab').click();
+  const search = page.getByTestId('sessions-search');
+  const rows = page.locator('[data-testid^="sessions-row-"]');
+  await expect(rows).toHaveCount(4);
+  // The ticket key, the phase words and the state words are all searchable.
+  await search.fill('bot-1');
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByTestId('sessions-row-BOT-1:implement')).toBeVisible();
+  await search.fill('code review');
+  await expect(rows).toHaveCount(2);
+  await search.fill('code review done');
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByTestId('sessions-row-BOT-3:review')).toBeVisible();
+  // Groups with no match go; the group heading is searchable too.
+  await expect(page.getByTestId('sessions-waiting')).toHaveCount(0);
+  await search.fill('failed');
+  await expect(rows).toHaveCount(1);
+  await search.fill('zzz');
+  await expect(page.getByTestId('sessions-no-match')).toBeVisible();
+  // Escape clears the search first, and only then closes the drawer.
+  await page.keyboard.press('Escape');
+  await expect(search).toHaveValue('');
+  await expect(rows).toHaveCount(4);
+  await expect(page.getByTestId('sessions-drawer')).toBeVisible();
+});

@@ -17,6 +17,10 @@
 // under reduced motion every bot stands still. Each bot carries a poster with its ticket key above
 // its head (BotPoster), swaying while it walks.
 //
+// The same sessions are also a list: SessionsDrawer (a tab on the right edge) shows every session of
+// the sprint's bots, grouped by state and not forgotten when a bot fades or is dismissed, each one
+// opening the same dialog and offering its join command.
+//
 // A bot is memoized on plain values, so a poll that finds nothing new, or a re-render of the app,
 // never restarts its walk, and a state change replays its own pose (the hop, the shake) once.
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
@@ -26,6 +30,7 @@ import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { BotPoster } from './BotPoster.jsx';
 import { ClaudeDialog } from './ClaudeDialog.jsx';
 import { ClaudePlaceholderDialog } from './ClaudePlaceholderDialog.jsx';
+import { SessionsDrawer } from './SessionsDrawer.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
 import { DashboardTooltip } from './Primitives.jsx';
 import { mascotFor } from '../lib/mascot-for.js';
@@ -43,6 +48,7 @@ import {
   nextBotChange,
   POSTER_RISE_PX,
   rememberBots,
+  sessionGroups,
   walks,
   ZONES_MIN_WIDTH_PX,
   zoneSpots,
@@ -196,6 +202,9 @@ export function BotBar() {
   // Bumped when a done bot starts to fade or is due to leave, the only change with no new data.
   const [clock, setClock] = useState(0);
   const [open, setOpen] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // The drawer lists every session of the sprint's bots, past the bar's time to live and dismissals.
+  const groups = useMemo(() => sessionGroups(bots, claude.byTicket), [bots, claude.byTicket]);
 
   useEffect(() => {
     setMemory((previous) => rememberBots(previous, bots, Date.now()));
@@ -269,6 +278,13 @@ export function BotBar() {
           ))}
         </div>
       )}
+      {/* The session list, from every screen: a tab on the right edge and the drawer it opens. */}
+      <SessionsDrawer
+        groups={groups}
+        open={drawerOpen}
+        onToggle={setDrawerOpen}
+        onOpenSession={openBot}
+      />
       {/* Beside the strip, never inside it: a dialog inherits the strip's pointer-events: none. */}
       {open?.phase === 'review' && (
         <ClaudePlaceholderDialog

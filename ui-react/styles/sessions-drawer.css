@@ -1,0 +1,222 @@
+/* The session list: an edge tab and the drawer it opens (SessionsDrawer.jsx). Both are fixed overlays,
+   so no screen's height, scroll or viewport fill changes. Above the bar (20) and under the tooltip and
+   every dialog (top layer). The drawer is not modal: the app stays usable beside it. */
+.sessions-tab {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s2);
+  border: 1px solid var(--border-strong);
+  border-right: 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  writing-mode: vertical-rl;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition:
+    color 120ms linear,
+    border-color 120ms linear,
+    background-color 120ms linear;
+}
+.sessions-tab:hover,
+.sessions-tab[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sessions-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* A session that needs you is a word as well as the count's amber: the label and the group say it. */
+.sessions-tab[data-attention='true'] .sessions-tab-count {
+  background: var(--amber);
+  color: var(--bg);
+}
+.sessions-tab-count {
+  min-width: 20px;
+  padding: 2px 0;
+  border-radius: var(--radius-pill);
+  background: var(--panel2);
+  color: var(--strong);
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  text-align: center;
+  writing-mode: horizontal-tb;
+}
+
+.sessions-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(380px, 100vw);
+  border-left: 1px solid var(--border-strong);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+/* A display rule on the same element would defeat the hidden attribute. */
+.sessions-drawer[hidden] {
+  display: none;
+}
+.sessions-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+}
+.sessions-head h2 {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-lg);
+}
+.sessions-search {
+  flex: none;
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+}
+.sessions-search input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--strong);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.sessions-search input:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.sessions-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--s3) var(--s4);
+}
+.sessions-empty {
+  margin: var(--s3) 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.sessions-group h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s3) 0 var(--s1);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sessions-group-count {
+  color: var(--text);
+}
+.sessions-group ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* One line a session: mark, key, then the phase and state, cut short with an ellipsis. */
+.sessions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  border-radius: var(--radius-sm);
+}
+.sessions-row:hover {
+  background: var(--panel2);
+}
+.sessions-row-open {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  padding: var(--s1) var(--s2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sessions-row-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.sessions-row-mark {
+  display: flex;
+  flex: none;
+  color: var(--muted);
+}
+.sessions-row-mark[data-state='working'] {
+  color: var(--accent);
+}
+.sessions-row-mark[data-state='waiting'] {
+  color: var(--amber);
+}
+.sessions-row-mark[data-state='done'] {
+  color: var(--green);
+}
+.sessions-row-mark[data-state='failed'] {
+  color: var(--red);
+}
+.sessions-row-ticket {
+  flex: none;
+  color: var(--strong);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.sessions-row-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn.subtle.sessions-row-copy {
+  flex: none;
+  min-height: 24px;
+  margin-right: var(--s1);
+  padding: 0 var(--s2);
+  font-size: var(--fs-xs);
+}
+
+@media (max-width: 599px) {
+  .sessions-tab {
+    top: auto;
+    bottom: calc(var(--bot-bar-size, 56px) + var(--s6));
+    transform: none;
+  }
+}
+
+@media print {
+  .sessions-tab,
+  .sessions-drawer {
+    display: none;
+  }
+}

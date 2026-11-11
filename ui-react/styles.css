@@ -20,6 +20,7 @@
 @import './styles/settings.css';
 @import './styles/devtools.css';
 @import './styles/bot-bar.css';
+@import './styles/sessions-drawer.css';
 @import './styles/mascots-page.css';
 
 :root {

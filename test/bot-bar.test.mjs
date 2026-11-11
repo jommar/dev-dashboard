@@ -22,6 +22,7 @@ import {
   STROLL_CYCLE_FACTOR,
   addCallouts,
   attendCallout,
+  botKey,
   botPose,
   liveCallouts,
   nextCalloutChange,
@@ -43,6 +44,9 @@ import {
   pickPoster,
   rememberBots,
   restingSpots,
+  sessionGroups,
+  SESSION_GROUPS,
+  filterSessionGroups,
   walks,
   roamFor,
 } from '../ui/bot-bar.js';
@@ -863,4 +867,99 @@ test('resting places are spread inside each zone, apart from the others zones', 
   const narrow = zoneSpots(bots, true);
   const all = [...narrow.values()].sort((a, b) => a - b);
   assert.equal(new Set(all).size, bots.length);
+});
+
+// -- the session list -------------------------------------------------------------------------------
+
+test('sessionGroups groups bots by what they need, in a fixed order, and drops empty groups', () => {
+  const bot = (ticket, phase, state) => ({ key: botKey(ticket, phase), ticket, phase, state });
+  const bots = [
+    bot('TAP-1', 'implement', 'done'),
+    bot('TAP-2', 'review', 'working'),
+    bot('TAP-3', 'implement', 'waiting'),
+    bot('TAP-4', 'groom', 'done'),
+  ];
+  const groups = sessionGroups(bots, { tickets: {} });
+  assert.deepEqual(
+    groups.map(({ state, rows }) => [state, rows.map(({ key }) => key)]),
+    [
+      ['waiting', ['TAP-3:implement']],
+      ['working', ['TAP-2:review']],
+      ['done', ['TAP-1:implement', 'TAP-4:groom']],
+    ],
+  );
+  assert.ok(groups.every(({ title }) => typeof title === 'string' && title));
+  assert.deepEqual(
+    SESSION_GROUPS.map(({ state }) => state),
+    ['waiting', 'working', 'failed', 'done'],
+  );
+  assert.deepEqual(sessionGroups([], {}), []);
+});
+
+test('sessionGroups attaches the join command of the entry for that phase, and none for review', () => {
+  const resume = { kind: 'resume', command: 'cd ~/pathwise && claude --resume abc' };
+  const attach = { kind: 'attach', command: 'claude attach ab12cd34' };
+  const response = {
+    tickets: {
+      'TAP-1': {
+        goTo: { investigate: null, implement: attach, groom: resume },
+        review: { state: 'done' },
+      },
+    },
+  };
+  const bot = (phase, state) => ({ key: botKey('TAP-1', phase), ticket: 'TAP-1', phase, state });
+  const rows = sessionGroups(
+    [bot('implement', 'working'), bot('groom', 'done'), bot('review', 'done'), bot('e2e', 'done')],
+    response,
+  ).flatMap(({ rows: found }) => found);
+  const goTo = Object.fromEntries(rows.map(({ phase, goTo: join }) => [phase, join]));
+  assert.deepEqual(goTo.implement, attach);
+  assert.deepEqual(goTo.groom, resume);
+  assert.equal(goTo.review, null);
+  assert.equal(goTo.e2e, null);
+});
+
+test('filterSessionGroups is one AND search over a row and its group title, dropping empty groups', () => {
+  const row = (ticket, phase, state, text) => ({
+    key: `${ticket}:${phase}`,
+    ticket,
+    phase,
+    state,
+    text,
+  });
+  const groups = [
+    {
+      state: 'waiting',
+      title: 'Needs you',
+      rows: [row('TAP-1', 'review', 'waiting', 'Code review idle · blocked, needs you')],
+    },
+    {
+      state: 'done',
+      title: 'Done',
+      rows: [
+        row('TAP-1', 'implement', 'done', 'Implement plan done · implemented Copy resume'),
+        row('TAP-2', 'groom', 'done', 'Groom ticket done · finished'),
+      ],
+    },
+  ];
+  const keysOf = (found) => found.flatMap(({ rows }) => rows.map(({ key }) => key));
+  const textOf = ({ ticket, text }) => `${ticket} ${text}`;
+  // Blank (or only spaces) keeps everything, and the very same groups.
+  assert.equal(filterSessionGroups(groups, '', textOf), groups);
+  assert.equal(filterSessionGroups(groups, '  ', textOf), groups);
+  // Case-insensitive; every term must match somewhere on the row.
+  assert.deepEqual(keysOf(filterSessionGroups(groups, 'tap-1', textOf)), [
+    'TAP-1:review',
+    'TAP-1:implement',
+  ]);
+  assert.deepEqual(keysOf(filterSessionGroups(groups, 'TAP-1 DONE', textOf)), ['TAP-1:implement']);
+  assert.deepEqual(keysOf(filterSessionGroups(groups, 'resume', textOf)), ['TAP-1:implement']);
+  // The group's title is on screen too, so it matches every row under it.
+  assert.deepEqual(keysOf(filterSessionGroups(groups, 'needs you', textOf)), ['TAP-1:review']);
+  // A group with no match is dropped; no match at all leaves nothing.
+  assert.deepEqual(
+    filterSessionGroups(groups, 'groom', textOf).map(({ state }) => state),
+    ['done'],
+  );
+  assert.deepEqual(filterSessionGroups(groups, 'nothing here', textOf), []);
 });

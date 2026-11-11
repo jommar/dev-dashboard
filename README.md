@@ -2019,6 +2019,17 @@ while there is no session to show.
   minutes, so an outage never pins bots to the bar. A `done` or `failed` bot also has a small **x**
   beside it that dismisses it. A dismissed bot comes back if its session changes state. This is
   remembered in memory only, so a reload starts the 10 minutes again and brings dismissed bots back.
+- **The session list.** A **Sessions** tab on the right edge of every screen (with a count, amber when
+  something needs you) opens a drawer that lists the same sessions as the bot lane: every session of a
+  ticket in an active sprint, grouped **Needs you**, **Working**, **Failed** and **Done**. Unlike the
+  bar it does not forget a done bot after 10 minutes or a dismissed one, so a finished session stays
+  reachable. A row opens the same Claude dialog its bot opens (the review dialog for a review session),
+  and a session with something to join has a **Copy attach** (live) or **Copy resume** (finished) button
+  that copies the same command as the dialog's Go to session. Rows are one compact line each, and one **Search sessions** box filters them by
+  everything a row shows (ticket, phase, state, reason, the copy button's word and the group heading); every
+  term must match, Escape clears the search before it closes the drawer. The drawer is a non-modal overlay (the app
+  stays usable beside it; Escape or Close shuts it and focus returns to the tab), uses the bar's data
+  (no request of its own) and renders no rows while shut.
 - **The bar polls.** It reads `GET /api/claude/tickets` itself, on every screen, every 15 seconds
   while the page is visible, through its own `useClaudeTickets` (a failed read keeps the last
   answer; there is no countdown). Its requests carry `?surface=bot-bar`, which the server ignores,
