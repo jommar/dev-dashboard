@@ -519,12 +519,22 @@ export const SESSION_GROUPS = Object.freeze([
   { state: 'done', title: 'Done' },
 ]);
 
+// Orders session rows newest activity first, a row with no time after every row with one. The sort is
+// stable, so rows that tie keep their order.
+const activityMs = ({ lastActiveAt }) => (lastActiveAt ? Date.parse(lastActiveAt) : -Infinity);
+const byLastActiveFirst = (a, b) => {
+  const left = activityMs(a);
+  const right = activityMs(b);
+  return left === right ? 0 : left > right ? -1 : 1;
+};
+
 // The groups of `bots` (what `inActiveSprint` returns), each `{ state, title, rows }` and none of them
 // empty. A row is the bot plus `goTo`, the `{ kind, command }` that joins its session in a terminal
 // (the entry's own `goTo` for that phase; a review session has none), or null, and `lastActiveAt`, the
 // ISO time that session was last written to, or null. `lastActive` is the map GET /api/claude/tickets
-// sends beside the tickets (`{ [ticket]: { [phase]: ISO } }`, sparse). Rows keep the order of `bots`:
-// by ticket, then by phase.
+// sends beside the tickets (`{ [ticket]: { [phase]: ISO } }`, sparse). Within a group the most recently
+// active session comes first and one with no time last; rows with the same time (or none) keep the
+// order of `bots`: by ticket, then by phase.
 export function sessionGroups(bots, response, lastActive = {}) {
   const tickets = response?.tickets ?? response ?? {};
   const rows = bots.map((bot) => {
@@ -538,7 +548,7 @@ export function sessionGroups(bots, response, lastActive = {}) {
   });
   return SESSION_GROUPS.map((group) => ({
     ...group,
-    rows: rows.filter(({ state }) => state === group.state),
+    rows: rows.filter(({ state }) => state === group.state).sort(byLastActiveFirst),
   })).filter(({ rows: found }) => found.length > 0);
 }
 

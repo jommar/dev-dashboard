@@ -921,6 +921,45 @@ test('sessionGroups attaches the join command of the entry for that phase, and n
   assert.equal(goTo.e2e, null);
 });
 
+test('sessionGroups puts the most recently active session first in each group, rows with no time last', () => {
+  const bot = (ticket, phase, state) => ({ key: botKey(ticket, phase), ticket, phase, state });
+  const bots = [
+    bot('TAP-1', 'implement', 'working'),
+    bot('TAP-2', 'implement', 'working'),
+    bot('TAP-3', 'implement', 'working'),
+    bot('TAP-4', 'implement', 'working'),
+    bot('TAP-5', 'implement', 'working'),
+    bot('TAP-6', 'implement', 'done'),
+    bot('TAP-7', 'review', 'done'),
+  ];
+  const lastActive = {
+    'TAP-1': { implement: '2026-11-12T10:00:00.000Z' },
+    'TAP-2': { implement: '2026-11-12T11:00:00.000Z' },
+    // No time for TAP-3, and a value that is not a time for TAP-4: both rank last, in `bots` order.
+    'TAP-4': { implement: 'soon' },
+    'TAP-5': { implement: '2026-11-12T11:00:00.000Z' },
+    'TAP-7': { review: '2026-11-12T09:00:00.000Z' },
+  };
+  const order = sessionGroups(bots, { tickets: {} }, lastActive).map(({ state, rows }) => [
+    state,
+    rows.map(({ key }) => key),
+  ]);
+  assert.deepEqual(order, [
+    // TAP-2 and TAP-5 tie, so TAP-2 (earlier in `bots`) stays ahead of TAP-5.
+    [
+      'working',
+      [
+        'TAP-2:implement',
+        'TAP-5:implement',
+        'TAP-1:implement',
+        'TAP-3:implement',
+        'TAP-4:implement',
+      ],
+    ],
+    ['done', ['TAP-7:review', 'TAP-6:implement']],
+  ]);
+});
+
 test('sessionGroups gives each row the last-activity time of its phase, null when none or not a time', () => {
   const bot = (ticket, phase, state) => ({ key: botKey(ticket, phase), ticket, phase, state });
   const lastActive = {

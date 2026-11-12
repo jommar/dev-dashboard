@@ -2021,7 +2021,8 @@ while there is no session to show.
   remembered in memory only, so a reload starts the 10 minutes again and brings dismissed bots back.
 - **The session list.** A **Sessions** tab on the right edge of every screen (with a count, amber when
   something needs you) opens a drawer that lists the same sessions as the bot lane: every session of a
-  ticket in an active sprint, grouped **Needs you**, **Working**, **Failed** and **Done**. Unlike the
+  ticket in an active sprint, grouped **Needs you**, **Working**, **Failed** and **Done**, each group with
+  the most recently active session first (one with no time last). Unlike the
   bar it does not forget a done bot after 10 minutes or a dismissed one, so a finished session stays
   reachable. A row opens the same Claude dialog its bot opens (the review dialog for a review session),
   and a session with something to join has a **Copy attach** (live) or **Copy resume** (finished) button
