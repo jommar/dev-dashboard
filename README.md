@@ -2028,7 +2028,7 @@ while there is no session to show.
   that copies the same command as the dialog's Go to session. Rows are one compact line each, and one **Search sessions** box filters them by
   everything a row shows (ticket, phase, state, reason, the copy button's word, the group heading and
   **quiet**, never the time); every term must match, Escape clears the search before it closes the drawer.
-  Each row ends with **active 9m ago**, when its session was last written to: the newest modification time
+  Each row ends with **9m ago** (read out as "active 9m ago"), when its session was last written to: the newest modification time
   of its transcripts (for a working session its subagents' transcripts too, so a long subagent does not hide
   it), from `lastActive` in the same response. A working session with no write for **5 minutes**
   (`QUIET_WORKING_MS` in `ui/bot-bar.js`) is **quiet**: amber and bold, and its popup says so. That is a

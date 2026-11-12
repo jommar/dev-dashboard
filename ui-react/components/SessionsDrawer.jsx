@@ -4,7 +4,7 @@
 // screen's height. Its rows are the bar's own sessions (BotBar works them out and hands them in),
 // grouped by what they need: Needs you, Working, Failed, Done, one compact line each, with one search
 // box over everything a row shows (filterSessionGroups). Each row also says when its session was last
-// active ("active 9m ago"), and a working one that has been quiet for a while is flagged (isQuiet). A
+// active ("9m ago", read as "active 9m ago"), and a working one that has been quiet for a while is flagged (isQuiet). A
 // row opens the same Claude dialog the bot opens, and a session there is to join gets a button that
 // copies its join command, the same as the dialog's "Go to session". The rows are mounted only while
 // the drawer is open, so nothing here is on the page, or in its accessibility tree, while it is shut.
@@ -51,7 +51,7 @@ const searchText = (row, now) =>
   ].join(' ');
 // How long "Copied" shows on a row's copy button.
 const COPIED_MS = 2000;
-// How often the open drawer reads the clock again, so "active 9m ago" and the quiet flag age on screen.
+// How often the open drawer reads the clock again, so "9m ago" and the quiet flag age on screen.
 const ACTIVITY_CLOCK_MS = 30_000;
 // The popup on a row's time: when the session was last written to and, for a quiet one, for how long.
 const activityTitle = (iso, quiet) =>
@@ -89,7 +89,7 @@ function Row({ row, now, copied, onOpen, onCopy }) {
           data-quiet={quiet ? 'true' : undefined}
         >
           {quiet && <span className="sr-only">quiet, </span>}
-          active{' '}
+          <span className="sr-only">active </span>
           <RelativeTime iso={lastActiveAt} now={now} title={activityTitle(lastActiveAt, quiet)} />
         </span>
       )}
