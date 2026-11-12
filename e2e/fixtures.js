@@ -195,4 +195,36 @@ export async function expectTooltip(page, target, text, options = {}) {
   await expect(page.getByRole('tooltip')).toHaveCount(0);
 }
 
+// A service card's Start / Stop / Restart live in its Actions menu. The three items keep the
+// `start-<id>`, `stop-<id>` and `restart-<id>` test ids, but only while the menu is open, so every
+// spec reaches them through `openActions`.
+export async function openActions(page, id) {
+  const trigger = page.getByTestId(`service-actions-${id}`);
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByTestId(`start-${id}`)).toBeVisible();
+}
+
+export async function closeActions(page) {
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menuitem')).toHaveCount(0);
+}
+
+export async function chooseAction(page, id, action) {
+  await openActions(page, id);
+  await page.getByTestId(`${action}-${id}`).click();
+}
+
+// A locked card cannot open its menu, so locked means the trigger is disabled; unlocked also
+// opens the menu and checks that all three items are enabled.
+export async function expectActionsLocked(page, id, locked) {
+  const trigger = page.getByTestId(`service-actions-${id}`);
+  if (locked) return expect(trigger).toBeDisabled();
+  await expect(trigger).toBeEnabled();
+  await openActions(page, id);
+  for (const action of ['start', 'stop', 'restart'])
+    await expect(page.getByTestId(`${action}-${id}`)).toBeEnabled();
+  await closeActions(page);
+}
+
 export { expect };

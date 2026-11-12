@@ -1,22 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card } from './Primitives.jsx';
+import { ServiceActionsMenu } from './ServiceActionsMenu.jsx';
 import { ServiceCheckoutPicker } from './ServiceCheckoutPicker.jsx';
 import { Terminal } from './Terminal.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 
-export function ServiceControlButtons({ serviceId, disabled, onAction }) {
+// The bulk toolbar's Start all / Stop all / Restart all; a card's own actions are the Actions menu.
+export function ServiceControlButtons({ disabled, onAction }) {
   return ['start', 'stop', 'restart'].map((action) => (
     <Button
       key={action}
       className={action}
       disabled={disabled}
-      data-testid={`${action}-${serviceId ?? 'all'}`}
-      data-service={serviceId}
-      data-action={serviceId == null ? undefined : action}
+      data-testid={`${action}-all`}
       onClick={() => onAction(action)}
     >
-      {action[0].toUpperCase() + action.slice(1)}
-      {serviceId == null ? ' all' : ''}
+      {action[0].toUpperCase() + action.slice(1)} all
     </Button>
   ));
 }
@@ -62,7 +61,7 @@ export function ServiceCard({
   return (
     <Card className="service-card" id={`card-${service.id}`} data-testid={`card-${service.id}`}>
       <header className="service-header">
-        <div className="service-title">
+        <div className="service-header-row">
           <h2 data-testid={`card-title-${service.id}`}>{service.label}</h2>
           <div className="service-meta">
             <code data-testid={`card-dir-${service.id}`}>{service.dir}</code>
@@ -77,12 +76,14 @@ export function ServiceCard({
               </a>
             )}
           </div>
-        </div>
-        <div className="service-actions">
-          <ServiceCheckoutPicker service={service} repo={repo} onFeedback={setControlState} />
           <span
             className="board-chip service-status"
             data-status={service.status}
+            data-exit={
+              service.status === 'exited' && service.exitCode != null && service.exitCode !== 0
+                ? 'error'
+                : undefined
+            }
             data-testid={`status-${service.id}`}
           >
             {service.status}
@@ -90,9 +91,10 @@ export function ServiceCard({
               ? ` (${service.exitCode})`
               : ''}
           </span>
-          <div className="service-controls" role="group" aria-label={`${service.label} controls`}>
-            <ServiceControlButtons serviceId={service.id} disabled={locked} onAction={command} />
-          </div>
+        </div>
+        <div className="service-header-row">
+          <ServiceCheckoutPicker service={service} repo={repo} onFeedback={setControlState} />
+          <ServiceActionsMenu serviceId={service.id} disabled={locked} onAction={command} />
         </div>
       </header>
       <p

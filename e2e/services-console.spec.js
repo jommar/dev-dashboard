@@ -1,4 +1,12 @@
-import { test, expect, seedVelocitySnapshot } from './fixtures.js';
+import {
+  test,
+  expect,
+  seedVelocitySnapshot,
+  openActions,
+  closeActions,
+  chooseAction,
+  expectActionsLocked,
+} from './fixtures.js';
 
 const emitServices = (page, services) =>
   page.evaluate(
@@ -44,24 +52,28 @@ test('service controls keep action labels, targets and lock scopes @regression',
     held.push(route);
   });
   const expectLocks = async (lockedIds) => {
+    for (const id of ['api', 'web', 'worker'])
+      await expectActionsLocked(page, id, lockedIds.includes(id));
     for (const { action } of actions) {
-      for (const id of ['api', 'web', 'worker', 'all']) {
-        const button = page.getByTestId(`${action}-${id}`);
-        if (lockedIds.includes(id)) await expect(button).toBeDisabled();
-        else await expect(button).toBeEnabled();
-      }
+      const bulk = page.getByTestId(`${action}-all`);
+      if (lockedIds.includes('all')) await expect(bulk).toBeDisabled();
+      else await expect(bulk).toBeEnabled();
     }
   };
   await page.goto('/#/services');
   await expect(page.getByTestId('log-api')).toContainText('line 120');
-  for (const { action, label, bulkLabel, className } of actions) {
-    for (const id of ['api', 'web', 'worker']) {
+  for (const id of ['api', 'web', 'worker']) {
+    await openActions(page, id);
+    for (const { action, label, className } of actions) {
       const button = page.getByTestId(`${action}-${id}`);
       await expect(button).toHaveText(label);
       await expect(button).toHaveClass(className);
       await expect(button).toHaveAttribute('data-service', id);
       await expect(button).toHaveAttribute('data-action', action);
     }
+    await closeActions(page);
+  }
+  for (const { action, bulkLabel, className } of actions) {
     const bulk = page.getByTestId(`${action}-all`);
     await expect(bulk).toHaveText(bulkLabel);
     await expect(bulk).toHaveClass(className);
@@ -71,7 +83,7 @@ test('service controls keep action labels, targets and lock scopes @regression',
   await expectLocks([]);
   for (const { action, paths } of actions) {
     const before = calls.length;
-    await page.getByTestId(`${action}-worker`).click();
+    await chooseAction(page, 'worker', action);
     await expect.poll(() => calls.length).toBe(before + 1);
     await expectLocks(['worker', 'all']);
     expect(calls.slice(before)).toEqual([{ method: 'POST', path: paths[2] }]);
@@ -154,14 +166,14 @@ test('control acceptance leaves stopped status truthful until the feed updates @
   let command;
   await page.route('**/api/services/worker/start', (route) => (command = route));
   await page.goto('/#/services');
-  await page.getByTestId('start-worker').click();
-  await expect(page.getByTestId('stop-worker')).toBeDisabled();
+  await chooseAction(page, 'worker', 'start');
+  await expectActionsLocked(page, 'worker', true);
   await expect(page.getByTestId('start-all')).toBeDisabled();
   await expect(page.getByTestId('status-worker')).toContainText('stopped');
   await expect.poll(() => Boolean(command)).toBe(true);
   await command.fulfill({ json: { ok: true } });
   await expect(page.getByTestId('control-feedback-worker')).toContainText('Command accepted');
-  await expect(page.getByTestId('start-worker')).toBeEnabled();
+  await expectActionsLocked(page, 'worker', false);
   await expect(page.getByTestId('status-worker')).toContainText('stopped');
   await emitServices(
     page,

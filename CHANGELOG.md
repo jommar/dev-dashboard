@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Changed the **Services** card header to two rows: the name, directory, port and status chip on the
+  first, the **checkout** select and a single **Actions** menu (Start, Stop, Restart) on the second,
+  truncating instead of wrapping on narrow cards. The status chip's dot is now green for running, red
+  for exited with a non-zero code, and grey for stopped or exited cleanly. The per-card commands, routes
+  and test ids are unchanged, and the bulk Start all / Stop all / Restart all buttons stay as they were.
 - Added a worktree picker to the **Services** tab: each service card has a **checkout** select listing
   the repo's git worktrees (`git worktree list`, main checkout first), so a service can run from a
   worktree instead of the main checkout under the Settings root. Services that share a repo (`be` and

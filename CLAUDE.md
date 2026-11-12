@@ -310,8 +310,13 @@ Each service card's checkout select runs a repo's services from a git worktree (
 - **A field the card needs must be in `ServiceProcess.snapshot()`.** SSE replaces the whole service
   object, so `checkout` and `checkoutLabel` come from the snapshot, never from a fetched copy or panel
   state.
-- **A native `<select>` and `<dialog>`, not the MUI Listbox/Menu.** `.service-card` is
-  `overflow: hidden` and clips popups. The select disables during a switch and takes focus back after.
+- **A native `<select>` and `<dialog>`, not the MUI Listbox.** `.service-card` is
+  `overflow: hidden` and clips popups. The Actions menu (`ServiceActionsMenu.jsx`) is the one
+  exception: MUI Menu renders in a portal, so the card cannot clip it. The select disables during a
+  switch and takes focus back after.
+- **The card header is two rows, never three.** Row 1 is name, shrinking directory/port and the status
+  chip; row 2 is the checkout select and the Actions button. Nothing wraps: it truncates. The status
+  dot is the chip's `currentColor` (green running, red `data-exit="error"`, else grey).
 - **The worktree list is never polled.** It is read when the panel loads its services and when a select
   gains focus; the PUT lists again and accepts only an exact listed path. Do not add a timer or accept
   a path the listing did not return.

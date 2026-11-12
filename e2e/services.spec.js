@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, chooseAction, expectActionsLocked } from './fixtures.js';
 
 test('service commands recover from failures and report individual bulk results @regression', async ({
   page,
@@ -7,14 +7,14 @@ test('service commands recover from failures and report individual bulk results 
     route.fulfill({ status: 409, json: { error: 'Process is busy' } }),
   );
   await page.goto('/#/services');
-  await page.getByTestId('start-api').click();
+  await chooseAction(page, 'api', 'start');
   await expect(page.getByTestId('control-feedback-api')).toContainText('Process is busy');
-  await expect(page.getByTestId('start-api')).toBeEnabled();
+  await expectActionsLocked(page, 'api', false);
   await page.getByTestId('start-all').click();
   await expect(page.getByTestId('bulk-feedback')).toContainText('Workspace API');
   await expect(page.getByTestId('bulk-feedback')).toContainText('Process is busy');
   await expect(page.getByTestId('stop-all')).toBeEnabled();
-  await expect(page.getByTestId('restart-api')).toBeEnabled();
+  await expectActionsLocked(page, 'api', false);
 });
 
 test('logs retain text on failure, retry, and ignore obsolete tail responses @regression', async ({
@@ -97,10 +97,9 @@ test('worker service command errors never strand controls @regression', async ({
     route.fulfill({ status: 500, json: { error: 'Cannot start worker' } }),
   );
   await page.goto('/#/services');
-  const button = page.getByTestId('start-worker');
-  await button.click();
+  await chooseAction(page, 'worker', 'start');
   await expect(page.getByTestId('control-feedback-worker')).toContainText('Cannot start worker');
-  await expect(button).toBeEnabled();
+  await expectActionsLocked(page, 'worker', false);
 });
 
 test('service discovery failure is retryable without duplicate cards @regression', async ({
@@ -136,25 +135,19 @@ test('bulk commands lock conflicting controls across routes until settled @regre
   });
   await page.goto('/#/services');
   await page.getByTestId('start-all').click();
-  await expect(page.getByTestId('stop-api')).toBeDisabled();
+  await expectActionsLocked(page, 'api', true);
   await expect(page.getByTestId('restart-all')).toBeDisabled();
   await page.getByTestId('tab-home').click();
   await expect(page.getByTestId('panel-home')).toBeVisible();
   await expect(page.getByTestId('home-refresh')).toHaveText('Generate velocity');
   await page.getByTestId('tab-services').click();
-  for (const action of ['start', 'stop', 'restart']) {
+  for (const action of ['start', 'stop', 'restart'])
     await expect(page.getByTestId(`${action}-all`)).toBeDisabled();
-    for (const { id } of dashboard.data.services) {
-      await expect(page.getByTestId(`${action}-${id}`)).toBeDisabled();
-    }
-  }
+  for (const { id } of dashboard.data.services) await expectActionsLocked(page, id, true);
   release();
-  for (const action of ['start', 'stop', 'restart']) {
+  for (const action of ['start', 'stop', 'restart'])
     await expect(page.getByTestId(`${action}-all`)).toBeEnabled();
-    for (const { id } of dashboard.data.services) {
-      await expect(page.getByTestId(`${action}-${id}`)).toBeEnabled();
-    }
-  }
+  for (const { id } of dashboard.data.services) await expectActionsLocked(page, id, false);
   expect(calls).toHaveLength(dashboard.data.services.length);
 });
 

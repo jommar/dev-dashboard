@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, chooseAction, expectActionsLocked } from './fixtures.js';
 import { dashboardData } from './data.js';
 
 // `api` and `web` share one repo dir (like be and queue); `worker` has its own.
@@ -181,8 +181,6 @@ test.describe('service checkout picker @regression', () => {
       page,
     }) => {
       const repoCards = ['api', 'web'];
-      const buttonsOf = (id) =>
-        ['start', 'stop', 'restart'].map((action) => page.getByTestId(`${action}-${id}`));
       let release;
       const gate = new Promise((resolve) => {
         release = resolve;
@@ -195,14 +193,14 @@ test.describe('service checkout picker @regression', () => {
       await page.getByTestId('service-checkout-api').selectOption({ label: 'a-fix' });
       for (const id of repoCards) {
         await expect(page.getByTestId(`service-checkout-${id}`)).toBeDisabled();
-        for (const button of buttonsOf(id)) await expect(button).toBeDisabled();
+        await expectActionsLocked(page, id, true);
       }
       await expect(page.getByTestId('service-checkout-worker')).toBeEnabled();
-      for (const button of buttonsOf('worker')) await expect(button).toBeEnabled();
+      await expectActionsLocked(page, 'worker', false);
       release();
       for (const id of repoCards) {
         await expect(page.getByTestId(`service-checkout-${id}`)).toBeEnabled();
-        for (const button of buttonsOf(id)) await expect(button).toBeEnabled();
+        await expectActionsLocked(page, id, false);
       }
 
       let releaseStart;
@@ -213,16 +211,16 @@ test.describe('service checkout picker @regression', () => {
         await startGate;
         await route.fulfill({ json: { ok: true } });
       });
-      await page.getByTestId('start-api').click();
+      await chooseAction(page, 'api', 'start');
       for (const id of repoCards)
         await expect(page.getByTestId(`service-checkout-${id}`)).toBeDisabled();
-      for (const button of buttonsOf('api')) await expect(button).toBeDisabled();
-      for (const button of buttonsOf('web')) await expect(button).toBeEnabled();
+      await expectActionsLocked(page, 'api', true);
+      await expectActionsLocked(page, 'web', false);
       await expect(page.getByTestId('service-checkout-worker')).toBeEnabled();
       releaseStart();
       for (const id of repoCards)
         await expect(page.getByTestId(`service-checkout-${id}`)).toBeEnabled();
-      for (const button of buttonsOf('api')) await expect(button).toBeEnabled();
+      await expectActionsLocked(page, 'api', false);
     });
 
     test('checkout 21: a refused switch and an unavailable listing are reported on the card', async ({

@@ -30,8 +30,7 @@
 #panel-services .board-controls {
   min-width: 0;
 }
-.service-bulk-controls,
-.service-controls {
+.service-bulk-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -73,44 +72,36 @@
 }
 .service-card .service-header {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s2) var(--s3);
+  flex-direction: column;
+  gap: var(--s2);
   padding: var(--s3) var(--s4);
 }
-.service-title {
+/* The header is two rows and never a third: what does not fit truncates. */
+.service-header-row {
   display: flex;
-  flex: 1 1 160px;
-  flex-direction: column;
-  gap: var(--s1);
+  align-items: center;
+  gap: var(--s3);
   min-width: 0;
 }
-.service-title h2 {
-  min-width: 0;
+.service-header-row h2 {
+  flex: 0 1 auto;
+  min-width: 4ch;
+  overflow: hidden;
   font-size: var(--fs-lg);
   letter-spacing: -0.012em;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.service-actions {
+.service-checkout {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 0;
   align-items: center;
   gap: var(--s2);
   min-width: 0;
 }
-.service-controls {
-  gap: var(--s1);
-}
-.service-checkout {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s1) var(--s2);
-  min-width: 0;
-}
 .service-checkout-select {
+  flex: 1 1 0;
   min-width: 0;
-  max-width: 160px;
   min-height: 32px;
   padding: var(--s1) var(--s2);
   border: 1px solid var(--border-strong);
@@ -128,14 +119,16 @@
   opacity: 0.55;
 }
 .service-checkout-badge {
-  max-width: 160px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.service-card .service-controls .btn {
-  min-width: 44px;
-  padding-inline: var(--s2);
+.service-card .service-actions-trigger {
+  flex: 0 0 auto;
+  padding-inline: var(--s3);
 }
 .service-card .service-status {
   flex: 0 0 auto;
@@ -158,22 +151,26 @@
 .service-status[data-status='running'] {
   color: var(--green);
 }
-.service-status[data-status='exited'] {
+.service-status[data-status='exited'][data-exit='error'] {
   color: var(--red);
 }
+/* A grid, not a flex row: the directory's track can shrink to nothing while the port's `auto` track
+   keeps the meta's minimum width, so the directory truncates first and the port stays whole. */
 .service-meta {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  flex: 1 1 0;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: var(--s1) var(--s3);
-  min-width: 0;
+  column-gap: var(--s3);
   color: var(--muted);
   font-size: var(--fs-xs);
 }
 .service-meta code {
   min-width: 0;
+  overflow: hidden;
   font-family: var(--mono);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .service-port {
   color: var(--accent);
@@ -245,7 +242,7 @@
   }
 }
 @media (hover: none) {
-  .service-card .service-controls .btn {
+  .service-card .service-actions-trigger {
     min-height: 44px;
   }
 }

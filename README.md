@@ -3,7 +3,7 @@
 A small dev-service controller. It runs each EZAT service
 (Portage Backend / Frontend, TravelTracker API / UI, Queue) as its own
 independently-controllable child process, exposes a dark-mode browser dashboard
-with per-service **Start/Stop/Restart** buttons, and provides an agent-ready log
+with a per-service **Actions** menu (Start, Stop, Restart), and provides an agent-ready log
 tail so debugging can be driven from code.
 
 ## Why
@@ -89,9 +89,12 @@ click. All seven views remain available:
   whether the work reached `ops/development`. It opens on your own tickets;
   **All release tickets** widens it. See [Releases](#releases).
 - **Services** — one card per service, each showing its status and a log
-  viewport that tails the last 40 lines (_Show full_ reveals everything). A
-  **checkout** select on each card runs the service from another git worktree of
-  its repo. See [Worktree picker](#worktree-picker).
+  viewport that tails the last 40 lines (_Show full_ reveals everything). The
+  card header is two rows: name, directory, port and a status chip (a green dot
+  for running, red for exited with an error, grey for stopped or a clean exit),
+  then the **checkout** select and an **Actions** menu with Start, Stop and
+  Restart. The select runs the service from another git worktree of its repo.
+  See [Worktree picker](#worktree-picker).
 - **Settings** — saved integrations, token replacements, local services and
   advanced options.
 
