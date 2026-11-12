@@ -175,12 +175,17 @@ Its styles are in `ui-react/styles/bot-bar.css` (tokens only,
 
 **The session list drawer.** `SessionsDrawer.jsx` (mounted by `BotBar`, so on every screen once ready) is
 a right-edge tab plus a non-modal fixed drawer listing the same sessions as the bar, from the bar's own
-data: `sessionGroups(bots, byTicket)` in `ui/bot-bar.js` over the sprint-filtered `bots`, deliberately
+data: `sessionGroups(bots, byTicket, lastActive)` in `ui/bot-bar.js` over the sprint-filtered `bots`, deliberately
 NOT the TTL/dismissal-filtered `visible`, so a faded or dismissed session stays reachable. Rows open the
-same dialog as a bot and copy the entry's `goTo[phase]` command (review has none). It makes no request,
+same dialog as a bot and copy the entry's `goTo[phase]` command (review has none). The third argument is
+the same response's `lastActive` map (`{ [ticket]: { [phase]: ISO } }`, `{}` when unknown), which gives
+each row its last-activity time. It makes no request,
 mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
 `Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`), and its styles live in
-`ui-react/styles/sessions-drawer.css` because `bot-bar.css` selectors must all start `.bot-bar`.
+`ui-react/styles/sessions-drawer.css` because `bot-bar.css` selectors must all start `.bot-bar`. A row's
+time is a `.sessions-row-when` span after its button, linked by the button's `aria-describedby` so the
+name stays as above, with no live region. `isQuiet` (`QUIET_WORKING_MS`) marks a working row whose time
+is five minutes old, and the open drawer re-reads the clock (`ACTIVITY_CLOCK_MS`) only while it is open.
 
 ## DevTools: a wall of live tiles
 

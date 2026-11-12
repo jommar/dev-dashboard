@@ -35,6 +35,7 @@ import {
   hashOf,
   heldDoneBots,
   inActiveSprint,
+  isQuiet,
   laneStyle,
   liveBots,
   nextSprint,
@@ -42,6 +43,7 @@ import {
   nextBotChange,
   pickMascot,
   pickPoster,
+  QUIET_WORKING_MS,
   rememberBots,
   restingSpots,
   sessionGroups,
@@ -917,6 +919,62 @@ test('sessionGroups attaches the join command of the entry for that phase, and n
   assert.deepEqual(goTo.groom, resume);
   assert.equal(goTo.review, null);
   assert.equal(goTo.e2e, null);
+});
+
+test('sessionGroups gives each row the last-activity time of its phase, null when none or not a time', () => {
+  const bot = (ticket, phase, state) => ({ key: botKey(ticket, phase), ticket, phase, state });
+  const lastActive = {
+    'TAP-1': { implement: '2026-11-12T10:00:00.000Z', review: 'not a time' },
+    'TAP-2': { review: '2026-11-12T09:00:00.000Z' },
+  };
+  const bots = [
+    bot('TAP-1', 'implement', 'working'),
+    bot('TAP-1', 'review', 'waiting'),
+    bot('TAP-1', 'groom', 'done'),
+    bot('TAP-2', 'review', 'waiting'),
+  ];
+  const timeOf = (groups) =>
+    Object.fromEntries(
+      groups.flatMap(({ rows }) => rows).map(({ key, lastActiveAt }) => [key, lastActiveAt]),
+    );
+  assert.deepEqual(timeOf(sessionGroups(bots, { tickets: {} }, lastActive)), {
+    'TAP-1:implement': '2026-11-12T10:00:00.000Z',
+    'TAP-1:review': null,
+    'TAP-1:groom': null,
+    'TAP-2:review': '2026-11-12T09:00:00.000Z',
+  });
+  // Without the third argument every row has no time, and the rows are otherwise the same.
+  assert.ok(
+    Object.values(timeOf(sessionGroups(bots, { tickets: {} }))).every((time) => time === null),
+  );
+});
+
+test('the bar hands the drawer the last-activity times with the tickets, and the hook returns them', () => {
+  const read = (file) => readFileSync(new URL(`../ui-react/${file}`, import.meta.url), 'utf8');
+  assert.match(
+    read('components/BotBar.jsx'),
+    /sessionGroups\(bots, claude\.byTicket, claude\.lastActive\)/,
+  );
+  assert.match(read('hooks/useClaudeTickets.js'), /result\.lastActive \?\? NO_ACTIVITY/);
+  assert.match(read('hooks/useClaudeTickets.js'), /return \{ byTicket, lastActive, /);
+});
+
+test('isQuiet: a working session with no write for five minutes or more is quiet; other states, no time and a future time never are', () => {
+  const now = Date.parse('2026-11-12T12:00:00.000Z');
+  const ago = (ms) => new Date(now - ms).toISOString();
+  const row = (state, lastActiveAt) => ({ state, lastActiveAt });
+  assert.equal(QUIET_WORKING_MS, 5 * 60 * 1000);
+  assert.equal(isQuiet(row('working', ago(QUIET_WORKING_MS - 1)), now), false, 'just under');
+  assert.equal(isQuiet(row('working', ago(QUIET_WORKING_MS)), now), true, 'at the threshold');
+  assert.equal(isQuiet(row('working', ago(60_000)), now), false, 'written a minute ago');
+  assert.equal(isQuiet(row('working', ago(-60_000)), now), false, 'a time ahead of the clock');
+  for (const state of ['waiting', 'done', 'failed'])
+    assert.equal(
+      isQuiet(row(state, ago(QUIET_WORKING_MS * 2)), now),
+      false,
+      `${state} is not quiet`,
+    );
+  assert.equal(isQuiet(row('working', null), now), false, 'no time');
 });
 
 test('filterSessionGroups is one AND search over a row and its group title, dropping empty groups', () => {

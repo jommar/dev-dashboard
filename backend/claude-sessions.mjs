@@ -2,6 +2,9 @@
 // stop of an idle background session, the resume that continues a finished one and the launch of a
 // new background session.
 //
+// `lastActive` reads only file modification times (stat, never content). Only the times it returns,
+// keyed by session id, leave this module; no name, path or cwd does.
+//
 // Everything runs as a fixed argument array with no shell. The listing carries session names and
 // working directories; neither is logged, stored or sent beyond the picker's name. The CLI's output
 // and error text never leave this module either, with one exception: a stop or a resume that does
@@ -142,7 +145,7 @@ export function createClaudeSessions({
   ),
   sessionsDir = path.join(path.dirname(projectsDir), 'sessions'),
   readActivities = readTranscriptActivities,
-  metadataIO = { readdir, readFile },
+  metadataIO = { readdir, readFile, stat },
   log = defaultClaudeLog,
 }) {
   let sharedListing = null;
@@ -214,6 +217,57 @@ export function createClaudeSessions({
       }
     }
     return { paths: found, incomplete };
+  }
+
+  // The newest modification time, in ms, of the files that can be stat'ed, or null when none can.
+  async function newestMtime(files) {
+    let newest = null;
+    for (const file of files) {
+      try {
+        const { mtimeMs } = await metadataIO.stat(file);
+        if (newest === null || mtimeMs > newest) newest = mtimeMs;
+      } catch {
+        // The other files of the same session may still be readable.
+      }
+    }
+    return newest;
+  }
+
+  // The transcripts of a session's subagents, which sit beside its transcript in its project folder.
+  async function subagentPaths(projectDirectory, sessionId) {
+    try {
+      const files = await metadataIO.readdir(path.join(projectDirectory, sessionId, 'subagents'), {
+        withFileTypes: true,
+      });
+      return files
+        .filter((file) => file.isFile() && file.name.endsWith('.jsonl'))
+        .map((file) => path.join(projectDirectory, sessionId, 'subagents', file.name));
+    } catch {
+      return [];
+    }
+  }
+
+  // Each listed session's last activity in ms, keyed by session id: the newest modification time of
+  // its transcript copies, and for a working session also of its subagents' transcripts, since a
+  // session waiting on a long subagent writes only there. A session with no readable file has no
+  // entry. Only stat is used, so no transcript content is read.
+  async function lastActive(entries) {
+    const times = new Map();
+    if (!entries.length) return times;
+    const { paths } = await transcriptPaths(entries);
+    await Promise.all(
+      entries.map(async ({ sessionId, state }) => {
+        const copies = paths.get(sessionId) ?? [];
+        const files = [...copies];
+        if (state === 'working') {
+          for (const copy of copies)
+            files.push(...(await subagentPaths(path.dirname(copy), sessionId)));
+        }
+        const newest = await newestMtime(files);
+        if (newest !== null) times.set(sessionId, newest);
+      }),
+    );
+    return times;
   }
 
   async function registryNames(attached) {
@@ -504,5 +558,5 @@ export function createClaudeSessions({
     return failure('failed-transient', error.killed ? 'timed_out' : 'spawn_failed');
   }
 
-  return { listSessions, stop, resume, entries, launch };
+  return { listSessions, stop, resume, entries, launch, lastActive };
 }

@@ -294,20 +294,31 @@ function goToFor(session) {
     : null;
 }
 
-// How to join each own session: `{ investigate, implement, groom }` (plus `e2e` for a ticket with an
-// e2e check record), each a goToFor result for the session its record resolves to. A record that is
-// missing, or no listing, has nothing to join.
-function goToAll(launch, entries) {
+// The listing entry each own session resolves to: `{ investigate, implement, review, groom }` (plus
+// `e2e` for a ticket with an e2e check record), each the entry its record resolves to, or null. A
+// record that is missing, or no listing, resolves to nothing.
+export function phaseSessions(launch, entries) {
   const records = readLaunch(launch);
-  const join = (record) => (record && entries ? goToFor(resolveSession(entries, record)) : null);
-  const phase = (name) => join(records.find((found) => found.phase === name));
+  const resolve = (record) => (record && entries ? resolveSession(entries, record) : null);
+  const phase = (name) => resolve(records.find((found) => found.phase === name));
   const e2e = readE2e(launch);
   return {
     investigate: phase(INVESTIGATE),
     implement: phase(IMPLEMENT),
-    groom: join(readGroom(launch)),
-    ...(e2e && { e2e: join(e2e) }),
+    review: resolve(readReview(launch)),
+    groom: resolve(readGroom(launch)),
+    ...(e2e && { e2e: resolve(e2e) }),
   };
+}
+
+// How to join each own session: `{ investigate, implement, groom }` (plus `e2e` for a ticket with an
+// e2e check record), each a goToFor result for the session phaseSessions resolves. Review has none.
+function goToAll(launch, entries) {
+  return Object.fromEntries(
+    Object.entries(phaseSessions(launch, entries))
+      .filter(([phase]) => phase !== 'review')
+      .map(([phase, session]) => [phase, goToFor(session)]),
+  );
 }
 
 // Independent sessions finish without writing a workflow flag.

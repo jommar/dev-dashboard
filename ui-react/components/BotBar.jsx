@@ -203,8 +203,12 @@ export function BotBar() {
   const [clock, setClock] = useState(0);
   const [open, setOpen] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  // The drawer lists every session of the sprint's bots, past the bar's time to live and dismissals.
-  const groups = useMemo(() => sessionGroups(bots, claude.byTicket), [bots, claude.byTicket]);
+  // The drawer lists every session of the sprint's bots, past the bar's time to live and dismissals,
+  // each with the time it was last active (the same response's `lastActive`).
+  const groups = useMemo(
+    () => sessionGroups(bots, claude.byTicket, claude.lastActive),
+    [bots, claude.byTicket, claude.lastActive],
+  );
 
   useEffect(() => {
     setMemory((previous) => rememberBots(previous, bots, Date.now()));

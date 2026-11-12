@@ -1698,6 +1698,9 @@ function claudeData() {
   return {
     listing: 'ok',
     tickets: {},
+    // The last time each session was written to, by ticket key then phase: the `lastActive` GET
+    // /api/claude/tickets sends beside the tickets (ISO strings, sparse; a spec sets the ones it needs).
+    lastActive: {},
     // What GET /api/active-sprint-tickets knows: the tickets Jira puts in an active sprint, each
     // one's Jira status name, and whether Jira can say (`available: false` is an unreachable or
     // unconfigured Jira). `asks` logs each key list.
@@ -1821,6 +1824,7 @@ function claudeResponse(url, method, { claude, devtools }, body) {
         listing: claude.listing,
         updatedAt: '2026-10-08T09:00:00.000Z',
         tickets: structuredClone(claude.tickets),
+        lastActive: structuredClone(claude.lastActive),
       },
     };
   if (method !== 'POST') return null;

@@ -521,19 +521,37 @@ export const SESSION_GROUPS = Object.freeze([
 
 // The groups of `bots` (what `inActiveSprint` returns), each `{ state, title, rows }` and none of them
 // empty. A row is the bot plus `goTo`, the `{ kind, command }` that joins its session in a terminal
-// (the entry's own `goTo` for that phase; a review session has none), or null. Rows keep the order of
-// `bots`: by ticket, then by phase.
-export function sessionGroups(bots, response) {
+// (the entry's own `goTo` for that phase; a review session has none), or null, and `lastActiveAt`, the
+// ISO time that session was last written to, or null. `lastActive` is the map GET /api/claude/tickets
+// sends beside the tickets (`{ [ticket]: { [phase]: ISO } }`, sparse). Rows keep the order of `bots`:
+// by ticket, then by phase.
+export function sessionGroups(bots, response, lastActive = {}) {
   const tickets = response?.tickets ?? response ?? {};
   const rows = bots.map((bot) => {
     const goTo = tickets[bot.ticket]?.goTo?.[bot.phase];
-    return { ...bot, goTo: typeof goTo?.command === 'string' ? goTo : null };
+    const at = lastActive?.[bot.ticket]?.[bot.phase];
+    return {
+      ...bot,
+      goTo: typeof goTo?.command === 'string' ? goTo : null,
+      lastActiveAt: typeof at === 'string' && Number.isFinite(Date.parse(at)) ? at : null,
+    };
   });
   return SESSION_GROUPS.map((group) => ({
     ...group,
     rows: rows.filter(({ state }) => state === group.state),
   })).filter(({ rows: found }) => found.length > 0);
 }
+
+// A working session nothing has written to for this long is quiet in the session list. It is a hint
+// only, not a state: a long tool call or a reply writes nothing to its transcript either.
+export const QUIET_WORKING_MS = 5 * 60 * 1000;
+
+// Whether a session row is quiet at `now` (ms): working, with a last-activity time at least
+// QUIET_WORKING_MS old. Any other state, or no time, is never quiet.
+export const isQuiet = ({ state, lastActiveAt }, now) =>
+  state === 'working' &&
+  Boolean(lastActiveAt) &&
+  now - Date.parse(lastActiveAt) >= QUIET_WORKING_MS;
 
 // The groups left after a search: one box, matched against everything a row shows. `textOf(row)` is the
 // row's visible words (its ticket, phase, state and reason); a group's own title counts for every row in

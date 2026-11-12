@@ -1043,3 +1043,60 @@ test('the session list has one search over everything a row shows', async ({ pag
   await expect(rows).toHaveCount(4);
   await expect(page.getByTestId('sessions-drawer')).toBeVisible();
 });
+
+test('the session list says when each session was last active, and flags a working one gone quiet', async ({
+  page,
+  dashboard,
+}) => {
+  const T0 = Date.parse('2026-11-12T12:00:00.000Z');
+  await page.clock.install({ time: T0 });
+  seed(dashboard);
+  // BOT-1 was last written to nine minutes ago, so it is quiet (working); BOT-3 two hours ago (done,
+  // so not quiet). BOT-2 has no time, so its row shows none.
+  const ago = (minutes) => new Date(T0 - minutes * 60_000).toISOString();
+  dashboard.data.claude.lastActive = {
+    'BOT-1': { implement: ago(9) },
+    'BOT-3': { review: ago(120) },
+  };
+  await page.goto('/#/services');
+  await page.getByTestId('sessions-tab').click();
+  const quiet = page.getByTestId('sessions-when-BOT-1:implement');
+  await expect(quiet).toHaveAttribute('data-quiet', 'true');
+  await expect(quiet).toContainText('active 9m ago');
+  await expect(page.getByTestId('sessions-when-BOT-3:review')).toContainText('active 2h ago');
+  await expect(page.getByTestId('sessions-when-BOT-3:review')).not.toHaveAttribute('data-quiet');
+  await expect(page.getByTestId('sessions-when-BOT-2:review')).toHaveCount(0);
+  // The row keeps its name; the time is its description, and the quiet word is in it.
+  const open = page.getByTestId('sessions-open-BOT-1:implement');
+  await expect(open).toHaveAccessibleName('Open BOT-1 Implement plan session');
+  await expect(open).toHaveAccessibleDescription('quiet, active 9m ago');
+  // The popup on the time gives when it was last active, and the quiet rule.
+  await quiet.locator('time').hover();
+  await expect(page.getByRole('tooltip')).toContainText('Last active');
+  await expect(page.getByRole('tooltip')).toContainText('working but quiet for 5+ min');
+  await page.mouse.move(5, 5);
+  // The search matches the word quiet, never the time.
+  const search = page.getByTestId('sessions-search');
+  const rows = page.locator('[data-testid^="sessions-row-"]');
+  await search.fill('quiet');
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByTestId('sessions-row-BOT-1:implement')).toBeVisible();
+  await search.fill('9m');
+  await expect(page.getByTestId('sessions-no-match')).toBeVisible();
+  await search.fill('');
+  await expect(rows).toHaveCount(4);
+  // With the drawer open the clock moves the age on, and the quiet flag stays while nothing is written.
+  await page.clock.runFor(60_000);
+  await expect(quiet).toContainText('active 10m ago');
+  await expect(quiet).toHaveAttribute('data-quiet', 'true');
+  // A write now comes with the next poll: the row reads just now and is no longer quiet.
+  dashboard.data.claude.lastActive['BOT-1'] = {
+    implement: new Date(await page.evaluate(() => Date.now())).toISOString(),
+  };
+  await page.clock.runFor(16_000);
+  await expect(quiet).toContainText('active just now');
+  await expect(quiet).not.toHaveAttribute('data-quiet');
+  // No live region in the drawer, and the bar's own live region stays silent.
+  await expect(page.getByTestId('sessions-drawer').locator('[aria-live]')).toHaveCount(0);
+  await expect(page.getByTestId('bot-bar-live').locator('> *')).toHaveCount(0);
+});

@@ -1764,7 +1764,7 @@ to default** or delete the file.
 
 | Route                               | Purpose                                                                                                                                                                           |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets }`; `listing` is `ok` or `unavailable` (the CLI listing failed); `tickets` is keyed by ticket key (entry below)                                    |
+| `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets, lastActive }`; `listing` is `ok` or `unavailable`; `tickets` keyed by ticket key (entry below); `lastActive` is `{ key: { phase: ISO } }`, sparse |
 | `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, `e2e-ticket-check` also takes `browserId`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }` |
 | `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                                                                |
 | `GET /api/claude/prompts`           | `{ ok: true, prompts }`; `prompts` is the four entries below, in the order investigate, implement, answers, groom                                                                 |
@@ -2026,8 +2026,15 @@ while there is no session to show.
   reachable. A row opens the same Claude dialog its bot opens (the review dialog for a review session),
   and a session with something to join has a **Copy attach** (live) or **Copy resume** (finished) button
   that copies the same command as the dialog's Go to session. Rows are one compact line each, and one **Search sessions** box filters them by
-  everything a row shows (ticket, phase, state, reason, the copy button's word and the group heading); every
-  term must match, Escape clears the search before it closes the drawer. The drawer is a non-modal overlay (the app
+  everything a row shows (ticket, phase, state, reason, the copy button's word, the group heading and
+  **quiet**, never the time); every term must match, Escape clears the search before it closes the drawer.
+  Each row ends with **active 9m ago**, when its session was last written to: the newest modification time
+  of its transcripts (for a working session its subagents' transcripts too, so a long subagent does not hide
+  it), from `lastActive` in the same response. A working session with no write for **5 minutes**
+  (`QUIET_WORKING_MS` in `ui/bot-bar.js`) is **quiet**: amber and bold, and its popup says so. That is a
+  hint, not a state, since a long tool call or a reply writes nothing either. The age is read again every
+  30 seconds while the drawer is open (`ACTIVITY_CLOCK_MS`). The time is the row's description, not part of
+  its name, and there is no live region. The drawer is a non-modal overlay (the app
   stays usable beside it; Escape or Close shuts it and focus returns to the tab), uses the bar's data
   (no request of its own) and renders no rows while shut.
 - **The bar polls.** It reads `GET /api/claude/tickets` itself, on every screen, every 15 seconds

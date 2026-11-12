@@ -198,6 +198,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* When the session was last written to: after the row's button, so it sits at the row's end. A working
+   session that has been quiet a while is amber and bold (weight as well as colour); its popup says why. */
+.sessions-row-when {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sessions-row-when[data-quiet='true'] {
+  color: var(--amber);
+  font-weight: 600;
+}
 .btn.subtle.sessions-row-copy {
   flex: none;
   min-height: 24px;

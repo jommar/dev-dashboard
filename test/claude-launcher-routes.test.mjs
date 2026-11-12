@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import {
   BROWSER_ID,
   BROWSER_PORT,
@@ -19,6 +20,7 @@ import {
   INVESTIGATE_NAME,
   KEY,
   REVIEW,
+  REVIEW_ID,
   REVIEW_NAME,
   START_MS,
   UNTRUSTED_OUTPUT,
@@ -236,13 +238,108 @@ test('scenario 12: an empty or missing state directory answers without a CLI cal
   assert.equal(missing.status, 200, 'no state directory yet');
   assert.equal(missing.json().listing, 'ok');
   assert.deepEqual(missing.json().tickets, {});
+  assert.deepEqual(missing.json().lastActive, {}, 'no folder, no times');
 
   fs.mkdirSync(f.stateDir, { recursive: true, mode: 0o700 });
   const empty = await f.http.bare('GET', TICKETS);
   assert.equal(empty.status, 200, 'an empty state directory');
   assert.equal(empty.json().listing, 'ok');
   assert.deepEqual(empty.json().tickets, {});
+  assert.deepEqual(empty.json().lastActive, {}, 'no folder, no times');
   assert.equal(f.cli.calls.length, 0, 'the CLI never ran');
+});
+
+// ---- lastActive: the ticket list's times, read from real transcripts ----
+
+const TRANSCRIPTS = 'project-x';
+const ACTIVE_IMPLEMENT_ID = 'bbbb3333';
+const GROOM_ID = 'cccc4444';
+const LEAK_NAME = 'sentinel-name-last-active';
+const LEAK_CWD = '/work/sentinel-cwd-last-active';
+
+// Writes a file and sets its modification time, so the time the route reports is exact.
+function dated(file, mtimeMs) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{}\n');
+  fs.utimesSync(file, new Date(mtimeMs), new Date(mtimeMs));
+}
+
+test('lastActive: each phase session gets its transcript time as ISO, and only that leaves', async (t) => {
+  const f = await claudeHttpFixture(t);
+  const projects = path.join(f.home, '.claude', 'projects', TRANSCRIPTS);
+  const transcript = (id, mtimeMs) =>
+    dated(path.join(projects, `${sessionUuid(id)}.jsonl`), mtimeMs);
+  const T_INVESTIGATE = START_MS - 3_600_000;
+  const T_IMPLEMENT = START_MS - 1_800_000;
+  const T_REVIEW = START_MS - 600_000;
+  const T_GROOM = START_MS - 60_000;
+  f.seed(KEY, {
+    status: statusFile({ investigate: true, done: true }),
+    launch: {
+      [INVESTIGATE]: launchRecord({ launchedAt: START_MS - 7_200_000, id: EARLIER_ID }),
+      [IMPLEMENT]: launchRecord({
+        name: IMPLEMENT_NAME,
+        launchedAt: START_MS - 1_800_000,
+        id: ACTIVE_IMPLEMENT_ID,
+      }),
+      [REVIEW]: reviewRecord(),
+      [GROOM]: launchRecord({ name: GROOM_NAME, launchedAt: START_MS - 300_000, id: GROOM_ID }),
+    },
+  });
+  f.seed(SECOND_KEY, { launch: { [INVESTIGATE]: launchRecord({ id: 'eeee5555' }) } });
+  f.cli.setListing([
+    listed({ id: EARLIER_ID, name: LEAK_NAME, cwd: LEAK_CWD }),
+    // Working: its main transcript is old, and only its subagent's transcript is recent.
+    workingEntry({ id: ACTIVE_IMPLEMENT_ID, name: LEAK_NAME, cwd: LEAK_CWD }),
+    reviewEntry({ cwd: LEAK_CWD }),
+    listed({ id: GROOM_ID, name: GROOM_NAME }),
+    listed({ id: 'eeee5555' }),
+  ]);
+  transcript(EARLIER_ID, T_INVESTIGATE);
+  transcript(ACTIVE_IMPLEMENT_ID, START_MS - 7_200_000);
+  dated(
+    path.join(projects, sessionUuid(ACTIVE_IMPLEMENT_ID), 'subagents', 'agent-1.jsonl'),
+    T_IMPLEMENT,
+  );
+  transcript(REVIEW_ID, T_REVIEW);
+  transcript(GROOM_ID, T_GROOM);
+
+  const res = await f.http.bare('GET', TICKETS);
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(Object.keys(body).sort(), ['lastActive', 'listing', 'tickets', 'updatedAt']);
+  assert.deepEqual(body.lastActive, {
+    [KEY]: {
+      investigate: new Date(T_INVESTIGATE).toISOString(),
+      implement: new Date(T_IMPLEMENT).toISOString(),
+      review: new Date(T_REVIEW).toISOString(),
+      groom: new Date(T_GROOM).toISOString(),
+    },
+  });
+  assert.deepEqual(Object.keys(body.lastActive[KEY]), [
+    'investigate',
+    'implement',
+    'review',
+    'groom',
+  ]);
+  for (const leaked of [LEAK_NAME, LEAK_CWD, f.home, '.jsonl']) {
+    assert.equal(res.text.includes(leaked), false, 'no session name, cwd or path in the reply');
+  }
+});
+
+test('lastActive: a listing that fails gives an empty map, even with transcripts on disk', async (t) => {
+  const f = await claudeHttpFixture(t);
+  f.seed(KEY, { launch: { [INVESTIGATE]: launchRecord({ id: EARLIER_ID }) } });
+  dated(
+    path.join(f.home, '.claude', 'projects', TRANSCRIPTS, `${sessionUuid(EARLIER_ID)}.jsonl`),
+    START_MS - 600_000,
+  );
+  f.cli.failListing();
+
+  const body = (await f.http.bare('GET', TICKETS)).json();
+
+  assert.equal(body.listing, 'unavailable');
+  assert.deepEqual(body.lastActive, {});
 });
 
 test('scenario 18: one shared listing serves five tickets and two simultaneous polls', async (t) => {

@@ -1730,3 +1730,126 @@ test('resume still refuses a null-pid session that is not listed as stopped', as
   assert.deepStrictEqual(result, { status: 'waiting', reason: 'live_at_resume' });
   assert.equal(env.exec.spawns().length, 0);
 });
+
+// ---- lastActive: each listed session's newest transcript time, read from stat alone ----
+
+const OLD_MS = Date.parse('2026-03-01T10:00:00.000Z');
+const NEW_MS = OLD_MS + 600_000;
+const NEWEST_MS = OLD_MS + 1_200_000;
+const projectFile = (home, project, sessionId) =>
+  path.join(home, '.claude', 'projects', project, `${sessionId}.jsonl`);
+const subagentFile = (home, project, sessionId, name = 'agent-1.jsonl') =>
+  path.join(home, '.claude', 'projects', project, sessionId, 'subagents', name);
+
+// A transcript or subagent file written with its modification time set, so the time is exact.
+function writeDated(file, mtimeMs) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${timestampLine('2026-03-01T00:00:00Z')}\n`);
+  fs.utimesSync(file, new Date(mtimeMs), new Date(mtimeMs));
+  return file;
+}
+
+test('lastActive: the newest copy of a session across project folders wins, not the last one read', async (t) => {
+  const env = await sessionsEnvironment(t);
+  writeDated(projectFile(env.home, 'project-a', SESSION_A), NEW_MS);
+  writeDated(projectFile(env.home, 'project-b', SESSION_A), OLD_MS);
+
+  const times = await env.sessions.lastActive([listingEntry({ sessionId: SESSION_A })]);
+
+  assert.equal(times.get(SESSION_A), NEW_MS);
+});
+
+test('lastActive: a session with no transcript has no entry and does not hide the others', async (t) => {
+  const env = await sessionsEnvironment(t);
+  writeDated(projectFile(env.home, 'project', SESSION_A), NEW_MS);
+
+  const times = await env.sessions.lastActive([
+    listingEntry({ sessionId: SESSION_B, state: 'done' }),
+    listingEntry({ sessionId: SESSION_A, state: 'done' }),
+  ]);
+
+  assert.equal(times.has(SESSION_B), false);
+  assert.equal(times.get(SESSION_A), NEW_MS);
+});
+
+test('lastActive: a newer subagent transcript counts for a working session only', async (t) => {
+  const env = await sessionsEnvironment(t);
+  writeDated(projectFile(env.home, 'project', SESSION_A), OLD_MS);
+  writeDated(subagentFile(env.home, 'project', SESSION_A), NEWEST_MS);
+  writeDated(subagentFile(env.home, 'project', SESSION_A, 'notes.txt'), NEWEST_MS + 60_000);
+  writeDated(projectFile(env.home, 'project', SESSION_B), OLD_MS);
+  writeDated(subagentFile(env.home, 'project', SESSION_B), NEWEST_MS);
+  writeDated(projectFile(env.home, 'project', SESSION_C), NEW_MS);
+
+  const times = await env.sessions.lastActive([
+    listingEntry({ sessionId: SESSION_A, state: 'working', pid: 4242, status: 'busy' }),
+    listingEntry({ sessionId: SESSION_B, state: 'done' }),
+    listingEntry({ sessionId: SESSION_C, state: 'working', pid: 4343, status: 'busy' }),
+  ]);
+
+  assert.equal(times.get(SESSION_A), NEWEST_MS, 'a working session counts its subagents');
+  assert.equal(times.get(SESSION_B), OLD_MS, 'a finished session does not count its subagents');
+  assert.equal(times.get(SESSION_C), NEW_MS, 'a working session with no subagents folder');
+});
+
+test('lastActive: a missing projects folder gives an empty map', async (t) => {
+  const env = await sessionsEnvironment(t);
+
+  const times = await env.sessions.lastActive([
+    listingEntry({ sessionId: SESSION_A, state: 'working', pid: 4242, status: 'busy' }),
+  ]);
+
+  assert.equal(times.size, 0);
+});
+
+test('lastActive: one failing stat does not hide the other copies of the session', async (t) => {
+  let failing = null;
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: fs.promises.readdir,
+      readFile: fs.promises.readFile,
+      stat: async (file, ...args) => {
+        if (file === failing) throw Object.assign(new Error('unreadable'), { code: 'EACCES' });
+        return fs.promises.stat(file, ...args);
+      },
+    },
+  });
+  writeDated(projectFile(env.home, 'project-a', SESSION_A), NEW_MS);
+  writeDated(projectFile(env.home, 'project-b', SESSION_A), OLD_MS);
+  failing = projectFile(env.home, 'project-a', SESSION_A);
+
+  const times = await env.sessions.lastActive([listingEntry({ sessionId: SESSION_A })]);
+
+  assert.equal(times.get(SESSION_A), OLD_MS, 'the readable copy still counts');
+});
+
+test('lastActive: no transcript content is read, and empty input reads no folder', async (t) => {
+  let contentReads = 0;
+  let folderReads = 0;
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: async (...args) => {
+        folderReads += 1;
+        return fs.promises.readdir(...args);
+      },
+      readFile: async (...args) => {
+        contentReads += 1;
+        return fs.promises.readFile(...args);
+      },
+      stat: fs.promises.stat,
+    },
+  });
+  writeDated(projectFile(env.home, 'project', SESSION_A), NEW_MS);
+  writeDated(subagentFile(env.home, 'project', SESSION_A), NEWEST_MS);
+
+  const times = await env.sessions.lastActive([
+    listingEntry({ sessionId: SESSION_A, state: 'working', pid: 4242, status: 'busy' }),
+  ]);
+  assert.equal(times.get(SESSION_A), NEWEST_MS);
+  assert.equal(contentReads, 0, 'stat only, never readFile');
+
+  folderReads = 0;
+  const none = await env.sessions.lastActive([]);
+  assert.equal(none.size, 0);
+  assert.equal(folderReads, 0, 'empty input reads no folder');
+});

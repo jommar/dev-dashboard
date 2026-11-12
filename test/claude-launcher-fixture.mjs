@@ -925,6 +925,10 @@ export function createFakeSessions() {
       }
       return state.listing.map((entry) => ({ ...entry }));
     },
+    // No transcripts are read by the fake; the times a route reports come from the real module.
+    async lastActive() {
+      return new Map();
+    },
     async stop({ sessionId }) {
       calls.push({ method: 'stop', sessionId });
       state.onStop?.({ sessionId });

@@ -39,6 +39,7 @@ import {
   isQuestionId,
   isShortId,
   isTicketKey,
+  phaseSessions,
   readE2e,
   readGroom,
   readLaunch,
@@ -747,6 +748,29 @@ export function createClaudeLauncher({
       writeJson(launchPath(key), { ...launched.value, [E2E]: { ...record, ...marker } });
     });
 
+  // The newest transcript time of each phase's session, as ISO strings: `{ KEY: { phase: iso } }`,
+  // sparse, so a ticket with no time has no key. With no session at all, no transcript is read.
+  async function lastActiveOf(keys, entries) {
+    const sessionsOf = new Map(
+      keys.map((key) => [key, phaseSessions(readObject(launchPath(key)).value ?? null, entries)]),
+    );
+    const sessions = new Map();
+    for (const phases of sessionsOf.values())
+      for (const session of Object.values(phases))
+        if (session) sessions.set(session.sessionId, session);
+    if (!sessions.size) return {};
+    const times = await claudeSessions.lastActive([...sessions.values()]);
+    const lastActive = {};
+    for (const [key, phases] of sessionsOf) {
+      const iso = {};
+      for (const [phase, session] of Object.entries(phases))
+        if (session && times.has(session.sessionId))
+          iso[phase] = new Date(times.get(session.sessionId)).toISOString();
+      if (Object.keys(iso).length) lastActive[key] = iso;
+    }
+    return lastActive;
+  }
+
   // Every ticket folder's entry from one shared listing; no folder, no CLI call. This is the one
   // place a finished e2e session is seen, so its browser is stopped here; that never fails the list.
   async function list() {
@@ -766,6 +790,7 @@ export function createClaudeLauncher({
       listing: entries ? 'ok' : 'unavailable',
       updatedAt: now(),
       tickets: Object.fromEntries(keys.map((key) => [key, ticketEntry(key, entries)])),
+      lastActive: entries ? await lastActiveOf(keys, entries) : {},
     };
   }
 

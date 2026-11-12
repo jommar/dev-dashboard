@@ -16,6 +16,7 @@ import {
   INVESTIGATE_NAME,
   KEY,
   REVIEW,
+  REVIEW_ID,
   REVIEW_NAME,
   START_MS,
   answeredMap,
@@ -1797,4 +1798,93 @@ test('e2e check state: a session missing from the listing has failed', async () 
   const entry = await e2eDerive({ entries: [] });
 
   assert.deepEqual(entry.e2e, { state: 'failed', reason: 'session_missing' });
+});
+
+// ---- phaseSessions: the listing entry each own session resolves to ----
+
+test('phaseSessions: each own session resolves to its listing entry, review and groom included', async () => {
+  const { phaseSessions } = await import('../backend/claude-ticket-state.mjs');
+  const launch = {
+    ...bothLaunched(),
+    [REVIEW]: reviewRecord(),
+    [GROOM]: groomRecord(),
+  };
+  const sessions = phaseSessions(launch, [
+    listed({ id: INVESTIGATE_ID }),
+    listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+    reviewEntry(),
+    groomEntry(),
+  ]);
+
+  assert.deepEqual(Object.keys(sessions), ['investigate', 'implement', 'review', 'groom']);
+  assert.equal(sessions.investigate.id, INVESTIGATE_ID);
+  assert.equal(sessions.implement.id, IMPLEMENT_ID);
+  assert.equal(sessions.review.id, REVIEW_ID);
+  assert.equal(sessions.groom.id, GROOM_ID);
+});
+
+test('phaseSessions: e2e appears only with its record, and a record with no listed session is null', async () => {
+  const { phaseSessions } = await import('../backend/claude-ticket-state.mjs');
+  const withoutE2e = phaseSessions(bothLaunched(), [listed({ id: INVESTIGATE_ID })]);
+
+  assert.equal('e2e' in withoutE2e, false, 'no e2e key without an e2e record');
+  assert.equal(withoutE2e.implement, null, 'a record whose session is not listed');
+  assert.equal(withoutE2e.review, null);
+  assert.equal(withoutE2e.groom, null);
+  assert.equal(phaseSessions({ [E2E]: e2eRecord() }, [e2eEntry()]).e2e.id, E2E_ID);
+  assert.deepEqual(phaseSessions({ [E2E]: e2eRecord() }, []), {
+    investigate: null,
+    implement: null,
+    review: null,
+    groom: null,
+    e2e: null,
+  });
+});
+
+test('phaseSessions: no listing resolves every phase to null, and a missing launch to nothing', async () => {
+  const { phaseSessions } = await import('../backend/claude-ticket-state.mjs');
+  const launch = {
+    ...bothLaunched(),
+    [REVIEW]: reviewRecord(),
+    [GROOM]: groomRecord(),
+    [E2E]: e2eRecord(),
+  };
+
+  assert.deepEqual(phaseSessions(launch, null), {
+    investigate: null,
+    implement: null,
+    review: null,
+    groom: null,
+    e2e: null,
+  });
+  assert.deepEqual(phaseSessions(null, [listed({ id: INVESTIGATE_ID })]), {
+    investigate: null,
+    implement: null,
+    review: null,
+    groom: null,
+  });
+});
+
+test('goTo keeps its key order: investigate, implement, groom, then e2e only with its record', async () => {
+  const withE2e = await derive({
+    launch: { ...bothLaunched(), [GROOM]: groomRecord(), [E2E]: e2eRecord() },
+    entries: [
+      listed({ id: INVESTIGATE_ID }),
+      listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+      groomEntry(),
+      e2eEntry(),
+    ],
+  });
+  assert.deepEqual(Object.keys(withE2e.goTo), ['investigate', 'implement', 'groom', 'e2e']);
+
+  const withoutE2e = await derive({ launch: bothLaunched(), entries: [] });
+  assert.deepEqual(Object.keys(withoutE2e.goTo), ['investigate', 'implement', 'groom']);
+
+  const reviewed = await derive({ launch: { [REVIEW]: reviewRecord() }, entries: [reviewEntry()] });
+  assert.deepEqual(Object.keys(reviewed.goTo), ['investigate', 'implement', 'groom']);
+  assert.deepEqual(reviewed.goTo, GO_TO_NONE, 'a review record adds no go-to key');
+
+  const noListing = await derive({ launch: { [E2E]: e2eRecord() }, entries: null });
+  assert.deepEqual(Object.keys(noListing.goTo), ['investigate', 'implement', 'groom', 'e2e']);
+  assert.deepEqual(Object.values(noListing.goTo), [null, null, null, null]);
 });
