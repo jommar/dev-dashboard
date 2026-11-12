@@ -68,21 +68,45 @@ export function isControlPending(id) {
   return pendingControls.has(id);
 }
 
-export async function control(id, action) {
-  if (pendingControls.has(id)) throw new Error('A command is already pending for this service');
-  pendingControls.add(id);
-  for (const listener of controlListeners) listener(id, true);
+// Marks every id pending while `task` runs, so the cards that read `isControlPending` lock for
+// exactly the length of the request. Refuses, without running `task`, when any id is already pending.
+async function withPending(ids, task) {
+  if (ids.some((id) => pendingControls.has(id)))
+    throw new Error('A command is already pending for this service');
+  for (const id of ids) {
+    pendingControls.add(id);
+    for (const listener of controlListeners) listener(id, true);
+  }
   try {
+    return await task();
+  } finally {
+    for (const id of ids) {
+      pendingControls.delete(id);
+      for (const listener of controlListeners) listener(id, false);
+    }
+  }
+}
+
+export const control = (id, action) =>
+  withPending([id], async () => {
     const res = await fetch(`/api/services/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
     });
     await checkResponse(res);
     return res;
-  } finally {
-    pendingControls.delete(id);
-    for (const listener of controlListeners) listener(id, false);
-  }
-}
+  });
+
+export const getWorktrees = (dir) => getJson(`/api/repos/${encodeURIComponent(dir)}/worktrees`);
+
+// `ids` are every service of the repo: all of them lock while the switch (and any restart) runs.
+export const setCheckout = (dir, path, { restart = false, ids }) =>
+  withPending(ids, () =>
+    getJson(`/api/repos/${encodeURIComponent(dir)}/checkout`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, restart }),
+    }),
+  );
 
 export async function getPrs() {
   const res = await fetch('/api/prs');

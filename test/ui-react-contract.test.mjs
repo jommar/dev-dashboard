@@ -127,6 +127,15 @@ test('Services styles are scoped token rules with explicit responsive grid colum
   );
 });
 
+test('checkout 23: the checkout picker is a native select with a native modal and the app tooltip', () => {
+  const picker = read('components/ServiceCheckoutPicker.jsx');
+  assert.match(picker, /<select\b/, 'a native select, not a custom popup');
+  assert.match(picker, /showModal\(/, 'the confirm is a native modal dialog');
+  assert.match(picker, /DashboardTooltip/, 'the badge uses the app tooltip');
+  assert.doesNotMatch(picker, /Listbox/, 'no custom listbox');
+  assert.doesNotMatch(picker, /<[a-z][\w-]*\b[^<>]*\stitle=/, 'no native title attribute');
+});
+
 test('React panels own structural rendering and compose shared React components', () => {
   const components = [
     'Primitives.jsx',

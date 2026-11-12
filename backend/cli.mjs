@@ -20,6 +20,7 @@
 // own Manager in-process (so `logs` works even with no server running).
 import { resolve } from 'node:path';
 import { Manager } from './manager.mjs';
+import { createCheckoutStore } from './checkouts.mjs';
 import { settingsStore } from './settings.mjs';
 import { DASHBOARD_DIR, DEFAULT_TAIL_LINES, DASHBOARD_HOST, DASHBOARD_PORT } from './config.mjs';
 import { fetchOpenPRs, groupByTicket } from './github.mjs';
@@ -115,7 +116,8 @@ async function main() {
     throw new Error('Complete Settings setup before using dashboard commands.');
   snapshot = settingsStore.getSnapshot();
   serviceDefinitions = snapshot.local.services;
-  const makeManager = () => new Manager({ local: snapshot.local });
+  const makeManager = () =>
+    new Manager({ local: snapshot.local, checkouts: createCheckoutStore() });
 
   if (command === 'status') {
     if (dash) {

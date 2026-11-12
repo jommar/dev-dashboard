@@ -11,6 +11,7 @@ import { fetchReviewTickets } from './review-tickets.mjs';
 import { fetchSpecReviews } from './spec-reviews.mjs';
 import { fetchHomeVelocity } from './home-velocity.mjs';
 import { getOriginDiff } from './diff.mjs';
+import { listWorktrees } from './checkouts.mjs';
 import { fetchRelease } from './releases.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
 import { slackIntegration } from './slack.mjs';
@@ -182,6 +183,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     fetchUatPromoteCandidates,
     enrichOpenPRs,
     getOriginDiff,
+    listWorktrees,
     fetchRelease,
     fetchTicketPrs,
     fetchReviewTickets,
@@ -589,6 +591,44 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         json(res, result.ok ? 200 : 400, result);
         return;
       }
+      const repo = pathname.match(/^\/api\/repos\/([^/]+)\/(worktrees|checkout)$/);
+      if (repo && req.method === (repo[2] === 'worktrees' ? 'GET' : 'PUT')) {
+        const dir = decodeURIComponent(repo[1]);
+        const groupOf = () => {
+          const group = manager.checkoutGroup(dir);
+          if (!group) throw httpError('UNKNOWN_REPO', 'Unknown repo.', 404);
+          return group;
+        };
+        if (repo[2] === 'worktrees') {
+          json(res, 200, { dir, worktrees: await api.listWorktrees(groupOf().main) });
+          return;
+        }
+        groupOf();
+        const { path: picked, restart } = await readJson(req);
+        if (
+          typeof picked !== 'string' ||
+          picked === '' ||
+          ![undefined, true, false].includes(restart)
+        )
+          throw httpError('INVALID_CHECKOUT', 'Invalid checkout.', 400);
+        try {
+          // The listing is read under the lock, so the repo cannot change between check and switch.
+          const result = await manager.withSettingsLock(async () => {
+            const chosen = (await api.listWorktrees(groupOf().main)).find(
+              ({ path }) => path === picked,
+            );
+            if (!chosen) throw httpError('INVALID_CHECKOUT', 'Not a worktree of this repo.', 400);
+            return manager.switchCheckoutUnlocked(dir, chosen.isMain ? null : chosen.path, {
+              restart: restart === true,
+            });
+          });
+          json(res, 200, { ok: true, dir, ...result });
+        } finally {
+          // A stop that timed out can leave members stopped, so the feed follows errors too.
+          broadcast();
+        }
+        return;
+      }
       if (req.method === 'GET' && pathname === '/api/my-tickets') {
         const includeDone = ['1', 'true'].includes(url.searchParams.get('includeDone'));
         json(res, 200, {
@@ -677,6 +717,11 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'VALIDATION_FAILED',
         'VALIDATION_UNAVAILABLE',
         'PERSISTENCE_FAILED',
+        'UNKNOWN_REPO',
+        'INVALID_CHECKOUT',
+        'CHECKOUT_IN_USE',
+        'CHECKOUT_UNUSABLE',
+        'WORKTREES_UNAVAILABLE',
         'UNSAFE_CREDENTIAL',
         'BODY_TOO_LARGE',
         'INVALID_JSON',

@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { Manager } from './manager.mjs';
+import { createCheckoutStore } from './checkouts.mjs';
 import { freePort } from './port.mjs';
 import { createHttpHandler } from './http-app.mjs';
 import { settingsStore } from './settings.mjs';
@@ -36,6 +37,7 @@ export async function start() {
     local: settingsStore.getSetupStatus().ready
       ? publicSettings.local
       : { root: publicSettings.local.root, services: [] },
+    checkouts: createCheckoutStore(),
   });
   const handler = createHttpHandler({ settings: settingsStore, manager });
   const server = http.createServer(handler);

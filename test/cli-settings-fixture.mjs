@@ -3,6 +3,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { settingsFixture } from './settings-fixture.mjs';
 
+// The `checkouts.mjs` the copied `cli.mjs` imports, for every CLI fixture that stubs its modules.
+export const CHECKOUT_STORE_STUB = `export const createCheckoutStore = () => ({ get: () => undefined, set() {} });`;
+
 export async function invokeCli(t, command, { ready = false, dashboard = 'gated' } = {}) {
   const f = settingsFixture(t);
   const root = f.paths.dashboardDir;
@@ -33,6 +36,7 @@ export async function invokeCli(t, command, { ready = false, dashboard = 'gated'
     export const getMinPrApprover = () => 1;
   `,
   );
+  fs.writeFileSync(path.join(root, 'checkouts.mjs'), CHECKOUT_STORE_STUB);
   fs.writeFileSync(
     path.join(root, 'manager.mjs'),
     `

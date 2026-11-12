@@ -148,6 +148,8 @@ test('production HTTP handler gates every operation, unlocks setup, closes revok
     ['/api/services/app/start', 'POST'],
     ['/api/services/app/stop', 'POST'],
     ['/api/services/app/restart', 'POST'],
+    ['/api/repos/app/worktrees'],
+    ['/api/repos/app/checkout', 'PUT'],
     ['/api/prs'],
     ['/api/my-tickets'],
     ['/api/ticket-prs'],

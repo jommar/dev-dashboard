@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card } from './Primitives.jsx';
+import { ServiceCheckoutPicker } from './ServiceCheckoutPicker.jsx';
 import { Terminal } from './Terminal.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 
@@ -24,6 +25,7 @@ export function ServiceCard({
   service,
   config,
   locked,
+  repo,
   active,
   followAll,
   snapshot,
@@ -77,6 +79,7 @@ export function ServiceCard({
           </div>
         </div>
         <div className="service-actions">
+          <ServiceCheckoutPicker service={service} repo={repo} onFeedback={setControlState} />
           <span
             className="board-chip service-status"
             data-status={service.status}

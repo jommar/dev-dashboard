@@ -292,6 +292,32 @@ change to `App.jsx` or `AppShell.jsx`. One trap: `.board-pane[hidden]` and `.boa
 their explicit `display: none` rules, because a `display: flex` rule on the same element defeats the
 `hidden` attribute.
 
+## Services: checkout picker, facts not to break
+
+Each service card's checkout select runs a repo's services from a git worktree (`backend/checkouts.mjs`,
+`ServiceCheckoutPicker.jsx`; README "Worktree picker" has the contract).
+
+- **The repo is the unit, not the service.** Services sharing a `def.dir` (`be` and `queue`) switch
+  together in `Manager.switchCheckoutUnlocked`, which runs inside `withSettingsLock` along with the
+  worktree listing and validation (the PUT route holds one lock callback), so a Settings save or another
+  switch cannot interleave. `setCheckout` in `ui-react/lib/api.js` marks every member pending
+  (`withPending`) and `ServicesPanel`'s `repoOf` disables every member's select. Never add a per-service
+  switch path.
+- **The override lives in `checkouts.json`, never in Settings.** `editable()` in `settings.mjs` drops
+  unknown service fields, and a Settings save must not clear a pick. It is keyed by the absolute main
+  checkout. `Manager.buildService` is the one place a `ServiceProcess` reads it, so any new place that
+  builds one goes through it. `checkSettings` compares against `mainCheckout()`, never `cwd()`.
+- **A field the card needs must be in `ServiceProcess.snapshot()`.** SSE replaces the whole service
+  object, so `checkout` and `checkoutLabel` come from the snapshot, never from a fetched copy or panel
+  state.
+- **A native `<select>` and `<dialog>`, not the MUI Listbox/Menu.** `.service-card` is
+  `overflow: hidden` and clips popups. The select disables during a switch and takes focus back after.
+- **The worktree list is never polled.** It is read when the panel loads its services and when a select
+  gains focus; the PUT lists again and accepts only an exact listed path. Do not add a timer or accept
+  a path the listing did not return.
+- **A running service is never swapped without `restart: true`** (409 `CHECKOUT_IN_USE`), and the
+  `.nvmrc` preflight runs before anything stops.
+
 ## E2E ticket check: facts not to break
 
 The Claude dialog's E2E row (`E2eCheckDialog.jsx`, phase `e2e-ticket-check`, bot phase `e2e`) launches

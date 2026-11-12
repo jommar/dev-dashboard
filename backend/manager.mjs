@@ -60,12 +60,28 @@ class RingBuffer {
   }
 }
 
+// How long a checkout switch waits for a stopped service to exit before giving up.
+const STOP_WAIT_MS = 10_000;
+
+// A checkout store that forgets on exit, for a Manager built without a file-backed one.
+function memoryCheckoutStore() {
+  const entries = new Map();
+  return {
+    get: (main) => entries.get(main),
+    set(main, checkout) {
+      if (checkout === null) entries.delete(main);
+      else entries.set(main, checkout);
+    },
+  };
+}
+
 // ── per-service process wrapper ────────────────────────────────────
 export class ServiceProcess {
-  constructor(def, { root = REPOS_ROOT, logsDir = LOGS_DIR } = {}) {
+  constructor(def, { root = REPOS_ROOT, logsDir = LOGS_DIR, checkout = null } = {}) {
     this.def = def;
     this.root = root;
     this.logsDir = logsDir;
+    this.checkout = checkout; // the worktree this service runs from; null is the main checkout
     this.id = def.id;
     this.buffer = new RingBuffer(BUFFER_BYTES);
     this.proc = null;
@@ -75,8 +91,12 @@ export class ServiceProcess {
     this.lastLineAt = null;
   }
 
-  cwd() {
+  mainCheckout() {
     return path.resolve(this.root, this.def.dir);
+  }
+
+  cwd() {
+    return this.checkout ?? this.mainCheckout();
   }
 
   hasNodeModules() {
@@ -200,7 +220,8 @@ export class ServiceProcess {
     this.proc.stderr?.on('data', (chunk) => this.#write(chunk));
 
     this.proc.on('error', (err) => {
-      this.#write(`[dashboard] spawn error: ${err.message}\n`);
+      const missing = err.code === 'ENOENT' && !fs.existsSync(dir) ? ` (no directory ${dir})` : '';
+      this.#write(`[dashboard] spawn error: ${err.message}${missing}\n`);
       this.status = 'exited';
       this.exitCode = err.code ?? 1;
       this.proc = null;
@@ -270,6 +291,24 @@ export class ServiceProcess {
     return true;
   }
 
+  // Stop and resolve true once the process has exited; false when it is still running after
+  // `timeoutMs`.
+  stopAndWait(timeoutMs) {
+    const proc = this.proc;
+    if (!proc) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const finish = (exited) => {
+        clearTimeout(timer);
+        proc.off('exit', onExit);
+        resolve(exited);
+      };
+      const onExit = () => finish(true);
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      proc.once('exit', onExit);
+      this.stop();
+    });
+  }
+
   async restart() {
     // Reject configuration errors before interrupting the existing process.
     const runtime = this.#nodeRuntime();
@@ -288,6 +327,8 @@ export class ServiceProcess {
       exitCode: this.exitCode,
       port: this.def.port ?? null,
       dir: this.def.dir,
+      checkout: this.cwd(),
+      checkoutLabel: this.checkout ? path.basename(this.checkout) : null,
       startedAt: this.startedAt,
       lastLineAt: this.lastLineAt,
       lineCount: this.buffer.lines.length,
@@ -304,13 +345,15 @@ export class Manager {
   constructor({
     local = { root: REPOS_ROOT, services: Object.values(SERVICES) },
     logsDir = LOGS_DIR,
+    checkouts = memoryCheckoutStore(),
   } = {}) {
     this.local = structuredClone(local);
     this.logsDir = logsDir;
+    this.checkouts = checkouts;
     this.queue = Promise.resolve();
     this.services = Object.create(null);
     for (const def of local.services) {
-      this.services[def.id] = new ServiceProcess(def, { root: local.root, logsDir });
+      this.services[def.id] = this.buildService(def, local.root);
     }
     fs.mkdirSync(logsDir, { recursive: true });
     this.onUpdate = null;
@@ -319,6 +362,12 @@ export class Manager {
         if (this.onUpdate) this.onUpdate(id);
       };
     }
+  }
+
+  // A service that runs from its repo's stored checkout, or the main one when none is stored.
+  buildService(def, root) {
+    const checkout = this.checkouts.get(path.resolve(root, def.dir)) ?? null;
+    return new ServiceProcess(def, { root, logsDir: this.logsDir, checkout });
   }
 
   withSettingsLock(operation) {
@@ -334,10 +383,10 @@ export class Manager {
       let changed =
         !definition ||
         JSON.stringify(definition) !== JSON.stringify(svc.def) ||
-        path.resolve(local.root, definition.dir) !== svc.cwd();
+        path.resolve(local.root, definition.dir) !== svc.mainCheckout();
       if (!changed && local.root !== svc.root) {
         try {
-          const next = new ServiceProcess(definition, { root: local.root, logsDir: this.logsDir });
+          const next = this.buildService(definition, local.root);
           changed = next.runtimeIdentity() !== svc.runtimeIdentity();
         } catch {
           changed = true;
@@ -361,7 +410,7 @@ export class Manager {
         JSON.stringify(previous.def) === JSON.stringify(def) &&
         (previous.root === local.root || previous.proc)
           ? previous
-          : new ServiceProcess(def, { root: local.root, logsDir: this.logsDir });
+          : this.buildService(def, local.root);
       svc.root = local.root;
       svc.onUpdate = (id) => this.onUpdate?.(id);
       services[def.id] = svc;
@@ -427,6 +476,72 @@ export class Manager {
     } finally {
       svc.pending = false;
     }
+  }
+
+  // The services that share the repo directory `dir` and the main checkout they run from, or null.
+  checkoutGroup(dir) {
+    const members = Object.values(this.services).filter((svc) => svc.def.dir === dir);
+    if (members.length === 0) return null;
+    return { main: members[0].mainCheckout(), ids: members.map((svc) => svc.id) };
+  }
+
+  // Run every service of the repo `dir` from `checkout` (null: the main checkout). Running members
+  // switch only with `restart: true`: they are stopped, awaited, and started again. Call it inside
+  // `withSettingsLock`.
+  async switchCheckoutUnlocked(dir, checkout, { restart = false } = {}) {
+    const group = this.checkoutGroup(dir);
+    if (!group)
+      throw Object.assign(new Error(`unknown repo: ${dir}`), { code: 'UNKNOWN_REPO', status: 404 });
+    const members = group.ids.map((id) => this.services[id]);
+    const running = members.filter((svc) => svc.proc);
+    if (running.length > 0 && restart !== true)
+      throw Object.assign(new Error('A service of this repo is running.'), {
+        code: 'CHECKOUT_IN_USE',
+        status: 409,
+      });
+    for (const svc of running) {
+      try {
+        new ServiceProcess(svc.def, {
+          root: svc.root,
+          logsDir: this.logsDir,
+          checkout,
+        }).inspectRuntime();
+      } catch (error) {
+        throw Object.assign(new Error(`Checkout is not usable: ${error.message}`), {
+          code: 'CHECKOUT_UNUSABLE',
+          status: 422,
+          cause: error,
+        });
+      }
+    }
+    await Promise.all(running.map((svc) => svc.stopAndWait(STOP_WAIT_MS)));
+    try {
+      if (running.some((svc) => svc.proc))
+        throw Object.assign(new Error('A service did not stop in time.'), {
+          code: 'CHECKOUT_IN_USE',
+          status: 409,
+        });
+      try {
+        await this.checkouts.set(group.main, checkout);
+      } catch (error) {
+        throw Object.assign(new Error('Could not save the checkout.'), {
+          code: 'PERSISTENCE_FAILED',
+          status: 503,
+          cause: error,
+        });
+      }
+    } catch (error) {
+      // The old checkout stays in force: bring back the members this switch stopped.
+      for (const svc of running) if (!svc.proc) await this.startUnlocked(svc.id).catch(() => {});
+      throw error;
+    }
+    for (const svc of members) svc.checkout = checkout;
+    for (const svc of running) await this.startUnlocked(svc.id);
+    return {
+      checkout: members[0].cwd(),
+      checkoutLabel: checkout ? path.basename(checkout) : null,
+      restarted: running.map((svc) => svc.id),
+    };
   }
 
   logs(id, lines) {

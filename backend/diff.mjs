@@ -67,7 +67,7 @@ export function repoDir(shortName, { snapshot } = {}) {
   return dir;
 }
 
-function runGit(dir, args, { timeout = DIFF_TIMEOUT_MS, maxBuffer = DIFF_MAX_BYTES } = {}) {
+export function runGit(dir, args, { timeout = DIFF_TIMEOUT_MS, maxBuffer = DIFF_MAX_BYTES } = {}) {
   return new Promise((resolve, reject) => {
     execFile(
       'git',

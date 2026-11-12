@@ -89,7 +89,9 @@ click. All seven views remain available:
   whether the work reached `ops/development`. It opens on your own tickets;
   **All release tickets** widens it. See [Releases](#releases).
 - **Services** — one card per service, each showing its status and a log
-  viewport that tails the last 40 lines (_Show full_ reveals everything).
+  viewport that tails the last 40 lines (_Show full_ reveals everything). A
+  **checkout** select on each card runs the service from another git worktree of
+  its repo. See [Worktree picker](#worktree-picker).
 - **Settings** — saved integrations, token replacements, local services and
   advanced options.
 
@@ -152,6 +154,7 @@ The dashboard persists configuration outside the project:
 | Path                                                         | Contents                                                                                                                                     |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `~/.config/dev-dashboard/settings.json`                      | Versioned non-secret settings (`schemaVersion: 1`), revision, migration origin, integration acceptance metadata and the `slackWatch` section |
+| `~/.config/dev-dashboard/checkouts.json`                     | Worktree each repo's services run from; written by the checkout picker (see [Worktree picker](#worktree-picker))                             |
 | `~/.config/dev-dashboard/slack-watch/map.json`               | Watched Slack links and the session ids attached to each; written by the Slack watcher only (see [Watch](#watch))                            |
 | `~/.config/dev-dashboard/slack-watch/inbox/<session-id>.log` | One notice line per wake for an attached session; plain text, created and removed by the watcher                                             |
 | `~/.config/github/token`                                     | GitHub token                                                                                                                                 |
@@ -377,6 +380,7 @@ An agent can read the same logs three ways:
    - `GET /api/logs/:id?lines=N`
    - `GET /api/services`
    - `POST /api/services/:id/{start|stop|restart}`
+   - `GET /api/repos/:dir/worktrees` and `PUT /api/repos/:dir/checkout` (a repo's git worktrees, and which one its services run from; see [Worktree picker](#worktree-picker))
    - `GET /api/events` (SSE live status)
    - `GET /api/prs`
    - `GET /api/review-tickets` (other-assigned review-ready Jira tickets with all linked open PRs in watched repos; see [PR review board](#open-prs))
@@ -2778,6 +2782,105 @@ Start and restart reject empty, unreadable, or unsupported pins and installation
 without executable `node` and `npm`, before clearing logs or freeing ports.
 Restart validates before stopping the running service. Successful pinned starts
 log the selected Node version and executable path.
+
+### Worktree picker
+
+Each service card has a **checkout** select (`service-checkout-<id>`) that runs
+the service from any git worktree of its repo, not only the main checkout under
+the Settings root. It lists the repo's `git worktree list` output: the main
+checkout first (shown as `main · <branch>`), then the worktrees by branch name
+(a detached one reads `<7 hex> (detached)`). Bare and prunable worktrees are
+left out. A repo that runs from a worktree shows a **worktree: &lt;folder&gt;**
+badge (`service-checkout-badge-<id>`, full path on hover) on each of its cards.
+
+- **Services of one repo switch together.** `be` and `queue` share
+  `Portage-backend`, `legacy` and `legacy-ui` share `TravelTracker`; picking on
+  one card moves them all and locks every card of the repo until the request
+  ends.
+- **A running repo is never swapped silently.** Picking while no service of the
+  repo runs just records the choice; the next start uses it. Picking while any
+  runs opens a confirm naming the running services; **Restart** stops them,
+  waits up to 10 s for each to exit, and starts them again from the new
+  checkout. Services of the repo that were stopped stay stopped.
+- **What runs where.** The service's working directory, its `.nvmrc` lookup
+  (the worktree's own file first, then the monorepo root's) and its
+  `node_modules` warning all follow the chosen checkout. The port, command and
+  log location (`logs/<id>/out.log`) are unchanged, and logs are cleared on the
+  restart as for any start. A new worktree has no `node_modules` of its own:
+  the start shows the usual warning and fails until you install there.
+- **The choice is remembered** in `~/.config/dev-dashboard/checkouts.json`,
+  separate from Settings, so a Settings save never drops it. Picking the main
+  checkout removes the entry. Delete the file to put everything back on the
+  main checkouts. A missing or corrupt file reads as no overrides. Services
+  start stopped when the dashboard starts, so a remembered choice never swaps
+  anything that is running. The CLI's in-process fallback reads the same file.
+- **The list is read on demand**: when the Services tab loads (once per repo) and
+  when a select gains focus. Nothing polls it.
+
+**Failure behaviour.**
+
+- A service that is running while the pick is made and `restart` is not
+  confirmed, or does not exit within 10 s, leaves everything as it was
+  (409 `CHECKOUT_IN_USE`). After a stop timeout or a failed save of
+  `checkouts.json` (503 `PERSISTENCE_FAILED`), the members the switch had
+  already stopped are started again on the old checkout; one that ignored the
+  stop signal is not restarted by this.
+- Before anything stops, each running service is checked against the new
+  checkout (its `.nvmrc` pin and Node installation); a pin that cannot be
+  used is 422 `CHECKOUT_UNUSABLE` and nothing stops.
+- If the switch succeeds but the new start fails (no `node_modules`, a removed
+  directory), the service shows as exited with the reason in its log; switch
+  back from the select.
+- A worktree that is removed later is not cleaned up: its entry stays, the select
+  shows `<folder> (not listed)`, and the next start fails with a
+  `(no directory <path>)` line in the log until you pick another checkout.
+
+**Limits.**
+
+- A service's `dir` must be the root of a git worktree. If it is a subdirectory
+  of a repo (or a bare repository), the listing and a pick answer
+  `WORKTREES_UNAVAILABLE` (502): the select shows only the current checkout and
+  reports "Checkouts unavailable" when focused, rather than starting from the
+  worktree root.
+- The repo's main checkout is matched by real path and is shown and used under
+  the spelling configured in Settings, even when git prints another one. When
+  `dir` is itself a linked worktree, that directory is "main" and the true main
+  checkout is listed as an ordinary entry.
+- The listing reads `git worktree list --porcelain -z` (git 2.36 or newer), so a
+  worktree whose path contains a newline is listed with its true path.
+- Services are grouped by the exact `dir` string; two services pointing at the
+  same repo under different spellings are separate groups.
+
+**API.** Both routes need setup to be ready (otherwise 409 `SETUP_REQUIRED`).
+`:dir` is the URL-encoded `dir` of a configured service and must match it
+exactly, so a value that is not a configured `dir` is 404 `UNKNOWN_REPO` before
+git runs. Errors use the usual `{ code, error, errors }` body.
+
+- `GET /api/repos/:dir/worktrees` answers `200`
+  `{ "dir": "Portage-backend", "worktrees": [{ "path", "label", "isMain" }] }`.
+  A git failure (not a repo, git missing, 5 s timeout) is 502
+  `WORKTREES_UNAVAILABLE`.
+- `PUT /api/repos/:dir/checkout` takes JSON `{ "path": "<a listed path>",
+"restart": true }` (`restart` optional, boolean, default `false`). The server
+  lists the worktrees again inside the settings lock and `path` must equal one
+  listed `path` exactly (no normalising, no prefix match); anything else, a
+  non-string or empty `path`, or a non-boolean `restart` is 400
+  `INVALID_CHECKOUT`. Choosing the main checkout's path removes the override. It
+  answers `200` `{ "ok": true, "dir", "checkout", "checkoutLabel", "restarted": ["be"] }`
+  and broadcasts the status feed (it does after an error too).
+- `409 CHECKOUT_IN_USE` (a service of the repo is running and `restart` is not
+  `true`, or one did not exit in time), `422 CHECKOUT_UNUSABLE`,
+  `503 PERSISTENCE_FAILED`.
+- Every service in `GET /api/services` and `GET /api/events` now carries
+  `checkout` (the absolute directory it uses, and was spawned in when running)
+  and `checkoutLabel` (`null` for the main checkout, otherwise the worktree's
+  folder name).
+
+The picker's `data-testid` names (`service-checkout-<id>`,
+`service-checkout-badge-<id>`, `service-checkout-dialog-<id>`,
+`service-checkout-confirm-<id>`, `service-checkout-cancel-<id>`) are pinned by
+`e2e/services-checkout.spec.js`; treat them as a contract. Results appear in the
+card's `control-feedback-<id>` line.
 
 ## Port freeing
 

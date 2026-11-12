@@ -488,6 +488,8 @@ export function dashboardData() {
       id: 'api',
       label: 'Workspace API',
       dir: 'workspace-api',
+      checkout: '/repos/workspace-api',
+      checkoutLabel: null,
       status: 'running',
       port: null,
       exitCode: null,
@@ -496,6 +498,8 @@ export function dashboardData() {
       id: 'web',
       label: 'Workspace Web',
       dir: 'workspace-web',
+      checkout: '/repos/workspace-web',
+      checkoutLabel: null,
       status: 'running',
       port: null,
       exitCode: null,
@@ -504,6 +508,8 @@ export function dashboardData() {
       id: 'worker',
       label: 'Background Worker',
       dir: 'workspace-worker',
+      checkout: '/repos/workspace-worker',
+      checkoutLabel: null,
       status: 'stopped',
       port: null,
       exitCode: 0,
@@ -2125,6 +2131,15 @@ export function apiResponse(url, method, data, body) {
     if (url.pathname === '/api/config') return { json: data.config };
     if (url.pathname === '/api/settings') return { json: data.settings };
     if (url.pathname === '/api/services') return { json: { services: data.services } };
+    const worktrees = url.pathname.match(/^\/api\/repos\/([^/]+)\/worktrees$/);
+    if (worktrees) {
+      const dir = decodeURIComponent(worktrees[1]);
+      if (data.worktrees?.[dir]) return { json: data.worktrees[dir] };
+      if (data.services?.some((service) => service.dir === dir))
+        return {
+          json: { dir, worktrees: [{ path: `/repos/${dir}`, label: 'master', isMain: true }] },
+        };
+    }
     if (url.pathname === '/api/team-velocity') return { json: data.teamVelocity };
     if (url.pathname === '/api/prs') return { json: data.prs };
     if (url.pathname === '/api/review-tickets') return { json: data.reviewTickets };
@@ -2160,6 +2175,20 @@ export function apiResponse(url, method, data, body) {
     return data.saveResponse || { json: data.settings };
   if (method === 'POST' && url.pathname === '/api/settings/validate')
     return data.validateResponse || { json: { ...data.settings, setup: data.config.setup } };
+  const checkout = url.pathname.match(/^\/api\/repos\/([^/]+)\/checkout$/);
+  if (method === 'PUT' && checkout) {
+    const dir = decodeURIComponent(checkout[1]);
+    if (data.services?.some((service) => service.dir === dir))
+      return {
+        json: {
+          ok: true,
+          dir,
+          checkout: body?.path,
+          checkoutLabel: body?.path === `/repos/${dir}` ? null : body?.path.split('/').pop(),
+          restarted: [],
+        },
+      };
+  }
   const control = url.pathname.match(/^\/api\/services\/([^/]+)\/(start|stop|restart)$/);
   if (method === 'POST' && control && data.services.some((service) => service.id === control[1])) {
     return { json: { ok: true } };

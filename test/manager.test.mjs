@@ -348,3 +348,240 @@ test('settings apply preserves live logs and children, rejects live and pending 
   assert.equal(f.kills.length, 0);
   assert.equal(manager.logs('app', 0), logs);
 });
+
+// Checkout picker: a repo's services run from a chosen git worktree.
+
+function fakeCheckoutStore(initial = {}) {
+  const entries = new Map(Object.entries(initial));
+  const sets = [];
+  return {
+    sets,
+    get: (main) => entries.get(main),
+    set(main, checkout) {
+      sets.push([main, checkout]);
+      if (checkout === null) entries.delete(main);
+      else entries.set(main, checkout);
+    },
+  };
+}
+
+const repoService = (id, dir, extra = {}) => ({
+  id,
+  label: id,
+  dir,
+  command: ['npm', 'run', 'dev'],
+  port: null,
+  ...extra,
+});
+
+// A worktree directory beside the fixture's project, with an optional pin of its own.
+function makeWorktree(f, name, pin) {
+  const dir = path.join(f.root, 'worktrees', name);
+  fs.mkdirSync(dir, { recursive: true });
+  if (pin !== undefined) fs.writeFileSync(path.join(dir, '.nvmrc'), pin);
+  return dir;
+}
+
+// A real process exits after the signal, not inside process.kill: deliver the exit event later.
+function deferExit(proc) {
+  const emit = proc.emit.bind(proc);
+  proc.emit = (event, ...args) => {
+    if (event !== 'exit') return emit(event, ...args);
+    setImmediate(() => emit(event, ...args));
+    return true;
+  };
+}
+
+// A process that never reports its exit.
+function neverExit(proc) {
+  const emit = proc.emit.bind(proc);
+  proc.emit = (event, ...args) => (event === 'exit' ? true : emit(event, ...args));
+}
+
+test('checkout 7: start runs in the override with its own pin, and in the main checkout without one', async (t) => {
+  const f = await fixture(t, { customNvm: true });
+  fs.writeFileSync(path.join(f.project, '.nvmrc'), '20.18.0');
+  f.install('v20.18.0');
+  const worktree = makeWorktree(f, 'x', '22.0.0');
+  const bin = f.install('v22.0.0');
+  const plain = new f.Manager({
+    local: { root: f.root, services: [repoService('plain', 'project')] },
+    logsDir: f.logs,
+  });
+  const moved = new f.Manager({
+    local: { root: f.root, services: [repoService('moved', 'project')] },
+    logsDir: f.logs,
+    checkouts: fakeCheckoutStore({ [f.project]: worktree }),
+  });
+  await plain.start('plain');
+  await moved.start('moved');
+  assert.equal(f.spawns[0].options.cwd, f.project);
+  assert.equal(f.spawns[1].options.cwd, worktree);
+  assert.equal(f.spawns[1].options.env.PATH, `${bin}${path.delimiter}${process.env.PATH || ''}`);
+});
+
+test('checkout 8: switching a repo moves every service of it and no other in the status', async (t) => {
+  const f = await fixture(t);
+  const local = {
+    root: f.root,
+    services: [
+      repoService('be', 'Portage-backend'),
+      repoService('queue', 'Portage-backend'),
+      repoService('fe', 'Portage-frontend'),
+    ],
+  };
+  const manager = new f.Manager({ local, logsDir: f.logs });
+  const worktree = makeWorktree(f, 'feature');
+  const byId = () => Object.fromEntries(manager.list().map((service) => [service.id, service]));
+  assert.equal(byId().be.checkout, path.join(f.root, 'Portage-backend'));
+  assert.equal(byId().be.checkoutLabel, null);
+  await manager.switchCheckoutUnlocked('Portage-backend', worktree, { restart: false });
+  for (const id of ['be', 'queue']) {
+    assert.equal(byId()[id].checkout, worktree, id);
+    assert.equal(byId()[id].checkoutLabel, 'feature', id);
+  }
+  assert.equal(byId().fe.checkout, path.join(f.root, 'Portage-frontend'));
+  assert.equal(byId().fe.checkoutLabel, null);
+});
+
+test('checkout 9: a running repo is refused without restart and nothing changes', async (t) => {
+  const f = await fixture(t);
+  const store = fakeCheckoutStore();
+  const manager = new f.Manager({
+    local: { root: f.root, services: [repoService('be', 'project')] },
+    logsDir: f.logs,
+    checkouts: store,
+  });
+  await manager.start('be');
+  const worktree = makeWorktree(f, 'x');
+  await assert.rejects(
+    manager.switchCheckoutUnlocked('project', worktree, { restart: false }),
+    (error) => error.code === 'CHECKOUT_IN_USE' && error.status === 409,
+  );
+  assert.equal(f.kills.length, 0);
+  assert.equal(f.spawns.length, 1);
+  assert.deepEqual(store.sets, []);
+  assert.equal(manager.list()[0].checkout, f.project);
+});
+
+test('checkout 10: a confirmed restart stops, awaits and respawns the running member only', async (t) => {
+  const f = await fixture(t, { customNvm: true });
+  f.install('v20.18.0');
+  const worktree = makeWorktree(f, 'x', '20.18.0');
+  const store = fakeCheckoutStore();
+  const manager = new f.Manager({
+    local: {
+      root: f.root,
+      services: [repoService('be', 'project'), repoService('queue', 'project')],
+    },
+    logsDir: f.logs,
+    checkouts: store,
+  });
+  await manager.start('be');
+  deferExit(f.spawns[0].proc);
+  manager.services.be.buffer.push('old log line\n');
+  const result = await manager.switchCheckoutUnlocked('project', worktree, { restart: true });
+  assert.deepEqual(result.restarted, ['be']);
+  assert.equal(f.kills.length, 1);
+  assert.equal(f.spawns.length, 2);
+  assert.equal(f.spawns[1].options.cwd, worktree);
+  assert.doesNotMatch(manager.logs('be', 0), /old log line|process exited/);
+  assert.deepEqual(store.sets, [[f.project, worktree]]);
+  const byId = Object.fromEntries(manager.list().map((service) => [service.id, service]));
+  assert.equal(byId.be.status, 'running');
+  assert.equal(byId.be.checkout, worktree);
+  assert.equal(byId.queue.status, 'stopped');
+  assert.equal(byId.queue.checkout, worktree);
+});
+
+test('checkout 11: an unusable pin in the worktree leaves the running service alone', async (t) => {
+  const f = await fixture(t);
+  const store = fakeCheckoutStore();
+  const manager = new f.Manager({
+    local: { root: f.root, services: [repoService('be', 'project')] },
+    logsDir: f.logs,
+    checkouts: store,
+  });
+  await manager.start('be');
+  const worktree = makeWorktree(f, 'x', 'lts/*');
+  await assert.rejects(
+    manager.switchCheckoutUnlocked('project', worktree, { restart: true }),
+    (error) => error.code === 'CHECKOUT_UNUSABLE' && error.status === 422,
+  );
+  assert.equal(f.kills.length, 0);
+  assert.equal(f.spawns.length, 1);
+  assert.deepEqual(store.sets, []);
+  assert.equal(manager.list()[0].checkout, f.project);
+});
+
+test('checkout 12: a process that will not exit blocks the switch after the wait', async (t) => {
+  const f = await fixture(t);
+  const store = fakeCheckoutStore();
+  const manager = new f.Manager({
+    local: { root: f.root, services: [repoService('be', 'project')] },
+    logsDir: f.logs,
+    checkouts: store,
+  });
+  await manager.start('be');
+  neverExit(f.spawns[0].proc);
+  const worktree = makeWorktree(f, 'x');
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const outcome = assert.rejects(
+    manager.switchCheckoutUnlocked('project', worktree, { restart: true }),
+    (error) => error.code === 'CHECKOUT_IN_USE' && error.status === 409,
+  );
+  for (let second = 0; second < 15; second += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(1000);
+  }
+  await outcome;
+  assert.equal(f.spawns.length, 1);
+  assert.deepEqual(store.sets, []);
+  assert.equal(manager.list()[0].checkout, f.project);
+});
+
+test('checkout 10: a store that cannot save brings the stopped member back on the old checkout', async (t) => {
+  const f = await fixture(t);
+  const store = fakeCheckoutStore();
+  store.set = () => {
+    throw new Error('disk full');
+  };
+  const manager = new f.Manager({
+    local: { root: f.root, services: [repoService('be', 'project')] },
+    logsDir: f.logs,
+    checkouts: store,
+  });
+  await manager.start('be');
+  deferExit(f.spawns[0].proc);
+  const worktree = makeWorktree(f, 'x');
+  await assert.rejects(
+    manager.switchCheckoutUnlocked('project', worktree, { restart: true }),
+    (error) => error.code === 'PERSISTENCE_FAILED' && error.status === 503,
+  );
+  assert.equal(f.spawns.length, 2);
+  assert.equal(f.spawns[1].options.cwd, f.project);
+  assert.equal(manager.list()[0].status, 'running');
+  assert.equal(manager.list()[0].checkout, f.project);
+});
+
+test('checkout 13: identical settings apply while an overridden service runs, a changed one does not', async (t) => {
+  const f = await fixture(t);
+  const definition = repoService('be', 'project');
+  const local = { root: f.root, services: [definition] };
+  const worktree = makeWorktree(f, 'x');
+  const manager = new f.Manager({
+    local,
+    logsDir: f.logs,
+    checkouts: fakeCheckoutStore({ [f.project]: worktree }),
+  });
+  await manager.start('be');
+  await manager.applySettings(structuredClone(local));
+  assert.equal(manager.list()[0].checkout, worktree);
+  await assert.rejects(
+    manager.applySettings({
+      root: f.root,
+      services: [{ ...definition, command: ['node', 'x.js'] }],
+    }),
+    (error) => error.code === 'SERVICE_IN_USE',
+  );
+});

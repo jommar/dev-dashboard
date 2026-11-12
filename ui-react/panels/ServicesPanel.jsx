@@ -14,6 +14,7 @@ export function ServicesPanel({ config, active, services: snapshots = [] }) {
   const [bulkFeedback, setBulkFeedback] = useState({ message: '', state: '' });
   const [followStates, setFollowStates] = useState({});
   const [followVersion, setFollowVersion] = useState(0);
+  const [listings, setListings] = useState({});
   useEffect(() => {
     const refreshLocks = () =>
       setPending((ids) => {
@@ -35,18 +36,28 @@ export function ServicesPanel({ config, active, services: snapshots = [] }) {
   useEffect(() => {
     if (active && !services.length) load();
   }, [active]);
+  // A repo's worktrees are read when the services load and when a picker gains focus, never on a timer.
+  const listCheckouts = useCallback(
+    async (dir) => {
+      const { worktrees } = await api.getWorktrees(dir);
+      setListings((listed) => ({ ...listed, [dir]: worktrees }));
+    },
+    [api],
+  );
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const result = await api.getServices();
       setServices(result);
+      for (const dir of new Set(result.map((service) => service.dir)))
+        listCheckouts(dir).catch(() => {});
     } catch (cause) {
       setError(`Services unavailable: ${cause.message}`);
     } finally {
       setLoading(false);
     }
-  }, [api]);
+  }, [api, listCheckouts]);
   const current = useMemo(
     () =>
       services.map(
@@ -56,6 +67,18 @@ export function ServicesPanel({ config, active, services: snapshots = [] }) {
   );
   const control = async (id, action) => {
     await api.control(id, action);
+  };
+  // The picker's view of a service's repo: every service sharing its dir switches and locks together.
+  const repoOf = (service) => {
+    const members = current.filter(({ dir }) => dir === service.dir);
+    const ids = members.map(({ id }) => id);
+    return {
+      worktrees: listings[service.dir],
+      services: members,
+      disabled: bulkPending || ids.some((id) => pending.has(id)),
+      list: () => listCheckouts(service.dir),
+      switchTo: (path, restart) => api.setCheckout(service.dir, path, { restart, ids }),
+    };
   };
   const controlAll = async (action) => {
     if (bulkPending || pending.size) return;
@@ -164,6 +187,7 @@ export function ServicesPanel({ config, active, services: snapshots = [] }) {
                   snapshot={snapshots}
                   followAll={followStates[service.id] ?? true}
                   locked={bulkPending || pending.has(service.id)}
+                  repo={repoOf(service)}
                   onControl={control}
                   onFollowChange={(id, value) => {
                     setFollowStates((states) => ({ ...states, [id]: value }));

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { invokeCli } from './cli-settings-fixture.mjs';
+import { CHECKOUT_STORE_STUB, invokeCli } from './cli-settings-fixture.mjs';
 
 async function runControl(t, command, response) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-dashboard-cli-'));
@@ -37,6 +37,7 @@ async function runControl(t, command, response) {
     export const getSettingsStore = () => settingsStore;
   `,
   );
+  fs.writeFileSync(path.join(root, 'checkouts.mjs'), CHECKOUT_STORE_STUB);
   fs.writeFileSync(
     path.join(root, 'manager.mjs'),
     `
@@ -213,6 +214,7 @@ async function runReleasesCli(t, args, { result = null, failure = null } = {}) {
     export const getSettingsStore = () => settingsStore;
   `,
   );
+  fs.writeFileSync(path.join(root, 'checkouts.mjs'), CHECKOUT_STORE_STUB);
   fs.writeFileSync(
     path.join(root, 'manager.mjs'),
     `export class Manager { constructor() { throw new Error('Unexpected manager'); } }`,

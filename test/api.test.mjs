@@ -292,3 +292,79 @@ test('rereviewClaude posts only the ticket key and passes the send outcome throu
   assert.deepEqual(JSON.parse(calls[0][1].body), { key: 'TAP-1234' });
   assert.deepEqual(result.send, send);
 });
+
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+};
+
+test('checkout 14: setCheckout PUTs JSON, returns the body and locks every id only during the call', async (t) => {
+  const calls = [];
+  const gate = deferred();
+  const body = { ok: true, dir: 'my dir', checkout: '/r/x', checkoutLabel: 'x', restarted: ['a'] };
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    await gate.promise;
+    return new Response(JSON.stringify(body), { status: 200 });
+  });
+  const pending = api.setCheckout('my dir', '/r/x', { restart: true, ids: ['a', 'b'] });
+  assert.equal(api.isControlPending('a'), true);
+  assert.equal(api.isControlPending('b'), true);
+  assert.equal(api.isControlPending('c'), false);
+  gate.resolve();
+  assert.deepEqual(await pending, body);
+  assert.equal(api.isControlPending('a'), false);
+  assert.equal(api.isControlPending('b'), false);
+  assert.equal(calls[0][0], '/api/repos/my%20dir/checkout');
+  assert.equal(calls[0][1].method, 'PUT');
+  assert.equal(new Headers(calls[0][1].headers).get('content-type'), 'application/json');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { path: '/r/x', restart: true });
+});
+
+test('checkout 14: setCheckout throws the coded error and releases the ids', async (t) => {
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async () =>
+      new Response(JSON.stringify({ code: 'CHECKOUT_IN_USE', error: 'CHECKOUT IN USE' }), {
+        status: 409,
+      }),
+  );
+  await assert.rejects(api.setCheckout('d', '/r/x', { restart: false, ids: ['a', 'b'] }), {
+    code: 'CHECKOUT_IN_USE',
+    status: 409,
+    message: 'CHECKOUT IN USE',
+  });
+  assert.equal(api.isControlPending('a'), false);
+  assert.equal(api.isControlPending('b'), false);
+});
+
+test('checkout 14: setCheckout refuses without a request while one of its ids is pending', async (t) => {
+  const calls = [];
+  const gate = deferred();
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    await gate.promise;
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  });
+  const start = control('a', 'start');
+  await assert.rejects(api.setCheckout('d', '/r/x', { restart: false, ids: ['a', 'b'] }));
+  assert.equal(calls.length, 1);
+  assert.equal(api.isControlPending('b'), false);
+  gate.resolve();
+  await start;
+});
+
+test('checkout 14: getWorktrees asks the listing route of the encoded dir', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return new Response(JSON.stringify({ dir: 'my dir', worktrees: [] }), { status: 200 });
+  });
+  await api.getWorktrees('my dir');
+  assert.equal(calls[0][0], '/api/repos/my%20dir/worktrees');
+  assert.ok(!calls[0][1]?.method || calls[0][1].method === 'GET');
+});

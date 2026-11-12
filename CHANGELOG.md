@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added a worktree picker to the **Services** tab: each service card has a **checkout** select listing
+  the repo's git worktrees (`git worktree list`, main checkout first), so a service can run from a
+  worktree instead of the main checkout under the Settings root. Services that share a repo (`be` and
+  `queue`, `legacy` and `legacy-ui`) always switch together. The choice is kept in
+  `~/.config/dev-dashboard/checkouts.json`, not in Settings, and survives dashboard restarts. A repo with
+  a running service switches only after an explicit confirm, which stops it, waits up to 10 s for it to
+  exit and starts it again from the new checkout (`restart: true`); otherwise 409 `CHECKOUT_IN_USE`. New
+  routes `GET /api/repos/:dir/worktrees` and `PUT /api/repos/:dir/checkout` (the picked `path` must be
+  one the listing returns), new error codes `UNKNOWN_REPO`, `INVALID_CHECKOUT`, `CHECKOUT_IN_USE`,
+  `CHECKOUT_UNUSABLE` and `WORKTREES_UNAVAILABLE`, and two new status fields on every service,
+  `checkout` and `checkoutLabel`. The Settings schema, the `start` / `stop` / `restart` routes and the
+  log location are unchanged; with no `checkouts.json` every service runs from its main checkout as
+  before.
 - Added local prompt overrides for code review (`prompts/review.md`), spec review
   (`prompts/spec-review.md`) and E2E checks (`prompts/e2e.md`), bringing the shared editor, prompt API
   and starter command to nine templates. Built-in prompt text, spec-review CLI restrictions and E2E
