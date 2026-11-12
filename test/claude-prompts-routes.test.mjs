@@ -16,6 +16,9 @@ import {
   GROOM,
   GROOM_TEMPLATE,
   REREVIEW_TEMPLATE,
+  REVIEW_TEMPLATE,
+  SPEC_REVIEW_TEMPLATE,
+  E2E_TEMPLATE,
   IMPLEMENT,
   IMPLEMENT_TEMPLATE,
   INVESTIGATE,
@@ -84,7 +87,7 @@ const assertFailed = (res, label) => {
 
 // ---- GET /api/claude/prompts ----
 
-test('scenario 170: GET lists the six prompts in order, each the built-in text when there is no file', async (t) => {
+test('scenario 170: GET lists the nine prompts in order, each the built-in text when there is no file', async (t) => {
   const f = await claudeHttpFixture(t);
 
   const res = await list(f);
@@ -113,6 +116,9 @@ test('scenario 171: GET shows a usable file as custom with its trimmed text, the
     promptEntry('approve', 'default'),
     promptEntry('rereview', 'default'),
     promptEntry('groom', 'default'),
+    promptEntry('review', 'default'),
+    promptEntry('spec-review', 'default'),
+    promptEntry('e2e', 'default'),
   ]);
 });
 
@@ -130,6 +136,9 @@ test('scenario 171: GET shows a file that cannot be used as unusable, with the b
     promptEntry('approve', 'default'),
     promptEntry('rereview', 'default'),
     promptEntry('groom', 'default'),
+    promptEntry('review', 'default'),
+    promptEntry('spec-review', 'default'),
+    promptEntry('e2e', 'default'),
   ]);
 });
 
@@ -168,14 +177,17 @@ test('scenario 173: PUT saves the trimmed text with one newline and answers with
   assert.deepEqual(fs.readdirSync(f.promptsDir).sort(), [
     'answers.md',
     'approve.md',
+    'e2e.md',
     'groom.md',
     'implement.md',
     'investigate.md',
     'rereview.md',
+    'review.md',
+    'spec-review.md',
   ]);
   assert.deepEqual(
     (await list(f)).json().prompts.map(({ source }) => source),
-    ['custom', 'custom', 'custom', 'custom', 'custom', 'custom'],
+    PROMPT_NAMES.map(() => 'custom'),
   );
 });
 
@@ -275,8 +287,26 @@ test('scenario 180: DELETE removes the file and answers with the built-in entry,
   assert.deepEqual(fs.readdirSync(f.promptsDir), ['implement.md'], 'the other file stays');
   assert.deepEqual(
     (await list(f)).json().prompts.map(({ source }) => source),
-    ['default', 'custom', 'default', 'default', 'default', 'default'],
+    [
+      'default',
+      'custom',
+      'default',
+      'default',
+      'default',
+      'default',
+      'default',
+      'default',
+      'default',
+    ],
   );
+  // Every registered prompt, including the three initial side-action prompts, supports reset.
+  for (const name of PROMPT_NAMES) {
+    assert.equal((await put(f, name, `custom ${name}`)).status, 200, `save ${name}`);
+    const removed = await reset(f, name);
+    assert.equal(removed.status, 200, `reset ${name}`);
+    assert.deepEqual(removed.json().prompt, promptEntry(name, 'default'));
+    assert.equal(fs.existsSync(f.promptPath(name)), false, `${name}: the custom file is gone`);
+  }
 });
 
 test('scenario 182: DELETE of a folder where the file should be is CLAUDE_FAILED and what is in it stays', async (t) => {
@@ -312,7 +342,7 @@ const UNKNOWN_PATHS = [
   PROMPTS,
 ];
 
-test('scenario 183: any name but the six is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
+test('scenario 183: any name but the nine is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
   const f = await claudeHttpFixture(t);
   // Where `../investigate` and `../answers` would land if a name became part of a path.
   fs.writeFileSync(path.join(f.root, 'investigate.md'), 'outside');
@@ -441,7 +471,7 @@ test('scenario 185: the prompt routes answer while setup is incomplete, like the
   const removed = await reset(f, 'implement');
 
   assert.equal(listed.status, 200);
-  assert.equal(listed.json().prompts.length, 6);
+  assert.equal(listed.json().prompts.length, 9);
   assert.equal(saved.status, 200);
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.json().prompt, promptEntry('implement', 'default'));
@@ -608,6 +638,9 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['approve', 'default', APPROVE_TEMPLATE],
       ['rereview', 'default', REREVIEW_TEMPLATE],
       ['groom', 'default', GROOM_TEMPLATE],
+      ['review', 'default', REVIEW_TEMPLATE],
+      ['spec-review', 'default', SPEC_REVIEW_TEMPLATE],
+      ['e2e', 'default', E2E_TEMPLATE],
     ],
   );
   assert.equal(replies.save.status, 200);
@@ -626,6 +659,9 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['approve', 'default'],
       ['rereview', 'default'],
       ['groom', 'default'],
+      ['review', 'default'],
+      ['spec-review', 'default'],
+      ['e2e', 'default'],
     ],
   );
   assert.deepEqual(fs.readdirSync(sandbox.elsewhere), [], 'nothing went to the working folder');

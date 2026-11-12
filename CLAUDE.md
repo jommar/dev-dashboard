@@ -303,8 +303,11 @@ like groom and review; the contracts the backend and UI hold:
   INVESTIGATE branch of `launchLocked` keeps it through its `kept` list; a side key not named there is
   deleted by the next investigate launch. `entry.e2e` is always present, `blocks.e2e` and `goTo.e2e`
   only for a ticket with the record.
-- **Prompt and launch.** The prompt is server-owned (`e2ePrompt(key, port)`), minimal, and interpolates
-  only the validated key (with its slug and the `agent-browser --session e2e-<key lower case>` name) and the port, an integer in 9300-9399 read from the DevTools
+- **Prompt and launch.** The server rereads `prompts/e2e.md` on each launch: a missing file uses
+  the unchanged built-in E2E template; an unusable file refuses launch. It substitutes only
+  `{KEY}` (the validated ticket key), `{SLUG}` (that key in lower case) and `{PORT}`; the built-in
+  uses `agent-browser --session e2e-<key lower case>`.
+  The port is an integer in 9300-9399 read from the DevTools
   registry by `browserId` (`b-` plus 8 hex digits, else 400 `INVALID_TICKET`); never client text, a port
   or a URL from the client. The launch passes only the working directory: no tool limits, no
   `--add-dir`, no MCP override. Refusals: `browser_not_found` / `browser_not_running` (409

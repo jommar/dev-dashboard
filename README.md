@@ -573,8 +573,10 @@ means the session finished, not that the review passed.
 Close, Escape or a genuine backdrop click dismisses the native modal; dragging
 from its content to the backdrop does not. It survives filtering/lane movement
 but closes on leaving the tab or ticket removal. Focus returns to the PR opener
-or the board if the opener is filtered out. There is no review prompt editor,
-answers form, Go to session control or review-status badge on the PR card.
+or the board if the opener is filtered out. This dialog has no prompt editor,
+answers form or Go to session control, and the PR card has no review-status badge.
+Review templates are editable through the shared **Prompts** editor in the My Tickets Claude
+dialog (see [Custom prompts](#custom-prompts)); no editor button is added to the review dialog.
 
 Next to **Start code review**, **Re-review** sends a message to the ticket's existing review
 session, asking it to review the linked PRs again (see [Code review](#code-review)). It is off
@@ -601,7 +603,8 @@ The lookup is cached for 10 minutes; Refresh does not bypass it, so a new code P
 spec within 10 minutes. If the lookup fails or is incomplete, the lane is empty and a note says
 so, and the ticket lanes are unaffected. The card's **Claude** button opens a dialog with one
 action, **Start spec review**, **Re-review** or **Review again** (see below), which posts
-`{ key, phase: 'spec-review', pr }`; `pr` is required. The server builds the review prompt, and the
+`{ key, phase: 'spec-review', pr }`; `pr` is required. The server fills the built-in review template
+or `prompts/spec-review.md` with the validated key and PR number (see [Custom prompts](#custom-prompts)), and the
 session is named `<KEY>-spec-review`. Its state is in the ticket's [Claude launcher](#claude-launcher)
 entry, where `blocks.specReview` appears only once a spec review was launched.
 
@@ -614,7 +617,8 @@ The dashboard stores nothing for it. A `current` card shows a **Reviewed** chip,
 review** for `none`, **Re-review** for `stale` and **Review again** for `current`; all three send the
 same launch and stay enabled.
 
-The spec review session runs unattended, as the signed-in user. The launch enforces part of its limits on
+The built-in spec review prompt requests an unattended review as the signed-in user. A custom
+`prompts/spec-review.md` replaces those instructions in full. The launch enforces part of its limits on
 the command line, for this session only, and no prompt can widen them: the built-in tools are only `Read`,
 `Skill` and `ToolSearch` (no `Bash`, `Edit`, `Write`, `Grep`, `Glob`, `WebFetch` or `Agent`); it gets no
 `--add-dir`, so no workflow state folder; it loads only the servers that the `.mcp.json` of the launch
@@ -637,7 +641,8 @@ today. The deny rules cover `Read` only, because `Grep` and `Glob` are not avail
 read tools, `github_submit_pr_review` and the Slack `slack_prepare_write` and `slack_confirm_write` pair stay
 allowed.
 
-Everything else is only the prompt's instruction, and nothing enforces it. The session is told to submit one
+Everything else below is only the built-in prompt's instruction, not enforced by the launch or
+automatically added to a custom template. By default, the session is told to submit one
 `COMMENT` review on the spec PR (never an approval or a changes request, since `github_submit_pr_review`
 accepts any event; the merge and the push are blocked by the launch), to mention nobody, quote no Jira or
 Slack text and link nowhere but that PR. It is told to reply once in the ticket's existing `#ezat_claudio`
@@ -1563,11 +1568,12 @@ ticket refuses another (`session_running`).
   modal over the dialog, so Start cannot be reached while it is open. The dialog opens no event
   stream of its own.
 - **Session.** `POST /api/claude/launch` with `phase` `e2e-ticket-check` and the `browserId`,
-  from `~/pathwise` with no tool limits and no `--add-dir`. The prompt is built by the server from the
-  ticket key and the browser's port (looked up in the DevTools registry, never taken from the
-  client) and nothing else: it names the skill, says the session is unattended, and tells it to attach
+  from `~/pathwise` with no tool limits and no `--add-dir`. The server fills the built-in template or
+  `prompts/e2e.md` from the validated ticket key and the browser's port (looked up in the DevTools
+  registry, never taken from the client); see [Custom prompts](#custom-prompts). The built-in text
+  names the skill, says the session is unattended, and tells it to attach
   with `agent-browser --session e2e-<key in lower case> connect <port>` and to pass that `--session`
-  on every agent-browser command, so concurrent checks stay apart. The session writes
+  on every agent-browser command, so concurrent checks stay apart. By default the session writes
   `~/pathwise/.orchestrator/<key in lower case>/e2e.md`, whose first line is `Verdict: PASS`,
   `FAIL`, `PARTIAL` or `BLOCKED: <reason>`. The dashboard does not read the verdict: the row shows the
   session's state, a **Go to e2e check session** chip, and once `done` a **View e2e result** link
@@ -1614,16 +1620,19 @@ Workflow and groom sessions neither block nor are blocked by review.
   message was delivered, and the ticket entry reports it as `reviewResentAt` and the block as
   `blocks.rereview`. A failed send is `200` with `send.status` `failed` and a reason
   (`live_at_resume`, `resume_failed`, `session_not_found`, `prompt_unreadable`).
-- **Initial review and re-review.** The server generates a fixed delegation prompt from the
-  validated key, asking Claude to use `pr-review-transact` for the ticket and its linked PRs.
+- **New review sessions.** The server fills the built-in delegation template or
+  `prompts/review.md` from the validated key (see [Custom prompts](#custom-prompts)). This applies
+  to **Start code review** and **Start new review**; **Re-review** continues the existing session
+  with the separate `prompts/rereview.md` message. The unchanged built-in launch text asks Claude
+  to use `pr-review-transact` for the ticket and its linked PRs.
   It directs inspection of existing reviews/unresolved threads against the latest PR head,
   verification of prior findings, and reporting remaining/new issues without duplicating
   already resolved findings. It forbids implementing fixes or code changes and follows, rather
   than overrides, the skill's approval/comment/Jira-transition rules. Ticket text, PR content,
-  comments and linked pages are explicitly untrusted data. Client prompt/title/summary/URL
-  fields and editable prompt files do not enter this prompt; it is not in the Prompts editor (the
-  Re-review message is, as `prompts/rereview.md`).
-- **Publishing is skill-governed, not read-only.** The prompt directs discovery and use of
+  comments and linked pages are explicitly untrusted data in that built-in text. Client
+  prompt/title/summary/URL fields do not enter the prompt. A custom file replaces the whole
+  template; none of those directions are automatically prepended.
+- **Publishing is skill-governed, not read-only.** The built-in prompt directs discovery and use of
   applicable skills in `~/pathwise` to publish actionable findings/review on the relevant PRs
   and reply concisely in the ticket's **existing Slack thread**, summarizing outcomes and
   blockers. All skill permission/confirmation requirements still apply under your own Claude
@@ -1653,11 +1662,10 @@ browser localStorage on rollback; older code ignores review records and treats p
 
 ### Custom prompts
 
-The three launch prompts (investigate, implement, groom) and the messages sent with your answers,
-your approval and a re-review are editable templates; the first code review uses its own fixed
-server-generated delegation prompt instead.
-By default the editable prompts are
-the built-in text. You can change each one in the app (see **Edit in the app** below) or by hand.
+All six launch prompts (investigate, implement, groom, review, spec-review and e2e) and the
+messages sent with your answers, your approval and a re-review are editable templates: nine in
+all. By default they use the original built-in text. You can change each one in the app (see
+**Edit in the app** below) or by hand. See also the standalone [prompt guide](prompts/README.md).
 Both edit the same file, a file of that name in the `prompts/` folder of the dashboard (the repo
 root, next to `claude/`), so a hand edit and an app edit always agree:
 
@@ -1669,17 +1677,24 @@ root, next to `claude/`), so a hand edit and an app edit always agree:
 | `prompts/approve.md`     | the message sent when you approve a plan | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
 | `prompts/rereview.md`    | the message sent for a re-review         | `{KEY}`, `{SLUG}`                                                |
 | `prompts/groom.md`       | the Groom ticket prompt                  | `{KEY}`, `{SLUG}`                                                |
+| `prompts/review.md`      | the prompt for a new code review session | `{KEY}`, `{SLUG}`                                                |
+| `prompts/spec-review.md` | the spec review prompt                   | `{KEY}`, `{SLUG}`, `{PR}`                                        |
+| `prompts/e2e.md`         | the E2E ticket check prompt              | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
 
-`{KEY}` is the ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
+`{KEY}` is the validated ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
 `{STATUS_FILE}` the absolute path of the ticket's `status.json`, `{QUESTION_IDS}` the ids of the new
-or changed answers joined with `, `, and `{CHANGE}` is `answers` on a first send and
-`changed answers` on a re-send. Any other `{WORD}` stays in the text as written, so in
+or changed answers joined with `, `, and `{CHANGE}` is `answers` for a normal send with no prior
+successful answer send for that planning session, `changed answers` for a later normal send with
+new or changed answers, and `answers (sent again)` for an explicit resend (`resend: true`), whether
+or not the answers changed. `{PR}` is the validated spec PR number, and `{PORT}` is the
+running browser's port (9300-9399), read from the DevTools registry, not client text. Any
+placeholder not listed for that template stays in the text as written, so in
 `groom.md`, which has no status file, `{STATUS_FILE}` is left as literal text. The file is read
 as UTF-8, trimmed, and otherwise used as written.
 
 - **Edit in the app.** **Prompts**, at the left of the Claude dialog's footer, swaps the dialog's
   body for an editor in the same dialog. The footer then holds **Back**, at the left where
-  **Prompts** was, and **Close**. The editor loads the six prompts once when it opens, not on
+  **Prompts** was, and **Close**. The editor loads the nine prompts once when it opens, not on
   the dialog's 15 second refresh; if the load fails it shows the error and a **Retry** button.
   Each prompt has:
   - a badge: `default` (no file, so the built-in text), `custom` (a usable file) or
@@ -1700,12 +1715,12 @@ as UTF-8, trimmed, and otherwise used as written.
   were typing in the dialog survive **Back**.
 
 - **A missing `{STATUS_FILE}` is a warning, never a block.** While the text in the box of a prompt
-  that takes `{STATUS_FILE}` (never the groom or re-review prompt) lacks the literal `{STATUS_FILE}`, the
+  that takes `{STATUS_FILE}` (investigate, implement, answers or approve) lacks the literal `{STATUS_FILE}`, the
   editor says so under the box as you type: "This prompt does not
   contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done
   will not work." **Save** stays enabled and the server never refuses a prompt for it.
 - **Absent means built-in.** A missing file is never an error. `npm run claude:prompts` creates
-  `prompts/` and writes the five built-in templates into it, placeholders intact, for you to edit
+  `prompts/` and writes the nine built-in templates into it, placeholders intact, for you to edit
   by hand. It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that
   exists. It needs no Settings setup.
 - **Applied at once.** The files are read on every launch and every send, never cached, so an edit
@@ -1745,8 +1760,18 @@ as UTF-8, trimmed, and otherwise used as written.
   `A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.`
 - **Why not under `claude/`.** Sessions are given `claude/` (`--add-dir`), and a session that has
   read untrusted ticket text must not be handed a way to rewrite the prompt of the next launch.
-  The folder is outside it, gitignored (`/prompts/`) and in `.dockerignore`. That is a grant, not a
+  The folder is outside it; its contents are gitignored except for `prompts/README.md`, and the
+  whole folder is in `.dockerignore`. That is a grant, not a
   sandbox: a session runs as your user and under your permission mode.
+
+A custom file replaces its entire template after substitution; the dashboard does not prepend
+unattended reminders, security instructions or the built-in text. For unattended custom prompts,
+include an explicit reminder not to ask questions or wait for replies, and define how to report
+blockers without bypassing required permissions. Preserve any task-specific safety and output
+instructions you need. Spec-review CLI restrictions still apply independently of custom text;
+E2E browser validation and automatic stopping are unchanged. `review.md` starts a new review
+session; `rereview.md` is only the continuation message (not `re-review.md`). The guide
+`prompts/README.md` is documentation, not a registered prompt.
 
 Each built-in investigate and implement prompt carries the protocol the dashboard relies on: the
 questions go into `status.json`, the phase flag (and `done`) is set as the very last action, and
@@ -1767,7 +1792,7 @@ to default** or delete the file.
 | `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets, lastActive }`; `listing` is `ok` or `unavailable`; `tickets` keyed by ticket key (entry below); `lastActive` is `{ key: { phase: ISO } }`, sparse |
 | `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, `e2e-ticket-check` also takes `browserId`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }` |
 | `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                                                                |
-| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; `prompts` is the four entries below, in the order investigate, implement, answers, groom                                                                 |
+| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; nine entries in the order investigate, implement, answers, approve, rereview, groom, review, spec-review, e2e                                            |
 | `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                                                            |
 | `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                                                               |
 
@@ -1823,9 +1848,9 @@ written when any entry is invalid. The empty array `[]` is also accepted: it sav
 the send decision (the retry). The reply's `send` is described under
 [Saving and sending answers](#saving-and-sending-answers).
 
-A prompt entry is `{ name, label, source, text, placeholders }`. `name` is `investigate`,
-`implement` or `answers` (a path with any other name matches no prompt route) and `label` is
-`Investigate and plan prompt`, `Implement plan prompt` or `Answers message`. `source` is
+A prompt entry is `{ name, label, source, text, placeholders }`. `name` is one of `investigate`,
+`implement`, `answers`, `approve`, `rereview`, `groom`, `review`, `spec-review` or `e2e`; a path
+with any other name matches no prompt route. `label` is its human-readable editor heading. `source` is
 `default` (no file), `custom` (a usable file) or `unusable` (a file that exists but cannot be
 used). `text` is the file's trimmed text for `custom` and the built-in text for the other two, so
 a fix can be saved from it, and `placeholders` lists the `{WORD}`s the prompt takes. `PUT` needs a
@@ -1834,7 +1859,7 @@ NUL bytes; anything else, a missing `text` included, is `400` `INVALID_PROMPT` a
 written. A text without
 `{STATUS_FILE}` is never refused. See [Custom prompts](#custom-prompts) for what a saved file does.
 
-The four launcher routes and the five prompt routes bypass the `SETUP_REQUIRED` gate like the
+The launcher and prompt routes bypass the `SETUP_REQUIRED` gate like the
 Slack routes, because they need neither GitHub nor Jira. They run behind the same Host, Origin, `Sec-Fetch-Site` and JSON
 `Content-Type` checks (`403` and `415`), a local POST that sends none of those headers is accepted
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
@@ -1891,7 +1916,7 @@ nothing was sent.` and that the session received nothing (attach to it).
    `prompts/investigate.md` (keep the rest), and launch **Investigate and plan** on a throwaway
    ticket. Confirm the session's first message contains your line. Delete the file, launch again
    once the first session has finished, and confirm the built-in text is back.
-10. Open a ticket's Claude dialog and press **Prompts**. Confirm the five prompts load with the
+10. Open a ticket's Claude dialog and press **Prompts**. Confirm the nine prompts load with the
     badge `default` (or `custom` if you kept a file), and that deleting `{STATUS_FILE}` from a box
     shows the warning while **Save** stays enabled. Add a line you will recognise at the top of
     **Investigate and plan prompt**, press **Save**, and confirm `Saved.`, the badge `custom` and

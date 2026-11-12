@@ -1,4 +1,4 @@
-// claude-prompts-init.test.mjs — the starter prompt files: `npm run claude:prompts` writes the four
+// claude-prompts-init.test.mjs — the starter prompt files: `npm run claude:prompts` writes the nine
 // built-in messages (placeholders intact) into the prompts folder, never over a file that is there.
 // Every test runs in a temp folder; the dashboard's real `prompts` folder is only ever looked at.
 import test from 'node:test';
@@ -12,6 +12,9 @@ import {
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
   REREVIEW_TEMPLATE,
+  REVIEW_TEMPLATE,
+  SPEC_REVIEW_TEMPLATE,
+  E2E_TEMPLATE,
   EARLIER_ID,
   IMPLEMENT,
   IMPLEMENT_TEMPLATE,
@@ -42,6 +45,9 @@ const STARTERS = [
   ['approve.md', APPROVE_TEMPLATE],
   ['rereview.md', REREVIEW_TEMPLATE],
   ['groom.md', GROOM_TEMPLATE],
+  ['review.md', REVIEW_TEMPLATE],
+  ['spec-review.md', SPEC_REVIEW_TEMPLATE],
+  ['e2e.md', E2E_TEMPLATE],
 ];
 
 function tempRoot(t) {
@@ -71,7 +77,7 @@ const snapshot = (dir) =>
       ]),
   );
 
-test('scenario 130: it creates the prompts folder and writes the six built-in texts, placeholders intact', async (t) => {
+test('scenario 130: it creates the prompts folder and writes the nine built-in texts, placeholders intact', async (t) => {
   const dir = path.join(tempRoot(t), 'nested', 'prompts');
 
   const result = await initPrompts({ dir, fs });
@@ -84,10 +90,13 @@ test('scenario 130: it creates the prompts folder and writes the six built-in te
   assert.deepEqual(fs.readdirSync(dir).sort(), [
     'answers.md',
     'approve.md',
+    'e2e.md',
     'groom.md',
     'implement.md',
     'investigate.md',
     'rereview.md',
+    'review.md',
+    'spec-review.md',
   ]);
   for (const [name, template] of STARTERS) {
     const text = fs.readFileSync(path.join(dir, name), 'utf8');
@@ -99,6 +108,10 @@ test('scenario 130: it creates the prompts folder and writes the six built-in te
     assert.ok(fs.readFileSync(path.join(dir, 'answers.md'), 'utf8').includes(placeholder));
   for (const placeholder of ['{KEY}', '{SLUG}'])
     assert.ok(fs.readFileSync(path.join(dir, 'groom.md'), 'utf8').includes(placeholder));
+  assert.ok(fs.readFileSync(path.join(dir, 'review.md'), 'utf8').includes('{KEY}'));
+  assert.ok(fs.readFileSync(path.join(dir, 'spec-review.md'), 'utf8').includes('{PR}'));
+  for (const placeholder of ['{KEY}', '{SLUG}', '{PORT}'])
+    assert.ok(fs.readFileSync(path.join(dir, 'e2e.md'), 'utf8').includes(placeholder));
 });
 
 test('scenario 131: a file that is already there is kept as it is, and only the missing ones are written', async (t) => {
@@ -122,6 +135,9 @@ test('scenario 131: a file that is already there is kept as it is, and only the 
       ['approve.md', 'wrote'],
       ['rereview.md', 'wrote'],
       ['groom.md', 'wrote'],
+      ['review.md', 'wrote'],
+      ['spec-review.md', 'wrote'],
+      ['e2e.md', 'wrote'],
     ],
   );
   const after = snapshot(dir);

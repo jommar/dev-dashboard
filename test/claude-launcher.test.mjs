@@ -15,6 +15,7 @@ import {
   BROWSER_PORT,
   E2E,
   E2E_NAME,
+  E2E_TEMPLATE,
   EARLIER_ID,
   FIRST_ID,
   GROOM,
@@ -33,7 +34,9 @@ import {
   REVIEW,
   REVIEW_ID,
   REVIEW_NAME,
+  REVIEW_TEMPLATE,
   SLUG,
+  SPEC_REVIEW_TEMPLATE,
   START_MS,
   UNTRUSTED_OUTPUT,
   answeredMap,
@@ -89,7 +92,7 @@ for (const [label, status] of [
   ['malformed status', '{ "questions": ['],
   ['existing status with extra fields', ' { "done": true, "questions": [], "note": "keep" }\n'],
 ]) {
-  test(`review launch: server-owned delegation prompt, no plan or status transaction (${label})`, async (t) => {
+  test(`review launch: custom delegation prompt, no plan or status transaction (${label})`, async (t) => {
     const env = await launcherEnvironment(t);
     if (status !== undefined) env.seed(KEY, { status });
     for (const name of ['investigate', 'implement', 'answers', 'groom', REVIEW, 'review'])
@@ -97,7 +100,7 @@ for (const [label, status] of [
     const originalLaunch = env.sessions.launch.bind(env.sessions);
     t.mock.method(env.sessions, 'launch', async (request) => {
       assert.equal('addDir' in request, false, 'no state-directory access grant');
-      assertReviewPrompt(request.prompt);
+      assert.equal(request.prompt, `CUSTOM review ${KEY} {STATUS_FILE}`);
       const prerequisiteReads = env.recorder.calls.filter(
         ({ method, args }) =>
           ['readFileSync', 'statSync', 'existsSync', 'accessSync'].includes(method) &&
@@ -122,11 +125,11 @@ for (const [label, status] of [
     const [launch] = env.cli.launches();
     assert.equal(env.cli.launches().length, 1);
     const prompt = launch.args.at(-1);
-    assertReviewPrompt(prompt);
+    assert.equal(prompt, `CUSTOM review ${KEY} {STATUS_FILE}`);
     assert.deepEqual(launch.args, ['--bg', '-n', REVIEW_NAME, '--', prompt]);
     assert.ok(!prompt.includes(HOSTILE_SUMMARY), 'client text never enters the prompt');
     assert.ok(!prompt.includes('untrusted.example'), 'client URL never enters the prompt');
-    assert.ok(!prompt.includes('CUSTOM '), 'editable prompt files never enter the prompt');
+    assert.ok(!prompt.includes(`CUSTOM ${REVIEW}`), 'the phase name is not a prompt-file alias');
     assert.ok(!prompt.includes(env.statusPath()), 'no workflow status-writing contract');
     assert.equal(launch.options.cwd, env.pathwise);
     assert.ok(!launch.options.shell);
@@ -152,13 +155,47 @@ for (const [label, status] of [
   });
 }
 
-test('review launch: unusable editable prompt files cannot refuse or alter review', async (t) => {
+test('review launch: unusable unrelated prompt files cannot refuse or alter review', async (t) => {
   const env = await launcherEnvironment(t);
   fs.mkdirSync(env.promptsDir, { recursive: true });
-  for (const name of ['investigate', 'implement', 'answers', 'groom', REVIEW, 'review'])
+  for (const name of ['investigate', 'implement', 'answers', 'groom', REVIEW, 'rereview'])
     fs.mkdirSync(env.promptPath(name));
   await env.launcher.launch(launchBody(REVIEW));
   assertReviewPrompt(env.cli.launches()[0].args.at(-1));
+});
+
+test('review prompt override: initial Review uses review.md, then edits and removal apply without restart', async (t) => {
+  const env = await launcherEnvironment(t);
+  const custom =
+    'Review {KEY} in {SLUG}, then {KEY}: {STATUS_FILE} {QUESTION_IDS} {CHANGE} {NOPE} $& $1';
+  env.writePrompt('review', `\n  ${custom}  \n\n`);
+  env.writePrompt('rereview', 'Only a re-review should read this file.');
+
+  await env.launcher.launch(launchBody(REVIEW));
+  finishSessions(env);
+  env.writePrompt('review', 'Second review for {KEY} under .orchestrator/{SLUG}/.');
+  await env.launcher.launch(launchBody(REVIEW));
+  finishSessions(env);
+  fs.rmSync(env.promptPath('review'));
+  await env.launcher.launch(launchBody(REVIEW));
+
+  assert.deepEqual(
+    env.cli.launches().map(({ args }) => args),
+    [
+      [
+        '--bg',
+        '-n',
+        REVIEW_NAME,
+        '--',
+        `Review ${KEY} in ${SLUG}, then ${KEY}: {STATUS_FILE} {QUESTION_IDS} {CHANGE} {NOPE} $& $1`,
+      ],
+      ['--bg', '-n', REVIEW_NAME, '--', `Second review for ${KEY} under .orchestrator/${SLUG}/.`],
+      ['--bg', '-n', REVIEW_NAME, '--', renderTemplate(REVIEW_TEMPLATE)],
+    ],
+    'only KEY and SLUG are filled; rereview.md never replaces an initial Review launch',
+  );
+  assert.equal(env.files().status, null, 'Review still has no workflow status file');
+  assertNoReviewStatusMutation(env);
 });
 
 test('review launch: first review and re-review use the same fixed delegation template and session action', async (t) => {
@@ -2434,13 +2471,17 @@ test("scenario 120: the default prompts folder is the dashboard's own, outside t
   assert.ok(path.relative(CLAUDE_PROMPTS_DIR, CLAUDE_STATE_DIR).startsWith('..'), 'nor around it');
 });
 
-test('scenario 120: the prompts folder is ignored by git (anchored, with a comment) and by docker', async () => {
+test('scenario 120: git ignores custom prompts but tracks the guide, while docker excludes the folder', async () => {
   const { DASHBOARD_DIR } = await import('../backend/config.mjs');
   const lines = (file) => fs.readFileSync(path.join(DASHBOARD_DIR, file), 'utf8').split('\n');
   const git = lines('.gitignore');
-  const at = git.findIndex((line) => line.trim() === '/prompts/');
-  assert.ok(at > 0, '.gitignore has the anchored entry /prompts/');
+  const at = git.findIndex((line) => line.trim() === '/prompts/*');
+  assert.ok(at > 0, '.gitignore has the anchored entry /prompts/*');
   assert.ok(git[at - 1].trim().startsWith('#'), 'and a comment above it');
+  assert.ok(
+    git.findIndex((line) => line.trim() === '!/prompts/README.md') > at,
+    'the shared guide is trackable after excluding custom prompts',
+  );
   assert.ok(
     lines('.dockerignore').some((line) => line.trim() === 'prompts'),
     '.dockerignore has prompts',
@@ -2500,7 +2541,7 @@ test('scenario 121: with no answers file the message sent is the built-in text, 
   );
 });
 
-test('scenario 121: the built-in templates are exported as the six texts, placeholders in them', async () => {
+test('scenario 121: the built-in templates are exported as the nine texts, placeholders in them', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
   assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
   assert.deepEqual(PROMPT_TEMPLATES, {
@@ -2510,6 +2551,9 @@ test('scenario 121: the built-in templates are exported as the six texts, placeh
     approve: APPROVE_TEMPLATE,
     rereview: REREVIEW_TEMPLATE,
     groom: GROOM_TEMPLATE,
+    review: REVIEW_TEMPLATE,
+    'spec-review': SPEC_REVIEW_TEMPLATE,
+    e2e: E2E_TEMPLATE,
   });
 });
 
@@ -4018,6 +4062,7 @@ for (const [label, pr] of [
 ]) {
   test(`spec review launch: a ${label} pr is refused before anything runs or is written`, async (t) => {
     const env = await launcherEnvironment(t);
+    env.writePrompt('spec-review', 'Custom spec review for {KEY}: {PR}.');
     env.recorder.clearCalls();
     const body = pr === undefined ? { key: KEY, phase: SPEC_REVIEW } : specReviewBody(pr);
 
@@ -4263,6 +4308,7 @@ for (const [label, browserId] of [
 ]) {
   test(`e2e check launch: ${label} browserId is refused before anything runs or is written`, async (t) => {
     const env = await e2eEnvironment(t);
+    env.writePrompt('e2e', 'Custom check for {KEY} on {PORT}.');
     env.recorder.clearCalls();
     const body = browserId === undefined ? { key: KEY, phase: E2E } : e2eBody(browserId);
 
@@ -4289,6 +4335,7 @@ for (const [label, browsers, reason] of [
 ]) {
   test(`e2e check launch: browser ${label} is refused and nothing changes`, async (t) => {
     const env = await e2eEnvironment(t, browsers);
+    env.writePrompt('e2e', 'Custom check for {KEY} on {PORT}.');
     env.recorder.clearCalls();
     const before = env.files();
 
@@ -4494,6 +4541,7 @@ test('e2e check stop: overlapping lists stop the browser once', async (t) => {
 
 test('e2e check launch: a timeout keeps the record with its browser, and the finish-time stop cleans up', async (t) => {
   const env = await e2eEnvironment(t);
+  env.writePrompt('e2e', 'Custom check for {KEY} on {PORT}.');
   env.cli.failLaunch({ timeout: true });
 
   await assertRejects(
@@ -4518,3 +4566,120 @@ test('e2e check launch: a timeout keeps the record with its browser, and the fin
   assert.deepEqual(env.browsers.stops, [BROWSER_ID], 'stopped once the session ended');
   assert.equal(env.parsed().launch[E2E].browserStoppedAt, env.clock.now());
 });
+
+// ---- file overrides for the independent initial launch prompts ----
+
+test('spec-review prompt override: validated PR placeholders and fresh text never widen the CLI limits', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.writePrompt(
+    'spec-review',
+    '\n  Spec {KEY} ({SLUG}) PR {PR} again {PR}: {PORT} {STATUS_FILE} {NOPE} $& $1  \n',
+  );
+
+  await env.launcher.launch({ ...specReviewBody(), prompt: 'client text', url: 'client URL' });
+  finishSessions(env);
+  env.writePrompt('spec-review', 'Second {KEY} PR {PR} under {SLUG}.');
+  await env.launcher.launch(specReviewBody(SPEC_PR + 1));
+  finishSessions(env);
+  fs.rmSync(env.promptPath('spec-review'));
+  await env.launcher.launch(specReviewBody(SPEC_PR + 1));
+
+  const launches = env.cli.launches();
+  for (const { args, options } of launches) {
+    assert.deepEqual(args.slice(0, 4), ['--bg', '--tools', SPEC_REVIEW_TOOLS, '--disallowedTools']);
+    assert.deepEqual(args[4].split(',').sort(), [...SPEC_REVIEW_DENIED].sort());
+    assert.deepEqual(args.slice(5, -1), [
+      '--strict-mcp-config',
+      '--mcp-config',
+      path.join(env.pathwise, '.mcp.json'),
+      '-n',
+      SPEC_REVIEW_NAME,
+      '--',
+    ]);
+    assert.equal(options.cwd, env.pathwise);
+    assert.ok(!args.includes('--add-dir'), 'custom text cannot grant workflow-directory access');
+  }
+  assert.deepEqual(
+    launches.map(({ args }) => args.at(-1)),
+    [
+      `Spec ${KEY} (${SLUG}) PR ${SPEC_PR} again ${SPEC_PR}: {PORT} {STATUS_FILE} {NOPE} $& $1`,
+      `Second ${KEY} PR ${SPEC_PR + 1} under ${SLUG}.`,
+      specReviewPrompt(KEY, `https://github.com/TransActComm/ezat-specs/pull/${SPEC_PR + 1}`),
+    ],
+    'a missing override restores the exact former text, including the canonical spec PR URL',
+  );
+  assert.equal(env.files().status, null);
+  assertNoReviewStatusMutation(env);
+});
+
+test('e2e prompt override: validated registry PORT and KEY/SLUG are fresh without changing browser cleanup', async (t) => {
+  const env = await e2eEnvironment(t);
+  env.writePrompt(
+    'e2e',
+    '\n  Check {KEY}: agent-browser --session e2e-{SLUG} connect {PORT}; {PR} {STATUS_FILE} {NOPE} $& $1  \n',
+  );
+
+  await env.launcher.launch({ ...e2eBody(), port: 9999, prompt: 'client text' });
+  assert.equal(
+    env.parsed().launch[E2E].browserId,
+    BROWSER_ID,
+    'the custom launch owns its browser',
+  );
+  finishSessions(env);
+  await env.launcher.list();
+  await env.launcher.list();
+  assert.deepEqual(env.browsers.stops, [BROWSER_ID], 'a custom-prompt session auto-stops once');
+  assert.equal(env.parsed().launch[E2E].browserStoppedAt, START_MS);
+
+  const nextPort = BROWSER_PORT + 1;
+  env.browsers.set([runningBrowser({ port: nextPort })]);
+  env.writePrompt('e2e', 'Second {KEY} on {PORT} as e2e-{SLUG}.');
+  await env.launcher.launch({ ...e2eBody(), port: 9999 });
+  finishSessions(env);
+  fs.rmSync(env.promptPath('e2e'));
+  await env.launcher.launch(e2eBody());
+
+  const prompts = [
+    `Check ${KEY}: agent-browser --session e2e-${SLUG} connect ${BROWSER_PORT}; {PR} {STATUS_FILE} {NOPE} $& $1`,
+    `Second ${KEY} on ${nextPort} as e2e-${SLUG}.`,
+    renderTemplate(E2E_TEMPLATE).replaceAll('{PORT}', String(nextPort)),
+  ];
+  assert.deepEqual(
+    env.cli.launches().map(({ args }) => args),
+    prompts.map((prompt) => ['--bg', '-n', E2E_NAME, '--', prompt]),
+    'no add-dir, tool limits or MCP override; fallback retains the original e2e-<slug> session name',
+  );
+  for (const { options } of env.cli.launches()) assert.equal(options.cwd, env.pathwise);
+  assert.deepEqual(env.parsed().launch[E2E], {
+    name: E2E_NAME,
+    launchedAt: START_MS,
+    id: env.cli.listing.at(-1).id,
+    browserId: BROWSER_ID,
+  });
+  assert.equal(env.files().status, null);
+  assertNoReviewStatusMutation(env);
+});
+
+for (const [name, body] of [
+  ['review', () => launchBody(REVIEW)],
+  ['spec-review', () => specReviewBody()],
+  ['e2e', () => e2eBody()],
+]) {
+  for (const { label, arrange } of BAD_PROMPT_FILES) {
+    test(`initial prompt override: ${label} as ${name}.md refuses before launching or writing state`, async (t) => {
+      const env = await e2eEnvironment(t);
+      seedPlanned(env);
+      const before = env.files();
+      fs.mkdirSync(env.promptsDir, { recursive: true });
+      arrange(env.promptPath(name));
+      env.recorder.clearCalls();
+
+      await assertRejects(() => env.launcher.launch(body()), refused('prompt_unreadable'), label);
+
+      assert.equal(env.cli.launches().length, 0, 'no session is started');
+      assert.deepEqual(env.files(), before, 'existing launch and status bytes are untouched');
+      assert.deepEqual(fsChanges(env.recorder), [], 'no write or rollback is needed');
+      assert.deepEqual(env.browsers.stops, [], 'refusing a prompt never stops a browser');
+    });
+  }
+}

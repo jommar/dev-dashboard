@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added local prompt overrides for code review (`prompts/review.md`), spec review
+  (`prompts/spec-review.md`) and E2E checks (`prompts/e2e.md`), bringing the shared editor, prompt API
+  and starter command to nine templates. Built-in prompt text, spec-review CLI restrictions and E2E
+  browser validation/lifecycle are unchanged. Added `prompts/README.md`; only the guide is tracked,
+  not local overrides. Custom text replaces the whole template, with no automatic safety preamble.
 - Added a **Sessions** drawer for every screen: a tab on the right edge opens a list of the bot lane's
   Claude sessions (tickets in an active sprint), grouped Needs you / Working / Failed / Done, kept past a
   bot's fade or dismissal. A row opens the session's Claude dialog; a joinable session also has a button

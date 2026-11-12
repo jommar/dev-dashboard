@@ -6,8 +6,9 @@ logs/
 /claude/
 
 # Custom Claude launcher prompt files (see `npm run claude:prompts`) — local-only, never committed.
-# Anchored: only this directory.
-/prompts/
+# Anchored: only this directory; keep the shared guide trackable.
+/prompts/*
+!/prompts/README.md
 
 # Dependencies
 node_modules/
