@@ -11,6 +11,8 @@ export default [
       'test-results/**',
       '.playwright-mcp/**',
       '.orchestrator/**',
+      '.video-deck/**',
+      '.claude/**',
     ],
   },
   js.configs.recommended,

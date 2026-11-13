@@ -17,6 +17,15 @@
   --red: #fb7185;
   --amber: #fbbf24;
 
+  /* Session phase colours (Sessions drawer; the table is ui/session-phases.js). Kept apart from the
+     state colours above (green done, red failed, amber waiting) so a phase never reads as a state. */
+  --phase-investigate: #60a5fa;
+  --phase-implement: var(--support);
+  --phase-review: #f472b6;
+  --phase-groom: #fb923c;
+  --phase-e2e: var(--accent);
+  --phase-chat: #a3e635;
+
   /* Spacing scale — use these rather than ad-hoc pixel values. */
   --s1: 4px;
   --s2: 8px;

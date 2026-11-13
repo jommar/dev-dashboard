@@ -26,20 +26,13 @@ import {
 } from '../../ui/bot-bar.js';
 import { chatHref } from '../../ui/chat-stream.js';
 import { copyText } from '../../ui/dom.js';
+import { PHASES, phaseWords } from '../../ui/session-phases.js';
 
 const MARK = { working: 'running', waiting: 'attention', done: 'done', failed: 'failed' };
-const PHASE_WORDS = {
-  investigate: 'Investigate and plan',
-  implement: 'Implement plan',
-  review: 'Code review',
-  groom: 'Groom ticket',
-  e2e: 'E2E check',
-  chat: 'Chat',
-};
-// The words of a phase: the tooltip of its icon in a row, the row button's name and what the search matches.
-const phaseOf = (phase) => PHASE_WORDS[phase] ?? phase;
-// A phase's icon (NavIcon.jsx); a phase without one shows its words.
-const PHASE_ICONS = new Set(Object.keys(PHASE_WORDS));
+// The words of a phase (`phaseOf`) are the tooltip of its icon in a row, the row button's name and what the
+// search matches; a phase not in PHASES shows its words instead of an icon.
+const phaseOf = phaseWords;
+const hasPhaseIcon = (phase) => phase in PHASES;
 function stateText({ state, reason, phase }) {
   // A chat has no reason to give: it is working, done or failed.
   if (phase === 'chat') return BOT_STATE_WORDS[state];
@@ -118,20 +111,21 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
         <span className="sessions-row-mark" data-state={state}>
           <StatusMark status={MARK[state]} />
         </span>
-        {PHASE_ICONS.has(phase) && (
+        {hasPhaseIcon(phase) && (
           <DashboardTooltip title={phaseWords} placement="top">
             <span
               className="sessions-row-phase"
               data-testid={`sessions-phase-${key}`}
               data-phase={phase}
+              style={{ color: `var(${PHASES[phase].color})` }}
             >
-              <NavIcon name={phase} />
+              <NavIcon name={PHASES[phase].icon} />
             </span>
           </DashboardTooltip>
         )}
         <span className="sessions-row-ticket">{name}</span>
         <span className="sessions-row-detail">
-          {PHASE_ICONS.has(phase) ? stateText(row) : `${phaseWords} · ${stateText(row)}`}
+          {hasPhaseIcon(phase) ? stateText(row) : `${phaseWords} · ${stateText(row)}`}
         </span>
       </button>
       {lastActiveAt && (
