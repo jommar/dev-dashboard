@@ -1973,10 +1973,13 @@ has none, so there a chat cannot start.
   reload. The chat is titled with the first line of your first message (60 characters at most). The list
   on the left holds your standalone chats, newest first, each with its state and age.
 - **Continue a ticket's session.** In the [Sessions drawer](#bot-bar) a ticket session whose id is known
-  has a **Chat** link beside its copy button; it opens that same session here (and closes the drawer). The
+  has a **Chat** icon link (tooltip "Chat") beside its copy button; it opens that same session here (and closes the drawer). The
   session is continued, never copied: if it is idle, the dashboard stops it, waits for it to be gone and
   resumes it under the same id, so the conversation lands in the same transcript. The Open button still
   opens the Claude dialog.
+- **Start a chat from the drawer.** The Sessions drawer's header has a **New chat** link (also when no
+  sessions are listed): it opens the Chat tab on a fresh conversation, the same as the tab's own **New
+  chat**, and closes the drawer.
 - **What you see.** The history comes from the CLI's own transcript on disk (the dashboard only reads
   it), the newest branch of the conversation. Your messages are plain text, Claude's replies are
   rendered Markdown with a **Copy code** button on each code block, and a **Copy** button on each message.
@@ -2192,7 +2195,7 @@ while there is no session to show.
   reachable. A row opens the same Claude dialog its bot opens (the review dialog for a review session),
   and a session with something to join has a **Copy attach** (live) or **Copy resume** (finished) button
   that copies the same command as the dialog's Go to session. A ticket session whose id is known also has a
-  **Chat** link that opens it in the [Chat](#chat) tab. Rows are one compact line each, and one **Search sessions** box filters them by
+  **Chat** icon link that opens it in the [Chat](#chat) tab. Rows are one compact line each, and one **Search sessions** box filters them by
   everything a row shows (ticket, phase, state, reason, the copy button's word, the group heading and
   **quiet**, never the time); every term must match, Escape clears the search before it closes the drawer.
   Each row ends with **9m ago** (read out as "active 9m ago"), when its session was last written to: the newest modification time

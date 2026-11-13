@@ -198,7 +198,7 @@ the same response's `lastActive` map (`{ [ticket]: { [phase]: ISO } }`, `{}` whe
 each row its last-activity time. It makes no request,
 mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
 `Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`; a chat row's name is its title:
-`Open <title> Chat session`, detail `Chat · working`, with no reason), and its styles live in
+`Open <title> Chat session`, detail `Chat · working`, with no reason; the header's **New chat** link, `#/chat` as on the Chat screen, is there with or without rows and closes the drawer, focus back on the tab), and its styles live in
 `ui-react/styles/sessions-drawer.css` because `bot-bar.css` selectors must all start `.bot-bar`. A row's
 time is a `.sessions-row-when` span after its button, linked by the button's `aria-describedby` so the
 name stays as above, with no live region. `isQuiet` (`QUIET_WORKING_MS`) marks a working row whose time
@@ -207,7 +207,7 @@ Chat rows are in the same groups, appended after the sprint filter like their bo
 24-hour chats, not every chat on disk). `sessionGroups` prefers a bot's own `goTo` and `lastActiveAt` when
 it has the key (a chat's `goTo` is null while it works), and looks the rest up under the ticket as before.
 A ticket row whose bot has a `session` gets a **Chat** link beside its copy button
-(`#/chat?session=<uuid>`, name `Chat with <KEY> <phase> session`); the link and a chat row or bot close
+(`#/chat?session=<uuid>`, name `Chat with <KEY> <phase> session`), shown as the Chat tab's icon with "Chat" in the app tooltip (no visible text); the time, Chat and copy columns have fixed places so rows line up; the link and a chat row or bot close
 the drawer, because it is non-modal and would cover the conversation it just opened. Readers of
 `GET /api/claude/tickets` re-read at once on a `claude-tickets-changed` window event
 (`notifyClaudeTicketsChanged` in `useClaudeTickets.js`, fired by the Chat screen after a send and when a
@@ -454,7 +454,10 @@ client reducer).
   disabled textarea drops the writer's focus, and the reason (`chat-disabled-reason`, tied by
   `aria-describedby`) is always shown in words. Send is disabled with it. Stop shows only while `live`; a
   session running outside the chat has no Stop and gets Refresh instead. A refused send or stop is worded
-  from `errors[0]` (`REFUSAL_WORDS`), never the raw envelope.
+  from `errors[0]` (`REFUSAL_WORDS`), never the raw envelope. The controls (Send, Stop, Retry, Refresh) float
+  over the textarea's top right corner (`.chat-field` > `.chat-actions`, after the textarea in tab order) and
+  the textarea's top padding keeps text below them: the bottom edge of the screen is under the bot bar, so
+  nothing actionable goes there. The reason and send errors sit above the field for the same reason.
 - **Chat bots and rows are appended after the sprint filter.** See the bot bar section above: a chat's id
   must never reach `useActiveSprintKeys` or Jira, and no new chat code path may read it as a ticket key. A
   chat is `chat-<8 hex>` in labels, never a made-up key.

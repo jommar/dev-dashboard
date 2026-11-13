@@ -79,6 +79,12 @@
   padding: var(--s2) var(--s3);
   border-bottom: 1px solid var(--border);
 }
+.sessions-head-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s2);
+}
 .sessions-head h2 {
   margin: 0;
   color: var(--strong);
@@ -138,19 +144,24 @@
   padding: 0;
   list-style: none;
 }
-/* One line a session: mark, key, then the phase and state, cut short with an ellipsis. */
+/* One line a session: mark, key, then the phase and state, cut short with an ellipsis. The trailing
+   columns (time, Chat icon, copy) have fixed widths and places, so they line up down the list whether
+   or not a row has all of them. */
 .sessions-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 24px 88px;
   align-items: center;
   gap: var(--s1);
   border-radius: var(--radius-sm);
+}
+.sessions-row-open {
+  grid-column: 1;
 }
 .sessions-row:hover {
   background: var(--panel2);
 }
 .sessions-row-open {
   display: flex;
-  flex: 1 1 auto;
   align-items: center;
   gap: var(--s2);
   min-width: 0;
@@ -205,7 +216,8 @@
 /* When the session was last written to: after the row's button, so it sits at the row's end. A working
    session that has been quiet a while is amber and bold (weight as well as colour); its popup says why. */
 .sessions-row-when {
-  flex: none;
+  grid-column: 2;
+  justify-self: end;
   color: var(--muted);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
@@ -216,21 +228,26 @@
   font-weight: 600;
 }
 .btn.subtle.sessions-row-copy {
-  flex: none;
+  grid-column: 4;
   min-height: 24px;
   margin-right: var(--s1);
-  padding: 0 var(--s2);
+  padding: 0;
   font-size: var(--fs-xs);
 }
 
-/* A session with an id also opens in the Chat screen. */
+/* A session with an id also opens in the Chat screen: an icon, as tall as the copy button beside it. */
 .sessions-row-chat {
-  flex: none;
-  margin-right: var(--s1);
-  padding: 0 var(--s2);
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
   border-radius: var(--radius-sm);
   color: var(--accent);
-  font-size: var(--fs-xs);
+}
+.sessions-row-chat .nav-icon {
+  width: 16px;
+  height: 16px;
 }
 .sessions-row-chat:focus-visible {
   outline: 2px solid var(--accent);

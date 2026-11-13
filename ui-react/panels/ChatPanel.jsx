@@ -222,22 +222,6 @@ function ChatConversation({ active, session, focusOnMount }) {
         <label className="sr-only" htmlFor={fieldId}>
           Message
         </label>
-        <textarea
-          id={fieldId}
-          ref={field}
-          rows={3}
-          value={text}
-          readOnly={blocked}
-          aria-disabled={blocked || undefined}
-          aria-describedby={reason ? reasonId : undefined}
-          placeholder="Message Claude"
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-            event.preventDefault();
-            event.currentTarget.form.requestSubmit();
-          }}
-        />
         {reason && (
           <p id={reasonId} className="chat-disabled-reason" data-testid="chat-disabled-reason">
             {reason}
@@ -248,29 +232,47 @@ function ChatConversation({ active, session, focusOnMount }) {
             {problem}
           </p>
         )}
-        <div className="chat-actions">
-          <Button type="submit" data-testid="chat-send" disabled={blocked || !text.trim()}>
-            Send
-          </Button>
-          {live && (
-            <Button data-testid="chat-stop" disabled={stopping} onClick={halt}>
-              Stop
+        <div className="chat-field">
+          <textarea
+            id={fieldId}
+            ref={field}
+            rows={3}
+            value={text}
+            readOnly={blocked}
+            aria-disabled={blocked || undefined}
+            aria-describedby={reason ? reasonId : undefined}
+            placeholder="Message Claude"
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              event.currentTarget.form.requestSubmit();
+            }}
+          />
+          <div className="chat-actions">
+            <Button type="submit" data-testid="chat-send" disabled={blocked || !text.trim()}>
+              Send
             </Button>
-          )}
-          {retryable && (
-            <Button
-              data-testid="chat-retry"
-              disabled={blocked}
-              onClick={() => deliver(lastUser.text)}
-            >
-              Retry
-            </Button>
-          )}
-          {(outside || error) && (
-            <Button data-testid="chat-refresh" onClick={refresh}>
-              Refresh
-            </Button>
-          )}
+            {live && (
+              <Button data-testid="chat-stop" disabled={stopping} onClick={halt}>
+                Stop
+              </Button>
+            )}
+            {retryable && (
+              <Button
+                data-testid="chat-retry"
+                disabled={blocked}
+                onClick={() => deliver(lastUser.text)}
+              >
+                Retry
+              </Button>
+            )}
+            {(outside || error) && (
+              <Button data-testid="chat-refresh" onClick={refresh}>
+                Refresh
+              </Button>
+            )}
+          </div>
         </div>
       </form>
     </div>

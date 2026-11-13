@@ -288,11 +288,26 @@
   flex-direction: column;
   gap: var(--s2);
 }
+/* The controls float over the textarea's top right corner, out of the strip the bot bar lies over at the
+   bottom of the screen. The text starts below them (the top padding is a button's height plus a gap
+   either side), the box cannot shrink below that plus a line of text, and the resize handle at the bottom
+   right stays free. The controls are as tall as a button is (base.css: 44px where there is no hover) and
+   end before the textarea's thin scrollbar. */
+.chat-field {
+  --chat-actions-h: 36px;
+  position: relative;
+}
+@media (hover: none) {
+  .chat-field {
+    --chat-actions-h: 44px;
+  }
+}
 .chat-composer textarea {
   width: 100%;
-  min-height: 72px;
+  min-height: calc(var(--chat-actions-h) + var(--s2) * 3 + var(--s6));
   max-height: 240px;
-  padding: var(--s2) var(--s3);
+  padding: calc(var(--chat-actions-h) + var(--s2) * 2) var(--s3) var(--s2);
+  scrollbar-width: thin;
   border: 0;
   border-radius: var(--radius);
   background: var(--panel);
@@ -311,9 +326,15 @@
   cursor: not-allowed;
 }
 .chat-actions {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s4);
   display: flex;
-  flex-wrap: wrap;
   gap: var(--s2);
+}
+/* Opaque, so a draft scrolled under the controls does not show through them. */
+.chat-actions .btn:not(:hover) {
+  background: var(--panel);
 }
 
 /* Under 760px the chats stack above the conversation and keep to a short band. */

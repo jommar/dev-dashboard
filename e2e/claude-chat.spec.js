@@ -620,3 +620,308 @@ test('closing the drawer on a chat hands the focus back to the Sessions tab', as
   await expect(page.getByTestId('sessions-drawer')).toBeHidden();
   await expect(page.getByTestId('sessions-tab')).toBeFocused();
 });
+
+test('the drawer has a New chat link, with sessions listed or not', async ({ page, dashboard }) => {
+  await page.goto('/#/services');
+  await page.getByTestId('sessions-tab').click();
+  await expect(page.getByTestId('sessions-empty')).toBeVisible();
+  const empty = page.getByTestId('sessions-new-chat');
+  await expect(empty).toBeVisible();
+  await expect(empty).toHaveAccessibleName('New chat');
+  await expect(empty).not.toHaveAttribute('title', /.+/);
+
+  dashboard.data.claude.chats = [chatEntry(SESSION, 'done', hour, 'Plan the release notes')];
+  await page.reload();
+  await page.getByTestId('sessions-tab').click();
+  await expect(page.getByTestId(`sessions-row-${SESSION}:chat`)).toBeVisible();
+  await expect(page.getByTestId('sessions-new-chat')).toBeVisible();
+});
+
+test('New chat in the drawer opens a fresh conversation from another screen and closes the drawer', async ({
+  page,
+}) => {
+  await page.goto('/#/services');
+  await page.getByTestId('sessions-tab').click();
+  await page.getByTestId('sessions-new-chat').click();
+  await expect(page).toHaveURL(/#\/chat$/);
+  await expect(page.getByTestId('panel-chat')).toBeVisible();
+  await expect(page.getByTestId('chat-title')).toHaveText('New chat');
+  await expect(page.getByTestId('chat-empty')).toBeVisible();
+  await expect(page.getByTestId('sessions-drawer')).toBeHidden();
+  // The drawer-close convention: the focus goes back to the tab that opened it.
+  await expect(page.getByTestId('sessions-tab')).toBeFocused();
+});
+
+test('New chat in the drawer while reading a chat gives an empty conversation, and the next send is a new session', async ({
+  page,
+  dashboard,
+}) => {
+  await page.goto(`/#/chat?session=${SESSION}`);
+  await chatSay(
+    page,
+    SESSION,
+    'hello',
+    hello({ items: [USER, ANSWER], turn: turn({ outcome: 'failed', error: 'Boom' }) }),
+  );
+  await expect(page.getByTestId('chat-message-u1')).toBeVisible();
+  await expect(page.getByTestId('chat-retry')).toBeVisible();
+
+  await page.getByTestId('sessions-tab').click();
+  await page.getByTestId('sessions-new-chat').click();
+  await expect(page).toHaveURL(/#\/chat$/);
+  await expect(page.getByTestId('sessions-drawer')).toBeHidden();
+  await expect(page.getByTestId('chat-title')).toHaveText('New chat');
+  await expect(page.getByTestId('chat-empty')).toBeVisible();
+  await expect(page.getByTestId('chat-message-u1')).toHaveCount(0);
+  await expect(page.getByTestId('chat-message-a1')).toHaveCount(0);
+  await expect(page.getByTestId('chat-retry')).toHaveCount(0);
+  await expect(page.getByTestId('chat-turn-note')).toHaveCount(0);
+
+  await composer(page).fill('A different question');
+  await composer(page).press('Enter');
+  await expect(page).toHaveURL(new RegExp(`#/chat\\?session=${CHAT_SESSION_ID}$`));
+  const sends = callsTo(dashboard, '/api/claude/chat/send');
+  expect(sends).toHaveLength(1);
+  expect(sends[0].body).toEqual({ message: 'A different question' });
+});
+
+test('New chat in the drawer on a fresh Chat screen closes the drawer and breaks nothing', async ({
+  page,
+  dashboard,
+}) => {
+  await page.goto('/#/chat');
+  await page.getByTestId('sessions-tab').click();
+  await page.getByTestId('sessions-new-chat').click();
+  await expect(page).toHaveURL(/#\/chat$/);
+  await expect(page.getByTestId('sessions-drawer')).toBeHidden();
+  await expect(page.getByTestId('chat-empty')).toBeVisible();
+  await composer(page).fill('Still works');
+  await composer(page).press('Enter');
+  await expect(page).toHaveURL(new RegExp(`#/chat\\?session=${CHAT_SESSION_ID}$`));
+  expect(callsTo(dashboard, '/api/claude/chat/send')).toHaveLength(1);
+});
+
+test('New chat in the drawer works from the keyboard', async ({ page }) => {
+  await page.goto('/#/services');
+  await page.getByTestId('sessions-tab').click();
+  await page.getByTestId('sessions-new-chat').focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/#\/chat$/);
+  await expect(page.getByTestId('sessions-drawer')).toBeHidden();
+  await expect(page.getByTestId('sessions-tab')).toBeFocused();
+});
+
+// The composer's controls float over the top-right corner of the textarea, so the bot bar's strip and
+// the posters along the bottom of the screen never cover them.
+const BOT_TICKETS = {
+  'BOT-1': claudeEntry('working', 'running', { phase: 'implement-plan' }),
+  'BOT-2': claudeEntry('failed', 'ended_without_flag', { phase: 'implement-plan' }),
+  'BOT-3': claudeEntry('none', null, { review: { state: 'done', reason: 'finished' } }),
+  'BOT-4': claudeEntry('none', null, { review: { state: 'waiting', reason: 'blocked' } }),
+};
+const overlaps = (a, b) =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+// True when the topmost element at the centre of `locator` is the control itself.
+const isOnTop = (locator) =>
+  locator.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return el === hit || el.contains(hit);
+  });
+
+for (const width of [1200, 390]) {
+  test(`the composer controls float at the top right of the textarea, clear of the bots, at ${width}px`, async ({
+    page,
+    dashboard,
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.setViewportSize({ width, height: 800 });
+    Object.assign(dashboard.data.claude.tickets, BOT_TICKETS);
+    dashboard.data.claude.activeSprint.keys = Object.keys(BOT_TICKETS);
+    dashboard.data.claude.chats = [chatEntry(SESSION, 'working', 1000, 'Busy chat')];
+    await page.goto(`/#/chat?session=${SESSION}`);
+    await chatSay(page, SESSION, 'hello', hello({ state: 'working', live: true, items: [USER] }));
+    const bots = page.locator('[data-testid^="bot-bar-bot-"], [data-testid^="bot-bar-poster-"]');
+    await expect(bots).toHaveCount(10);
+
+    const check = async (control) => {
+      const box = await control.boundingBox();
+      // A disabled button takes no pointer events, so only an enabled one can be hit.
+      const enabled = await control.isEnabled();
+      const fieldBox = await composer(page).boundingBox();
+      expect(box.x + box.width, 'inside the textarea, right edge').toBeLessThanOrEqual(
+        fieldBox.x + fieldBox.width,
+      );
+      expect(box.x, 'in the right half').toBeGreaterThan(fieldBox.x + fieldBox.width / 2);
+      expect(box.y, 'inside the textarea, top edge').toBeGreaterThanOrEqual(fieldBox.y);
+      expect(box.y - fieldBox.y, 'in the first third').toBeLessThanOrEqual(fieldBox.height / 3);
+      expect(box.y + box.height, 'clear of the resize handle').toBeLessThanOrEqual(
+        fieldBox.y + fieldBox.height - 24,
+      );
+      if (enabled) expect(await isOnTop(control), 'nothing lies over it').toBe(true);
+      for (const bot of await bots.all()) {
+        expect(overlaps(box, await bot.boundingBox()), 'no bot or poster over it').toBe(false);
+      }
+      // The text starts below the controls, so a long message never runs under them.
+      const paddingTop = await composer(page).evaluate((el) =>
+        parseFloat(getComputedStyle(el).paddingTop),
+      );
+      expect(fieldBox.y + paddingTop, 'text starts below the controls').toBeGreaterThanOrEqual(
+        box.y + box.height,
+      );
+    };
+
+    // Working: the field is read-only, Send waits and Stop is there, both in the corner.
+    await check(page.getByTestId('chat-send'));
+    await check(page.getByTestId('chat-stop'));
+    await composer(page).focus();
+    await page.keyboard.press('Tab');
+    await expect(page.getByTestId('chat-stop'), 'Tab from the field reaches Stop').toBeFocused();
+
+    // Idle with a long message: Send alone, still in the corner, next in the tab order.
+    await chatSay(page, SESSION, 'state', { state: 'idle', turn: turn() });
+    await composer(page).fill('a long line of words '.repeat(30));
+    await check(page.getByTestId('chat-send'));
+    await composer(page).focus();
+    await page.keyboard.press('Tab');
+    await expect(page.getByTestId('chat-send'), 'Tab from the field reaches Send').toBeFocused();
+    expect(
+      await page.evaluate(() => document.scrollingElement.scrollHeight <= innerHeight),
+      'the page does not scroll',
+    ).toBe(true);
+    await expect(composer(page)).toBeInViewport();
+  });
+}
+
+// A ticket row's Chat link is an icon: no visible text, the same accessible name, "Chat" in the app's
+// own tooltip on hover and on focus, and the time, Chat and copy columns line up across rows.
+const iconRows = ({ data }) => {
+  const attach = { kind: 'attach', command: 'claude attach demo' };
+  data.claude.tickets['BOT-1'] = claudeEntry('working', 'running', {
+    phase: 'implement-plan',
+    goTo: { investigate: null, implement: attach, groom: null },
+  });
+  data.claude.tickets['BOT-2'] = claudeEntry('none', null, {
+    review: { state: 'done', reason: 'finished' },
+  });
+  data.claude.activeSprint.keys = ['BOT-1', 'BOT-2'];
+  data.claude.sessionIds = { 'BOT-1': { implement: SESSION } };
+  const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+  data.claude.lastActive = { 'BOT-1': { implement: ago(2) }, 'BOT-2': { review: ago(90) } };
+  data.claude.chats = [chatEntry(OTHER, 'done', hour, 'Plan the release notes')];
+};
+
+test('a ticket row Chat link is an icon with a tooltip, and the row columns line up', async ({
+  page,
+  dashboard,
+}) => {
+  iconRows(dashboard);
+  await page.goto('/#/services');
+  await page.getByTestId('sessions-tab').click();
+  const link = page.getByTestId('sessions-chat-BOT-1:implement');
+  await expect(link).toHaveAttribute('href', `#/chat?session=${SESSION}`);
+  expect((await link.innerText()).trim(), 'no visible text').toBe('');
+  await expect(link.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+  await expect(link.locator('title')).toHaveCount(0);
+  await expect(link).not.toHaveAttribute('title', /.+/);
+  await expect(
+    page.getByRole('link', { name: 'Chat with BOT-1 Implement plan session' }),
+  ).toHaveCount(1);
+  await expect(link).toHaveAccessibleName('Chat with BOT-1 Implement plan session');
+
+  // The tooltip says "Chat" on hover and on keyboard focus.
+  await link.hover();
+  await expect(page.getByRole('tooltip')).toHaveText('Chat');
+  await page.getByTestId('sessions-search').hover();
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  await page.getByTestId('sessions-open-BOT-1:implement').focus();
+  await page.keyboard.press('Tab');
+  await expect(link).toBeFocused();
+  await expect(page.getByRole('tooltip')).toHaveText('Chat');
+
+  // Compact, and no smaller than the copy button beside it.
+  const box = await link.boundingBox();
+  const copy = await page.getByTestId('sessions-copy-BOT-1:implement').boundingBox();
+  expect(box.height).toBeGreaterThanOrEqual(copy.height);
+  expect(box.width).toBeLessThan(40);
+
+  // Rows without a Chat link or without a copy button keep the columns: time, Chat, copy.
+  const right = async (id) => {
+    const b = await page.getByTestId(id).boundingBox();
+    return Math.round(b.x + b.width);
+  };
+  expect(await right('sessions-when-BOT-2:review')).toBe(
+    await right('sessions-when-BOT-1:implement'),
+  );
+  expect(await right(`sessions-copy-${OTHER}:chat`)).toBe(
+    await right('sessions-copy-BOT-1:implement'),
+  );
+  await expect(page.getByTestId('sessions-copy-BOT-2:review')).toHaveCount(0);
+  await expect(page.getByTestId(`sessions-chat-${OTHER}:chat`)).toHaveCount(0);
+
+  // Enter follows the link and closes the drawer.
+  await link.focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(new RegExp(`#/chat\\?session=${SESSION}$`));
+  await expect(page.getByTestId('sessions-drawer')).toBeHidden();
+});
+
+// The room kept for the controls follows their real height, the box cannot be dragged below a usable
+// text line, and a scrollbar never lies under the controls.
+test('the composer keeps room for the controls, a line of text and a scrollbar', async ({
+  page,
+}) => {
+  await page.goto(`/#/chat?session=${SESSION}`);
+  await chatSay(page, SESSION, 'hello', hello({ items: [USER] }));
+  await composer(page).fill('a long line of words '.repeat(60));
+  const send = await page.getByTestId('chat-send').boundingBox();
+  const room = await composer(page).evaluate((el) => {
+    const style = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return {
+      top: box.top,
+      right: box.right,
+      paddingTop: parseFloat(style.paddingTop),
+      paddingBottom: parseFloat(style.paddingBottom),
+      minHeight: parseFloat(style.minHeight),
+      overflows: el.scrollHeight > el.clientHeight,
+    };
+  });
+  expect(room.paddingTop, 'text starts below the controls').toBeGreaterThanOrEqual(
+    send.y + send.height - room.top,
+  );
+  expect(
+    room.minHeight - room.paddingTop - room.paddingBottom,
+    'the smallest box still has room for a line of text',
+  ).toBeGreaterThanOrEqual(20);
+  expect(room.overflows, 'the draft overflows the box').toBe(true);
+  // Headless Chromium hides scrollbars, so none can be measured here: the controls must end at least
+  // 16px (a classic scrollbar, 15-17px; the textarea asks for a thin one) inside the right edge.
+  expect(
+    room.right - (send.x + send.width),
+    'the controls end before where a scrollbar sits',
+  ).toBeGreaterThanOrEqual(16);
+});
+
+// Headless Chromium cannot emulate `(hover: none)`, so the touch case reads the stylesheet: the room
+// kept under that query is the height base.css gives every button under it.
+test('the room kept for the controls follows the touch button height', async ({ page }) => {
+  await page.goto(`/#/chat?session=${SESSION}`);
+  const heights = await page.evaluate(() => {
+    const found = { button: null, room: null };
+    for (const sheet of document.styleSheets) {
+      for (const rule of sheet.cssRules) {
+        if (!(rule instanceof CSSMediaRule) || !rule.conditionText.includes('hover: none'))
+          continue;
+        for (const inner of rule.cssRules) {
+          if (inner.selectorText === '.btn') found.button = inner.style.minHeight;
+          if (inner.selectorText === '.chat-field')
+            found.room = inner.style.getPropertyValue('--chat-actions-h').trim();
+        }
+      }
+    }
+    return found;
+  });
+  expect(heights.button, 'base.css makes buttons taller on touch').toBeTruthy();
+  expect(heights.room).toBe(heights.button);
+});

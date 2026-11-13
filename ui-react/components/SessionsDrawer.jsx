@@ -7,13 +7,15 @@
 // active ("9m ago", read as "active 9m ago"), and a working one that has been quiet for a while is flagged (isQuiet). A
 // row opens the same Claude dialog the bot opens, and a session there is to join gets a button that
 // copies its join command, the same as the dialog's "Go to session". A row with a session id also links
-// to that session in the Chat screen; a standalone chat's row (no ticket, its title in place of the
-// ticket) opens in Chat instead of a dialog (BotBar's open handler). The rows are mounted only while
+// to that session in the Chat screen, as an icon (the Chat tab's) with "Chat" in the tooltip; a standalone chat's row (no ticket, its title in place of the
+// ticket) opens in Chat instead of a dialog (BotBar's open handler). The header's "New chat" link is
+// the Chat screen's own (`#/chat`, a fresh conversation), shown with or without sessions. The rows are mounted only while
 // the drawer is open, so nothing here is on the page, or in its accessibility tree, while it is shut.
 // Escape closes it and puts focus back on the tab.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, DashboardTooltip } from './Primitives.jsx';
 import { StatusMark } from './ClaudeSteps.jsx';
+import { NavIcon } from './NavIcon.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
 import { RelativeTime } from './slack-watch/RelativeTime.jsx';
 import {
@@ -102,15 +104,17 @@ function Row({ row, now, copied, onOpen, onCopy, onClose }) {
         </span>
       )}
       {session && phase !== 'chat' && (
-        <a
-          className="sessions-row-chat"
-          href={chatHref(session)}
-          onClick={onClose}
-          data-testid={`sessions-chat-${key}`}
-          aria-label={`Chat with ${ticket} ${phaseWords} session`}
-        >
-          Chat
-        </a>
+        <DashboardTooltip title="Chat" placement="left">
+          <a
+            className="sessions-row-chat"
+            href={chatHref(session)}
+            onClick={onClose}
+            data-testid={`sessions-chat-${key}`}
+            aria-label={`Chat with ${ticket} ${phaseWords} session`}
+          >
+            <NavIcon name="chat" />
+          </a>
+        </DashboardTooltip>
       )}
       {goTo && (
         <DashboardTooltip title={goTo.command} placement="left">
@@ -215,15 +219,25 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
           <>
             <header className="sessions-head">
               <h2 id={titleId}>Claude sessions</h2>
-              <Button
-                ref={closeButton}
-                className="subtle"
-                data-testid="sessions-close"
-                aria-label="Close session list"
-                onClick={close}
-              >
-                Close
-              </Button>
+              <div className="sessions-head-actions">
+                <Button
+                  href="#/chat"
+                  className="subtle"
+                  data-testid="sessions-new-chat"
+                  onClick={close}
+                >
+                  New chat
+                </Button>
+                <Button
+                  ref={closeButton}
+                  className="subtle"
+                  data-testid="sessions-close"
+                  aria-label="Close session list"
+                  onClick={close}
+                >
+                  Close
+                </Button>
+              </div>
             </header>
             {count > 0 && (
               <div className="sessions-search">

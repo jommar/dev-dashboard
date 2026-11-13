@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Moved the Chat composer's controls (Send, Stop, Retry, Refresh) to float over the top right corner of the
+  message box, out of the strip along the bottom of the screen where the bot bar's mascots and posters
+  covered them; the reason the box waits and any send error now show above it. No behaviour change.
+- Added a **New chat** link to the Sessions drawer's header (shown with or without listed sessions): it
+  opens the Chat tab on a fresh standalone conversation, the same as the Chat tab's own **New chat**, and
+  closes the drawer. No backend change.
 - Added a **Chat** tab (after Pull Requests) to talk to a real Claude Code session inside the dashboard,
   with or without a Jira ticket. Press **New chat** for a standalone session (a record in
   `claude/chat/<uuid>.json`, run from `~/pathwise`), or follow the new **Chat** link on a ticket session's
