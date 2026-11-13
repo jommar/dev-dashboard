@@ -12,8 +12,13 @@ const REVIEW_CHIPS = {
 export function SpecReviewCard({ spec, jiraBase, onOpenClaude }) {
   const [firstKey] = spec.keys;
   const reviewChip = REVIEW_CHIPS[spec.review];
+  const reviewRequested = spec.reviewRequested === true;
   return (
-    <article className="board-card spec-review-card" data-testid={`prs-spec-${spec.number}`}>
+    <article
+      className="board-card spec-review-card"
+      data-review-requested={reviewRequested}
+      data-testid={`prs-spec-${spec.number}`}
+    >
       <div className="board-card-top">
         {spec.keys.map((key) => (
           <a
@@ -30,6 +35,15 @@ export function SpecReviewCard({ spec, jiraBase, onOpenClaude }) {
         {spec.draft && (
           <span className="board-chip" data-tone="warn">
             Draft
+          </span>
+        )}
+        {reviewRequested && (
+          <span
+            className="board-chip"
+            data-tone="warn"
+            data-testid={`prs-spec-requested-${spec.number}`}
+          >
+            Your review requested
           </span>
         )}
         {reviewChip && (

@@ -632,7 +632,13 @@ export function dashboardData() {
       approvalTicketStatuses: {},
     },
     // The Spec review lane's feed: available and empty by default; a spec overrides it per test.
-    specReviews: { available: true, total: 0, specs: [], updatedAt: '2026-11-09T10:00:00Z' },
+    specReviews: {
+      available: true,
+      total: 0,
+      specs: [],
+      hasMore: false,
+      updatedAt: '2026-11-09T10:00:00Z',
+    },
     reviewTickets: {
       total: 3,
       tickets: [

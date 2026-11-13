@@ -387,7 +387,7 @@ An agent can read the same logs three ways:
    - `GET /api/events` (SSE live status)
    - `GET /api/prs`
    - `GET /api/review-tickets` (other-assigned review-ready Jira tickets with all linked open PRs in watched repos; see [PR review board](#open-prs))
-   - `GET /api/spec-reviews` (open `ezat-specs` spec PRs with a ticket key and no open or merged code PR; see [Spec review lane](#spec-review-lane))
+   - `GET /api/spec-reviews?limit=3` (all eligible directly requested `ezat-specs` specs plus up to `limit` others; see [Spec review lane](#spec-review-lane))
    - `GET /api/my-tickets?includeDone=0|1`
    - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
@@ -601,29 +601,73 @@ as Jira links, the PR, its author, age in days, reviews by others, a Draft chip 
 review chip (below). The repos and label are fixed in code, not the Settings watched list, and spec
 cards ignore the work filters.
 
-The feed is `GET /api/spec-reviews`. It always answers 200 with `{ available, total, specs, updatedAt }`;
-each spec carries `number`, `title`, `url`, `author`, `draft`, `keys`, `ageDays`, `reviewsByOthers`
-and `review`.
-`available: false` means the lookup failed or was incomplete, and then `specs` is empty. A cross-site or
-same-site browser request gets `403 OPERATION_FAILED` before any GitHub call.
+The lane initially shows **all eligible specs directly requesting your review**, followed by the
+**three newest eligible other specs**. Each group is ordered newest first by creation time. **Load more**
+requests six others, then nine, and so on, without limiting your requested cards. Each successful answer
+replaces the whole list rather than appending it. Refresh and polling keep the last successfully expanded
+count, even if fewer others remain; tab switches keep it, while reloading the page resets it to three.
+Load more reads only the spec feed, not tickets or Slack. Load more and manual Refresh are disabled while
+a spec request is pending; ticket/Slack polling still settles independently. Concurrent spec triggers
+are skipped rather than queued. No Load more button appears after a proven end.
 
-The lookup is cached for 10 minutes; Refresh does not bypass it, so a new code PR hides its
-spec within 10 minutes. If the lookup fails or is incomplete, the lane is empty and a note says
-so, and the ticket lanes are unaffected. The card's **Claude** button opens a dialog with one
+The feed is `GET /api/spec-reviews?limit=3`; omission defaults to 3. `limit` counts **eligible others**,
+not directly requested specs. It accepts one canonical decimal integer from **1 through 1000**.
+Blank, repeated, signed, fractional, exponent, whitespace, leading-zero and out-of-range values return
+`400 INVALID_SPEC_LIMIT` before any GitHub call. Existing Host/setup guards remain; cross-site or same-site
+browser requests get `403 OPERATION_FAILED` before count validation or any GitHub call.
+Successful lookups answer 200 with `{ available: true, total, specs, hasMore, updatedAt }`;
+`total` equals the returned `specs.length`, including requested cards, not the global eligible total.
+`hasMore` is true only after observing another eligible nonrequested spec beyond the selected window;
+that lookahead card is not returned. The button is not included in the card count. At the 1000-other
+count bound, explicit GitHub-search-limit wording replaces Load more rather than implying unlimited loading.
+Each spec carries `number`, `title`, `url`, `author`, `draft`, `keys`, `ageDays`, `reviewsByOthers`,
+`review` and boolean `reviewRequested`.
+
+An upstream/eligibility failure answers 200 with
+`{ available: false, total: 0, specs: [], hasMore: false, updatedAt }`; false `hasMore` here does not claim
+exhaustion. A failed or incomplete refresh/expansion clears the spec lane and hides Load more, but keeps
+ticket lanes and an already-open spec dialog. Refresh retries the last successful count, not the failed
+larger count. Only a GitHub search ceiling failure adds `reason: 'search_limit'`; the note explains the
+1000-match ceiling rather than showing a partial requested set or inventing an end to the others list.
+Viewer identity, request lists, search counts/cursors and raw upstream errors are not returned.
+
+GitHub discovery is selective: fixed reviewer-specific requested/other searches are batched in one
+GraphQL POST where possible. Every lookup completes requested pagination and scans others only until
+the eligible window plus lookahead, or a proven end. A common default asks for four other candidates,
+not the entire spec repository; filtered candidates or requested pagination can require more calls.
+Expansion re-reads the prefix. A warm single-page feed can still take one spec POST before and after
+this change: savings are default payload and unnecessary paging, **not guaranteed fewer API calls**.
+Each search connection has GitHub's 1000-match ceiling; inability to establish the complete requested
+set or the others window/lookahead within it is unavailable with `search_limit`.
+
+Spec/request/review data is fetched on each feed load; only the existing code-key lookup is cached for
+10 minutes, so Refresh does not bypass that cache and a new code PR hides its spec within 10 minutes.
+GitHub search indexing and pagination are not an atomic live snapshot: a newly requested spec absent
+from the index can remain undiscovered until indexing catches up. Observed current fields reject stale
+closed/unlabelled hits and reclassify changed requests; there is no exhaustive fallback or instant
+completeness guarantee. The card's **Claude** button opens a dialog with one
 action, **Start spec review**, **Re-review** or **Review again** (see below), which posts
 `{ key, phase: 'spec-review', pr }`; `pr` is required. The server fills the built-in review template
 or `prompts/spec-review.md` with the validated key and PR number (see [Custom prompts](#custom-prompts)), and the
 session is named `<KEY>-spec-review`. Its state is in the ticket's [Claude launcher](#claude-launcher)
 entry, where `blocks.specReview` appears only once a spec review was launched.
 
-`review` is the signed-in user's own state on the PR, worked out from GitHub when the feed is read
-(the same 10-minute cache applies). `current` means their newest submitted review is on the PR's
+`review` is the signed-in user's own state on the PR, worked out fresh from GitHub when the feed is read.
+`current` means their newest submitted review is on the PR's
 current head commit; `stale` means it is on an earlier commit, so the PR has new commits since their
-review; `none` means they have no submitted review, or the lookup has no viewer login or head commit.
+review; `none` means they have no submitted review, or the lookup has no head commit. A missing viewer
+login makes discovery unavailable rather than claiming that every requested spec is known.
 The dashboard stores nothing for it. A `current` card shows a **Reviewed** chip, a `stale` card shows
 **New commits since your review**, and `none` shows no chip. The dialog's action reads **Start spec
 review** for `none`, **Re-review** for `stale` and **Review again** for `current`; all three send the
 same launch and stay enabled.
+
+`reviewRequested` is true only when GitHub has a pending direct **User** review request for the
+authenticated viewer. Requests for another user or a team do not count. A true card has an amber-tinted
+background, an amber edge and a **Your review requested** chip; false or absent keeps the ordinary
+appearance. This is independent of `review`: a previously reviewed spec stays visible and is highlighted
+if requested again, alongside its existing review chip. The highlight clears when the feed reports the
+request removed on a fresh feed load, subject to GitHub search indexing lag.
 
 The built-in spec review prompt requests an unattended review as the signed-in user. A custom
 `prompts/spec-review.md` replaces those instructions in full. The launch enforces part of its limits on

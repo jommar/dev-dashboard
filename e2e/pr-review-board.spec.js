@@ -1170,6 +1170,7 @@ test.describe('Spec review lane', () => {
     available: true,
     total: specs.length,
     specs,
+    hasMore: false,
     updatedAt: '2026-11-09T10:00:00Z',
     ...extra,
   });
@@ -1183,10 +1184,304 @@ test.describe('Spec review lane', () => {
     ageDays: 3,
     reviewsByOthers: 2,
     review: 'none',
+    reviewRequested: false,
     ...extra,
   });
   const SINGLE = specPr(321, '[TAP-100] Trip export spec', ['TAP-100']);
   const SHARED = specPr(330, '[TAP-1][TAP-2] Shared spec', ['TAP-1', 'TAP-2']);
+  const requested = [601, 602, 603, 604].map((number) =>
+    specPr(number, `[TAP-${number}] Requested spec`, [`TAP-${number}`], { reviewRequested: true }),
+  );
+  const others = [701, 702, 703, 704, 705, 706, 707].map((number) =>
+    specPr(number, `[TRIPS-${number}] Other spec`, [`TRIPS-${number}`]),
+  );
+  const windows = () => ({
+    3: specFeed([...requested, ...others.slice(0, 3)], { hasMore: true }),
+    6: specFeed([...requested, ...others.slice(0, 6)], { hasMore: true }),
+    9: specFeed([...requested, ...others]),
+  });
+  const loadMore = (page) => page.getByTestId('prs-spec-load-more');
+  async function specWindows(page, responses) {
+    const reads = [];
+    await page.route('**/api/spec-reviews*', async (route) => {
+      const value = new URL(route.request().url()).searchParams.get('limit');
+      const limit = value == null ? null : Number(value);
+      reads.push({ method: route.request().method(), limit });
+      const response = responses[limit] ?? responses.default ?? responses[3];
+      if (typeof response === 'function') await response(route, limit);
+      else await route.fulfill({ json: response });
+    });
+    return reads;
+  }
+  async function expectSpecNumbers(page, expected) {
+    const cards = specLane(page).getByTestId(/^prs-spec-\d+$/);
+    await expect(cards).toHaveCount(expected.length);
+    expect(
+      await cards.evaluateAll((elements) => elements.map((element) => element.dataset.testid)),
+    ).toEqual(expected.map((number) => `prs-spec-${number}`));
+    await expect(page.getByTestId('prs-column-count-spec-review')).toHaveText(
+      String(expected.length),
+    );
+  }
+
+  test('paging: Load more requests six others, replaces the complete feed and excludes its control from the count', async ({
+    page,
+    dashboard,
+  }) => {
+    const reads = await specWindows(page, windows());
+    await page.clock.install();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.goto('/#/prs');
+    await expectSpecNumbers(page, [601, 602, 603, 604, 701, 702, 703]);
+    const button = loadMore(page);
+    await expect(button).toBeVisible();
+    await expect(button).toHaveRole('button');
+    expect(await button.evaluate((element) => element.tagName)).toBe('BUTTON');
+    await expect(
+      specLane(page).locator('li').last().getByTestId('prs-spec-load-more'),
+    ).toBeVisible();
+    const before = dashboard.requests.length;
+    await button.focus();
+    await page.keyboard.press('Enter');
+    await expectSpecNumbers(page, [601, 602, 603, 604, 701, 702, 703, 704, 705, 706]);
+    expect(reads).toEqual([
+      { method: 'GET', limit: 3 },
+      { method: 'GET', limit: 6 },
+    ]);
+    expect(
+      dashboard.requests
+        .slice(before)
+        .filter(
+          ({ path }) => path === '/api/review-tickets' || path.startsWith('/api/slack/threads'),
+        ),
+    ).toEqual([]);
+    expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+    for (const number of [601, 602, 603, 604])
+      await expect(page.getByTestId(`prs-spec-requested-${number}`)).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+      false,
+    );
+    await button.click();
+    await expectSpecNumbers(page, [601, 602, 603, 604, 701, 702, 703, 704, 705, 706, 707]);
+    expect(reads.at(-1)).toEqual({ method: 'GET', limit: 9 });
+    await expect(button).toHaveCount(0);
+  });
+
+  test('paging: refresh and polls retain committed expansion and skip overlapping triggers', async ({
+    page,
+    dashboard,
+  }) => {
+    const responses = windows();
+    let release;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    let releaseLate = () => {};
+    const expanded = responses[6];
+    responses[6] = async (route) => {
+      await pending;
+      await route.fulfill({ json: expanded }).catch(() => {});
+    };
+    const reads = await specWindows(page, responses);
+    await page.clock.install();
+    try {
+      await page.goto('/#/prs');
+      await expectSpecNumbers(page, [601, 602, 603, 604, 701, 702, 703]);
+      await loadMore(page).click();
+      await expect.poll(() => reads.length).toBe(2);
+      await expect(loadMore(page)).toBeDisabled();
+      await expect(loadMore(page)).toHaveText(/Loading/i);
+      await expect(page.getByTestId('prs-refresh')).toBeDisabled();
+      await loadMore(page).dispatchEvent('click');
+      await loadMore(page).dispatchEvent('click');
+      await page.getByTestId('prs-refresh').dispatchEvent('click');
+      dashboard.data.reviewTickets.tickets[0].summary =
+        'Tickets settle while spec expansion is pending';
+      const slackReads = dashboard.requests.filter(({ path }) =>
+        path.startsWith('/api/slack/threads'),
+      ).length;
+      await page.clock.fastForward(91_000);
+      await expect(ticket(page)).toContainText('Tickets settle while spec expansion is pending');
+      expect(
+        dashboard.requests.filter(({ path }) => path.startsWith('/api/slack/threads')).length,
+      ).toBeGreaterThan(slackReads);
+      expect(reads).toEqual([
+        { method: 'GET', limit: 3 },
+        { method: 'GET', limit: 6 },
+      ]);
+      await expectSpecNumbers(page, [601, 602, 603, 604, 701, 702, 703]);
+      release();
+      await expectSpecNumbers(page, [601, 602, 603, 604, 701, 702, 703, 704, 705, 706]);
+      const fresh = specFeed([
+        specPr(802, '[TAP-802] Newly requested', ['TAP-802'], { reviewRequested: true }),
+        requested[1],
+        requested[2],
+        requested[3],
+        { ...requested[0], reviewRequested: false },
+        others[0],
+        others[1],
+      ]);
+      responses[6] = fresh;
+      await page.getByTestId('prs-refresh').click();
+      await expectSpecNumbers(page, [802, 602, 603, 604, 601, 701, 702]);
+      await expect(page.getByTestId('prs-spec-requested-601')).toHaveCount(0);
+      await expect(page.getByTestId('prs-spec-requested-802')).toBeVisible();
+      await expect(spec(page, 703)).toHaveCount(0);
+      expect(reads.at(-1).limit).toBe(6);
+      await page.clock.fastForward(91_000);
+      await expect.poll(() => reads.length).toBe(4);
+      expect(reads.at(-1).limit).toBe(6);
+      await page.getByTestId('tab-services').click();
+      await page.getByTestId('tab-prs').click();
+      await page.getByTestId('prs-refresh').click();
+      await expect.poll(() => reads.length).toBe(5);
+      expect(reads.at(-1).limit).toBe(6);
+      const late = new Promise((resolve) => {
+        releaseLate = resolve;
+      });
+      responses[6] = async (route) => {
+        await late;
+        await route.fulfill({ json: specFeed([], { available: false }) }).catch(() => {});
+      };
+      await page.getByTestId('prs-refresh').click();
+      await expect.poll(() => reads.length).toBe(6);
+      await page.reload();
+      await expectSpecNumbers(page, [601, 602, 603, 604, 701, 702, 703]);
+      expect(reads.at(-1).limit).toBe(3);
+      releaseLate();
+      await expect(page.getByTestId('prs-spec-error')).toHaveCount(0);
+      await expect(loadMore(page)).toBeEnabled();
+    } finally {
+      release();
+      releaseLate();
+    }
+  });
+
+  test('paging: expansion failure clears the lane, preserves the dialog and retries only the committed count with explicit limits', async ({
+    page,
+    dashboard,
+  }) => {
+    const responses = windows();
+    let release;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    responses[9] = async (route) => {
+      await pending;
+      await route.fulfill({ json: specFeed([], { available: false }) }).catch(() => {});
+    };
+    const reads = await specWindows(page, responses);
+    await page.clock.install();
+    try {
+      await page.goto('/#/prs');
+      await expect(loadMore(page)).toBeVisible();
+      await loadMore(page).click();
+      await expectSpecNumbers(page, [601, 602, 603, 604, 701, 702, 703, 704, 705, 706]);
+      await loadMore(page).click();
+      await expect.poll(() => reads.length).toBe(3);
+      await spec(page, 601).getByTestId('prs-spec-claude-icon-601').click();
+      await expect(page.getByTestId('prs-claude-dialog')).toBeVisible();
+      release();
+      await expect(page.getByTestId('prs-spec-error')).toBeVisible();
+      await expectSpecNumbers(page, []);
+      await expect(loadMore(page)).toHaveCount(0);
+      await expect(ticket(page)).toBeVisible();
+      await expect(page.getByTestId('prs-claude-dialog')).toBeVisible();
+      await page.keyboard.press('Escape');
+      responses[6] = specFeed([requested[0], others[0]]);
+      await page.getByTestId('prs-refresh').click();
+      await expectSpecNumbers(page, [601, 701]);
+      expect(reads.map(({ limit }) => limit)).toEqual([3, 6, 9, 6]);
+      await expect(page.getByTestId('prs-spec-error')).toHaveCount(0);
+      await expect(loadMore(page)).toHaveCount(0);
+      responses[6] = specFeed([], { available: false, reason: 'search_limit' });
+      await page.getByTestId('prs-refresh').click();
+      await expect(page.getByTestId('prs-spec-error')).toContainText(/1,?000/);
+      await expect(page.getByTestId('prs-spec-error')).toContainText(
+        /GitHub.*search|search.*GitHub/i,
+      );
+      await expectSpecNumbers(page, []);
+      await expect(ticket(page)).toBeVisible();
+
+      await expect(loadMore(page)).toHaveCount(0);
+      expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+
+  test('review requested specs have a distinct background and a visible chip, including reviewed specs', async ({
+    page,
+    dashboard,
+  }) => {
+    const omitted = specPr(331, '[TAP-3] Legacy spec', ['TAP-3']);
+    delete omitted.reviewRequested;
+    dashboard.data.specReviews = specFeed([
+      { ...SINGLE, reviewRequested: true, review: 'current' },
+      SHARED,
+      omitted,
+      specPr(332, '[TAP-4] Changed spec', ['TAP-4'], {
+        reviewRequested: true,
+        review: 'stale',
+      }),
+    ]);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/#/prs');
+    await expect(page.getByTestId('prs-column-count-spec-review')).toHaveText('4');
+    const ordinaryBackground = await spec(page, 330).evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    );
+    await expect(spec(page, 331)).toHaveCSS('background-color', ordinaryBackground);
+    for (const number of [321, 332]) {
+      const card = spec(page, number);
+      await expect(card).toBeVisible();
+      const background = await card.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      );
+      expect.soft(background).not.toBe(ordinaryBackground);
+      const chip = card.getByTestId(`prs-spec-requested-${number}`);
+      await expect(chip).toHaveText('Your review requested');
+      await expect(chip).toBeVisible();
+      await expect(chip).toHaveClass(/board-chip/);
+      await expect(chip).toHaveAttribute('data-tone', 'warn');
+      await expect(card.getByTestId(`prs-spec-claude-icon-${number}`)).toBeEnabled();
+    }
+    await expect(page.getByTestId('prs-spec-review-321')).toHaveText('Reviewed');
+    await expect(page.getByTestId('prs-spec-review-332')).toHaveText(
+      'New commits since your review',
+    );
+    for (const number of [330, 331])
+      await expect(page.getByTestId(`prs-spec-requested-${number}`)).toHaveCount(0);
+    expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+  });
+
+  test('review requested appearance clears on refresh without removing an already-reviewed spec', async ({
+    page,
+    dashboard,
+  }) => {
+    const requested = { ...SINGLE, reviewRequested: true, review: 'current' };
+    dashboard.data.specReviews = specFeed([requested, SHARED]);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/#/prs');
+    const card = spec(page, 321);
+    const chip = card.getByTestId('prs-spec-requested-321');
+    await expect(chip).toBeVisible();
+    const ordinaryStyle = await spec(page, 330).evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      shadow: getComputedStyle(element).boxShadow,
+    }));
+    const requestedShadow = await card.evaluate((element) => getComputedStyle(element).boxShadow);
+    expect(requestedShadow).not.toBe(ordinaryStyle.shadow);
+    requested.reviewRequested = false;
+    await page.getByTestId('prs-refresh').click();
+    await expect(chip).toHaveCount(0);
+    await expect(card).toBeVisible();
+    await expect(card).toHaveCSS('background-color', ordinaryStyle.background);
+    await expect(card).toHaveCSS('box-shadow', ordinaryStyle.shadow);
+    await expect(page.getByTestId('prs-spec-review-321')).toHaveText('Reviewed');
+    await expect(page.getByTestId('prs-column-count-spec-review')).toHaveText('2');
+    expect(dashboard.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+  });
 
   test('shows one card per spec with its content', async ({ page, dashboard }) => {
     dashboard.data.specReviews = specFeed([SINGLE, SHARED]);
@@ -1255,7 +1550,7 @@ test.describe('Spec review lane', () => {
       await page.goto('/#/prs');
       await expect(spec(page, 321)).toBeVisible();
       const meta = await page.getByTestId('prs-meta').innerText();
-      await page.route('**/api/spec-reviews', outage);
+      await page.route('**/api/spec-reviews*', outage);
       await page.getByTestId('prs-refresh').click();
       await expect(page.getByTestId('prs-spec-error')).toBeVisible();
       await expect(page.getByTestId('prs-column-count-spec-review')).toHaveText('0');

@@ -8,7 +8,7 @@ import { enrichOpenPRs } from './review.mjs';
 import { fetchPrDashboard } from './prs.mjs';
 import { fetchTicketPrs } from './ticket-prs.mjs';
 import { fetchReviewTickets } from './review-tickets.mjs';
-import { fetchSpecReviews } from './spec-reviews.mjs';
+import { fetchSpecReviews, parseSpecReviewLimit } from './spec-reviews.mjs';
 import { fetchHomeVelocity } from './home-velocity.mjs';
 import { getOriginDiff } from './diff.mjs';
 import { listWorktrees } from './checkouts.mjs';
@@ -158,8 +158,10 @@ function specReviewResponse(data) {
   return {
     available: data.available,
     total: data.total,
+    hasMore: data.hasMore,
+    ...(!data.available && data.reason === 'search_limit' ? { reason: 'search_limit' } : {}),
     specs: data.specs.map(
-      ({ number, title, url, author, draft, keys, ageDays, reviewsByOthers, review }) => ({
+      ({
         number,
         title,
         url,
@@ -169,6 +171,18 @@ function specReviewResponse(data) {
         ageDays,
         reviewsByOthers,
         review,
+        reviewRequested,
+      }) => ({
+        number,
+        title,
+        url,
+        author,
+        draft,
+        keys,
+        ageDays,
+        reviewsByOthers,
+        review,
+        reviewRequested,
       }),
     ),
     updatedAt: data.updatedAt,
@@ -715,7 +729,9 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       if (req.method === 'GET' && pathname === '/api/spec-reviews') {
         if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
           throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
-        json(res, 200, specReviewResponse(await api.fetchSpecReviews(options)));
+        const limits = url.searchParams.getAll('limit');
+        const limit = parseSpecReviewLimit(limits.length > 1 ? limits : limits[0]);
+        json(res, 200, specReviewResponse(await api.fetchSpecReviews({ ...options, limit })));
         return;
       }
       // Never fails the board: an unavailable result is still a 200 the board can render. A load
@@ -775,6 +791,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'UNSAFE_CREDENTIAL',
         'BODY_TOO_LARGE',
         'INVALID_JSON',
+        'INVALID_SPEC_LIMIT',
         'INVALID_LINK',
         'INVALID_SESSION',
         'INVALID_MESSAGE',

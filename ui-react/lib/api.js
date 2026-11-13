@@ -116,7 +116,8 @@ export async function getPrs() {
 }
 
 export const getReviewTickets = () => getJson('/api/review-tickets');
-export const getSpecReviews = () => getJson('/api/spec-reviews');
+export const getSpecReviews = (limit = 3, signal) =>
+  getJson(`/api/spec-reviews?limit=${encodeURIComponent(limit)}`, { signal });
 export const getTeamVelocity = () => getJson('/api/team-velocity');
 
 export async function getMyTickets(includeDone = false) {

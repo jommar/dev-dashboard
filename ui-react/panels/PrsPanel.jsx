@@ -23,6 +23,7 @@ import { PR_POLL_MS } from '../../ui/polling.js';
 
 const NO_TICKETS = Object.freeze([]);
 const NO_SPECS = Object.freeze([]);
+const SPEC_LIMIT = 1000;
 const LANE_HINTS = {
   'to-review':
     'No current approval or changes-request activity, no linked open PRs, or incomplete PR/review data. Evaluated across all linked open PRs in watched repositories; unknown data stays here.',
@@ -44,6 +45,9 @@ export function PrsPanel({ config, active }) {
   const [openClaudeKey, setOpenClaudeKey] = useState(null);
   const [specs, setSpecs] = useState(NO_SPECS);
   const [specFailed, setSpecFailed] = useState(false);
+  const [specLimit, setSpecLimit] = useState(3);
+  const [specHasMore, setSpecHasMore] = useState(false);
+  const [specBusy, setSpecBusy] = useState(false);
   // The spec whose dialog is open, held as the object it was opened with.
   const [openSpec, setOpenSpec] = useState(null);
   const boardRef = useRef(null);
@@ -70,21 +74,52 @@ export function PrsPanel({ config, active }) {
   const dataRef = useRef(data);
   dataRef.current = data;
   const specRequest = useRef(0);
+  const specInFlight = useRef(null);
+  useEffect(() => {
+    setSpecBusy(false);
+    return () => {
+      // Inactive/unmounted panels cannot accept an old reply or clear a newer request's guard.
+      specRequest.current += 1;
+      specInFlight.current?.abort();
+      specInFlight.current = null;
+    };
+  }, [active]);
   // An unavailable or failed spec answer lists no spec and sets the lane's note; it never fails tickets.
-  // Only the newest request writes, so a slow earlier answer cannot overwrite a newer one.
-  const loadSpecs = useCallback(async () => {
-    const id = ++specRequest.current;
-    try {
-      const result = await api.getSpecReviews();
-      if (id !== specRequest.current) return;
-      setSpecs(result.available ? result.specs : NO_SPECS);
-      setSpecFailed(!result.available);
-    } catch {
-      if (id !== specRequest.current) return;
-      setSpecs(NO_SPECS);
-      setSpecFailed(true);
-    }
-  }, [api]);
+  // Skip concurrent triggers; commit the expanded count only with a successful replacement feed.
+  const loadSpecs = useCallback(
+    async (limit = specLimit) => {
+      if (!active || specInFlight.current) return;
+      const id = ++specRequest.current;
+      const controller = new AbortController();
+      specInFlight.current = controller;
+      setSpecBusy(true);
+      try {
+        const result = await api.getSpecReviews(limit, controller.signal);
+        if (id !== specRequest.current) return;
+        setSpecs(result.available ? result.specs : NO_SPECS);
+        setSpecHasMore(Boolean(result.available && result.hasMore));
+        setSpecFailed(
+          result.available
+            ? false
+            : result.reason === 'search_limit'
+              ? 'search_limit'
+              : 'unavailable',
+        );
+        if (result.available) setSpecLimit(limit);
+      } catch {
+        if (id !== specRequest.current) return;
+        setSpecs(NO_SPECS);
+        setSpecHasMore(false);
+        setSpecFailed('unavailable');
+      } finally {
+        if (id === specRequest.current) {
+          specInFlight.current = null;
+          setSpecBusy(false);
+        }
+      }
+    },
+    [active, api, specLimit],
+  );
   const load = useCallback(
     async ({ silent = false } = {}) => {
       // Fired, never awaited: Slack is optional and slow, and its outage is not a failed refresh.
@@ -200,14 +235,44 @@ export function PrsPanel({ config, active }) {
               <SpecReviewCard spec={spec} jiraBase={config.jiraBase} onOpenClaude={setOpenSpec} />
             </li>
           ))}
+          {specHasMore && (
+            <li>
+              {specLimit < SPEC_LIMIT ? (
+                <button
+                  type="button"
+                  className="btn"
+                  data-testid="prs-spec-load-more"
+                  disabled={specBusy}
+                  onClick={() => loadSpecs(Math.min(SPEC_LIMIT, specLimit + 3))}
+                >
+                  {specBusy ? 'Loading…' : 'Load more'}
+                </button>
+              ) : (
+                <p className="review-ticket-warning" role="status">
+                  GitHub search is limited to 1,000 matches. More specs cannot be loaded here.
+                </p>
+              )}
+            </li>
+          )}
         </BoardColumn>
       </Board>
     ),
-    [columns, specs, config.jiraBase, data?.prCoverage, linksByTicket, openThread],
+    [
+      columns,
+      specs,
+      specHasMore,
+      specLimit,
+      specBusy,
+      loadSpecs,
+      config.jiraBase,
+      data?.prCoverage,
+      linksByTicket,
+      openThread,
+    ],
   );
   const coverageIncomplete = data && !hasCompletePrCoverage(data.prCoverage);
   return (
-    <BoardPanel id="prs" active={active} busy={loading}>
+    <BoardPanel id="prs" active={active} busy={loading || specBusy}>
       <BoardSection
         name="prs"
         title="Pull Requests"
@@ -221,7 +286,12 @@ export function PrsPanel({ config, active }) {
         }
         meta={meta}
         controls={
-          <RefreshControl name="prs" loading={loading} countdown={countdown} onRefresh={refresh} />
+          <RefreshControl
+            name="prs"
+            loading={loading || specBusy}
+            countdown={countdown}
+            onRefresh={refresh}
+          />
         }
         filters={
           <WorkFilters
@@ -250,8 +320,9 @@ export function PrsPanel({ config, active }) {
             )}
             {specFailed && (
               <BoardNote testId="prs-spec-error">
-                Spec review lookup unavailable or incomplete. No spec PRs are shown until it
-                answers.
+                {specFailed === 'search_limit'
+                  ? 'Spec review lookup reached the GitHub search limit of 1,000 matches. No spec PRs are shown because the requested set or next page could not be established.'
+                  : 'Spec review lookup unavailable or incomplete. No spec PRs are shown until it answers.'}
               </BoardNote>
             )}
           </>

@@ -311,6 +311,12 @@
 }
 
 /* Review-board cards add only ticket/PR content; board.css owns their shell and scrollers. */
+.spec-review-card[data-review-requested='true'] {
+  background: color-mix(in srgb, var(--amber) 8%, var(--panel2));
+  box-shadow:
+    inset 3px 0 0 var(--amber),
+    var(--shadow);
+}
 .review-ticket-key {
   color: var(--accent);
   font-family: var(--mono);
