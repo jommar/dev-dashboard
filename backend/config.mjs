@@ -41,6 +41,13 @@ export const BUFFER_BYTES = 64 * 1024;
 // launched Claude session) is given them.
 export const SECRET_ENV_NAMES = ['GH_TOKEN', 'GITHUB_TOKEN', 'JIRA_API_TOKEN', 'JIRA_TOKEN'];
 
+// A copy of `env` without those credentials: the environment of every process the dashboard starts.
+export function withoutSecrets(env) {
+  const copy = { ...env };
+  for (const name of SECRET_ENV_NAMES) delete copy[name];
+  return copy;
+}
+
 export const DASHBOARD_HOST = '127.0.0.1';
 export const DASHBOARD_PORT = 6500;
 

@@ -2,7 +2,7 @@ import { test, expect } from './fixtures.js';
 import { settingsData, ticketBoardData } from './data.js';
 
 const primaryRoutes = ['home', 'my-tickets', 'slack'];
-const toolRoutes = ['prs', 'releases', 'services', 'devtools', 'mascots', 'settings'];
+const toolRoutes = ['chat', 'prs', 'releases', 'services', 'devtools', 'mascots', 'settings'];
 
 for (const width of [320, 390, 699, 700, 1024, 1199, 1200, 1440]) {
   test(`main navigation keeps the daily route order and fits at ${width}px`, async ({

@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DASHBOARD_DIR } from './config.mjs';
 import { writeFileAtomic } from './credentials.mjs';
-import { stateOf } from './claude-sessions.mjs';
+import { settleSession } from './claude-sessions.mjs';
 import { defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
 import { createPromptStore, PROMPT_TEMPLATES } from './claude-prompts.mjs';
 import { BROWSER_ID, PORT_FIRST, PORT_LAST } from './browser-devtools.mjs';
@@ -66,6 +66,11 @@ const ANSWER_LIMIT = 20;
 // process is gone, and a resume in that gap starts a copy of the session instead of continuing it.
 export const FINISH_POLL_MS = 1_000;
 export const FINISH_POLL_LIMIT = 30;
+// One gap of that poll; it never keeps the process alive.
+export const pause = (timers) =>
+  new Promise((resolve) => {
+    timers.setTimeout(resolve, FINISH_POLL_MS).unref?.();
+  });
 // What the dashboard reads of session-writable state: a bigger file is unreadable, and only this
 // many ticket folders are listed.
 const MAX_STATE_BYTES = 1024 * 1024;
@@ -170,17 +175,23 @@ const fillTemplate = (template, values) =>
 export const e2ePrompt = (key, port) =>
   fillTemplate(PROMPT_TEMPLATES.e2e, { KEY: key, SLUG: key.toLowerCase(), PORT: port });
 
-// Why a send that did not go through failed: how a stop that did not stop and a resume that did not
-// deliver are reported. A resume that listed no such session routed nothing, so it fails too.
-const STOP_FAILURES = { not_idle: 'session_running', not_listed: 'session_not_found' };
 const sendFailed = (reason) => ({ status: 'failed', reason });
+// The failures of `settleSession` this module logs, and the step each is logged under; a stop that
+// failed is logged by the sessions module.
+const SETTLE_LOG_STEPS = {
+  listing_unavailable: 'listing',
+  session_not_found: 'listing',
+  live_at_resume: 'wait',
+};
+// Why a send that did not go through failed: how a resume that did not deliver is reported. A resume
+// that listed no such session routed nothing, so it fails too.
 function resumeFailure({ status, reason }) {
   if (status === 'delivered') return reason === 'not_listed' ? 'session_not_found' : null;
   return status === 'waiting' ? 'live_at_resume' : 'resume_failed';
 }
 
-const invalid = (code, message) => Object.assign(new Error(message), { code, status: 400 });
-const refused = (reason) =>
+export const invalid = (code, message) => Object.assign(new Error(message), { code, status: 400 });
+export const refused = (reason) =>
   Object.assign(new Error('Claude action refused.'), {
     code: 'CLAUDE_REFUSED',
     status: 409,
@@ -517,35 +528,28 @@ export function createClaudeLauncher({
     notice,
     { beforeResume = () => {}, onFailure = () => {} } = {},
   ) {
-    const fail = (reason, session, step) => {
-      logClaudeFailure(log, { step, reason, session: session?.id, ticket: key });
-      return sendFailed(reason);
-    };
+    // The session as last listed, for the log line of a failure.
+    let seen = null;
     const observe = async () => {
       const listing = await claudeSessions.entries({ fresh: true });
-      return { listing, session: listing ? resolveSession(listing, record) : null };
+      const session = listing ? resolveSession(listing, record) : null;
+      seen = session ?? seen;
+      return { listing, session };
     };
-
-    let { listing, session } = await observe();
-    if (!listing) return fail('listing_unavailable', null, 'listing');
-    if (!session) return fail('session_not_found', null, 'listing');
-    const asked = session;
-    if (typeof session.pid === 'number') {
+    const settled = await settleSession({
+      observe,
       // The sessions module logs a stop that fails, with the CLI's output.
-      const stopped = await claudeSessions.stop({ sessionId: session.sessionId, ticket: key });
-      if (stopped.status !== 'stopped')
-        return sendFailed(STOP_FAILURES[stopped.status] ?? 'resume_failed');
+      stop: (found) => claudeSessions.stop({ sessionId: found.sessionId, ticket: key }),
+      wait: () => pause(timers),
+      limit: FINISH_POLL_LIMIT,
+    });
+    if (settled.status === 'failed') {
+      const step = SETTLE_LOG_STEPS[settled.reason];
+      if (step)
+        logClaudeFailure(log, { step, reason: settled.reason, session: seen?.id, ticket: key });
+      return sendFailed(settled.reason);
     }
-    for (let attempt = 1; ; attempt += 1) {
-      ({ listing, session } = await observe());
-      if (!listing) return fail('listing_unavailable', asked, 'wait');
-      if (!session) return fail('session_not_found', asked, 'wait');
-      if (stateOf(session) === 'finished') break;
-      if (attempt >= FINISH_POLL_LIMIT) return fail('live_at_resume', session, 'wait');
-      await new Promise((resolve) => {
-        timers.setTimeout(resolve, FINISH_POLL_MS).unref?.();
-      });
-    }
+    const { session } = settled;
 
     // `done` is reset before the resume, so a session that finishes at once and sets it again is
     // never overwritten afterwards.
@@ -717,12 +721,28 @@ export function createClaudeLauncher({
       writeJson(launchPath(key), { ...launched.value, [E2E]: { ...record, ...marker } });
     });
 
-  // The newest transcript time of each phase's session, as ISO strings: `{ KEY: { phase: iso } }`,
-  // sparse, so a ticket with no time has no key. With no session at all, no transcript is read.
-  async function lastActiveOf(keys, entries) {
-    const sessionsOf = new Map(
+  // Each ticket's phase sessions as the listing resolves them: `Map<KEY, { phase: entry or null }>`.
+  const phaseSessionsOf = (keys, entries) =>
+    new Map(
       keys.map((key) => [key, phaseSessions(readObject(launchPath(key)).value ?? null, entries)]),
     );
+
+  // The full session id of each phase's listed session: `{ KEY: { phase: uuid } }`, sparse, so a
+  // ticket with none has no key.
+  function sessionIdsOf(sessionsOf) {
+    const ids = {};
+    for (const [key, phases] of sessionsOf) {
+      const found = Object.entries(phases)
+        .filter(([, session]) => session)
+        .map(([phase, session]) => [phase, session.sessionId]);
+      if (found.length) ids[key] = Object.fromEntries(found);
+    }
+    return ids;
+  }
+
+  // The newest transcript time of each phase's session, as ISO strings: `{ KEY: { phase: iso } }`,
+  // sparse, so a ticket with no time has no key. With no session at all, no transcript is read.
+  async function lastActiveOf(sessionsOf) {
     const sessions = new Map();
     for (const phases of sessionsOf.values())
       for (const session of Object.values(phases))
@@ -755,11 +775,13 @@ export function createClaudeLauncher({
           ticket: stopping[index],
         });
     });
+    const sessionsOf = entries ? phaseSessionsOf(keys, entries) : null;
     return {
       listing: entries ? 'ok' : 'unavailable',
       updatedAt: now(),
       tickets: Object.fromEntries(keys.map((key) => [key, ticketEntry(key, entries)])),
-      lastActive: entries ? await lastActiveOf(keys, entries) : {},
+      lastActive: sessionsOf ? await lastActiveOf(sessionsOf) : {},
+      sessionIds: sessionsOf ? sessionIdsOf(sessionsOf) : {},
     };
   }
 

@@ -1,0 +1,353 @@
+/* chat.css — the Chat screen (ui-react/panels/ChatPanel.jsx, components/ChatTranscript.jsx): a list of
+   standalone chats beside one conversation, inside the shared board pane (board.css), which loads
+   before this sheet. Every selector starts `.chat`. Tokens only: no literal colours, no multi-column
+   masonry, transitions of at most 200 ms that name their properties, radii of at most 12 px, no
+   smooth scrolling, and a reduced-motion block. */
+
+/* The pane holds the screen and does not scroll itself: the list and the log scroll on their own. */
+.chat-pane {
+  display: flex;
+  overflow: hidden;
+}
+.chat {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: var(--s3);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---- The chats ---- */
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.chat-list ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chat-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--fg);
+  text-decoration: none;
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition:
+    background-color 120ms var(--ease-out),
+    box-shadow 120ms var(--ease-out);
+}
+.chat-list-item:hover {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.chat-list-item[aria-current='page'] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.chat-list-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.chat-list-title {
+  overflow: hidden;
+  color: var(--fg-strong);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-list-meta {
+  color: var(--fg-muted);
+  font-size: var(--fs-xs);
+}
+.chat-list-item[data-state='failed'] .chat-list-meta {
+  color: var(--bad);
+}
+
+/* ---- The conversation ---- */
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+  min-height: 0;
+}
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+}
+.chat-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--fg-strong);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The state is a word, with a dot beside it; the colour is never all there is. */
+.chat-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--fg-muted);
+  font-size: var(--fs-xs);
+}
+.chat-state::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+.chat-state[data-state='working'] {
+  color: var(--accent);
+}
+.chat-state[data-state='completed'] {
+  color: var(--ok);
+}
+.chat-state[data-state='failed'] {
+  color: var(--bad);
+}
+.chat-note,
+.chat-empty,
+.chat-disabled-reason {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-sm);
+}
+.chat-empty {
+  padding: var(--s5) var(--s3);
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--border);
+  text-align: center;
+}
+.chat-turn-note {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--radius-sm);
+  color: var(--warn);
+  font-size: var(--fs-sm);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.chat-log {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--s3);
+  min-height: 0;
+  padding: var(--s3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--border);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.chat-log:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+}
+.chat-message[data-kind='user'] {
+  align-self: flex-end;
+  max-width: min(80%, 70ch);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.chat-message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.chat-who {
+  color: var(--fg-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.chat-plain {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.chat-message .btn.subtle.chat-copy {
+  min-height: 24px;
+  padding: 0 var(--s2);
+  font-size: var(--fs-xs);
+}
+
+/* A code block: the Markdown's own box, with its Copy button above the code, not over it. */
+.chat-code {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin: 0 0 var(--s3);
+}
+.chat-code pre {
+  align-self: stretch;
+  margin: 0;
+}
+
+/* A tool call: one quiet line, open on demand. */
+.chat-tool {
+  align-self: flex-start;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.chat-tool summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s3);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.chat-tool summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.chat-tool-name {
+  color: var(--fg-strong);
+}
+.chat-tool-status {
+  color: var(--fg-muted);
+}
+.chat-tool[data-status='running'] .chat-tool-status {
+  color: var(--accent);
+}
+.chat-tool[data-status='done'] .chat-tool-status {
+  color: var(--ok);
+}
+.chat-tool[data-status='failed'] .chat-tool-status {
+  color: var(--bad);
+}
+.chat-tool-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: 0 var(--s3) var(--s3);
+}
+.chat-tool-label {
+  color: var(--fg-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.chat-tool-body pre {
+  max-height: 240px;
+  margin: 0;
+  padding: var(--s2);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-tool-cut {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-xs);
+}
+
+/* ---- The composer ---- */
+.chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.chat-composer textarea {
+  width: 100%;
+  min-height: 72px;
+  max-height: 240px;
+  padding: var(--s2) var(--s3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-md);
+  box-shadow: inset 0 0 0 1px var(--border);
+  resize: vertical;
+}
+.chat-composer textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.chat-composer textarea[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+/* Under 760px the chats stack above the conversation and keep to a short band. */
+@media (max-width: 759px) {
+  /* The bot bar's strip and the posters above it lie over the bottom of every screen; keep the composer
+     clear of them. */
+  .chat-pane {
+    padding-bottom: 104px;
+  }
+  .chat {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .chat-list {
+    max-height: 144px;
+  }
+  .chat-message[data-kind='user'] {
+    max-width: 100%;
+  }
+}
+
+/* The working dot pulses only when motion is welcome. */
+@keyframes chat-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-state[data-state='working']::before {
+    animation: chat-pulse 1.4s ease-in-out infinite;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-list-item {
+    transition: none;
+  }
+}

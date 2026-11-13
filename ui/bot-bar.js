@@ -82,6 +82,45 @@ export function botsFromTickets(response) {
     );
 }
 
+// A standalone chat (no ticket) with a turn in flight, or one written to in the last day, gets a bot.
+export const CHAT_RECENT_MS = 24 * 60 * 60 * 1000;
+
+// The bots of the chats GET /api/claude/tickets lists beside the tickets, as `{ key, ticket, phase,
+// state, reason, title, session, goTo, lastActiveAt }`. A chat is no ticket: its `ticket` is
+// `chat-<first 8 of its id>` (the bot's label and test id), its `key` is `<id>:chat`, and it carries its
+// own join command and time. These bots are added after `inActiveSprint`, so no sprint filter applies
+// and the id never reaches Jira.
+export function botsFromChats(chats, now) {
+  if (!Array.isArray(chats)) return [];
+  return chats.flatMap((chat) => {
+    const state = BOT_STATES[chat?.state];
+    const recent = now - Date.parse(chat?.lastActiveAt) <= CHAT_RECENT_MS;
+    return state && (state === 'working' || recent)
+      ? [
+          {
+            key: botKey(chat.id, 'chat'),
+            ticket: `chat-${chat.id.slice(0, 8)}`,
+            phase: 'chat',
+            state,
+            reason: null,
+            title: chat.title,
+            session: chat.id,
+            goTo: chat.goTo ?? null,
+            lastActiveAt: chat.lastActiveAt,
+          },
+        ]
+      : [];
+  });
+}
+
+// `bots` with each ticket bot given the id of its session (`sessionIds` is GET /api/claude/tickets'
+// `{ [ticket]: { [phase]: uuid } }`, sparse), so the session list can open it in Chat.
+export const withSessions = (bots, sessionIds) =>
+  bots.map((bot) => {
+    const session = sessionIds?.[bot.ticket]?.[bot.phase];
+    return session ? { ...bot, session } : bot;
+  });
+
 // A ticket key as the rest of the app compares it: trimmed and upper case (`tap-12 ` is TAP-12).
 export const normalizeTicketKey = (key) =>
   String(key ?? '')
@@ -534,12 +573,13 @@ const byLastActiveFirst = (a, b) => {
 // ISO time that session was last written to, or null. `lastActive` is the map GET /api/claude/tickets
 // sends beside the tickets (`{ [ticket]: { [phase]: ISO } }`, sparse). Within a group the most recently
 // active session comes first and one with no time last; rows with the same time (or none) keep the
-// order of `bots`: by ticket, then by phase.
+// order of `bots`: by ticket, then by phase. A bot that carries its own `goTo` or `lastActiveAt` (a
+// chat's, null while it works) keeps it instead of being looked up under its ticket.
 export function sessionGroups(bots, response, lastActive = {}) {
   const tickets = response?.tickets ?? response ?? {};
   const rows = bots.map((bot) => {
-    const goTo = tickets[bot.ticket]?.goTo?.[bot.phase];
-    const at = lastActive?.[bot.ticket]?.[bot.phase];
+    const goTo = 'goTo' in bot ? bot.goTo : tickets[bot.ticket]?.goTo?.[bot.phase];
+    const at = 'lastActiveAt' in bot ? bot.lastActiveAt : lastActive?.[bot.ticket]?.[bot.phase];
     return {
       ...bot,
       goTo: typeof goTo?.command === 'string' ? goTo : null,

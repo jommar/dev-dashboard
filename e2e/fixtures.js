@@ -71,6 +71,7 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
       });
       const streams = [];
       const screencasts = [];
+      const chats = [];
       const clipboard = { writes: [], error: null };
       class MockEventSource extends EventTarget {
         static CONNECTING = 0;
@@ -91,9 +92,20 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
           const screencast =
             new URL(this.url).pathname === '/api/devtools/stream' &&
             new URL(this.url).origin === location.origin;
-          if (this.url !== location.origin + '/api/events' && !screencast) {
+          // The Chat screen's stream, one per open chat: a spec sends everything on it (`hello`
+          // first, as the server does) through `window.__dashboardMock.chats`.
+          const chatUrl = new URL(this.url);
+          const chat =
+            chatUrl.pathname === '/api/claude/chat/stream' && chatUrl.origin === location.origin;
+          if (this.url !== location.origin + '/api/events' && !screencast && !chat) {
             window.__unexpectedDashboardNetwork(`EventSource ${this.url}`);
             this.readyState = 2;
+            return;
+          }
+          if (chat) {
+            this.session = chatUrl.searchParams.get('session');
+            chats.push(this);
+            setTimeout(() => this.emit('open'), 0);
             return;
           }
           if (screencast) {
@@ -126,6 +138,9 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
             'status',
             'target',
             'tabs',
+            'item',
+            'delta',
+            'state',
           ].includes(type)
             ? new MessageEvent(type, { data: JSON.stringify(snapshot) })
             : new Event(type);
@@ -152,7 +167,7 @@ export async function installDashboardMocks(context, baseURL, data = dashboardDa
           },
         },
       });
-      window.__dashboardMock = { streams, screencasts, clipboard };
+      window.__dashboardMock = { streams, screencasts, chats, clipboard };
     },
     { services: data.services },
   );
@@ -168,6 +183,31 @@ export const watchListReads = (dashboard) =>
   watchRequests(dashboard).filter(
     ({ method, path }) => method === 'GET' && path === '/api/slack/watch',
   );
+
+// The chat streams the page holds open (one it closed is not one), as their session ids.
+export const openChatStreams = (page) =>
+  page.evaluate(() =>
+    window.__dashboardMock.chats.filter((it) => it.readyState !== 2).map((it) => it.session),
+  );
+
+// Sends one server event (`hello`, `item`, `delta` or `state`) on the newest open stream of a chat,
+// once the page has opened it.
+export async function chatSay(page, session, type, payload) {
+  await expect
+    .poll(async () => (await openChatStreams(page)).includes(session), {
+      message: `the page opens a chat stream for ${session}`,
+    })
+    .toBe(true);
+  await page.evaluate(
+    ([id, event, data]) => {
+      const open = window.__dashboardMock.chats.filter(
+        (it) => it.session === id && it.readyState !== 2,
+      );
+      open.at(-1).emit(event, data);
+    },
+    [session, type, payload],
+  );
+}
 
 export const test = base.extend({
   dashboardFixture: [null, { option: true }],

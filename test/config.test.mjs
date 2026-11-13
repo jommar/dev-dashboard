@@ -13,15 +13,33 @@ test('scenario 53: config.mjs exports SECRET_ENV_NAMES as exactly the four crede
   assert.deepEqual([...SECRET_ENV_NAMES].sort(), [...CREDENTIAL_NAMES].sort());
 });
 
-// The two consumers read the shared list; neither keeps a list of its own.
-const IMPORTS_LIST = /import\s*\{[^}]*\bSECRET_ENV_NAMES\b[^}]*\}\s*from\s*['"]\.\/config\.mjs['"]/;
+test('scenario 18: withoutSecrets copies an environment without the credential names, and only those', async () => {
+  const { withoutSecrets } = await import('../backend/config.mjs');
+  assert.equal(typeof withoutSecrets, 'function', 'config.mjs exports withoutSecrets');
+  const env = Object.fromEntries([
+    ...CREDENTIAL_NAMES.map((name) => [name, `synthetic-${name}`]),
+    ['PATH', '/usr/bin'],
+    ['GH_TOKEN_NOT', 'kept'],
+  ]);
+  const snapshot = { ...env };
 
-for (const backendFile of ['claude-sessions.mjs', 'manager.mjs']) {
-  test(`scenario 54: ${backendFile} takes the credential names from config.mjs and lists none itself`, () => {
+  const scrubbed = withoutSecrets(env);
+
+  assert.deepEqual(scrubbed, { PATH: '/usr/bin', GH_TOKEN_NOT: 'kept' });
+  assert.deepEqual(env, snapshot, 'the environment given is not changed');
+  assert.notEqual(scrubbed, env, 'a copy');
+});
+
+// The three places that start a process take the environment from the one helper in config.mjs;
+// none keeps a list of its own.
+const IMPORTS_HELPER = /import\s*\{[^}]*\bwithoutSecrets\b[^}]*\}\s*from\s*['"]\.\/config\.mjs['"]/;
+
+for (const backendFile of ['claude-sessions.mjs', 'manager.mjs', 'claude-chat.mjs']) {
+  test(`scenario 18: ${backendFile} takes its environment from withoutSecrets in config.mjs and lists no credential itself`, () => {
     const source = fs.readFileSync(new URL(`../backend/${backendFile}`, import.meta.url), 'utf8');
     assert.ok(
-      IMPORTS_LIST.test(source),
-      `${backendFile} imports SECRET_ENV_NAMES from ./config.mjs`,
+      IMPORTS_HELPER.test(source),
+      `${backendFile} imports withoutSecrets from ./config.mjs`,
     );
     assert.ok(!LISTED_NAME.test(source), `${backendFile} spells out no credential name`);
   });

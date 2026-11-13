@@ -310,6 +310,15 @@ export const checkSlackWatchNow = () => watchRequest('/api/slack/watch/check', {
 export const getClaudeTickets = (surface) =>
   watchRequest(`/api/claude/tickets${surface ? `?surface=${encodeURIComponent(surface)}` : ''}`);
 
+// The Chat screen: `send` without a session starts a standalone chat (the reply names it); `stop`
+// ends the turn in flight. The stream is one chat's server-sent events (see ui/chat-stream.js).
+export const sendChat = (message, session) =>
+  watchRequest('/api/claude/chat/send', { method: 'POST', body: { message, session } });
+export const stopChat = (session) =>
+  watchRequest('/api/claude/chat/stop', { method: 'POST', body: { session } });
+export const openChatStream = (session) =>
+  new EventSource(`/api/claude/chat/stream?session=${encodeURIComponent(session)}`);
+
 // Which of `keys` are in a sprint Jira calls active (the bot bar's filter) and their status names.
 // Resolves like the other watch calls: `ok`, `available` (false when Jira could not say), `keys` and
 // `statuses` (a ticket key -> Jira status name object, only for the tickets Jira reported).

@@ -14,6 +14,8 @@ import { MascotsPanel } from './panels/MascotsPanel.jsx';
 import { SlackPanel } from './panels/SlackPanel.jsx';
 import { SlackTabBadge } from './components/SlackTabBadge.jsx';
 import { SettingsPanel } from './panels/SettingsPanel.jsx';
+import { ChatPanel } from './panels/ChatPanel.jsx';
+import { chatSessionFromQuery } from '../ui/chat-stream.js';
 import './styles.css';
 
 // The badge polls from inside the Slack tab entry, so setup-only mode (which
@@ -23,6 +25,7 @@ const READY_TABS = [
   { id: 'my-tickets', label: 'My Tickets' },
   { id: 'slack', label: 'Slack', badge: <SlackTabBadge /> },
   { id: 'prs', label: 'Pull Requests' },
+  { id: 'chat', label: 'Chat' },
   { id: 'releases', label: 'Releases' },
   { id: 'services', label: 'Services' },
   { id: 'devtools', label: 'DevTools' },
@@ -38,9 +41,9 @@ const routeFromHash = (tabs) => {
   const { route } = parseHash();
   return tabs.some(({ id }) => id === route) ? route : tabs[0].id;
 };
-// Only Releases keeps its query string (?view=list); every other route drops it.
+// Only Releases (?view=list) and Chat (?session=<uuid>) keep their query string; every other route drops it.
 const hashFor = (route, query = '') =>
-  `#/${route}${route === 'releases' && query ? `?${query}` : ''}`;
+  `#/${route}${(route === 'releases' || route === 'chat') && query ? `?${query}` : ''}`;
 // Any of these keys set to "list" selects the list view; anything else is the card view.
 const releaseViewFromQuery = (query) => {
   const params = new URLSearchParams(query);
@@ -52,6 +55,7 @@ export function App() {
   const [bootError, setBootError] = useState(false);
   const [active, setActive] = useState('home');
   const [releaseView, setReleaseView] = useState(() => releaseViewFromQuery(parseHash().query));
+  const [chatSession, setChatSession] = useState(() => chatSessionFromQuery(parseHash().query));
   const [reloadKey, setReloadKey] = useState(0);
   const redirecting = useRef(false);
   const ready = config?.setup?.ready === true;
@@ -75,6 +79,7 @@ export function App() {
       if (location.hash !== target) history.replaceState(null, '', target);
       setActive(next);
       setReleaseView(releaseViewFromQuery(parseHash().query));
+      setChatSession(chatSessionFromQuery(parseHash().query));
     } catch {
       setBootError(true);
     }
@@ -91,6 +96,7 @@ export function App() {
       if (location.hash !== target) history.replaceState(null, '', target);
       setActive(next);
       setReleaseView(releaseViewFromQuery(parseHash().query));
+      setChatSession(chatSessionFromQuery(parseHash().query));
     };
     window.addEventListener('hashchange', change);
     return () => window.removeEventListener('hashchange', change);
@@ -139,6 +145,7 @@ export function App() {
                 onViewChange={changeReleaseView}
               />
               <SlackPanel active={active === 'slack'} />
+              <ChatPanel active={active === 'chat'} session={chatSession} />
               <DevtoolsPanel active={active === 'devtools'} />
               <MascotsPanel active={active === 'mascots'} />
             </>

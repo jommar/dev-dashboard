@@ -307,7 +307,26 @@ test('lastActive: each phase session gets its transcript time as ISO, and only t
   const res = await f.http.bare('GET', TICKETS);
   assert.equal(res.status, 200);
   const body = res.json();
-  assert.deepEqual(Object.keys(body).sort(), ['lastActive', 'listing', 'tickets', 'updatedAt']);
+  assert.deepEqual(Object.keys(body).sort(), [
+    'chats',
+    'lastActive',
+    'listing',
+    'sessionIds',
+    'tickets',
+    'updatedAt',
+  ]);
+  assert.deepEqual(body.chats, [], 'no standalone chat yet');
+  // Which session each phase is: the full UUID of the listed session, sparse, a phase with no
+  // listed session has none and a ticket with none is not there.
+  assert.deepEqual(body.sessionIds, {
+    [KEY]: {
+      investigate: sessionUuid(EARLIER_ID),
+      implement: sessionUuid(ACTIVE_IMPLEMENT_ID),
+      review: sessionUuid(REVIEW_ID),
+      groom: sessionUuid(GROOM_ID),
+    },
+    [SECOND_KEY]: { investigate: sessionUuid('eeee5555') },
+  });
   assert.deepEqual(body.lastActive, {
     [KEY]: {
       investigate: new Date(T_INVESTIGATE).toISOString(),
@@ -340,6 +359,7 @@ test('lastActive: a listing that fails gives an empty map, even with transcripts
 
   assert.equal(body.listing, 'unavailable');
   assert.deepEqual(body.lastActive, {});
+  assert.deepEqual(body.sessionIds, {}, 'no listing, no session ids');
 });
 
 test('scenario 18: one shared listing serves five tickets and two simultaneous polls', async (t) => {

@@ -1,9 +1,11 @@
 // claude-sessions.mjs — the Claude CLI's session listing (for the watcher's picker and prune), the
 // stop of an idle background session, the resume that continues a finished one and the launch of a
-// new background session.
+// new background session, and the one-writer mark (`beginTurn`) that keeps a chat turn and a resume
+// off the same session.
 //
 // `lastActive` reads only file modification times (stat, never content). Only the times it returns,
-// keyed by session id, leave this module; no name, path or cwd does.
+// keyed by session id, leave this module; no name, path or cwd does. `transcriptFile` is the one
+// other call that looks at a transcript, and it too only stats: it gives the chat the path to read.
 //
 // Everything runs as a fixed argument array with no shell. The listing carries session names and
 // working directories; neither is logged, stored or sent beyond the picker's name. The CLI's output
@@ -16,7 +18,7 @@ import { execFile } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { SECRET_ENV_NAMES } from './config.mjs';
+import { withoutSecrets } from './config.mjs';
 import { isSessionId } from './slack-watch-store.mjs';
 import { cliOutputForLog, defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
 
@@ -39,6 +41,10 @@ const STARTED_ID = /(?<![\w-])[0-9a-f]{8}(?![\w-])/;
 const delivered = (reason) => ({ status: 'delivered', ...(reason && { reason }) });
 const failure = (status, reason) => ({ status, reason });
 
+// How a stop that did not stop is reported by `settleSession`: a session that is not idle or no longer
+// listed is said so, any other failure of the CLI is a failed resume.
+const STOP_FAILURES = { not_idle: 'session_running', not_listed: 'session_not_found' };
+
 // A live process has a numeric pid, a finished session has none; any other pid is not trusted. The
 // one exception is a session the CLI lists as `stopped` (ended with `claude stop`), which it reports
 // with `pid: null`: that is finished, and without it such a session could never be resumed.
@@ -52,6 +58,32 @@ export function stateOf(entry) {
 function activityOf(entry) {
   if (entry.kind !== 'background' || typeof entry.pid !== 'number') return null;
   return entry.status === 'idle' || entry.status === 'busy' ? entry.status : null;
+}
+
+// Brings a session to a stop, so that a resume continues it instead of starting a copy of it: a live
+// session is stopped, then its entry is polled until it has no pid (the CLI's stop returns before the
+// process is gone), at most `limit` observations with `wait()` between them. `observe()` reads the
+// listing again and answers `{ listing, session }` (no listing: unavailable; no session: not listed),
+// `stop(session)` stops the session just read. Answers `{ status: 'settled', session }` or
+// `{ status: 'failed', reason }`.
+export async function settleSession({ observe, stop, wait, limit }) {
+  const unsettled = (reason) => ({ status: 'failed', reason });
+  let { listing, session } = await observe();
+  if (!listing) return unsettled('listing_unavailable');
+  if (!session) return unsettled('session_not_found');
+  if (typeof session.pid === 'number') {
+    const stopped = await stop(session);
+    if (stopped.status !== 'stopped')
+      return unsettled(STOP_FAILURES[stopped.status] ?? 'resume_failed');
+  }
+  for (let attempt = 1; ; attempt += 1) {
+    ({ listing, session } = await observe());
+    if (!listing) return unsettled('listing_unavailable');
+    if (!session) return unsettled('session_not_found');
+    if (stateOf(session) === 'finished') return { status: 'settled', session };
+    if (attempt >= limit) return unsettled('live_at_resume');
+    await wait();
+  }
 }
 
 const fingerprint = ({ dev, ino, size, mtimeMs, ctimeMs }) =>
@@ -153,6 +185,21 @@ export function createClaudeSessions({
   let pickerRequest = 0;
   let cachedPickerRequest = 0;
   const pendingActivities = new Map();
+  // The sessions a chat turn or a resume is writing to right now, in this process.
+  const held = new Set();
+
+  // The one-writer mark: a release function, or null while another writer holds the session. The
+  // release lets go once, so a late call never frees a mark someone else took since.
+  function beginTurn(sessionId) {
+    if (held.has(sessionId)) return null;
+    held.add(sessionId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      held.delete(sessionId);
+    };
+  }
 
   function run(args, options) {
     return new Promise((resolve) => {
@@ -479,7 +526,8 @@ export function createClaudeSessions({
     });
   }
 
-  // `ticket` has the same meaning as for `stop`. The notice is never logged.
+  // `ticket` has the same meaning as for `stop`. The notice is never logged. The session is held for
+  // the length of its CLI call, and a session someone else holds is waited on as if it were live.
   async function resume({ sessionId, notice, ticket }) {
     const shortId = typeof sessionId === 'string' ? sessionId.slice(0, 8) : undefined;
     const failed = (result, extra = {}) => {
@@ -502,11 +550,15 @@ export function createClaudeSessions({
     if (typeof entry.cwd !== 'string' || !entry.cwd)
       return failed(failure('failed-transient', 'spawn_failed'));
 
+    const release = beginTurn(sessionId);
+    if (!release) return failed({ status: 'waiting', reason: 'live_at_resume' }, { pid: null });
     const { error, stdout, stderr } = await run(['--bg', '--resume', sessionId, '--', notice], {
       cwd: entry.cwd,
+      env: withoutSecrets(process.env),
       timeout: RESUME_TIMEOUT_MS,
       maxBuffer: RESUME_MAX_BYTES,
     });
+    release();
     const output = `${stdout}${stderr}`;
     const detail = () => ({
       exitCode: error?.code ?? 0,
@@ -526,8 +578,32 @@ export function createClaudeSessions({
 
   // The CLI's entries from the listing that concurrent callers share, or from a read of their own
   // when a decision must not rest on an answer that was already in flight. Null when unavailable.
+  // A session that is held (a chat turn, a resume under way) reads as working, so the launcher's
+  // guards, the ticket card and the bot bar all see it as work in progress.
   async function entries({ fresh = false } = {}) {
-    return fresh ? readEntries() : (await rawListing()).entries;
+    const listed = fresh ? await readEntries() : (await rawListing()).entries;
+    if (!listed) return listed;
+    return listed.map((entry) =>
+      held.has(entry.sessionId) ? { ...entry, state: 'working' } : entry,
+    );
+  }
+
+  // The path of the newest copy of a session's transcript, or null when it has none. Only stat is
+  // used, so no transcript content is read here; the chat reads the file itself.
+  async function transcriptFile(sessionId) {
+    if (!isSessionId(sessionId)) return null;
+    const { paths } = await transcriptPaths([{ sessionId }]);
+    let newest = null;
+    let newestMs = -Infinity;
+    for (const file of paths.get(sessionId) ?? []) {
+      try {
+        const { mtimeMs } = await metadataIO.stat(file);
+        if (mtimeMs > newestMs) [newest, newestMs] = [file, mtimeMs];
+      } catch {
+        // The other copies may still be there.
+      }
+    }
+    return newest;
   }
 
   // Starts a background session named `name` that runs `prompt` from `cwd`, with access to `addDir`
@@ -536,8 +612,7 @@ export function createClaudeSessions({
   // The prompt follows `--`, so it is never read as an option. Returns the id the CLI printed, or
   // null when it printed none.
   async function launch({ name, prompt, cwd, addDir, tools, disallowedTools, mcpConfig }) {
-    const env = { ...process.env };
-    for (const secret of SECRET_ENV_NAMES) delete env[secret];
+    const env = withoutSecrets(process.env);
     const { error, stdout, stderr } = await run(
       [
         '--bg',
@@ -558,5 +633,5 @@ export function createClaudeSessions({
     return failure('failed-transient', error.killed ? 'timed_out' : 'spawn_failed');
   }
 
-  return { listSessions, stop, resume, entries, launch, lastActive };
+  return { listSessions, stop, resume, entries, launch, lastActive, beginTurn, transcriptFile };
 }

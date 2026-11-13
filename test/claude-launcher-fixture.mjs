@@ -1058,7 +1058,13 @@ function exactRequest(port, method, requestPath, { body, headers = {} } = {}) {
 // routes get a store over the temp prompts folder and the same recording `fs` as the launcher, so
 // an edit made through a route is what the launcher reads and no request can reach the
 // dashboard's own `prompts` folder.
-export async function claudeHttpFixture(t, { ready = true } = {}) {
+//
+// The chat integration is always injected, so no request can reach the dashboard's own
+// `claude/chat` folder: with `chat: true` it is the real chat module over the temp state directory,
+// the real sessions module and the fake `spawn` of `claude-chat-fixture.mjs` (`f.chatSpawn`, `f.chat`);
+// otherwise it is an inert one with no chats, so a test that is not about the chat needs nothing of
+// the chat module.
+export async function claudeHttpFixture(t, { ready = true, chat = false } = {}) {
   const env = await launcherEnvironment(t);
   const { createHttpHandler } = await import('../backend/http-app.mjs');
   const { createPromptStore } = await import('../backend/claude-prompts.mjs');
@@ -1069,6 +1075,23 @@ export async function claudeHttpFixture(t, { ready = true } = {}) {
   };
   const manager = { list: () => [], logs: () => '', onUpdate: null };
   const watcher = { isDisabled: () => true, stop() {}, list: () => ({}), refreshSchedule() {} };
+  let claudeChat = { list: async () => [], close() {} };
+  let chatSpawn = null;
+  if (chat) {
+    const { createClaudeChat } = await import('../backend/claude-chat.mjs');
+    const { createFakeSpawn } = await import('./claude-chat-fixture.mjs');
+    chatSpawn = createFakeSpawn();
+    claudeChat = createClaudeChat({
+      claudeSessions: env.sessions,
+      spawn: chatSpawn.spawn,
+      stateDir: env.stateDir,
+      home: env.home,
+      fs: env.recorder.fs,
+      now: env.clock.now,
+      timers: env.timers,
+      log: () => {},
+    });
+  }
   const handler = createHttpHandler({
     settings,
     manager,
@@ -1079,6 +1102,7 @@ export async function claudeHttpFixture(t, { ready = true } = {}) {
       claudeSessions: env.sessions,
       claudeLauncher: env.launcher,
       claudePrompts: createPromptStore({ promptsDir: env.promptsDir, fs: env.recorder.fs }),
+      claudeChat,
     },
   });
   const server = http.createServer(handler);
@@ -1093,6 +1117,8 @@ export async function claudeHttpFixture(t, { ready = true } = {}) {
   const base = `http://127.0.0.1:${port}`;
   return {
     ...env,
+    chat: claudeChat,
+    chatSpawn,
     http: {
       base,
       port,

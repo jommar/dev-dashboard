@@ -1853,3 +1853,264 @@ test('lastActive: no transcript content is read, and empty input reads no folder
   assert.equal(none.size, 0);
   assert.equal(folderReads, 0, 'empty input reads no folder');
 });
+
+// ---- the chat's one-writer mark: beginTurn, the working overlay and the mark inside resume ----
+
+const sessionOf = (entries, sessionId) => entries.find((entry) => entry.sessionId === sessionId);
+
+test('scenario 6: beginTurn gives a release function, null for a held id, and the id again once released', async (t) => {
+  const env = await sessionsEnvironment(t);
+  assert.equal(typeof env.sessions.beginTurn, 'function', 'the sessions module has beginTurn');
+
+  const release = env.sessions.beginTurn(SESSION_A);
+  assert.equal(typeof release, 'function');
+  assert.equal(env.sessions.beginTurn(SESSION_A), null, 'held');
+  assert.equal(typeof env.sessions.beginTurn(SESSION_B), 'function', 'another id is free');
+
+  release();
+  assert.equal(typeof env.sessions.beginTurn(SESSION_A), 'function', 'free after the release');
+});
+
+test('scenario 6: a held session reads working in entries (shared and fresh), and reads as before after the release', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A), finishedEntry(SESSION_B)]);
+  const before = await env.sessions.entries({ fresh: true });
+  assert.equal(sessionOf(before, SESSION_A).state, 'done');
+
+  const release = env.sessions.beginTurn(SESSION_A);
+  for (const options of [undefined, { fresh: true }]) {
+    const held = await env.sessions.entries(options);
+    assert.equal(sessionOf(held, SESSION_A).state, 'working', JSON.stringify(options));
+    assert.equal(sessionOf(held, SESSION_A).cwd, FINISHED_CWD, 'the rest of the entry is kept');
+    assert.deepEqual(
+      sessionOf(held, SESSION_B),
+      sessionOf(before, SESSION_B),
+      'other sessions as before',
+    );
+  }
+
+  release();
+  assert.deepEqual(await env.sessions.entries({ fresh: true }), before);
+});
+
+test('scenario 6: resume on a held session waits as live_at_resume and runs no CLI; after the release it resumes', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A)]);
+  const release = env.sessions.beginTurn(SESSION_A);
+
+  const waiting = await env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
+
+  assert.deepStrictEqual(waiting, { status: 'waiting', reason: 'live_at_resume' });
+  assert.equal(env.exec.spawns().length, 0, 'the CLI was not run');
+
+  release();
+  const resumed = await env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
+  assert.deepStrictEqual(resumed, { status: 'delivered', reason: 'resumed' });
+  assert.equal(env.exec.spawns().length, 1);
+});
+
+test('scenario 6: resume holds the mark for the length of its CLI call', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A)]);
+  const gate = deferred();
+  env.exec.onResume(() => gate.promise);
+
+  const resuming = env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
+  await flush();
+  assert.equal(env.exec.spawns().length, 1, 'the CLI call is under way');
+  assert.equal(env.sessions.beginTurn(SESSION_A), null, 'a chat cannot start on it meanwhile');
+  assert.equal(sessionOf(await env.sessions.entries({ fresh: true }), SESSION_A).state, 'working');
+
+  gate.resolve({ stdout: 'backgrounded' });
+  assert.deepStrictEqual(await resuming, { status: 'delivered', reason: 'resumed' });
+  assert.equal(typeof env.sessions.beginTurn(SESSION_A), 'function', 'let go when the call ends');
+});
+
+test('scenario 6: resume lets go of the mark when its CLI call fails', async (t) => {
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A)]);
+  env.exec.onResume(() => ({ exitCode: 2, stderr: 'broke' }));
+  const result = await env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
+  assert.equal(result.status, 'failed-transient');
+  assert.equal(typeof env.sessions.beginTurn(SESSION_A), 'function');
+});
+
+// ---- transcriptFile: the path of a session's transcript, from stat alone ----
+
+test('transcriptFile: the newest copy of the session wins; no transcript is null', async (t) => {
+  const env = await sessionsEnvironment(t);
+  assert.equal(
+    typeof env.sessions.transcriptFile,
+    'function',
+    'the sessions module has transcriptFile',
+  );
+  const older = writeDated(projectFile(env.home, 'project-a', SESSION_A), OLD_MS);
+  const newer = writeDated(projectFile(env.home, 'project-b', SESSION_A), NEW_MS);
+
+  assert.equal(await env.sessions.transcriptFile(SESSION_A), newer);
+  assert.notEqual(older, newer);
+  assert.equal(await env.sessions.transcriptFile(SESSION_B), null);
+});
+
+test('transcriptFile: a missing projects folder is null, and no transcript content is read', async (t) => {
+  let contentReads = 0;
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: fs.promises.readdir,
+      readFile: async (...args) => {
+        contentReads += 1;
+        return fs.promises.readFile(...args);
+      },
+      stat: fs.promises.stat,
+    },
+  });
+  assert.equal(await env.sessions.transcriptFile(SESSION_A), null, 'no projects folder');
+  const file = writeDated(projectFile(env.home, 'project', SESSION_A), NEW_MS);
+  assert.equal(await env.sessions.transcriptFile(SESSION_A), file);
+  assert.equal(contentReads, 0, 'stat only, never readFile');
+});
+
+// ---- settleSession: the stop-then-poll loop that the launcher and the chat share ----
+//
+// Interface assumed by these tests (plan §2 names the parameters, not the result):
+//   settleSession({ observe, stop, wait, limit }) -> { status: 'settled', session }
+//                                                  | { status: 'failed', reason }
+//   observe() -> { listing, session }  (listing null: unavailable; session null: not listed)
+//   stop() -> a `stop` result;  wait() -> a promise, once per poll gap;  limit: the poll cap
+// Reasons are the launcher's: listing_unavailable, session_not_found, session_running,
+// live_at_resume, resume_failed.
+
+function settleDouble({ observations, stopResult = { status: 'stopped' } }) {
+  const calls = { stop: 0, wait: 0, observe: 0 };
+  return {
+    calls,
+    observe: async () => {
+      const next = observations[Math.min(calls.observe, observations.length - 1)];
+      calls.observe += 1;
+      return next;
+    },
+    stop: async () => {
+      calls.stop += 1;
+      return stopResult;
+    },
+    wait: async () => {
+      calls.wait += 1;
+    },
+  };
+}
+const seen = (session) => ({ listing: session ? [session] : [], session });
+
+test('scenario 6: settleSession stops a live session, waits through each live poll, and settles when the pid is gone', async () => {
+  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const live = idleBackgroundEntry(SESSION_A);
+  const gone = finishedEntry(SESSION_A);
+  const double = settleDouble({
+    observations: [seen(live), seen(live), seen(live), seen(gone)],
+  });
+
+  const result = await settleSession({ ...double, limit: 30 });
+
+  assert.deepEqual(result, { status: 'settled', session: gone });
+  assert.equal(double.calls.stop, 1);
+  assert.equal(double.calls.wait, 2, 'a gap after each live poll');
+});
+
+test('scenario 6: settleSession does not stop or wait for a session with no pid', async () => {
+  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const gone = finishedEntry(SESSION_A);
+  const double = settleDouble({ observations: [seen(gone)] });
+  const result = await settleSession({ ...double, limit: 30 });
+  assert.deepEqual(result, { status: 'settled', session: gone });
+  assert.deepEqual([double.calls.stop, double.calls.wait], [0, 0]);
+});
+
+test('scenario 6: settleSession gives up as live_at_resume at the limit, after limit - 1 gaps', async () => {
+  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const double = settleDouble({ observations: [seen(idleBackgroundEntry(SESSION_A))] });
+  const result = await settleSession({ ...double, limit: 4 });
+  assert.deepEqual(result, { status: 'failed', reason: 'live_at_resume' });
+  assert.equal(double.calls.wait, 3);
+});
+
+for (const [label, stopResult, reason] of [
+  ['not idle', { status: 'not_idle', activity: 'busy' }, 'session_running'],
+  ['not listed', { status: 'not_listed' }, 'session_not_found'],
+  ['a CLI failure', { status: 'failed-transient', reason: 'stop_failed' }, 'resume_failed'],
+])
+  test(`scenario 6: settleSession reports a stop that was ${label} as ${reason}, with no wait`, async () => {
+    const { settleSession } = await import('../backend/claude-sessions.mjs');
+    const double = settleDouble({
+      observations: [seen(idleBackgroundEntry(SESSION_A))],
+      stopResult,
+    });
+    const result = await settleSession({ ...double, limit: 30 });
+    assert.deepEqual(result, { status: 'failed', reason });
+    assert.equal(double.calls.wait, 0);
+  });
+
+test('scenario 6: settleSession reports an unavailable listing and an unlisted session', async () => {
+  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const unavailable = settleDouble({ observations: [{ listing: null, session: null }] });
+  assert.deepEqual(await settleSession({ ...unavailable, limit: 30 }), {
+    status: 'failed',
+    reason: 'listing_unavailable',
+  });
+  const missing = settleDouble({ observations: [seen(null)] });
+  assert.deepEqual(await settleSession({ ...missing, limit: 30 }), {
+    status: 'failed',
+    reason: 'session_not_found',
+  });
+});
+
+// ---- launch still starts its process without the dashboard's credentials ----
+
+test('scenario 18: launch passes the CLI an environment without the credential names and keeps the rest', async (t) => {
+  const names = ['GH_TOKEN', 'GITHUB_TOKEN', 'JIRA_API_TOKEN', 'JIRA_TOKEN'];
+  const previous = names.map((name) => [name, process.env[name]]);
+  for (const name of names) process.env[name] = `synthetic-${name}`;
+  t.after(() => {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const env = await sessionsEnvironment(t);
+  await env.sessions.launch({ name: 'n', prompt: 'p', cwd: FINISHED_CWD });
+  const { options } = env.exec.calls.at(-1);
+  for (const name of names) assert.equal(name in options.env, false, name);
+  assert.equal(options.env.PATH, process.env.PATH);
+});
+
+test('scenario 6: settleSession gives stop the session it has just read', async () => {
+  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const live = idleBackgroundEntry(SESSION_A);
+  const double = settleDouble({ observations: [seen(live), seen(finishedEntry(SESSION_A))] });
+  let given;
+  await settleSession({
+    ...double,
+    stop: async (session) => {
+      given = session;
+      return { status: 'stopped' };
+    },
+    limit: 30,
+  });
+  assert.equal(given, live);
+});
+
+test('scenario 18: resume passes the CLI an environment without the credential names and keeps the rest', async (t) => {
+  const names = ['GH_TOKEN', 'GITHUB_TOKEN', 'JIRA_API_TOKEN', 'JIRA_TOKEN'];
+  const previous = names.map((name) => [name, process.env[name]]);
+  for (const name of names) process.env[name] = `synthetic-${name}`;
+  t.after(() => {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const env = await sessionsEnvironment(t);
+  env.exec.setListing([finishedEntry(SESSION_A)]);
+  await env.sessions.resume({ sessionId: SESSION_A, notice: 'a notice' });
+  const { options } = env.exec.spawns().at(-1);
+  for (const name of names) assert.equal(name in options.env, false, name);
+  assert.equal(options.env.PATH, process.env.PATH);
+});

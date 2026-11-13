@@ -6,6 +6,7 @@
 // (`./02-spec.md`: it switches files through `onOpenFile`); any other link shows as plain text. An
 // image is never fetched: its alt text shows instead, so opening a plan cannot make the browser call
 // out. A flat front-matter block at the top is a quiet metadata row (see ui/markdown-front-matter.js).
+// `components` adds or replaces renderers (the chat draws its own code block); pass a stable object.
 import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -39,7 +40,13 @@ function Table({ children }) {
   );
 }
 
-export function MarkdownView({ children, files = NO_FILES, onOpenFile, ...props }) {
+export function MarkdownView({
+  children,
+  files = NO_FILES,
+  onOpenFile,
+  components: extra,
+  ...props
+}) {
   const { fields, body } = useMemo(() => splitFrontMatter(children), [children]);
   const components = useMemo(
     () => ({
@@ -61,8 +68,9 @@ export function MarkdownView({ children, files = NO_FILES, onOpenFile, ...props 
       },
       img: Image,
       table: Table,
+      ...extra,
     }),
-    [files, onOpenFile],
+    [files, onOpenFile, extra],
   );
   return (
     <div className="markdown-body" {...props}>

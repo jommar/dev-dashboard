@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { SERVICES, REPOS_ROOT, LOGS_DIR, BUFFER_BYTES, SECRET_ENV_NAMES } from './config.mjs';
+import { SERVICES, REPOS_ROOT, LOGS_DIR, BUFFER_BYTES, withoutSecrets } from './config.mjs';
 import { freePort } from './port.mjs';
 
 // ── rolling ring buffer ────────────────────────────────────────────
@@ -125,8 +125,7 @@ export class ServiceProcess {
   }
 
   #nodeRuntime() {
-    const env = { ...process.env };
-    for (const key of SECRET_ENV_NAMES) delete env[key];
+    const env = withoutSecrets(process.env);
     const pin = this.nvmrc();
     if (pin === null) return { env };
     if (!/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(pin)) {

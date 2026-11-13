@@ -1083,3 +1083,61 @@ test('the e2e check styles in the Claude launcher sheet use tokens only and shor
     assert.doesNotMatch(value, /\ball\b/, 'transition names its properties');
   }
 });
+
+// -- Chat (plan scenario 20) -------------------------------------------------------------------------
+
+test('scenario 20: chat.css loads after board.css and is token-only, short, small-radius and Chat-scoped', () => {
+  const rootCss = read('styles.css');
+  const importAt = (sheet) =>
+    rootCss.search(new RegExp(`@import ['"]\\./styles/${sheet}\\.css['"]`));
+  assert.ok(importAt('chat') > -1, 'styles.css imports chat.css');
+  assert.ok(importAt('board') < importAt('chat'), 'board.css loads before chat.css');
+
+  const css = read('styles/chat.css');
+  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, 'colours come from tokens, never a hex literal');
+  // Every token it reads is one the app declares (in the shared sheets) or one the sheet declares.
+  const declared = new Set(
+    [read('styles/tokens.css'), rootCss, css].flatMap((sheet) =>
+      [...sheet.matchAll(/(--[\w-]+)\s*:/g)].map(([, name]) => name),
+    ),
+  );
+  for (const [, name] of css.matchAll(/var\((--[\w-]+)/g))
+    assert.ok(declared.has(name), `${name} is a declared token`);
+  assert.doesNotMatch(css, /(?<![\w-])columns:\s*\d/, 'a chat is not a masonry');
+  assert.doesNotMatch(css, /scroll-behavior:\s*smooth/, 'scrolling is never smooth');
+  for (const [, value] of css.matchAll(/transition(?:-duration|-property)?\s*:\s*([^;}]+)/g)) {
+    for (const [, amount, unit] of value.matchAll(/(\d*\.?\d+)\s*(ms|s)\b/g)) {
+      const ms = unit === 's' ? Number(amount) * 1000 : Number(amount);
+      assert.ok(ms <= 200, `transition "${value.trim()}" stays within 200 ms`);
+    }
+    assert.doesNotMatch(value, /\ball\b/, 'transition names its properties');
+  }
+  for (const [, value] of css.matchAll(/border-radius\s*:\s*([^;}]+)/g))
+    for (const [, px] of value.matchAll(/(\d*\.?\d+)px/g))
+      assert.ok(Number(px) <= 12, `border-radius "${value.trim()}" is at most 12 px`);
+  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*(?:reduce|no-preference)\)/);
+  const selectors = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)]
+    .map(([, selector]) => selector.trim())
+    .filter((selector) => !selector.startsWith('@') && !/^(?:from|to|\d)/.test(selector))
+    .flatMap((selector) => selector.split(/,(?![^(]*\))/));
+  assert.ok(selectors.length > 0, 'the sheet has rules');
+  for (const selector of selectors)
+    assert.match(selector.trim(), /^\.chat\b/, `${selector.trim()} stays Chat-scoped`);
+});
+
+test('scenario 20: Chat is a tools-row tab, its components use no native title, its routes are literals', () => {
+  assert.match(read('App.jsx'), /\{ id: 'chat', label: '[^']+'/, 'chat is one of the ready tabs');
+  assert.match(
+    read('components/AppTabs.jsx'),
+    /const PRIMARY_ROUTES = new Set\(\['home', 'my-tickets', 'slack'\]\);/,
+    'chat never joins the primary row',
+  );
+  for (const file of ['panels/ChatPanel.jsx', 'components/ChatTranscript.jsx']) {
+    const source = read(file);
+    assert.doesNotMatch(source, /<[a-z][\w-]*\b[^<>]*\stitle=/, `${file} has no native title`);
+    assert.doesNotMatch(source, /data-tooltip/, `${file} uses the app tooltip`);
+  }
+  const api = read('lib/api.js');
+  for (const route of ['/api/claude/chat/send', '/api/claude/chat/stop', '/api/claude/chat/stream'])
+    assert.ok(api.includes(route), `API route ${route} is a literal in api.js`);
+});

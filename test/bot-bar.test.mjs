@@ -52,6 +52,8 @@ import {
   walks,
   roamFor,
 } from '../ui/bot-bar.js';
+// The chat helpers by namespace: a missing one fails its own test, not the import of the whole file.
+import * as bar from '../ui/bot-bar.js';
 
 const FIVE = ['dux', 'wick', 'glim', 'pinch', 'pinch-crab'];
 const SIX = [...FIVE, 'moss'];
@@ -1059,4 +1061,116 @@ test('filterSessionGroups is one AND search over a row and its group title, drop
     ['done'],
   );
   assert.deepEqual(filterSessionGroups(groups, 'nothing here', textOf), []);
+});
+
+// -- chats: standalone Claude chats and ticket sessions with a session id (plan scenario 15) ---------
+
+const NOW = Date.parse('2026-11-13T12:00:00.000Z');
+const HOUR = 60 * 60 * 1000;
+const CHAT_A = '3f2b8c1a-5d4e-4f60-9a7b-1c2d3e4f5a6b';
+const CHAT_B = '9a8b7c6d-1e2f-4a3b-8c4d-5e6f7a8b9c0d';
+const CHAT_C = '0d1c2b3a-4f5e-4d6c-8b7a-9f8e7d6c5b4a';
+const RESUME = (id) => ({ kind: 'resume', command: `cd ~/pathwise && claude --resume ${id}` });
+const ago = (ms) => new Date(NOW - ms).toISOString();
+// A standalone chat as GET /api/claude/tickets lists it.
+const chat = (id, state, lastActiveMs, title = 'Plan the release notes') => ({
+  id,
+  title,
+  state,
+  createdAt: ago(lastActiveMs + HOUR),
+  lastActiveAt: ago(lastActiveMs),
+  goTo: state === 'working' ? null : RESUME(id),
+});
+
+test('scenario 15: a chat recent enough or working is a bot with its own key, title, session and join command', () => {
+  assert.equal(bar.CHAT_RECENT_MS, 24 * HOUR);
+  const bots = bar.botsFromChats(
+    [
+      chat(CHAT_A, 'working', 1000, 'Working one'),
+      chat(CHAT_B, 'done', 2 * HOUR, 'Done one'),
+      chat(CHAT_C, 'failed', 3 * HOUR, 'Failed one'),
+    ],
+    NOW,
+  );
+  const byKey = new Map(bots.map((bot) => [bot.key, bot]));
+  assert.deepEqual([...byKey.keys()].sort(), [
+    `${CHAT_C}:chat`,
+    `${CHAT_A}:chat`,
+    `${CHAT_B}:chat`,
+  ]);
+  const working = byKey.get(`${CHAT_A}:chat`);
+  assert.equal(working.ticket, 'chat-3f2b8c1a', 'the first eight characters of the id');
+  assert.equal(working.phase, 'chat');
+  assert.equal(working.state, 'working');
+  assert.equal(working.title, 'Working one');
+  assert.equal(working.session, CHAT_A);
+  assert.equal(working.goTo, null, 'nothing to join while a turn runs');
+  assert.equal(working.lastActiveAt, ago(1000));
+  assert.equal(byKey.get(`${CHAT_B}:chat`).state, 'done');
+  assert.deepEqual(byKey.get(`${CHAT_B}:chat`).goTo, RESUME(CHAT_B));
+  assert.equal(byKey.get(`${CHAT_C}:chat`).state, 'failed');
+});
+
+test('scenario 15: a chat idle for over 24 hours gives no bot, unless it is working', () => {
+  const bots = bar.botsFromChats(
+    [
+      chat(CHAT_A, 'done', 25 * HOUR),
+      chat(CHAT_B, 'failed', 30 * HOUR),
+      chat(CHAT_C, 'working', 26 * HOUR),
+    ],
+    NOW,
+  );
+  assert.deepEqual(
+    bots.map(({ key }) => key),
+    [`${CHAT_C}:chat`],
+  );
+});
+
+test('scenario 15: a ticket bot is given the session id of its phase, and one without keeps none', () => {
+  const bots = botsFromTickets({
+    'TAP-1': entry('implement-plan', 'working', { review: { state: 'done', reason: 'r' } }),
+    'TAP-2': entry('investigate-and-plan', 'waiting'),
+  });
+  const withIds = bar.withSessions(bots, {
+    'TAP-1': { implement: CHAT_A },
+    'TAP-9': { groom: CHAT_B },
+  });
+  const sessionOf = (key) => withIds.find((bot) => bot.key === key).session;
+  assert.equal(sessionOf('TAP-1:implement'), CHAT_A);
+  assert.ok(!sessionOf('TAP-1:review'), 'no id for that phase');
+  assert.ok(!sessionOf('TAP-2:investigate'), 'no id for that ticket');
+  assert.deepEqual(
+    withIds.map(({ key, state }) => [key, state]),
+    bots.map(({ key, state }) => [key, state]),
+    'everything else about the bots is as it was',
+  );
+});
+
+test("scenario 15: a session-list row prefers its bot's own join command and time, and keeps title and session", () => {
+  const ticketBots = bar.withSessions(
+    botsFromTickets({ 'TAP-1': entry('implement-plan', 'working') }),
+    { 'TAP-1': { implement: CHAT_A } },
+  );
+  const chatBots = bar.botsFromChats(
+    [chat(CHAT_B, 'working', 1000, 'Own title'), chat(CHAT_C, 'done', HOUR, 'Finished chat')],
+    NOW,
+  );
+  const response = { tickets: { 'TAP-1': { goTo: { implement: RESUME(CHAT_A) } } } };
+  const groups = sessionGroups([...ticketBots, ...chatBots], response, {
+    'TAP-1': { implement: ago(5 * 60 * 1000) },
+  });
+  const rows = Object.fromEntries(
+    groups.flatMap(({ rows: found }) => found.map((row) => [row.key, row])),
+  );
+  const own = rows[`${CHAT_B}:chat`];
+  assert.equal(own.title, 'Own title');
+  assert.equal(own.goTo, null, 'its own null, not looked up in the tickets');
+  assert.equal(own.lastActiveAt, ago(1000));
+  assert.deepEqual(rows[`${CHAT_C}:chat`].goTo, RESUME(CHAT_C));
+  assert.equal(rows[`${CHAT_C}:chat`].lastActiveAt, ago(HOUR));
+  assert.equal(rows['TAP-1:implement'].session, CHAT_A, 'the drawer can link a ticket row to Chat');
+  assert.deepEqual(rows['TAP-1:implement'].goTo, RESUME(CHAT_A));
+  // Newest activity first within a group, chat rows and ticket rows together.
+  const working = groups.find(({ state }) => state === 'working').rows.map(({ key }) => key);
+  assert.deepEqual(working, [`${CHAT_B}:chat`, 'TAP-1:implement']);
 });

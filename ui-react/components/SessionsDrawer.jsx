@@ -6,7 +6,9 @@
 // box over everything a row shows (filterSessionGroups). Each row also says when its session was last
 // active ("9m ago", read as "active 9m ago"), and a working one that has been quiet for a while is flagged (isQuiet). A
 // row opens the same Claude dialog the bot opens, and a session there is to join gets a button that
-// copies its join command, the same as the dialog's "Go to session". The rows are mounted only while
+// copies its join command, the same as the dialog's "Go to session". A row with a session id also links
+// to that session in the Chat screen; a standalone chat's row (no ticket, its title in place of the
+// ticket) opens in Chat instead of a dialog (BotBar's open handler). The rows are mounted only while
 // the drawer is open, so nothing here is on the page, or in its accessibility tree, while it is shut.
 // Escape closes it and puts focus back on the tab.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -20,6 +22,7 @@ import {
   filterSessionGroups,
   isQuiet,
 } from '../../ui/bot-bar.js';
+import { chatHref } from '../../ui/chat-stream.js';
 import { copyText } from '../../ui/dom.js';
 
 const MARK = { working: 'running', waiting: 'attention', done: 'done', failed: 'failed' };
@@ -29,10 +32,13 @@ const PHASE_WORDS = {
   review: 'Code review',
   groom: 'Groom ticket',
   e2e: 'E2E check',
+  chat: 'Chat',
 };
 // The words a row shows after its ticket: the phase, then the state with its reason when it adds one.
 const phaseOf = (phase) => PHASE_WORDS[phase] ?? phase;
-function stateText({ state, reason }) {
+function stateText({ state, reason, phase }) {
+  // A chat has no reason to give: it is working, done or failed.
+  if (phase === 'chat') return BOT_STATE_WORDS[state];
   const reasonPhrase = claudePhrase({ state, reason });
   return reasonPhrase === BOT_STATE_WORDS[state]
     ? reasonPhrase
@@ -43,7 +49,7 @@ function stateText({ state, reason }) {
 const copyWord = (goTo) => (goTo.kind === 'attach' ? 'Copy attach' : 'Copy resume');
 const searchText = (row, now) =>
   [
-    row.ticket,
+    row.title ?? row.ticket,
     phaseOf(row.phase),
     stateText(row),
     row.goTo ? copyWord(row.goTo) : '',
@@ -59,9 +65,11 @@ const activityTitle = (iso, quiet) =>
     quiet ? ` · working but quiet for ${QUIET_WORKING_MS / 60_000}+ min` : ''
   }`;
 
-function Row({ row, now, copied, onOpen, onCopy }) {
-  const { key, ticket, phase, state, goTo, lastActiveAt } = row;
+function Row({ row, now, copied, onOpen, onCopy, onClose }) {
+  const { key, ticket, phase, state, goTo, lastActiveAt, session } = row;
   const phaseWords = phaseOf(phase);
+  // A standalone chat has no ticket; its title is what names it.
+  const name = row.title ?? ticket;
   const whenId = useId();
   const quiet = isQuiet(row, now);
   return (
@@ -70,15 +78,15 @@ function Row({ row, now, copied, onOpen, onCopy }) {
         type="button"
         className="sessions-row-open"
         data-testid={`sessions-open-${key}`}
-        aria-label={`Open ${ticket} ${phaseWords} session`}
+        aria-label={`Open ${name} ${phaseWords} session`}
         aria-describedby={lastActiveAt ? whenId : undefined}
-        aria-haspopup="dialog"
+        aria-haspopup={phase === 'chat' ? undefined : 'dialog'}
         onClick={() => onOpen(ticket, phase)}
       >
         <span className="sessions-row-mark" data-state={state}>
           <StatusMark status={MARK[state]} />
         </span>
-        <span className="sessions-row-ticket">{ticket}</span>
+        <span className="sessions-row-ticket">{name}</span>
         <span className="sessions-row-detail">{`${phaseWords} · ${stateText(row)}`}</span>
       </button>
       {lastActiveAt && (
@@ -93,12 +101,23 @@ function Row({ row, now, copied, onOpen, onCopy }) {
           <RelativeTime iso={lastActiveAt} now={now} title={activityTitle(lastActiveAt, quiet)} />
         </span>
       )}
+      {session && phase !== 'chat' && (
+        <a
+          className="sessions-row-chat"
+          href={chatHref(session)}
+          onClick={onClose}
+          data-testid={`sessions-chat-${key}`}
+          aria-label={`Chat with ${ticket} ${phaseWords} session`}
+        >
+          Chat
+        </a>
+      )}
       {goTo && (
         <DashboardTooltip title={goTo.command} placement="left">
           <Button
             className="subtle sessions-row-copy"
             data-testid={`sessions-copy-${key}`}
-            aria-label={`Copy command to continue ${ticket} ${phaseWords} session`}
+            aria-label={`Copy command to continue ${name} ${phaseWords} session`}
             onClick={() => onCopy(key, goTo.command)}
           >
             {copied ? 'Copied' : copyWord(goTo)}
@@ -151,6 +170,17 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
     return () => clearTimeout(timer);
   }, [copied]);
 
+  // Closing from the drawer's own controls puts the focus back on the tab that opened it. A row that
+  // goes to Chat closes the drawer too (BotBar), so it does the same.
+  const close = () => {
+    onToggle(false);
+    tab.current?.focus();
+  };
+  const openRow = (ticket, phase) => {
+    onOpenSession(ticket, phase);
+    if (phase === 'chat') tab.current?.focus();
+  };
+
   const copy = async (key, command) => {
     const ok = await copyText(command);
     setCopied(ok ? key : null);
@@ -190,10 +220,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
                 className="subtle"
                 data-testid="sessions-close"
                 aria-label="Close session list"
-                onClick={() => {
-                  onToggle(false);
-                  tab.current?.focus();
-                }}
+                onClick={close}
               >
                 Close
               </Button>
@@ -241,8 +268,9 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
                           row={row}
                           now={now}
                           copied={copied === row.key}
-                          onOpen={onOpenSession}
+                          onOpen={openRow}
                           onCopy={copy}
+                          onClose={close}
                         />
                       ))}
                     </ul>

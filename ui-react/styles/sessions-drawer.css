@@ -185,7 +185,11 @@
   color: var(--red);
 }
 .sessions-row-ticket {
-  flex: none;
+  flex: 0 1 auto;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--strong);
   font-size: var(--fs-sm);
   font-weight: 600;
@@ -217,6 +221,20 @@
   margin-right: var(--s1);
   padding: 0 var(--s2);
   font-size: var(--fs-xs);
+}
+
+/* A session with an id also opens in the Chat screen. */
+.sessions-row-chat {
+  flex: none;
+  margin-right: var(--s1);
+  padding: 0 var(--s2);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}
+.sessions-row-chat:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 @media (max-width: 599px) {

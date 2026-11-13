@@ -113,17 +113,33 @@ screens' polling and shared board contracts below remain unchanged.
 
 `ui-react/components/BotBar.jsx` (mounted once in `AppShell`, only once setup is ready) is a
 `position: fixed`, transparent strip of mascots along the bottom of every screen, one per Claude
-session of any kind (investigate, implement, review, groom or e2e check). It is an overlay: `pointer-events: none` on the strip and `auto` on the
+session of any kind (investigate, implement, review, groom or e2e check, or a standalone Chat, the one
+kind that is not a ticket's; see below). It is an overlay: `pointer-events: none` on the strip and `auto` on the
 bots, z-index under the tooltip and dialogs, no change to any screen's height or the viewport-fill
 rule; keep it that way, and never put a dialog inside the strip (it would inherit the
 `pointer-events: none`). Which sessions get a bot is the single `SESSIONS` table in
 `ui/bot-bar.js` (every row does; `BOT_PHASES` is derived from it, so a new kind of session is one new row there, never a second list) (`investigate`, `implement`, `review`, `groom`, `e2e`: every session an entry carries, in draw order; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`; every phase but `review` opens `ClaudeDialog`), with the state mapping, the done time to live, the hold rule and the pure helpers; `none` and
-`unknown` get no bot. A bot also needs its ticket in an active Jira sprint: the pure filter
+`unknown` get no bot. A ticket session's bot also needs its ticket in an active Jira sprint: the pure filter
 `inActiveSprint` is applied to the sessions with the keys `useActiveSprintKeys` gets from
 `GET /api/active-sprint-tickets` (`fetchActiveSprintKeys` in `backend/jira.mjs`; per-ticket answers
 cached 5 minutes server side, asked again by the browser every `SPRINT_POLL_MS`, 5 minutes). A ticket
 whose sprint is unknown gets no bot, and on a failed or `available: false` answer the last good key set
 stays; do not show a bot for a ticket the sprint filter has not placed.
+
+**Chat bots are the exception to both rules above.** A standalone chat has no ticket, so it is not a row
+of `SESSIONS` and has no `entry`: `botsFromChats(chats, now)` in `ui/bot-bar.js` builds its bot from the
+`chats` array `GET /api/claude/tickets` carries beside `tickets` (`phase: 'chat'`, key `<uuid>:chat`,
+`ticket: 'chat-<first 8 hex>'`, which is its label, poster and test id, plus its own `title`, `session`,
+`goTo` and `lastActiveAt`). `BotBar` appends them **after** `inActiveSprint`
+(`[...inActiveSprint(sessions, sprint?.keys), ...chatBots]`), so no sprint filter applies and a chat id
+never enters `ticketKeys` or a Jira request; keep that order, and never feed a chat bot to
+`useActiveSprintKeys`. A chat gets a bot while it works or when it was written to in the last 24 hours
+(`CHAT_RECENT_MS`), and then follows the ordinary rules: it fades 10 minutes after it is first seen done
+and can be dismissed. It has no callout and no live-region message, because those are derived from the
+ticket map (`useBotCallouts(claude.byTicket, ...)`), and `heldDoneBots` holds only an implement bot. A
+chat bot opens `#/chat?session=<uuid>` (`openBot`), not a dialog (and has no `aria-haspopup`). A ticket
+bot may carry `session` (`withSessions(bots, sessionIds)`, from the tickets reply's sparse
+`sessionIds[KEY][phase]`), which only gives its drawer row a Chat link.
 
 That answer is `{ keys, statuses }` (`nextSprint`): the same Jira search already returns each ticket's
 status name, so `statuses` is a key -> status map, not a second call. It feeds the hold rule:
@@ -181,11 +197,21 @@ same dialog as a bot and copy the entry's `goTo[phase]` command (review has none
 the same response's `lastActive` map (`{ [ticket]: { [phase]: ISO } }`, `{}` when unknown), which gives
 each row its last-activity time. It makes no request,
 mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
-`Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`), and its styles live in
+`Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`; a chat row's name is its title:
+`Open <title> Chat session`, detail `Chat · working`, with no reason), and its styles live in
 `ui-react/styles/sessions-drawer.css` because `bot-bar.css` selectors must all start `.bot-bar`. A row's
 time is a `.sessions-row-when` span after its button, linked by the button's `aria-describedby` so the
 name stays as above, with no live region. `isQuiet` (`QUIET_WORKING_MS`) marks a working row whose time
 is five minutes old, and the open drawer re-reads the clock (`ACTIVITY_CLOCK_MS`) only while it is open.
+Chat rows are in the same groups, appended after the sprint filter like their bots (so they are the
+24-hour chats, not every chat on disk). `sessionGroups` prefers a bot's own `goTo` and `lastActiveAt` when
+it has the key (a chat's `goTo` is null while it works), and looks the rest up under the ticket as before.
+A ticket row whose bot has a `session` gets a **Chat** link beside its copy button
+(`#/chat?session=<uuid>`, name `Chat with <KEY> <phase> session`); the link and a chat row or bot close
+the drawer, because it is non-modal and would cover the conversation it just opened. Readers of
+`GET /api/claude/tickets` re-read at once on a `claude-tickets-changed` window event
+(`notifyClaudeTicketsChanged` in `useClaudeTickets.js`, fired by the Chat screen after a send and when a
+chat's phase changes), so the bar, the drawer and the chat list follow a turn without waiting for the 15 s poll.
 
 ## DevTools: a wall of live tiles
 
@@ -355,3 +381,96 @@ like groom and review; the contracts the backend and UI hold:
   (no separate unmount code). Closing at step 2 before Start stops the browser; while Start runs, close
   does nothing and unmount stops nothing; after `timed_out` no close path stops it (the backend's
   auto-stop owns it). No `EventSource` in the component.
+
+## Chat: facts not to break
+
+The Chat tab (`ui-react/panels/ChatPanel.jsx`) talks to a real Claude Code session: the server runs
+`claude -p` and streams normalized events to the browser. A chat is addressed by one value, the session
+UUID (`#/chat?session=<uuid>`): a **standalone chat** (a record in `claude/chat/<uuid>.json`, no ticket,
+cwd always `~/pathwise`) or any session `claude agents --json --all` lists, which includes every ticket
+session. The CLI does not list a `-p` run, which is why the dashboard keeps its own record for standalone
+chats. The contract is README "Chat" (routes, errors, events, items); its two ends are
+`backend/claude-chat-items.mjs` (CLI line to event, transcript to items) and `ui/chat-stream.js` (the
+client reducer).
+
+- **One writer per session, and its refusals.** `claudeSessions.beginTurn(sessionId)` in
+  `backend/claude-sessions.mjs` is the only writer mark; the chat turn and `resume()` (so the launcher and
+  the Slack watcher) go through it, never through a second lock. A held session reads `state: "working"` in
+  `entries()`, so the launcher's guards, the ticket card and the bot bar see a turn as work in progress.
+  The refusals are 409 `CLAUDE_REFUSED` with `errors[0]` `chat_busy` (a turn is already in flight on this
+  session), `session_running` (a listed session is working outside the chat, or the mark is held),
+  `session_not_found`, `too_many_turns` (4 in flight) and `no_turn` (stop with none), and 502
+  `CLAUDE_FAILED` `listing_unavailable`, `live_at_resume` and `spawn_failed`. A working listed session is
+  never touched: no stop, no spawn, no second copy. An idle one is stopped and polled until it has no pid
+  (`settleSession`, shared with `deliverToSession`) and only then continued with `--resume`, so the turn
+  continues it instead of forking. The mark is taken **after** that stop-poll, not before the listing read:
+  a held session reads `working`, so holding it across the chat's own reads would make every idle session
+  look like work elsewhere. The stop-poll itself is therefore unguarded, as it is for the launcher. The mark
+  is per dashboard process: a terminal that resumes the same session is not seen.
+- **Argument arrays, no shell, scrubbed env, on every child.** The turn is
+  `spawn('claude', [...], { cwd, env: withoutSecrets(process.env), stdio: pipes })` with no `shell` option.
+  The arguments are the fixed `TURN_ARGS` plus `--resume <uuid>` or `--session-id <uuid>`; the message is a
+  stdin line, never an argument (it would show in `ps`), and no permission, model, tool or MCP flag is
+  passed. `withoutSecrets` in `backend/config.mjs` is the one place the credential names
+  (`SECRET_ENV_NAMES`) are removed, and every place that starts a process uses it: `launch()`, `resume()`,
+  the manager's Node runtime and the chat. A new child gets it too. The cwd comes from the record or the
+  listing, never from a request; a listed entry with no usable cwd is `spawn_failed` rather than a run in
+  the dashboard's own directory.
+- **Nothing said is ever logged.** A failure is one `[claude]` line through `logClaudeFailure` with the
+  step, reason, exit code and the 8-character session prefix: no message, title, CLI output, event or
+  stderr (the child's stderr is drained and discarded). Do not add a `console.*` or a log field that
+  carries text to the chat modules.
+- **The transcript path is derived, not accepted.** History is read from the CLI's own transcript, found
+  by `claudeSessions.transcriptFile(sessionId)` (stat only, by exact file name under the projects
+  directory), and only after `isSessionId` has passed in the chat module itself (`requireSession`, run
+  first in `send`, `stop` and `open`, so a path is never built from a bad id even by a direct call; the
+  routes only parse the body). The client never sends a path, cwd, name or flag. Only the last 4 MiB are
+  read and at most 300 items returned; either cut sets `truncated`.
+- **Stop escalates.** `stop()` sends SIGINT; a process still alive 5 s later gets SIGTERM, and 5 s after
+  that SIGKILL (`STOP_GRACE_MS`), so a process that ignores both cannot hold the session for good. A turn
+  ends on the process `close`, not on `result`, and the stop timers are cleared on that end. SIGINT leaves
+  the session resumable, and a turn stopped by the user ends `stopped` whether or not the CLI printed a
+  `result`. `handler.close()` sends SIGTERM to every turn's child and ends every stream.
+- **History first, then the stream, in one `hello`.** `GET /api/claude/chat/stream?session=<uuid>` is an
+  explicit branch in `http-app.mjs` (a table route is always a JSON reply). It writes `hello` first, with
+  the whole chat (`items`, `state`, `live`, `truncated`, `turn`), then `item` (upsert by id), `delta` and
+  `state`. While a turn runs, history is read only up to the transcript's size when the turn started and
+  the turn's own items come from its live buffer (at most 500), so nothing is listed twice; `open()` reads
+  again if a turn starts or ends while it waits. On the client `chatReducer` makes `hello` **replace** the
+  view (that is also how a reconnect and Refresh heal), ignores every event before it, and keeps a
+  cut-short reply as an assistant item (`partial-<n>`) when the turn goes idle. `delta` is dropped for a
+  client that has not drained; `item` and `state` are always written. `state: "working"` with
+  `live: false` is a session working outside the chat: read-only, never stoppable. A refused stream is a
+  JSON error, because the headers go out with the first event. The stream answers a cross-site
+  `Sec-Fetch-Site` with 403 `INVALID_ORIGIN` directly (deliberate: the code is not in the error allow-list
+  and every other route answers `OPERATION_FAILED` for it, which existing tests pin); 8 streams at most,
+  then 429 `TOO_MANY_STREAMS`.
+- **`ChatConversation` is keyed by session.** `<ChatConversation key={session ?? 'new'} />` remounts it on
+  every switch and on New chat, so the transcript, draft, Retry, status line and stream of one chat can
+  never show in another. Do not replace the key with an effect that resets pieces of state. The stream is
+  one `EventSource`, open only while the Chat screen is active and shows a session (`useChatSession`), and
+  deltas are batched per animation frame.
+- **The composer is `readOnly` plus `aria-disabled`, never `disabled`, while a turn works.** A natively
+  disabled textarea drops the writer's focus, and the reason (`chat-disabled-reason`, tied by
+  `aria-describedby`) is always shown in words. Send is disabled with it. Stop shows only while `live`; a
+  session running outside the chat has no Stop and gets Refresh instead. A refused send or stop is worded
+  from `errors[0]` (`REFUSAL_WORDS`), never the raw envelope.
+- **Chat bots and rows are appended after the sprint filter.** See the bot bar section above: a chat's id
+  must never reach `useActiveSprintKeys` or Jira, and no new chat code path may read it as a ticket key. A
+  chat is `chat-<8 hex>` in labels, never a made-up key.
+- **One place registers the tab, one place holds the routes.** `READY_TABS` in `ui-react/App.jsx` (Chat
+  follows Pull Requests; `hashFor` keeps the `?session=` query for `chat`, as it keeps Releases' `?view=`)
+  and the three literal paths in `ui-react/lib/api.js` (`sendChat`, `stopChat`, `openChatStream`), which
+  the contract test reads. The primary route row is pinned by a test, so a new tab goes in the tools row.
+  `ui-react/styles/chat.css` follows the board stylesheet rules (every selector starts `.chat`, tokens only,
+  no hex, short named transitions, a reduced-motion block, no `columns:`) and is imported after `board.css`.
+- **Known limits, so nobody "fixes" them by accident.** (a) `npm run dev` restarts through nodemon's
+  SIGUSR2, which `server.mjs` does not handle, so its SIGTERM cleanup does not run and a `claude` child
+  mid-turn can outlive a dev restart. Production `npm start` handles SIGTERM. This was deliberately left
+  alone: switching nodemon to SIGTERM would also stop every managed service on each dev restart. (b) Chat
+  turns pass no permission flag, so a tool that needs approval is denied (listed in the turn's `denials`
+  and shown as a note); there is no in-app approve or deny. (c) `costUsd` on a turn is the CLI's
+  `total_cost_usd`, cumulative for a resumed session, not per turn; the screen does not show it. (d)
+  Resuming a finished `--bg` ticket session and `session_running` on a working one were checked on the
+  real CLI with scratch sessions; sessions started with the launcher's extra flags (`--add-dir`,
+  `--tools`, `--strict-mcp-config`) and the ticket row's Chat link in a real browser were not.

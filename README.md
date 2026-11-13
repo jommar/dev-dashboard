@@ -393,6 +393,7 @@ An agent can read the same logs three ways:
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
    - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers`, `POST /api/claude/approve` and `POST /api/claude/rereview` (see [Claude launcher](#claude-launcher))
+   - `POST /api/claude/chat/send`, `POST /api/claude/chat/stop` and `GET /api/claude/chat/stream?session=<uuid>` (SSE; chat with a session, with or without a ticket; see [Chat](#chat))
    - `GET /api/active-sprint-tickets?keys=A-1,B-2` (which of those tickets are in an active Jira sprint; see [Bot bar](#bot-bar))
    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
 
@@ -1259,7 +1260,8 @@ planning session stays reachable then.
 ### State files
 
 `claude/<KEY>/status.json` is shared with the session. The key must match `^[A-Z]{1,10}-\d{1,7}$`
-before any path is built, and a folder under `claude/` with another name is ignored.
+before any path is built, and a folder under `claude/` with another name is ignored (`claude/chat/`
+holds the records of standalone chats, see [Chat](#chat)).
 
 `nodemon.json` makes `npm run dev` ignore `claude/`. Without it, every write to these files (a launch,
 a saved answer, the session's own updates) would restart the dashboard and cut off the request in
@@ -1956,11 +1958,136 @@ starting a copy. If one is wrong, the fix is a single constant or rule: the id p
 `backend/slack-watcher.mjs`, which the Slack wake shares. To roll the feature back, revert the change;
 `claude/` holds only local files you can delete, and running sessions are unaffected.
 
+## Chat
+
+The **Chat** tab (after Pull Requests) holds a conversation with a real Claude Code session inside the
+dashboard, so you do not need a terminal for `claude attach` or `claude --resume`. It works for a
+**standalone chat**, a session with no Jira ticket that the dashboard creates for you, and for any
+session the Claude CLI lists, which includes every ticket session the [launcher](#claude-launcher)
+started. Like the launcher it is host only: it needs the `claude` command on `PATH`, and the Docker image
+has none, so there a chat cannot start.
+
+- **Start a chat.** Open the Chat tab (or press **New chat**, `#/chat`), type a message and press
+  **Enter** (**Shift+Enter** is a new line). The dashboard starts a new session in `~/pathwise`, the
+  launcher's own directory, and the address becomes `#/chat?session=<uuid>`, which you can bookmark or
+  reload. The chat is titled with the first line of your first message (60 characters at most). The list
+  on the left holds your standalone chats, newest first, each with its state and age.
+- **Continue a ticket's session.** In the [Sessions drawer](#bot-bar) a ticket session whose id is known
+  has a **Chat** link beside its copy button; it opens that same session here (and closes the drawer). The
+  session is continued, never copied: if it is idle, the dashboard stops it, waits for it to be gone and
+  resumes it under the same id, so the conversation lands in the same transcript. The Open button still
+  opens the Claude dialog.
+- **What you see.** The history comes from the CLI's own transcript on disk (the dashboard only reads
+  it), the newest branch of the conversation. Your messages are plain text, Claude's replies are
+  rendered Markdown with a **Copy code** button on each code block, and a **Copy** button on each message.
+  A tool call is one collapsed chip (name, running, done or failed) that opens to its input and result;
+  long inputs and results are cut at 8192 characters. The reply being written streams in as it arrives.
+  Thinking and subagent traffic are not shown.
+- **Working, idle and working elsewhere.** The state pill reads **Working** while a turn that this
+  dashboard runs is in flight: the message box is read-only (the reason shows beneath it) and **Stop** is
+  shown. It reads **Idle**, **Stopped** or **Failed**
+  once the turn ended; after a stopped or failed turn **Retry** sends your last message again, a note says
+  how it ended (a stopped reply you had already seen stays on screen) and any tool the session was not
+  allowed to use is named. **Working elsewhere** means the session is running outside the chat (a ticket
+  session working in the background): its history shows, the message box is read-only with the reason, there
+  is no Stop, and **Refresh** reads it again. The chat never sends into a running session and never starts
+  a second copy.
+- **Stop.** **Stop** interrupts the turn (Ctrl-C to the CLI). If it has not ended 5 seconds later it is
+  terminated, and 5 seconds after that killed. The session stays usable: your next message continues it.
+- **One turn at a time.** Each message is one `claude -p` process, started for that turn and ended with
+  it, with your message on its standard input (never in the command line, so `ps` does not show it). A chat
+  holds one turn at a time (`chat_busy`), and 4 turns can run at once (`too_many_turns`). The process runs
+  without the dashboard's `GH_TOKEN`, `GITHUB_TOKEN`, `JIRA_API_TOKEN` and `JIRA_TOKEN`, as launched
+  sessions do. Nothing you or Claude said is logged; a failed turn is one `[claude]` line with the step,
+  the reason, the exit code and the first 8 characters of the session id.
+- **Bots and drawer.** A standalone chat that is working, or was written to in the last 24 hours, has a
+  bot on the [bot bar](#bot-bar) and a row in the Sessions drawer, with or without an active sprint; it
+  opens the chat instead of a dialog. A chat id is never sent to Jira.
+- **Where things live.** A standalone chat's record is `claude/chat/<uuid>.json` in the dashboard
+  directory (the launcher's gitignored, nodemon-ignored `claude/` state; the chat's title, directory,
+  times and last outcome, no message text). The conversation itself is the CLI's transcript, so
+  `claude --resume <uuid>` in `~/pathwise` (the Sessions drawer's **Copy resume** gives the command) shows the same
+  chat in a terminal. Delete the record to forget a chat in the dashboard; the transcript is not touched. Rolling
+  the feature back is a revert; the record files are yours to delete.
+
+### Chat routes and events
+
+| Route                                      | Purpose                                                                                                                                                                                    |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/claude/tickets`                  | also answers `chats` (the standalone chats, at most 100, newest turn first) and `sessionIds` (`{ KEY: { phase: uuid } }`, sparse, `{}` when the listing is unavailable)                    |
+| `POST /api/claude/chat/send`               | body `{ message, session? }`; without `session` a new standalone chat is created. Answers `{ ok: true, session, chat }` once the process has started (`chat` is null for a listed session) |
+| `POST /api/claude/chat/stop`               | body `{ session }`; answers `{ ok: true }` once the signal is sent                                                                                                                         |
+| `GET /api/claude/chat/stream?session=<id>` | `text/event-stream` for one chat: `hello` first, then `item`, `delta` and `state`                                                                                                          |
+
+`session` is always a full session UUID; the dashboard works out the directory itself and never accepts a
+path, directory, model or flag. A `message` is a string of 1 to 32000 characters after trimming. The routes
+keep the launcher's rules (loopback Host, same-origin writes, JSON content type, bodies of at most 64 KiB,
+`Cache-Control: no-store`), work while setup is incomplete, and fail with the usual
+`{ code, error, errors[] }`:
+
+| Status | Code               | When                                                                                                                                                                                                                         |
+| ------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_SESSION`  | `session` is present and not a UUID (send, stop, stream); checked before any file is read or process started                                                                                                                 |
+| `400`  | `INVALID_MESSAGE`  | `message` is not a string, is empty once trimmed or is over 32000 characters                                                                                                                                                 |
+| `409`  | `CLAUDE_REFUSED`   | `chat_busy` (a turn is already running in this chat), `session_running` (a listed session works outside the chat), `session_not_found`, `too_many_turns` (4 running), `no_turn` (stop with none)                             |
+| `502`  | `CLAUDE_FAILED`    | `listing_unavailable` (a listed session needs the CLI listing), `live_at_resume` (a stopped session still had a process after the wait), `spawn_failed` (the CLI could not be started, or a listed session has no directory) |
+| `429`  | `TOO_MANY_STREAMS` | 8 chat streams are already open                                                                                                                                                                                              |
+| `403`  | `INVALID_ORIGIN`   | the stream was requested cross-site (`Sec-Fetch-Site` `cross-site` or `same-site`); the other routes answer `OPERATION_FAILED` for that, this one says why                                                                   |
+
+A refused stream is a JSON error, because the stream's headers go out with its first event. Every event's
+data is JSON:
+
+- `hello` (always first): `{ session, kind, title, state, live, items, truncated, turn }`. `kind` is `chat`
+  or `session`; `state` is `working` or `idle`; `live` is true only when the working turn is one this
+  dashboard runs (it streams and can be stopped), so `state: "working", live: false` is a session working
+  elsewhere; `items` is the history followed by the turn in flight; `turn` is the last turn of this
+  dashboard process on the session, or null. A new `hello` **replaces** what the browser had, which is how a
+  reconnect or Refresh recovers.
+- `item`: `{ item }`, an upsert by `item.id`. Items are `{ id, kind: "user", text }`,
+  `{ id, kind: "assistant", text }` (Markdown) and `{ id, kind: "tool", name, input, result, truncated }`; a
+  tool item is sent when the call starts (`result` null) and again with `{ text, isError }` when it ends.
+- `delta`: `{ text }`, more of the reply being written; the finished assistant `item` replaces it. It is
+  dropped for a client that is not keeping up; `item` and `state` never are.
+- `state`: `{ state: "working" }` when a turn starts, and `{ state: "idle", turn }` when it ends, where
+  `turn` is `{ outcome, reason, error, denials, costUsd }`: `outcome` is `completed`, `stopped` or `failed`;
+  `reason` is `spawn_failed`, `api_error` or `exited` for a failure; `error` is the CLI's own error text (2000
+  characters at most); `denials` names the tools the session was not allowed to use.
+
+History is bounded: only the last 4 MiB of the transcript is read and at most 300 items are sent (the
+screen then says only the latest messages are shown), and a running turn keeps at most 500 items. While a
+turn runs, history is read only up to where the transcript stood when the turn started, so no message
+appears twice.
+
+### Chat limits
+
+- **A dev restart can leave a turn running.** `npm run dev` restarts the server through nodemon's `SIGUSR2`
+  signal, which does not run the server's `SIGTERM` clean-up, so a `claude` process in the middle of a
+  turn can outlive a dev restart (development only: `npm start` handles `SIGTERM`, which ends every turn's
+  process and every chat stream). It is deliberately not switched to `SIGTERM`, because that would also stop
+  every service the dashboard manages on each dev restart.
+- **Tool permissions are the plain CLI's.** A chat turn passes no permission flag, so the session runs
+  under your own Claude settings, like the launcher. There is no approve or deny prompt in the app: a tool
+  that needs approval is denied and shown in the turn's note (`denials`).
+- **Cost is cumulative.** The turn's `costUsd` is the CLI's total for the session, so on a resumed
+  session it is cumulative, not per turn. The screen does not show it.
+- **One writer is a dashboard rule.** The one-turn-at-a-time rule covers the chat, the launcher's
+  resumes and the Slack watcher, all in this dashboard. A terminal that resumes the same session at the
+  same moment is not seen and would interleave with it.
+- **Cross-site stream requests** get `INVALID_ORIGIN`, on purpose, while the other routes answer
+  `OPERATION_FAILED` for the same thing.
+- **Not covered by a check on the real CLI.** Resuming a finished `--bg` ticket session and the
+  `session_running` refusal of a working one were run with scratch sessions on the real CLI. Sessions
+  started with the launcher's extra flags (`--add-dir`, `--tools`, `--strict-mcp-config`) and the Chat link
+  on a ticket's row in a real browser were not run end to end.
+- **Out of scope:** approving tool calls in the app, choosing a directory, model or MCP servers, renaming,
+  deleting or archiving a chat, live output of a session running in the background (Refresh reads its
+  transcript), syntax highlighting and attachments.
+
 ## Bot bar
 
 A strip of small animated mascots runs along the bottom of every screen once setup is complete (the
 Settings-only setup mode has none): one **bot per Claude session** (investigate, implement,
-review, groom or e2e check), so you can see at a glance which ones are working and which need you. It is an overlay
+review, groom or e2e check, or a standalone [Chat](#chat)), so you can see at a glance which ones are working and which need you. It is an overlay
 (`position: fixed`, transparent, and it ignores the pointer except on the bots), so it takes no room,
 never scrolls the page and leaves every screen's height and viewport fill unchanged. It is hidden
 while there is no session to show.
@@ -1971,6 +2098,11 @@ while there is no session to show.
   order a ticket's bots are drawn in; a new kind of session is one new row. A bot is keyed `<KEY>:<phase>` (an e2e bot `<KEY>:e2e`). A session whose
   state is `none` (never started) or `unknown` (the CLI listing could not be read) has no bot, and neither
   does a session of a ticket outside the active sprint, which also keeps old finished sessions off the bar.
+  **Standalone chats are the exception** (see the [Chat](#chat) tab): they have no ticket, so there is no
+  sprint to check and no Jira call. A chat has a bot while it works or when it was written to in the last
+  24 hours, keyed `<uuid>:chat` and labelled `chat-` and the first 8 characters of its id; it follows the
+  states, zones, 10-minute fade and dismiss rules below, has no callout (callouts come from tickets), and
+  clicking it opens `#/chat?session=<uuid>` instead of a dialog.
 - **The active sprint.** "Active" is the rule My Tickets and Home use (a sprint Jira reports as
   `active`, read from the ticket's most relevant sprint; several boards can each have one, and a
   ticket in any of them counts). The bar asks which of its tickets are in one with
@@ -2053,12 +2185,14 @@ while there is no session to show.
   remembered in memory only, so a reload starts the 10 minutes again and brings dismissed bots back.
 - **The session list.** A **Sessions** tab on the right edge of every screen (with a count, amber when
   something needs you) opens a drawer that lists the same sessions as the bot lane: every session of a
-  ticket in an active sprint, grouped **Needs you**, **Working**, **Failed** and **Done**, each group with
+  ticket in an active sprint, plus the standalone chats of the last 24 hours (a chat row is named by its
+  title and reads `Chat · working`, and opens the chat), grouped **Needs you**, **Working**, **Failed** and **Done**, each group with
   the most recently active session first (one with no time last). Unlike the
   bar it does not forget a done bot after 10 minutes or a dismissed one, so a finished session stays
   reachable. A row opens the same Claude dialog its bot opens (the review dialog for a review session),
   and a session with something to join has a **Copy attach** (live) or **Copy resume** (finished) button
-  that copies the same command as the dialog's Go to session. Rows are one compact line each, and one **Search sessions** box filters them by
+  that copies the same command as the dialog's Go to session. A ticket session whose id is known also has a
+  **Chat** link that opens it in the [Chat](#chat) tab. Rows are one compact line each, and one **Search sessions** box filters them by
   everything a row shows (ticket, phase, state, reason, the copy button's word, the group heading and
   **quiet**, never the time); every term must match, Escape clears the search before it closes the drawer.
   Each row ends with **9m ago** (read out as "active 9m ago"), when its session was last written to: the newest modification time
@@ -2074,7 +2208,9 @@ while there is no session to show.
   while the page is visible, through its own `useClaudeTickets` (a failed read keeps the last
   answer; there is no countdown). Its requests carry `?surface=bot-bar`, which the server ignores,
   so a request log or a test counting a board's own reads can tell them apart. It reads no
-  other route than `/api/active-sprint-tickets` above (in particular never `/api/team-velocity`).
+  other route than `/api/active-sprint-tickets` above (in particular never `/api/team-velocity`). It also
+  reads again at once when the Chat tab reports a send or a turn changing state, so a chat's bot follows it
+  without waiting for the poll.
 
 ## Mascots page
 
@@ -2937,7 +3073,7 @@ ui-react/
   lib/api.js            one browser API boundary
   hooks/                shared service event, polling and API hooks
   components/           shell, reusable MUI primitives, filters and card wrappers
-  panels/               Home, Services, PRs, My Tickets, Releases, Slack and Settings
+  panels/               Home, Services, PRs, My Tickets, Releases, Slack, Chat and Settings
   styles.css            theme variables plus the established bespoke panel CSS
 ui/
   dom.js                esc / slug / clamp / copyText / timeAgo
@@ -2977,7 +3113,9 @@ treat those names as a contract and don't rename them.
 
 - The dashboard server uses Node built-ins at runtime; `nodemon` is a
   development dependency used by `npm run dev`.
-- On shutdown the dashboard SIGTERMs each service's process group, then exits.
+- On shutdown the dashboard SIGTERMs each service's process group and every running [Chat](#chat) turn,
+  then exits. A `npm run dev` restart (nodemon's `SIGUSR2`) does not run that clean-up; see
+  [Chat limits](#chat-limits).
 - **Logs are cleared on every start/restart** — a service always begins with a
   fresh in-memory buffer and empty `logs/<id>/out.log`, so previous-run output
   never lingers in the tail or the agent-readable file.

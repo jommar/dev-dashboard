@@ -21,6 +21,9 @@
 // the sprint's bots, grouped by state and not forgotten when a bot fades or is dismissed, each one
 // opening the same dialog and offering its join command.
 //
+// Standalone Claude chats (no ticket) are bots too, added after the sprint filter, so they need no
+// sprint and never reach Jira. A chat bot opens the Chat screen on its session instead of a dialog.
+//
 // A bot is memoized on plain values, so a poll that finds nothing new, or a re-render of the app,
 // never restarts its walk, and a state change replays its own pose (the hop, the shake) once.
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
@@ -34,11 +37,13 @@ import { SessionsDrawer } from './SessionsDrawer.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
 import { DashboardTooltip } from './Primitives.jsx';
 import { mascotFor } from '../lib/mascot-for.js';
+import { chatHref } from '../../ui/chat-stream.js';
 import {
   BOT_STATE_WORDS,
   CALLOUT_TEXT,
   NO_MEMORY,
   botPose,
+  botsFromChats,
   botsFromTickets,
   dismissBot,
   heldDoneBots,
@@ -50,6 +55,7 @@ import {
   rememberBots,
   sessionGroups,
   walks,
+  withSessions,
   ZONES_MIN_WIDTH_PX,
   zoneSpots,
   roamFor,
@@ -78,6 +84,7 @@ const Bot = memo(function Bot({
   botKey,
   ticket,
   phase,
+  title,
   state,
   reason,
   fading,
@@ -92,7 +99,7 @@ const Bot = memo(function Bot({
   const mascot = mascotFor(botKey);
   const roam = roamFor(botKey);
   const pose = botPose(state, roam);
-  const label = `${ticket} ${phase}: ${BOT_STATE_WORDS[state]}`;
+  const label = `${title ?? `${ticket} ${phase}`}: ${BOT_STATE_WORDS[state]}`;
   // The popup adds the reason, unless it only repeats the state word (a running session reads "working").
   const reasonPhrase = claudePhrase({ state, reason });
   const detail = reasonPhrase === BOT_STATE_WORDS[state] ? label : `${label} · ${reasonPhrase}`;
@@ -133,7 +140,7 @@ const Bot = memo(function Bot({
             data-phase={phase}
             data-mascot={mascot.id}
             aria-label={label}
-            aria-haspopup="dialog"
+            aria-haspopup={phase === 'chat' ? undefined : 'dialog'}
             onMouseEnter={() => onAttend(botKey)}
             onFocus={() => onAttend(botKey)}
             onClick={() => {
@@ -191,10 +198,17 @@ const Bot = memo(function Bot({
 export function BotBar() {
   const claude = useClaudeTickets({ active: true, source: 'bot-bar' });
   // Sessions that qualify by phase and state, then only the tickets Jira places in an active sprint.
-  const sessions = useMemo(() => botsFromTickets(claude.byTicket), [claude.byTicket]);
+  const sessions = useMemo(
+    () => withSessions(botsFromTickets(claude.byTicket), claude.sessionIds),
+    [claude.byTicket, claude.sessionIds],
+  );
   const ticketKeys = useMemo(() => [...new Set(sessions.map(({ ticket }) => ticket))], [sessions]);
   const sprint = useActiveSprintKeys(ticketKeys);
-  const bots = useMemo(() => inActiveSprint(sessions, sprint?.keys), [sessions, sprint]);
+  const chatBots = useMemo(() => botsFromChats(claude.chats, Date.now()), [claude.chats]);
+  const bots = useMemo(
+    () => [...inActiveSprint(sessions, sprint?.keys), ...chatBots],
+    [sessions, sprint, chatBots],
+  );
   // A done implement bot whose ticket is still open in Jira stays until the ticket reaches a
   // done-kind status; its status map is part of the same sprint answer.
   const held = useMemo(() => heldDoneBots(bots, sprint?.statuses), [bots, sprint]);
@@ -243,7 +257,17 @@ export function BotBar() {
     visible,
   );
 
-  const openBot = useCallback((ticket, phase) => setOpen({ ticket, phase }), []);
+  // A chat bot or row goes to the Chat screen; every other session opens its dialog.
+  const openBot = useCallback(
+    (ticket, phase) => {
+      const chat = phase === 'chat' && chatBots.find((bot) => bot.ticket === ticket);
+      if (chat) {
+        location.hash = chatHref(chat.session);
+        setDrawerOpen(false);
+      } else setOpen({ ticket, phase });
+    },
+    [chatBots],
+  );
   const dismiss = useCallback(
     (key, state) => setMemory((previous) => dismissBot(previous, { key, state })),
     [],
@@ -268,6 +292,7 @@ export function BotBar() {
               botKey={bot.key}
               ticket={bot.ticket}
               phase={bot.phase}
+              title={bot.title}
               state={bot.state}
               reason={bot.reason}
               fading={bot.fading}

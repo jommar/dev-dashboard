@@ -8,6 +8,8 @@
 // prompts folder.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createHttpHandler } from '../backend/http-app.mjs';
 import { claudeHttpFixture, dashboardSandbox } from './claude-launcher-fixture.mjs';
 
@@ -249,4 +251,55 @@ test('scenario 168: a response that cannot take a header is an error, never a re
   handler.close();
 
   assert.deepEqual(sent, [], 'nothing was sent');
+});
+
+test('scenario 19: closing the handler closes the chat, once, which ends its streams and its processes', () => {
+  let closed = 0;
+  const handler = createHttpHandler({
+    settings: {},
+    manager: {},
+    integrations: {
+      slack: { status: async () => ({ connected: false }) },
+      slackWatchStore: {},
+      claudeSessions: {},
+      claudeLauncher: {},
+      claudePrompts: {},
+      claudeChat: {
+        list: async () => [],
+        close: () => {
+          closed += 1;
+        },
+      },
+      slackWatcher: { isDisabled: () => true, stop() {} },
+    },
+  });
+  assert.equal(closed, 0, 'building the handler does not touch the chat');
+  handler.close();
+  assert.equal(closed, 1);
+});
+
+test('scenario 19: building the handler over empty doubles reads and writes no chat file', (t) => {
+  const touched = [];
+  for (const method of [
+    'readdirSync',
+    'readFileSync',
+    'statSync',
+    'lstatSync',
+    'mkdirSync',
+    'writeFileSync',
+    'openSync',
+    'existsSync',
+    'accessSync',
+  ]) {
+    const original = fs[method];
+    t.mock.method(fs, method, (...args) => {
+      if (String(args[0]).split(path.sep).includes('chat')) touched.push([method, String(args[0])]);
+      return original.apply(fs, args);
+    });
+  }
+
+  const handler = handlerOverDoubles();
+  handler.close();
+
+  assert.deepEqual(touched, [], 'no file under a chat folder is touched at construction');
 });

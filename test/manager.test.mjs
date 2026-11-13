@@ -58,6 +58,11 @@ async function fixture(t, { customNvm = false, secretNames = SECRET_NAMES } = {}
     export const LOGS_DIR = ${JSON.stringify(logs)};
     export const BUFFER_BYTES = 65536;
     export const SECRET_ENV_NAMES = ${JSON.stringify(secretNames)};
+    export const withoutSecrets = (env) => {
+      const copy = { ...env };
+      for (const name of SECRET_ENV_NAMES) delete copy[name];
+      return copy;
+    };
   `,
   );
   const { ServiceProcess, Manager } = await import(pathToFileURL(path.join(root, 'manager.mjs')));

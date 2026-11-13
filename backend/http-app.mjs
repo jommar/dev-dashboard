@@ -20,6 +20,7 @@ import { withAttachedSessions } from './slack-model.mjs';
 import { createSlackWatchStore, isSessionId } from './slack-watch-store.mjs';
 import { createClaudeSessions } from './claude-sessions.mjs';
 import { createClaudeLauncher, failed } from './claude-launcher.mjs';
+import { createClaudeChat } from './claude-chat.mjs';
 import { createClaudeArtifacts } from './claude-artifacts.mjs';
 import { PROMPT_NAMES, createPromptStore } from './claude-prompts.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
@@ -61,6 +62,23 @@ async function readJson(req) {
 // One query-string value of a request, or null when it is absent.
 function queryParam(req, name) {
   return new URL(req.url, 'http://localhost').searchParams.get(name);
+}
+
+// Server-sent events on `res`, as a stream sink: `send(event, payload)` is false when the client is
+// not keeping up. The headers go out with the first message, so a refused stream is still a JSON error.
+function eventStreamSink(res) {
+  return {
+    send: (event, payload) => {
+      if (!res.headersSent)
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-store',
+          Connection: 'keep-alive',
+        });
+      return res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    },
+    end: () => res.end(),
+  };
 }
 
 function httpError(code, message, status) {
@@ -164,6 +182,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     integrations.claudeSessions || createClaudeSessions({ store: slackWatchStore });
   const claudePrompts = integrations.claudePrompts || createPromptStore();
   const claudeArtifacts = integrations.claudeArtifacts || createClaudeArtifacts();
+  const claudeChat = integrations.claudeChat || createClaudeChat({ claudeSessions });
   const browserDevtools = integrations.browserDevtools || createBrowserDevtools();
   const claudeLauncher =
     integrations.claudeLauncher ||
@@ -281,7 +300,11 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     },
   };
   const claudeRoutes = {
-    'GET /api/claude/tickets': () => claudeLauncher.list(),
+    // The launcher's reply and, beside it, the standalone chats: one poll for the bar and the Chat screen.
+    'GET /api/claude/tickets': async () => ({
+      ...(await claudeLauncher.list()),
+      chats: await claudeChat.list(),
+    }),
     'POST /api/claude/launch': async (req) => {
       const { key, phase, pr, browserId } = await readJson(req);
       return claudeLauncher.launch({ key, phase, pr, browserId });
@@ -303,6 +326,15 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     'GET /api/claude/artifacts': (req) => claudeArtifacts.list(queryParam(req, 'key')),
     'GET /api/claude/artifact': (req) =>
       claudeArtifacts.read(queryParam(req, 'key'), queryParam(req, 'name')),
+    // The chat module validates the body, so nothing is read or started for a bad one.
+    'POST /api/claude/chat/send': async (req) => {
+      const { message, session } = await readJson(req);
+      return claudeChat.send({ message, session });
+    },
+    'POST /api/claude/chat/stop': async (req) => {
+      const { session } = await readJson(req);
+      return claudeChat.stop({ session });
+    },
   };
   // A prompt store call: its refusal of a bad text passes as it is, anything the disk does is a
   // failed Claude action.
@@ -333,21 +365,24 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   // unsubscribe). It is as sensitive as the signed-in sessions it shows, so another site's page may not
   // open one. A frame is dropped, never queued, while the client has not drained the last write.
   const openDevtoolsStream = (res) => {
-    const handle = devtoolsStreams.open({
-      send: (event, payload) => {
-        // The headers go out with the first message, so a refused stream is still a JSON error.
-        if (!res.headersSent)
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-store',
-            Connection: 'keep-alive',
-          });
-        return res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
-      },
-      end: () => res.end(),
-    });
+    const handle = devtoolsStreams.open(eventStreamSink(res));
     res.on('drain', handle.drained);
     res.on('close', handle.close);
+  };
+  // The conversation of one Claude session: `hello` (the history and the turn in flight) first, then
+  // `item`, `delta` and `state` messages. It carries what was said, so another site's page may not
+  // open one. The module checks the session id and the stream cap before it sends anything.
+  const openChatStream = async (res, session) => {
+    let handle = null;
+    let closed = false;
+    res.on('drain', () => handle?.drained());
+    res.on('close', () => {
+      closed = true;
+      handle?.close();
+    });
+    handle = await claudeChat.open({ session, sink: eventStreamSink(res) });
+    // A client that went away while the history was read.
+    if (closed) handle.close();
   };
   const guard = () => {
     if (!settings.getSetupStatus().ready)
@@ -526,6 +561,16 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
           throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
         openDevtoolsStream(res);
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/claude/chat/stream') {
+        // Answered here, not thrown: a thrown `INVALID_ORIGIN` reads OPERATION_FAILED on the other
+        // routes (it is not in the allow-list), and this stream's clients get the real code.
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site'])) {
+          json(res, 403, { code: 'INVALID_ORIGIN', error: 'INVALID ORIGIN', errors: [] });
+          return;
+        }
+        await openChatStream(res, url.searchParams.get('session'));
         return;
       }
       const tableRoute =
@@ -727,6 +772,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'INVALID_JSON',
         'INVALID_LINK',
         'INVALID_SESSION',
+        'INVALID_MESSAGE',
         'WATCH_DISABLED',
         'WATCH_PAUSED',
         'INVALID_TICKET',
@@ -778,6 +824,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
   handler.slackWatcher = slackWatcher;
   handler.close = () => {
     slackWatcher.stop();
+    claudeChat.close();
     devtoolsStreams.close();
     browserScreencast.close?.();
     unsubscribe?.();

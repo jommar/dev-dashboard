@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Added a **Chat** tab (after Pull Requests) to talk to a real Claude Code session inside the dashboard,
+  with or without a Jira ticket. Press **New chat** for a standalone session (a record in
+  `claude/chat/<uuid>.json`, run from `~/pathwise`), or follow the new **Chat** link on a ticket session's
+  row in the Sessions drawer to continue that session (an idle one is stopped and resumed under the same
+  id, never copied; one working in the background is shown read-only as **Working elsewhere**). Each message
+  is one `claude -p` process with the message on stdin and no dashboard tokens in its environment; replies
+  stream in over server-sent events, render as Markdown with Copy buttons, tool calls are collapsed chips,
+  and **Stop** (SIGINT, then SIGTERM, then SIGKILL, 5 s apart) and **Retry** are there. History comes from
+  the CLI's own transcript. New routes `POST /api/claude/chat/send`, `POST /api/claude/chat/stop` and
+  `GET /api/claude/chat/stream?session=<uuid>`; `GET /api/claude/tickets` also answers `chats` and
+  `sessionIds`; new error code `INVALID_MESSAGE` (`INVALID_SESSION`, `TOO_MANY_STREAMS` and, for a cross-site
+  stream request, `INVALID_ORIGIN` now also come from the chat routes) and new `CLAUDE_REFUSED` reasons
+  `chat_busy`, `too_many_turns`, `no_turn` and `session_not_found`. Standalone chats also get a bot and a Sessions drawer row
+  (working or active in the last 24 hours, outside the active-sprint filter, never sent to Jira). A session
+  now reads as `working` while a chat turn holds it, so the launcher and the Slack watcher do not write to it
+  too. `resume()` now also drops the dashboard's credentials from its environment, like a launch. Known
+  limits: a `npm run dev` restart (nodemon's `SIGUSR2`) does not end a `claude` process mid-turn, tools that
+  need approval are denied (no in-app approve), and `costUsd` on a resumed session is cumulative.
 - Changed the **Services** card header to two rows: the name, directory, port and status chip on the
   first, the **checkout** select and a single **Actions** menu (Start, Stop, Restart) on the second,
   truncating instead of wrapping on narrow cards. The status chip's dot is now green for running, red

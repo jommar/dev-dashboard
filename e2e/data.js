@@ -1524,6 +1524,8 @@ function watchLinkFromParsed({ key, link }) {
 // and changes `tickets` the way the server's answer would, so a spec can assert what the dialog
 // sent and what the icon shows afterwards. Invented data only.
 const CLAUDE_ATTACH = { kind: 'attach', command: 'claude attach ab12cd34' };
+// The id the fake server mints for a new standalone chat (an invented UUID).
+export const CHAT_SESSION_ID = '5b0c7e3a-2d41-4c8e-9f16-0a7d3b9e4c21';
 // `goTo` on an entry is `{ investigate, implement, groom }`: each side is `{ kind, command }` for
 // that session, or null when nothing of it can be joined. Groom is not a phase of the workflow: the
 // entry's `groom` is `{ state, reason }` of its own (`none`, `working`, `waiting`, `done`, `failed`
@@ -1707,6 +1709,10 @@ function claudeData() {
     // The last time each session was written to, by ticket key then phase: the `lastActive` GET
     // /api/claude/tickets sends beside the tickets (ISO strings, sparse; a spec sets the ones it needs).
     lastActive: {},
+    // The standalone chats and the session ids GET /api/claude/tickets sends beside the tickets:
+    // `chats` as the server lists them, `sessionIds` as `{ [key]: { [phase]: uuid } }` (sparse).
+    chats: [],
+    sessionIds: {},
     // What GET /api/active-sprint-tickets knows: the tickets Jira puts in an active sprint, each
     // one's Jira status name, and whether Jira can say (`available: false` is an unreachable or
     // unconfigured Jira). `asks` logs each key list.
@@ -1831,10 +1837,34 @@ function claudeResponse(url, method, { claude, devtools }, body) {
         updatedAt: '2026-10-08T09:00:00.000Z',
         tickets: structuredClone(claude.tickets),
         lastActive: structuredClone(claude.lastActive),
+        chats: structuredClone(claude.chats),
+        sessionIds: structuredClone(claude.sessionIds),
       },
     };
   if (method !== 'POST') return null;
   claude.calls.push({ method, path: pathname, body: structuredClone(body) });
+  // The chat routes: a send without a session starts a standalone chat (the server mints its id, here
+  // CHAT_SESSION_ID) and answers once the turn has spawned; a stop answers ok. What the turn then
+  // says comes on the chat stream, which a spec drives (see `chatSay` in fixtures.js).
+  if (pathname === '/api/claude/chat/send') {
+    const session = body?.session ?? CHAT_SESSION_ID;
+    const now = new Date().toISOString();
+    const chat = body?.session
+      ? null
+      : {
+          id: session,
+          title: String(body?.message ?? '')
+            .split('\n')[0]
+            .slice(0, 60),
+          state: 'working',
+          createdAt: now,
+          lastActiveAt: now,
+          goTo: null,
+        };
+    if (chat) claude.chats.push(chat);
+    return { json: { ok: true, session, chat } };
+  }
+  if (pathname === '/api/claude/chat/stop') return { json: { ok: true } };
   if (pathname === '/api/claude/launch' && body?.phase === 'pr-review-transact') {
     const current = claude.tickets[body.key] ?? claudeEntry('none', null, { phase: null });
     if (current.blocks.review) return claudeFailure(409, 'CLAUDE_REFUSED', [current.blocks.review]);

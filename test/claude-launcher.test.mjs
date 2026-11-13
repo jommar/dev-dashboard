@@ -4683,3 +4683,37 @@ for (const [name, body] of [
     });
   }
 }
+
+// ---- a chat turn is work in progress for every other writer (the chat's one-writer mark) ----
+
+test('scenario 6: while a chat turn holds the session, the ticket reads working and an answer is refused with nothing sent; after the release all is as before', async (t) => {
+  const env = await launcherEnvironment(t);
+  seedPlanned(env);
+  const sessionId = sessionUuid(EARLIER_ID);
+  assert.equal(typeof env.sessions.beginTurn, 'function', 'the sessions module has beginTurn');
+  const idle = (await env.launcher.list()).tickets[KEY];
+  assert.deepEqual([idle.state, idle.reason], ['done', 'plan_ready']);
+  const before = env.files();
+
+  const release = env.sessions.beginTurn(sessionId);
+  assert.equal(typeof release, 'function');
+
+  const working = (await env.launcher.list()).tickets[KEY];
+  assert.deepEqual([working.state, working.reason], ['working', 'running']);
+  assert.equal(working.blocks.answer, 'session_running');
+  await assertRejects(
+    () => env.launcher.answer(answerBody({ q1: 'a different answer' })),
+    refused('session_running'),
+    'answer while a chat turn holds the session',
+  );
+  assert.equal(env.cli.resumes().length, 0, 'nothing was delivered to the session');
+  assert.deepEqual(env.files(), before, 'no file changed');
+
+  release();
+
+  const after = (await env.launcher.list()).tickets[KEY];
+  assert.deepEqual([after.state, after.reason], ['done', 'plan_ready']);
+  const sent = await env.launcher.answer(answerBody({ q1: 'a different answer' }));
+  assert.deepEqual(sent.send, { status: 'sent' });
+  assert.equal(env.cli.resumes().length, 1);
+});
