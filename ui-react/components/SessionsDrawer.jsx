@@ -57,7 +57,9 @@ const searchText = (row, now) =>
     row.goTo ? copyWord(row.goTo) : '',
     isQuiet(row, now) ? 'quiet' : '',
   ].join(' ');
-// How long "Copied" shows on a row's copy button.
+// How long "Copied" (or "Copy failed") shows on a row's copy button: in its tooltip, its glyph and, as
+// the chat's copy buttons do, its name, so a screen reader hears the outcome.
+const OUTCOME_KINDS = { Copied: 'copied', 'Copy failed': 'failed' };
 const COPIED_MS = 2000;
 // How often the open drawer reads the clock again, so "9m ago" and the quiet flag age on screen.
 const ACTIVITY_CLOCK_MS = 30_000;
@@ -67,7 +69,7 @@ const activityTitle = (iso, quiet) =>
     quiet ? ` · working but quiet for ${QUIET_WORKING_MS / 60_000}+ min` : ''
   }`;
 
-function Row({ row, now, copied, onOpen, onCopy, onClose }) {
+function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
   const { key, ticket, phase, state, goTo, lastActiveAt, session } = row;
   const phaseWords = phaseOf(phase);
   // A standalone chat has no ticket; its title is what names it.
@@ -117,14 +119,15 @@ function Row({ row, now, copied, onOpen, onCopy, onClose }) {
         </DashboardTooltip>
       )}
       {goTo && (
-        <DashboardTooltip title={goTo.command} placement="left">
+        <DashboardTooltip title={outcome ?? copyWord(goTo)} placement="left">
           <Button
             className="subtle sessions-row-copy"
             data-testid={`sessions-copy-${key}`}
-            aria-label={`Copy command to continue ${name} ${phaseWords} session`}
+            data-outcome={outcome ? OUTCOME_KINDS[outcome] : undefined}
+            aria-label={outcome ?? `Copy command to continue ${name} ${phaseWords} session`}
             onClick={() => onCopy(key, goTo.command)}
           >
-            {copied ? 'Copied' : copyWord(goTo)}
+            <NavIcon name={outcome === 'Copied' ? 'check' : 'copy'} />
           </Button>
         </DashboardTooltip>
       )}
@@ -138,6 +141,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
   const titleId = useId();
   const tab = useRef(null);
   const closeButton = useRef(null);
+  // The row whose copy button is showing its outcome: { key, outcome }.
   const [copied, setCopied] = useState(null);
   const [query, setQuery] = useState('');
   // The time the rows are aged against. It is read again while the drawer is open, and only then.
@@ -187,7 +191,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
 
   const copy = async (key, command) => {
     const ok = await copyText(command);
-    setCopied(ok ? key : null);
+    setCopied({ key, outcome: ok ? 'Copied' : 'Copy failed' });
   };
 
   return (
@@ -281,7 +285,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
                           key={row.key}
                           row={row}
                           now={now}
-                          copied={copied === row.key}
+                          outcome={copied?.key === row.key ? copied.outcome : null}
                           onOpen={openRow}
                           onCopy={copy}
                           onClose={close}

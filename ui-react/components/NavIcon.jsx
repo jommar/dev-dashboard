@@ -11,6 +11,9 @@ const paths = {
   settings:
     'm9 3-.5 3-2 1-2.5-1-2 3 2 2.5v2L2 16l2 3 2.5-1 2 1L9 22h4l.5-3 2-1 2.5 1 2-3-2-2.5v-2L20 9l-2-3-2.5 1-2-1L13 3z',
   tools: 'M5 6h14M5 12h14M5 18h14',
+  // Not tabs: the copy buttons of the Sessions drawer's rows, and their done mark.
+  copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
+  check: 'm5 12 5 5 9-10',
 };
 
 export function NavIcon({ name }) {

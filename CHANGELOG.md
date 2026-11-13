@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made the Sessions drawer's per-row **Copy attach** / **Copy resume** button an icon (the label is its
+  tooltip, its accessible name is unchanged), and a refused copy now says **Copy failed** instead of staying
+  silent.
 - Moved the Chat composer's controls (Send, Stop, Retry, Refresh) to float over the top right corner of the
   message box, out of the strip along the bottom of the screen where the bot bar's mascots and posters
   covered them; the reason the box waits and any send error now show above it. No behaviour change.

@@ -866,6 +866,67 @@ test('a ticket row Chat link is an icon with a tooltip, and the row columns line
   await expect(page.getByTestId('sessions-drawer')).toBeHidden();
 });
 
+// A row's copy button is an icon too: no visible text, the same accessible name, its label in the app's
+// tooltip on hover and focus, and the outcome (Copied, Copy failed) in the tooltip, the glyph and the name.
+test('a row copy button is an icon with a tooltip, and says whether the copy worked', async ({
+  page,
+  dashboard,
+}) => {
+  iconRows(dashboard);
+  await page.goto('/#/services');
+  await page.getByTestId('sessions-tab').click();
+  const copy = page.getByTestId('sessions-copy-BOT-1:implement');
+  const name = 'Copy command to continue BOT-1 Implement plan session';
+  expect((await copy.innerText()).trim(), 'no visible text').toBe('');
+  await expect(copy.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+  await expect(copy.locator('title')).toHaveCount(0);
+  await expect(copy).not.toHaveAttribute('title', /.+/);
+  await expect(copy).toHaveAccessibleName(name);
+  await expect(page.getByTestId(`sessions-copy-${OTHER}:chat`)).toHaveAccessibleName(
+    'Copy command to continue Plan the release notes Chat session',
+  );
+  // As compact as the Chat icon beside it.
+  const chat = await page.getByTestId('sessions-chat-BOT-1:implement').boundingBox();
+  const box = await copy.boundingBox();
+  expect(box.width).toBeLessThan(40);
+  expect(box.height).toBe(chat.height);
+
+  // The label is a live-session's "Copy attach" or a finished one's "Copy resume", on hover and focus.
+  await copy.hover();
+  await expect(page.getByRole('tooltip')).toHaveText('Copy attach');
+  await page.getByTestId('sessions-search').hover();
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  await page.getByTestId(`sessions-copy-${OTHER}:chat`).hover();
+  await expect(page.getByRole('tooltip')).toHaveText('Copy resume');
+  await page.getByTestId('sessions-search').hover();
+  await page.getByTestId('sessions-chat-BOT-1:implement').focus();
+  await page.keyboard.press('Tab');
+  await expect(copy).toBeFocused();
+  await expect(page.getByRole('tooltip')).toHaveText('Copy attach');
+
+  // A copy puts the command on the clipboard and says Copied, then goes back to its label.
+  await page.keyboard.press('Enter');
+  expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes.at(-1))).toBe(
+    'claude attach demo',
+  );
+  await expect(copy).toHaveAccessibleName('Copied');
+  await expect(copy).toHaveAttribute('data-outcome', 'copied');
+  await expect(page.getByRole('tooltip')).toHaveText('Copied');
+  await expect(copy).toHaveAccessibleName(name);
+  await expect(copy).not.toHaveAttribute('data-outcome');
+  await expect(page.getByRole('tooltip')).toHaveText('Copy attach');
+
+  // A refused copy says so, instead of staying silent.
+  await page.evaluate(() => {
+    window.__dashboardMock.clipboard.error = 'denied';
+  });
+  await page.keyboard.press('Enter');
+  await expect(copy).toHaveAccessibleName('Copy failed');
+  await expect(copy).toHaveAttribute('data-outcome', 'failed');
+  await expect(page.getByRole('tooltip')).toHaveText('Copy failed');
+  await expect(copy).toHaveAccessibleName(name);
+});
+
 // The room kept for the controls follows their real height, the box cannot be dragged below a usable
 // text line, and a scrollbar never lies under the controls.
 test('the composer keeps room for the controls, a line of text and a scrollbar', async ({

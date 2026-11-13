@@ -207,7 +207,7 @@ Chat rows are in the same groups, appended after the sprint filter like their bo
 24-hour chats, not every chat on disk). `sessionGroups` prefers a bot's own `goTo` and `lastActiveAt` when
 it has the key (a chat's `goTo` is null while it works), and looks the rest up under the ticket as before.
 A ticket row whose bot has a `session` gets a **Chat** link beside its copy button
-(`#/chat?session=<uuid>`, name `Chat with <KEY> <phase> session`), shown as the Chat tab's icon with "Chat" in the app tooltip (no visible text); the time, Chat and copy columns have fixed places so rows line up; the link and a chat row or bot close
+(`#/chat?session=<uuid>`, name `Chat with <KEY> <phase> session`), shown as the Chat tab's icon with "Chat" in the app tooltip (no visible text), as is the row's copy button (name unchanged, tooltip `Copy attach` / `Copy resume`; the outcome, `Copied` or `Copy failed`, shows in the tooltip, the glyph and the button's name, as the chat's copy buttons do); the time, Chat and copy columns have fixed places so rows line up; the link and a chat row or bot close
 the drawer, because it is non-modal and would cover the conversation it just opened. Readers of
 `GET /api/claude/tickets` re-read at once on a `claude-tickets-changed` window event
 (`notifyClaudeTicketsChanged` in `useClaudeTickets.js`, fired by the Chat screen after a send and when a

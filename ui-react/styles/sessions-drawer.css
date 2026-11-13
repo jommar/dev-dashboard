@@ -149,7 +149,7 @@
    or not a row has all of them. */
 .sessions-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px 24px 88px;
+  grid-template-columns: minmax(0, 1fr) 64px 24px 24px;
   align-items: center;
   gap: var(--s1);
   border-radius: var(--radius-sm);
@@ -196,7 +196,7 @@
   color: var(--red);
 }
 .sessions-row-ticket {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -227,12 +227,26 @@
   color: var(--amber);
   font-weight: 600;
 }
+/* The copy button is an icon, as big as the Chat icon; its outcome shows in the glyph's colour. */
 .btn.subtle.sessions-row-copy {
   grid-column: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
   min-height: 24px;
   margin-right: var(--s1);
   padding: 0;
-  font-size: var(--fs-xs);
+}
+.sessions-row-copy .nav-icon {
+  width: 16px;
+  height: 16px;
+}
+.btn.subtle.sessions-row-copy[data-outcome='copied'] {
+  color: var(--green);
+}
+.btn.subtle.sessions-row-copy[data-outcome='failed'] {
+  color: var(--red);
 }
 
 /* A session with an id also opens in the Chat screen: an icon, as tall as the copy button beside it. */

@@ -2009,7 +2009,7 @@ has none, so there a chat cannot start.
 - **Where things live.** A standalone chat's record is `claude/chat/<uuid>.json` in the dashboard
   directory (the launcher's gitignored, nodemon-ignored `claude/` state; the chat's title, directory,
   times and last outcome, no message text). The conversation itself is the CLI's transcript, so
-  `claude --resume <uuid>` in `~/pathwise` (the Sessions drawer's **Copy resume** gives the command) shows the same
+  `claude --resume <uuid>` in `~/pathwise` (the Sessions drawer's copy icon, **Copy resume**, gives the command) shows the same
   chat in a terminal. Delete the record to forget a chat in the dashboard; the transcript is not touched. Rolling
   the feature back is a revert; the record files are yours to delete.
 
@@ -2193,7 +2193,7 @@ while there is no session to show.
   the most recently active session first (one with no time last). Unlike the
   bar it does not forget a done bot after 10 minutes or a dismissed one, so a finished session stays
   reachable. A row opens the same Claude dialog its bot opens (the review dialog for a review session),
-  and a session with something to join has a **Copy attach** (live) or **Copy resume** (finished) button
+  and a session with something to join has a copy icon button (tooltip **Copy attach** when live, **Copy resume** when finished)
   that copies the same command as the dialog's Go to session. A ticket session whose id is known also has a
   **Chat** icon link that opens it in the [Chat](#chat) tab. Rows are one compact line each, and one **Search sessions** box filters them by
   everything a row shows (ticket, phase, state, reason, the copy button's word, the group heading and
