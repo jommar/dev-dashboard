@@ -199,7 +199,7 @@ the same response's `lastActive` map (`{ [ticket]: { [phase]: ISO } }`, `{}` whe
 each row its last-activity time. It makes no request,
 mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
 `Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`; a chat row's name is its title:
-`Open <title> Chat session`; a row's detail is the phase as an icon (`sessions-phase-<key>`, `NavIcon`, `aria-hidden`, not a tab stop, the words from `phaseOf` in its app tooltip) followed by the state and reason, a chat's just `working`/`done`; the search still matches the phase words; the header's **New chat** link, `#/chat` as on the Chat screen, is there with or without rows and closes the drawer, focus back on the tab), and its styles live in
+`Open <title> Chat session`; a row's phase is an icon (`sessions-phase-<key>`, `NavIcon`, `aria-hidden`, not a tab stop, the words from `phaseOf` in its app tooltip) in a column of its own right after the state mark and before the key or title, and the detail after the title is just the state and reason, a chat's `working`/`done`; the search still matches the phase words; the header's **New chat** link, `#/chat` as on the Chat screen, is there with or without rows and closes the drawer, focus back on the tab), and its styles live in
 `ui-react/styles/sessions-drawer.css` because `bot-bar.css` selectors must all start `.bot-bar`. A row's
 time is a `.sessions-row-when` span after its button, linked by the button's `aria-describedby` so the
 name stays as above, with no live region. `isQuiet` (`QUIET_WORKING_MS`) marks a working row whose time

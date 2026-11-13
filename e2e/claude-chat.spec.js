@@ -1137,6 +1137,8 @@ for (const width of [1200, 390]) {
     const tip = page.getByRole('tooltip');
 
     const glyphs = new Set();
+    const iconXs = [];
+    const titleXs = [];
     const rowKeys = [...PHASE_ROWS.map(([key]) => key), `${chatId}:chat`];
     for (const key of rowKeys) {
       const words = key.endsWith(':chat')
@@ -1148,6 +1150,25 @@ for (const width of [1200, 390]) {
       // An icon, not the phase words; the row button's name still carries them.
       await expect(row.locator('.sessions-row-detail')).not.toContainText(words);
       await expect(row.locator('.sessions-row-detail')).toContainText(/done|working/);
+      // The icon leads the row: right after the state mark, before the key or title, in one column.
+      await expect(row.locator('.sessions-row-detail svg')).toHaveCount(0);
+      const markBox = await row.locator('.sessions-row-mark').boundingBox();
+      const iconBox = await icon.boundingBox();
+      const titleBox = await row.locator('.sessions-row-ticket').boundingBox();
+      expect(iconBox.x, 'after the state mark').toBeGreaterThanOrEqual(markBox.x + markBox.width);
+      expect(iconBox.x - (markBox.x + markBox.width), 'right after it').toBeLessThanOrEqual(12);
+      expect(iconBox.x + iconBox.width, 'before the key or title').toBeLessThanOrEqual(titleBox.x);
+      iconXs.push(Math.round(iconBox.x));
+      titleXs.push(Math.round(titleBox.x));
+      if (key.endsWith(':chat'))
+        expect(titleBox.width, 'a chat title keeps room').toBeGreaterThanOrEqual(60);
+      else
+        expect(
+          await row
+            .locator('.sessions-row-ticket')
+            .evaluate((el) => el.scrollWidth <= el.clientWidth),
+          'a ticket key is not cut short',
+        ).toBe(true);
       await expect(icon.locator('svg[aria-hidden="true"]')).toHaveCount(1);
       await expect(icon).not.toHaveAttribute('title', /.+/);
       await expect(icon.locator('title')).toHaveCount(0);
@@ -1163,6 +1184,8 @@ for (const width of [1200, 390]) {
       await expect(tip).toHaveCount(0);
     }
     expect(glyphs.size, 'one distinct glyph a phase').toBe(6);
+    expect(new Set(iconXs).size, `phase icons share one column: ${iconXs}`).toBe(1);
+    expect(new Set(titleXs).size, `titles start in one column: ${titleXs}`).toBe(1);
 
     // The search still matches the phase words that are no longer visible.
     const search = page.getByTestId('sessions-search');

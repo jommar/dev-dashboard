@@ -19,8 +19,8 @@
 - Every row in the Sessions drawer now always shows both icon slots, Chat and Copy: live when the
   session or command exists, otherwise a dimmed placeholder with a tooltip that says why, so rows look uniform.
   A standalone chat's row has the Chat icon too, and each row's phase (chat, code review, implement plan,
-  investigate and plan, groom, E2E check) is now a small icon with the phase name as its tooltip, followed by
-  the state and reason; the search still matches the phase words.
+  investigate and plan, groom, E2E check) is now a small icon with the phase name as its tooltip, in its own
+  column at the start of the row, before the key or title; the search still matches the phase words.
 - Made the Sessions drawer's per-row **Copy attach** / **Copy resume** button an icon (the label is its
   tooltip, its accessible name is unchanged), and a refused copy now says **Copy failed** instead of staying
   silent.

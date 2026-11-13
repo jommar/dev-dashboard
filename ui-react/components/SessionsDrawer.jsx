@@ -118,22 +118,20 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
         <span className="sessions-row-mark" data-state={state}>
           <StatusMark status={MARK[state]} />
         </span>
+        {PHASE_ICONS.has(phase) && (
+          <DashboardTooltip title={phaseWords} placement="top">
+            <span
+              className="sessions-row-phase"
+              data-testid={`sessions-phase-${key}`}
+              data-phase={phase}
+            >
+              <NavIcon name={phase} />
+            </span>
+          </DashboardTooltip>
+        )}
         <span className="sessions-row-ticket">{name}</span>
         <span className="sessions-row-detail">
-          {PHASE_ICONS.has(phase) ? (
-            <DashboardTooltip title={phaseWords} placement="top">
-              <span
-                className="sessions-row-phase"
-                data-testid={`sessions-phase-${key}`}
-                data-phase={phase}
-              >
-                <NavIcon name={phase} />
-              </span>
-            </DashboardTooltip>
-          ) : (
-            `${phaseWords} · `
-          )}
-          <span className="sessions-row-state">{stateText(row)}</span>
+          {PHASE_ICONS.has(phase) ? stateText(row) : `${phaseWords} · ${stateText(row)}`}
         </span>
       </button>
       {lastActiveAt && (
