@@ -149,7 +149,15 @@ for (const [label, overrides, state, reason, block] of REVIEW_STATES) {
     assert.deepEqual(entry.questions, []);
     assert.equal(entry.unanswered, 0);
     assert.equal(entry.unsent, false);
-    assert.deepEqual(entry.goTo, GO_TO_NONE, 'no additional review go-to control');
+    // the review session has a go-to of its own; it adds nothing to the other phases'
+    const { review: reviewGoTo, ...otherGoTo } = entry.goTo;
+    void reviewGoTo;
+    assert.deepEqual(otherGoTo, GO_TO_NONE, 'no additional go-to for the other phases');
+    assert.equal(
+      'review' in entry.goTo,
+      state !== 'none',
+      'review go-to only with a review record',
+    );
   });
 }
 
@@ -181,12 +189,14 @@ test('review state: review changes no workflow or groom fields, flags, questions
       launch: { ...launch, [REVIEW]: reviewRecord({ launchedAt: START_MS - 1_000 }) },
       entries: entries === null ? null : [...entries, reviewEntry({ state: 'working' })],
     });
-    const withoutReview = ({ review, blocks, ...rest }) => {
+    const withoutReview = ({ review, blocks, goTo, ...rest }) => {
       const { review: ignored, rereview: alsoIgnored, ...otherBlocks } = blocks;
+      const { review: reviewGoTo, ...otherGoTo } = goTo;
       void review;
       void ignored;
       void alsoIgnored;
-      return { ...rest, blocks: otherBlocks };
+      void reviewGoTo;
+      return { ...rest, blocks: otherBlocks, goTo: otherGoTo };
     };
     assert.deepEqual(withoutReview(reviewed), withoutReview(base));
     assert.deepEqual(
@@ -1865,7 +1875,7 @@ test('phaseSessions: no listing resolves every phase to null, and a missing laun
   });
 });
 
-test('goTo keeps its key order: investigate, implement, groom, then e2e only with its record', async () => {
+test('goTo keeps its key order: investigate, implement, review and groom, then e2e, the last two only with their record', async () => {
   const withE2e = await derive({
     launch: { ...bothLaunched(), [GROOM]: groomRecord(), [E2E]: e2eRecord() },
     entries: [
@@ -1881,10 +1891,97 @@ test('goTo keeps its key order: investigate, implement, groom, then e2e only wit
   assert.deepEqual(Object.keys(withoutE2e.goTo), ['investigate', 'implement', 'groom']);
 
   const reviewed = await derive({ launch: { [REVIEW]: reviewRecord() }, entries: [reviewEntry()] });
-  assert.deepEqual(Object.keys(reviewed.goTo), ['investigate', 'implement', 'groom']);
-  assert.deepEqual(reviewed.goTo, GO_TO_NONE, 'a review record adds no go-to key');
+  assert.deepEqual(Object.keys(reviewed.goTo), ['investigate', 'implement', 'review', 'groom']);
+  assert.deepEqual(reviewed.goTo, { ...GO_TO_NONE, review: resumeFor(REVIEW_ID) });
 
   const noListing = await derive({ launch: { [E2E]: e2eRecord() }, entries: null });
   assert.deepEqual(Object.keys(noListing.goTo), ['investigate', 'implement', 'groom', 'e2e']);
   assert.deepEqual(Object.values(noListing.goTo), [null, null, null, null]);
+});
+
+// ---- review gets its own go-to, and an orphaned session is joined by its recovered id ----
+
+test('goTo.review: a finished listed review session resumes, a live or blocked one attaches', async () => {
+  const launch = { [REVIEW]: reviewRecord() };
+  const finished = await derive({ launch, entries: [reviewEntry()] });
+  assert.deepEqual(finished.goTo.review, resumeFor(REVIEW_ID));
+  for (const extra of [{ state: 'working', status: 'busy', pid: 4242 }, { state: 'blocked' }]) {
+    const live = await derive({ launch, entries: [reviewEntry(extra)] });
+    assert.deepEqual(live.goTo.review, attachFor(REVIEW_ID), JSON.stringify(extra));
+  }
+});
+
+test('goTo.review: a review record with no session is null, and a ticket with no review record has no key', async () => {
+  const unlisted = await derive({ launch: { [REVIEW]: reviewRecord() }, entries: [] });
+  assert.equal(unlisted.goTo.review, null);
+  const noListing = await derive({ launch: { [REVIEW]: reviewRecord() }, entries: null });
+  assert.equal(noListing.goTo.review, null);
+  const without = await derive({ launch: bothLaunched(), entries: [] });
+  assert.equal('review' in without.goTo, false);
+});
+
+test('goTo: a session the listing no longer shows is joined by the id recovered from its transcript, for every phase with a record', async () => {
+  const recovered = new Map([
+    [INVESTIGATE_ID, sessionUuid(INVESTIGATE_ID)],
+    [REVIEW_ID, sessionUuid(REVIEW_ID)],
+    [GROOM_ID, sessionUuid(GROOM_ID)],
+  ]);
+  const entry = await derive({
+    status: bothStatus,
+    launch: { ...bothLaunched(), [REVIEW]: reviewRecord(), [GROOM]: groomRecord() },
+    entries: [],
+    recovered,
+  });
+  assert.deepEqual(entry.goTo, {
+    investigate: resumeFor(INVESTIGATE_ID),
+    implement: null,
+    review: resumeFor(REVIEW_ID),
+    groom: resumeFor(GROOM_ID),
+  });
+});
+
+test('goTo: the listing wins over a recovered id, no listing recovers nothing, and an id that was not recovered gives null', async () => {
+  const other = new Map([[FIRST_ID, 'ffffffff-0000-4000-8000-000000000000']]);
+  const listedWins = await derive({ entries: [listed({ id: FIRST_ID })], recovered: other });
+  assert.deepEqual(listedWins.goTo, investigateOnly(resumeFor(FIRST_ID)));
+
+  const same = new Map([[FIRST_ID, sessionUuid(FIRST_ID)]]);
+  const noListing = await derive({ entries: null, recovered: same });
+  assert.deepEqual(noListing.goTo, GO_TO_NONE, 'a failed listing is not a reason to recover');
+
+  const none = await derive({ entries: [], recovered: new Map() });
+  assert.deepEqual(none.goTo, GO_TO_NONE);
+});
+
+test('a recovered session changes no state: an orphan with its flag set is done, one without is failed as before', async () => {
+  const recovered = new Map([[FIRST_ID, sessionUuid(FIRST_ID)]]);
+  const plain = await derive({ entries: [] });
+  const withRecovery = await derive({ entries: [], recovered });
+  const { goTo: plainGoTo, ...plainRest } = plain;
+  const { goTo, ...rest } = withRecovery;
+  assert.deepEqual(rest, plainRest);
+  assert.equal(plainGoTo.investigate, null);
+  assert.deepEqual(goTo.investigate, resumeFor(FIRST_ID));
+});
+
+test('a recovered session that is held reads working with no resume command, and one that is not is unchanged', async () => {
+  const recovered = new Map([[FIRST_ID, sessionUuid(FIRST_ID)]]);
+  const idle = await derive({ entries: [], recovered, held: () => false });
+  assert.equal(idle.state, 'done');
+  assert.deepEqual(idle.goTo.investigate, resumeFor(FIRST_ID));
+
+  const asked = [];
+  const working = await derive({
+    entries: [],
+    recovered,
+    held: (sessionId) => asked.push(sessionId) && true,
+  });
+  assert.deepEqual(asked.length > 0 && new Set(asked), new Set([sessionUuid(FIRST_ID)]));
+  assert.equal(working.state, 'working');
+  assert.equal(working.goTo.investigate, null);
+
+  const listedHeld = await derive({
+    entries: [listed({ id: FIRST_ID, state: 'working' })],
+  });
+  assert.equal(working.state, listedHeld.state, 'the same state a held listed session gets');
 });

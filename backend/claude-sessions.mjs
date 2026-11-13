@@ -38,6 +38,8 @@ const FORK_MARKER = 'started a copy';
 // The short id a background start prints: a standalone token, not a part of a longer id.
 const STARTED_ID = /(?<![\w-])[0-9a-f]{8}(?![\w-])/;
 
+const SHORT_ID = /^[0-9a-f]{8}$/;
+
 const delivered = (reason) => ({ status: 'delivered', ...(reason && { reason }) });
 const failure = (status, reason) => ({ status, reason });
 
@@ -201,6 +203,10 @@ export function createClaudeSessions({
     };
   }
 
+  // Whether a chat turn or a resume in this process is writing to the session now. `entries` shows
+  // that on a listed session; this is for one the listing no longer shows.
+  const isHeld = (sessionId) => held.has(sessionId);
+
   function run(args, options) {
     return new Promise((resolve) => {
       try {
@@ -235,15 +241,16 @@ export function createClaudeSessions({
     return new Set(links.flatMap((link) => link.sessionIds));
   }
 
-  async function transcriptPaths(entries) {
-    const ids = new Set(entries.map(({ sessionId }) => sessionId));
-    const found = new Map();
+  // Calls `visit(sessionId, file)` for every regular `<name>.jsonl` file in a project folder (a
+  // folder of the same name, such as a session's subagents, is not one). Only directory listings are
+  // read. `incomplete` says some folder could not be listed.
+  async function scanTranscripts(visit) {
     let incomplete = false;
     let projects;
     try {
       projects = await metadataIO.readdir(projectsDir, { withFileTypes: true });
     } catch (error) {
-      return { paths: found, incomplete: error.code !== 'ENOENT' };
+      return { incomplete: error.code !== 'ENOENT' };
     }
     for (const project of projects) {
       if (!project.isDirectory()) continue;
@@ -257,13 +264,41 @@ export function createClaudeSessions({
       }
       for (const file of files) {
         if (!file.isFile() || !file.name.endsWith('.jsonl')) continue;
-        const sessionId = file.name.slice(0, -'.jsonl'.length);
-        if (!ids.has(sessionId)) continue;
-        if (!found.has(sessionId)) found.set(sessionId, []);
-        found.get(sessionId).push(path.join(directory, file.name));
+        visit(file.name.slice(0, -'.jsonl'.length), path.join(directory, file.name));
       }
     }
+    return { incomplete };
+  }
+
+  async function transcriptPaths(entries) {
+    const ids = new Set(entries.map(({ sessionId }) => sessionId));
+    const found = new Map();
+    const { incomplete } = await scanTranscripts((sessionId, file) => {
+      if (!ids.has(sessionId)) return;
+      if (!found.has(sessionId)) found.set(sessionId, []);
+      found.get(sessionId).push(file);
+    });
     return { paths: found, incomplete };
+  }
+
+  // The full session id of each short id (8 hex) whose transcript is on disk, as a Map. The CLI drops
+  // a removed or pruned session from its listing but keeps the conversation, and a launch record
+  // keeps only the short id. A short id counts only when every transcript that starts with it is the
+  // same session (a copy in another project folder is the same id); two different ids behind one
+  // prefix, or none, leave it out. Directory listings only, never an error: an unreadable folder
+  // recovers nothing.
+  async function recoverSessionIds(shortIds) {
+    const wanted = new Set(shortIds.filter((id) => typeof id === 'string' && SHORT_ID.test(id)));
+    const found = new Map();
+    if (!wanted.size) return found;
+    await scanTranscripts((sessionId) => {
+      const short = sessionId.slice(0, 8);
+      if (!wanted.has(short) || !isSessionId(sessionId)) return;
+      found.set(short, [...(found.get(short) ?? []), sessionId]);
+    });
+    const unique = new Map();
+    for (const [short, ids] of found) if (new Set(ids).size === 1) unique.set(short, ids[0]);
+    return unique;
   }
 
   // The newest modification time, in ms, of the files that can be stat'ed, or null when none can.
@@ -633,5 +668,16 @@ export function createClaudeSessions({
     return failure('failed-transient', error.killed ? 'timed_out' : 'spawn_failed');
   }
 
-  return { listSessions, stop, resume, entries, launch, lastActive, beginTurn, transcriptFile };
+  return {
+    listSessions,
+    stop,
+    resume,
+    entries,
+    launch,
+    lastActive,
+    beginTurn,
+    isHeld,
+    transcriptFile,
+    recoverSessionIds,
+  };
 }

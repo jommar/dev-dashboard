@@ -1086,6 +1086,7 @@ export async function claudeHttpFixture(t, { ready = true, chat = false } = {}) 
       spawn: chatSpawn.spawn,
       stateDir: env.stateDir,
       home: env.home,
+      launchedName: env.launcher.launchedName,
       fs: env.recorder.fs,
       now: env.clock.now,
       timers: env.timers,

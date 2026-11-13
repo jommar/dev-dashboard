@@ -405,3 +405,34 @@ test('scenario 17: a client that leaves while its stream is still being opened d
   }
   for (const stream of open) stream.close();
 });
+
+// ---- a session the CLI no longer lists, that a launch record names ----
+
+test('orphans: a launched session the listing lost is continued through send and streamed with its history; an unrelated unlisted id is still refused', async (t) => {
+  const f = await fixture(t);
+  const orphan = sessionUuid('abab1212');
+  f.seed(KEY, { launch: { [IMPLEMENT]: launchRecord({ name: IMPLEMENT_NAME, id: 'abab1212' }) } });
+  f.cli.setListing([]);
+  const file = path.join(f.home, '.claude', 'projects', 'p', `${orphan}.jsonl`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(
+    file,
+    [tUser('u1', null, 'earlier question'), tAssistant('a1', 'u1', [tText('earlier answer')])]
+      .map((line) => JSON.stringify(line))
+      .join('\n'),
+  );
+
+  const sent = await f.http.json('POST', SEND, { message: 'hello again', session: orphan });
+  assert.equal(sent.status, 200);
+  assert.deepEqual(sent.json(), { ok: true, session: orphan, chat: null });
+  assert.deepEqual(f.chatSpawn.calls[0].args.slice(-2), ['--resume', orphan]);
+
+  const stream = await openStream(f, `?session=${orphan}`);
+  await until(() => stream.text().includes('earlier answer'));
+  assert.ok(stream.text().includes(`"title":"${IMPLEMENT_NAME}"`));
+  stream.close();
+
+  const stranger = await f.http.json('POST', SEND, { message: 'hi', session: UUID_6 });
+  assert.equal(stranger.status, 409);
+  assert.deepEqual(stranger.json().errors, ['session_not_found']);
+});

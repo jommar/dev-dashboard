@@ -139,7 +139,8 @@ and can be dismissed. It has no callout and no live-region message, because thos
 ticket map (`useBotCallouts(claude.byTicket, ...)`), and `heldDoneBots` holds only an implement bot. A
 chat bot opens `#/chat?session=<uuid>` (`openBot`), not a dialog (and has no `aria-haspopup`). A ticket
 bot may carry `session` (`withSessions(bots, sessionIds)`, from the tickets reply's sparse
-`sessionIds[KEY][phase]`), which only gives its drawer row a Chat link.
+`sessionIds[KEY][phase]`, which also holds recovered orphans, see "Orphaned sessions" in the chat facts),
+which only gives its drawer row a live Chat link (none: the placeholder).
 
 That answer is `{ keys, statuses }` (`nextSprint`): the same Jira search already returns each ticket's
 status name, so `statuses` is a key -> status map, not a second call. It feeds the hold rule:
@@ -193,7 +194,7 @@ Its styles are in `ui-react/styles/bot-bar.css` (tokens only,
 a right-edge tab plus a non-modal fixed drawer listing the same sessions as the bar, from the bar's own
 data: `sessionGroups(bots, byTicket, lastActive)` in `ui/bot-bar.js` over the sprint-filtered `bots`, deliberately
 NOT the TTL/dismissal-filtered `visible`, so a faded or dismissed session stays reachable. Rows open the
-same dialog as a bot and copy the entry's `goTo[phase]` command (review has none). The third argument is
+same dialog as a bot and copy the entry's `goTo[phase]` command (review included, when it has one). The third argument is
 the same response's `lastActive` map (`{ [ticket]: { [phase]: ISO } }`, `{}` when unknown), which gives
 each row its last-activity time. It makes no request,
 mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
@@ -206,8 +207,12 @@ is five minutes old, and the open drawer re-reads the clock (`ACTIVITY_CLOCK_MS`
 Chat rows are in the same groups, appended after the sprint filter like their bots (so they are the
 24-hour chats, not every chat on disk). `sessionGroups` prefers a bot's own `goTo` and `lastActiveAt` when
 it has the key (a chat's `goTo` is null while it works), and looks the rest up under the ticket as before.
-A ticket row whose bot has a `session` gets a **Chat** link beside its copy button
-(`#/chat?session=<uuid>`, name `Chat with <KEY> <phase> session`), shown as the Chat tab's icon with "Chat" in the app tooltip (no visible text), as is the row's copy button (name unchanged, tooltip `Copy attach` / `Copy resume`; the outcome, `Copied` or `Copy failed`, shows in the tooltip, the glyph and the button's name, as the chat's copy buttons do); the time, Chat and copy columns have fixed places so rows line up; the link and a chat row or bot close
+Every ticket row always has both icon slots, **Chat** and copy (a standalone chat's row has only the copy slot:
+the row itself opens the chat). Each is live when its action exists (a `session`, a `goTo`) and otherwise a dimmed
+`aria-disabled` placeholder (`SlotOff`, a focusable `span role="button"` that does nothing, test ids
+`sessions-chat-off-<key>` / `sessions-copy-off-<key>`) whose tooltip and name say why (`No session to chat with`;
+`Working: no resume command yet` for a working chat, else `No resume command available`).
+The live Chat link is `#/chat?session=<uuid>`, name `Chat with <KEY> <phase> session`, shown as the Chat tab's icon with "Chat" in the app tooltip (no visible text), as is the row's copy button (name unchanged, tooltip `Copy attach` / `Copy resume`; the outcome, `Copied` or `Copy failed`, shows in the tooltip, the glyph and the button's name, as the chat's copy buttons do); the time, Chat and copy columns have fixed places so rows line up; the link and a chat row or bot close
 the drawer, because it is non-modal and would cover the conversation it just opened. Readers of
 `GET /api/claude/tickets` re-read at once on a `claude-tickets-changed` window event
 (`notifyClaudeTicketsChanged` in `useClaudeTickets.js`, fired by the Chat screen after a send and when a
@@ -455,9 +460,30 @@ client reducer).
   `aria-describedby`) is always shown in words. Send is disabled with it. Stop shows only while `live`; a
   session running outside the chat has no Stop and gets Refresh instead. A refused send or stop is worded
   from `errors[0]` (`REFUSAL_WORDS`), never the raw envelope. The controls (Send, Stop, Retry, Refresh) float
-  over the textarea's top right corner (`.chat-field` > `.chat-actions`, after the textarea in tab order) and
-  the textarea's top padding keeps text below them: the bottom edge of the screen is under the bot bar, so
-  nothing actionable goes there. The reason and send errors sit above the field for the same reason.
+  over the textarea's top right corner (`.chat-field` > `.chat-actions`, after the textarea in tab order);
+  text and placeholder start at the top left and the room for the controls is reserved on the right, never
+  as a row at the top (`data-controls` 1-3 is how many show; `--chat-actions-*` in `chat.css`; three wrap
+  into two rows under 760px). The bottom edge of the screen is under the bot bar, so nothing actionable goes
+  there. The reason and send errors sit above the field for the same reason.
+- **Orphaned sessions are recovered, never guessed.** `launch.json` keeps only the 8-hex short id; when
+  `claude agents --json --all` no longer lists a recorded session (`claude rm`, pruned) the conversation is
+  still on disk. `recoverSessionIds` (`claude-sessions.mjs`, the same `scanTranscripts` helper as `lastActive`, a separate pass)
+  maps a short id to the full id: regular `<uuid>.jsonl` files only (the uuid directories beside them do not
+  count) and exactly one distinct id behind the prefix, else nothing. The launcher asks (`recoverOrphans`,
+  from `list()` only, and only with a usable listing, so a failed listing never makes every session an
+  orphan; every answer, found or not, is kept for `ORPHAN_RETRY_MS`, 5 minutes on the injectable clock, then
+  asked again, so a hit whose transcript is gone is dropped) and `phaseSessions` turns a record the listing
+  lacks into a synthetic finished entry, which fills `sessionIds`, `goTo` and `lastActive`: the card state is
+  derived as before, from the flag files and the listing, never from the transcript (flag set: `done`; none:
+  `failed` / `session_missing`), and the listing always wins. The one exception is the one-writer mark:
+  while a chat turn holds the session (`claudeSessions.isHeld`) the synthetic entry is `working`, so the card
+  reads working and `goTo` is null, as for a held listed session. The chat resolves an unlisted
+  id (`orphanSession`) only when a launch record names its short id (`launchedName`) AND the prefix recovers
+  to exactly that id; it then skips the working check and the stop-poll (an orphan has no pid, so nothing
+  but a dashboard turn makes it busy), runs from `~/pathwise` (the CLI finds a session by id, not directory) and resumes with
+  `--resume <id>`. Any other unlisted id stays `session_not_found`; do not widen that to any transcript on
+  disk. Its Copy is the resume string, and `goTo.review` exists like `goTo.e2e` (only for a ticket with a
+  review record), so a review row gets Copy.
 - **Chat bots and rows are appended after the sprint filter.** See the bot bar section above: a chat's id
   must never reach `useActiveSprintKeys` or Jira, and no new chat code path may read it as a ticket key. A
   chat is `chat-<8 hex>` in labels, never a made-up key.

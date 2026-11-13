@@ -1081,3 +1081,156 @@ test('e2e check route: a stopped browser is refused with its reason and nothing 
   assert.equal(f.cli.launches().length, 0);
   assert.equal(f.files().launch, null);
 });
+
+// ---- sessions the CLI no longer lists: found again by their transcript ----
+
+const ORPHAN_ID = 'abab1212';
+// How long an answer from the transcript scan (found or not) is trusted before it is asked again.
+const ORPHAN_RETRY_MS = 5 * 60_000;
+const RESUME_OF = (id) => ({
+  kind: 'resume',
+  command: `cd ~/pathwise && claude --resume ${sessionUuid(id)}`,
+});
+
+function orphanFixture(t) {
+  return claudeHttpFixture(t).then((f) => {
+    f.seed(KEY, {
+      status: statusFile({ investigate: true, done: true }),
+      launch: {
+        [INVESTIGATE]: launchRecord({ id: ORPHAN_ID }),
+        [REVIEW]: reviewRecord(),
+      },
+    });
+    f.writePlan();
+    f.cli.setListing([reviewEntry({ cwd: LEAK_CWD })]);
+    const projects = path.join(f.home, '.claude', 'projects', 'p');
+    return { f, projects, write: (name, mtimeMs) => dated(path.join(projects, name), mtimeMs) };
+  });
+}
+
+test('orphans: a phase the listing no longer shows gets its session id, resume command and last activity from its transcript; the listed review keeps its own', async (t) => {
+  const { f, write } = await orphanFixture(t);
+  write(`${sessionUuid(ORPHAN_ID)}.jsonl`, START_MS - 3_600_000);
+
+  const body = (await f.http.bare('GET', TICKETS)).json();
+
+  assert.deepEqual(body.sessionIds[KEY], {
+    investigate: sessionUuid(ORPHAN_ID),
+    review: sessionUuid('dddd0004'),
+  });
+  assert.deepEqual(body.tickets[KEY].goTo.investigate, RESUME_OF(ORPHAN_ID));
+  assert.deepEqual(body.tickets[KEY].goTo.review, RESUME_OF('dddd0004'));
+  assert.equal(body.lastActive[KEY].investigate, new Date(START_MS - 3_600_000).toISOString());
+  assert.deepEqual(
+    [body.tickets[KEY].state, body.tickets[KEY].reason],
+    ['done', 'plan_ready'],
+    'its state is derived as before: the flags say done',
+  );
+});
+
+test('orphans: no transcript, a folder, two different sessions behind the prefix, or no listing gives no id and no go-to', async (t) => {
+  const { f, projects, write } = await orphanFixture(t);
+
+  let body = (await f.http.bare('GET', TICKETS)).json();
+  assert.equal(body.sessionIds[KEY].investigate, undefined, 'no transcript');
+  assert.equal(body.tickets[KEY].goTo.investigate, null);
+
+  f.clock.advance(ORPHAN_RETRY_MS);
+  fs.mkdirSync(path.join(projects, sessionUuid(ORPHAN_ID), 'subagents'), { recursive: true });
+  body = (await f.http.bare('GET', TICKETS)).json();
+  assert.equal(body.sessionIds[KEY].investigate, undefined, 'a folder is not a transcript');
+
+  f.clock.advance(ORPHAN_RETRY_MS);
+  write(`${sessionUuid(ORPHAN_ID)}.jsonl`, START_MS);
+  write(`${ORPHAN_ID}-1111-4111-8111-111111111111.jsonl`, START_MS);
+  body = (await f.http.bare('GET', TICKETS)).json();
+  assert.equal(body.sessionIds[KEY].investigate, undefined, 'two sessions behind one prefix');
+  assert.equal(body.tickets[KEY].goTo.investigate, null);
+
+  f.clock.advance(ORPHAN_RETRY_MS);
+  fs.rmSync(path.join(projects, `${ORPHAN_ID}-1111-4111-8111-111111111111.jsonl`));
+  f.cli.failListing();
+  body = (await f.http.bare('GET', TICKETS)).json();
+  assert.equal(body.listing, 'unavailable');
+  assert.deepEqual(body.sessionIds, {}, 'a failed listing recovers nothing');
+});
+
+test("orphans: a listed session keeps the listing's entry even when a transcript with its prefix is on disk", async (t) => {
+  const { f, write } = await orphanFixture(t);
+  f.cli.setListing([
+    listed({ id: ORPHAN_ID, sessionId: `${ORPHAN_ID}-5555-4555-8555-555555555555` }),
+  ]);
+  write(`${sessionUuid(ORPHAN_ID)}.jsonl`, START_MS);
+
+  const body = (await f.http.bare('GET', TICKETS)).json();
+
+  assert.equal(body.sessionIds[KEY].investigate, `${ORPHAN_ID}-5555-4555-8555-555555555555`);
+});
+
+// Counts the scans the launcher asks the sessions module for, and passes them on.
+function countScans(f) {
+  const scans = [];
+  const real = f.sessions.recoverSessionIds;
+  f.sessions.recoverSessionIds = (shortIds) => {
+    scans.push([...shortIds]);
+    return real(shortIds);
+  };
+  return scans;
+}
+
+test('orphans: an answer from the transcript scan, found or not, is kept for the retry window and asked again after it', async (t) => {
+  const { f, projects, write } = await orphanFixture(t);
+  const scans = countScans(f);
+  const poll = async () => (await f.http.bare('GET', TICKETS)).json();
+
+  assert.equal((await poll()).sessionIds[KEY].investigate, undefined);
+  write(`${sessionUuid(ORPHAN_ID)}.jsonl`, START_MS);
+  f.clock.advance(ORPHAN_RETRY_MS - 1);
+  assert.equal((await poll()).sessionIds[KEY].investigate, undefined, 'a miss is not rescanned');
+  assert.equal(scans.length, 1);
+
+  f.clock.advance(1);
+  assert.equal((await poll()).sessionIds[KEY].investigate, sessionUuid(ORPHAN_ID));
+  assert.equal(scans.length, 2, 'a miss is asked again once the window has passed');
+
+  fs.rmSync(path.join(projects, `${sessionUuid(ORPHAN_ID)}.jsonl`));
+  f.clock.advance(ORPHAN_RETRY_MS - 1);
+  assert.equal((await poll()).sessionIds[KEY].investigate, sessionUuid(ORPHAN_ID));
+  assert.equal(scans.length, 2, 'a hit is not rescanned either');
+
+  f.clock.advance(1);
+  assert.equal(
+    (await poll()).sessionIds[KEY].investigate,
+    undefined,
+    'a hit whose transcript is gone is dropped when it is asked again',
+  );
+  assert.equal(scans.length, 3);
+});
+
+test('orphans: a session with nothing to recover or already listed never starts a scan', async (t) => {
+  const { f } = await orphanFixture(t);
+  f.cli.setListing([
+    listed({ id: ORPHAN_ID, sessionId: sessionUuid(ORPHAN_ID) }),
+    reviewEntry({ cwd: LEAK_CWD }),
+  ]);
+  const scans = countScans(f);
+  await f.http.bare('GET', TICKETS);
+  assert.equal(scans.length, 0);
+});
+
+test('orphans: while a chat turn holds the session its card reads working and offers no resume command, as a listed one does', async (t) => {
+  const { f, write } = await orphanFixture(t);
+  write(`${sessionUuid(ORPHAN_ID)}.jsonl`, START_MS);
+  const id = sessionUuid(ORPHAN_ID);
+
+  const release = f.sessions.beginTurn(id);
+  const held = (await f.http.bare('GET', TICKETS)).json();
+  assert.equal(held.tickets[KEY].state, 'working');
+  assert.equal(held.tickets[KEY].goTo.investigate, null);
+  assert.equal(held.sessionIds[KEY].investigate, id, 'the id stays, for Chat');
+
+  release();
+  const idle = (await f.http.bare('GET', TICKETS)).json();
+  assert.equal(idle.tickets[KEY].state, 'done');
+  assert.deepEqual(idle.tickets[KEY].goTo.investigate, RESUME_OF(ORPHAN_ID));
+});

@@ -282,7 +282,8 @@ function classify({ record, session, entries, now, flag, unanswered, planPresent
 }
 
 // How to join the session in a terminal. A live or blocked session is attached by its short id; a
-// finished one is resumed by its session id, from the directory it started in.
+// finished one is resumed by its session id from ~/pathwise, the directory every launch runs from (the
+// CLI finds a conversation by its id, so this also works for a session that started elsewhere).
 function goToFor(session) {
   if (!session || !KNOWN_STATES.includes(session.state)) return null;
   if (typeof session.pid === 'number' || session.state === 'blocked')
@@ -294,29 +295,54 @@ function goToFor(session) {
     : null;
 }
 
-// The listing entry each own session resolves to: `{ investigate, implement, review, groom }` (plus
-// `e2e` for a ticket with an e2e check record), each the entry its record resolves to, or null. A
-// record that is missing, or no listing, resolves to nothing.
-export function phaseSessions(launch, entries) {
+// The launch record of each own session: `{ investigate, implement, review, groom }` (plus `e2e` for
+// a ticket with an e2e check record), each a record or null/undefined.
+export function phaseRecords(launch) {
   const records = readLaunch(launch);
-  const resolve = (record) => (record && entries ? resolveSession(entries, record) : null);
-  const phase = (name) => resolve(records.find((found) => found.phase === name));
   const e2e = readE2e(launch);
   return {
-    investigate: phase(INVESTIGATE),
-    implement: phase(IMPLEMENT),
-    review: resolve(readReview(launch)),
-    groom: resolve(readGroom(launch)),
-    ...(e2e && { e2e: resolve(e2e) }),
+    investigate: records.find((found) => found.phase === INVESTIGATE),
+    implement: records.find((found) => found.phase === IMPLEMENT),
+    review: readReview(launch),
+    groom: readGroom(launch),
+    ...(e2e && { e2e }),
   };
 }
 
-// How to join each own session: `{ investigate, implement, groom }` (plus `e2e` for a ticket with an
-// e2e check record), each a goToFor result for the session phaseSessions resolves. Review has none.
-function goToAll(launch, entries) {
+// The stand-in entry of a record the listing lacks whose full id was recovered, or null: finished, or
+// working while `held(sessionId)` (a chat turn is writing to it).
+function recoveredEntry(record, recovered, held) {
+  if (!record.id || !recovered.has(record.id)) return null;
+  const sessionId = recovered.get(record.id);
+  return { id: record.id, sessionId, state: held(sessionId) ? 'working' : 'done' };
+}
+
+// The listing entry each own session resolves to, under the keys of `phaseRecords`, each the entry
+// its record resolves to, or null. A record that is missing, or no listing, resolves to nothing.
+//
+// `recovered` maps a short id to the full session id found on disk for it (see `recoverSessionIds`
+// in claude-sessions.mjs). A record whose session the listing no longer shows (the CLI dropped it,
+// its conversation is kept) resolves to a finished entry with that id; the listing always wins, and
+// without a listing nothing is recovered, so a failed listing never turns every session into one.
+// `held(sessionId)` says a chat turn is writing to that session now: a recovered one then reads
+// working (no process, so no go-to), as a listed one does.
+export function phaseSessions(launch, entries, recovered = new Map(), held = () => false) {
+  const resolve = (record) => {
+    if (!record || !entries) return null;
+    return resolveSession(entries, record) ?? recoveredEntry(record, recovered, held);
+  };
   return Object.fromEntries(
-    Object.entries(phaseSessions(launch, entries))
-      .filter(([phase]) => phase !== 'review')
+    Object.entries(phaseRecords(launch)).map(([phase, record]) => [phase, resolve(record)]),
+  );
+}
+
+// How to join each own session: `{ investigate, implement, groom }` (plus `review` and `e2e` for a
+// ticket with such a record), each a goToFor result for the session phaseSessions resolves.
+function goToAll(launch, entries, recovered, held) {
+  const hasReview = Boolean(readReview(launch));
+  return Object.fromEntries(
+    Object.entries(phaseSessions(launch, entries, recovered, held))
+      .filter(([phase]) => phase !== 'review' || hasReview)
       .map(([phase, session]) => [phase, goToFor(session)]),
   );
 }
@@ -358,8 +384,10 @@ export function rereviewBlock(review, entries) {
 
 // The entry for one ticket. `status` and `launch` are the parsed files (null when a file is not a
 // JSON object), `entries` is the CLI listing (null when unavailable) and `planPresent` says whether
-// the plan file exists.
-export function deriveEntry({ status, launch, entries, now, planPresent }) {
+// the plan file exists. `recovered` is the short-to-full ids of sessions the listing no longer shows
+// (see `phaseSessions`); it gives their go-to, and changes the state only while `held` says a chat
+// turn is writing to the session: then the current one reads working, as a listed one does.
+export function deriveEntry({ status, launch, entries, now, planPresent, recovered, held }) {
   const flags = {
     [INVESTIGATE]: status?.[INVESTIGATE] === true,
     [IMPLEMENT]: status?.[IMPLEMENT] === true,
@@ -370,7 +398,12 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
   const sendable = !answersToSend(status, launch).skip;
   const unanswered = questions.filter(isUnanswered).length;
   const record = currentRecord(launch);
-  const session = record && entries ? resolveSession(entries, record) : null;
+  const listedSession = record && entries ? resolveSession(entries, record) : null;
+  const heldSession =
+    !listedSession && record && entries && recovered
+      ? recoveredEntry(record, recovered, held ?? (() => false))
+      : null;
+  const session = listedSession ?? (heldSession?.state === 'working' ? heldSession : null);
   const { state, reason } = record
     ? classify({
         record,
@@ -429,6 +462,6 @@ export function deriveEntry({ status, launch, entries, now, planPresent }) {
     specReview,
     e2e,
     blocks,
-    goTo: goToAll(launch, entries),
+    goTo: goToAll(launch, entries, recovered, held),
   };
 }

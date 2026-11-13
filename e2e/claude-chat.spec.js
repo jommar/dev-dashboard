@@ -307,6 +307,7 @@ test('scenario 16: a ticket session opens in Chat from the drawer, and the link 
     `#/chat?session=${SESSION}`,
   );
   await expect(page.getByTestId('sessions-chat-BOT-2:review')).toHaveCount(0);
+  await expect(page.getByTestId('sessions-chat-off-BOT-2:review')).toBeVisible();
   await page.getByTestId('sessions-open-BOT-1:implement').click();
   await expect(page.getByTestId('claude-dialog')).toBeVisible();
   await page.getByTestId('claude-dialog-close').click();
@@ -762,13 +763,14 @@ for (const width of [1200, 390]) {
       for (const bot of await bots.all()) {
         expect(overlaps(box, await bot.boundingBox()), 'no bot or poster over it').toBe(false);
       }
-      // The text starts below the controls, so a long message never runs under them.
-      const paddingTop = await composer(page).evaluate((el) =>
-        parseFloat(getComputedStyle(el).paddingTop),
+      // The room for the controls is kept on the right, so the text wraps before them.
+      const paddingRight = await composer(page).evaluate((el) =>
+        parseFloat(getComputedStyle(el).paddingRight),
       );
-      expect(fieldBox.y + paddingTop, 'text starts below the controls').toBeGreaterThanOrEqual(
-        box.y + box.height,
-      );
+      expect(
+        fieldBox.x + fieldBox.width - paddingRight,
+        'the text area ends before the controls',
+      ).toBeLessThanOrEqual(box.x);
     };
 
     // Working: the field is read-only, Send waits and Stop is there, both in the corner.
@@ -858,6 +860,9 @@ test('a ticket row Chat link is an icon with a tooltip, and the row columns line
   );
   await expect(page.getByTestId('sessions-copy-BOT-2:review')).toHaveCount(0);
   await expect(page.getByTestId(`sessions-chat-${OTHER}:chat`)).toHaveCount(0);
+  // The slots are still there, as placeholders: Copy for the review row, none for a chat row's Chat.
+  await expect(page.getByTestId('sessions-copy-off-BOT-2:review')).toBeVisible();
+  await expect(page.getByTestId(`sessions-chat-off-${OTHER}:chat`)).toHaveCount(0);
 
   // Enter follows the link and closes the drawer.
   await link.focus();
@@ -927,6 +932,161 @@ test('a row copy button is an icon with a tooltip, and says whether the copy wor
   await expect(copy).toHaveAccessibleName(name);
 });
 
+// Every row always has both icon slots, Chat and Copy: live when the action exists, otherwise a dimmed,
+// focusable, aria-disabled placeholder that says why in the app's tooltip and in its name.
+for (const width of [1200, 390]) {
+  test(`every drawer row has both icon slots, live or a placeholder with a reason, at ${width}px`, async ({
+    page,
+    dashboard,
+  }) => {
+    const { data } = dashboard;
+    const attach = { kind: 'attach', command: 'claude attach demo' };
+    data.claude.tickets['BOT-1'] = claudeEntry('working', 'running', {
+      phase: 'implement-plan',
+      goTo: { investigate: null, implement: attach, groom: null },
+    });
+    // A review row with a session and no resume command, an implement row with neither, and a review
+    // row with a resume command but no session: every phase can have a command.
+    const resume = { kind: 'resume', command: 'cd ~/pathwise && claude --resume demo' };
+    data.claude.tickets['BOT-2'] = claudeEntry('none', null, {
+      review: { state: 'done', reason: 'finished' },
+    });
+    data.claude.tickets['BOT-3'] = claudeEntry('done', 'implemented', { phase: 'implement-plan' });
+    data.claude.tickets['BOT-4'] = claudeEntry('none', null, {
+      review: { state: 'done', reason: 'finished' },
+      goTo: { investigate: null, implement: null, groom: null, review: resume },
+    });
+    data.claude.activeSprint.keys = ['BOT-1', 'BOT-2', 'BOT-3', 'BOT-4'];
+    data.claude.sessionIds = { 'BOT-1': { implement: SESSION }, 'BOT-2': { review: OTHER } };
+    const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+    data.claude.lastActive = {
+      'BOT-1': { implement: ago(2) },
+      'BOT-2': { review: ago(90) },
+      'BOT-3': { implement: ago(200) },
+      'BOT-4': { review: ago(300) },
+    };
+    const working = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
+    data.claude.chats = [
+      chatEntry(working, 'working', 1000, 'Busy chat'),
+      chatEntry(CHAT_SESSION_ID, 'done', hour, 'Plan the release notes'),
+    ];
+    await page.setViewportSize({ width, height: 700 });
+    await page.goto('/#/services');
+    await page.getByTestId('sessions-tab').click();
+    const tip = page.getByRole('tooltip');
+    const chatOff = (key) => page.getByTestId(`sessions-chat-off-${key}`);
+    const copyOff = (key) => page.getByTestId(`sessions-copy-off-${key}`);
+
+    // Live icons are as before, and the rows that lack the action have a placeholder instead.
+    await expect(page.getByTestId('sessions-chat-BOT-1:implement')).toHaveAttribute('href');
+    await expect(page.getByTestId('sessions-copy-BOT-1:implement')).toBeVisible();
+    await expect(chatOff('BOT-1:implement')).toHaveCount(0);
+    await expect(copyOff('BOT-1:implement')).toHaveCount(0);
+    await expect(page.getByTestId('sessions-chat-BOT-2:review')).toHaveAttribute(
+      'href',
+      `#/chat?session=${OTHER}`,
+    );
+    await expect(page.getByTestId('sessions-chat-off-BOT-2:review')).toHaveCount(0);
+    await expect(page.getByTestId('sessions-copy-BOT-2:review')).toHaveCount(0);
+    // A review row with a command has a live Copy, as every other phase does.
+    await expect(page.getByTestId('sessions-copy-BOT-4:review')).toBeVisible();
+    await expect(page.getByTestId('sessions-copy-off-BOT-4:review')).toHaveCount(0);
+    await expect(page.getByTestId('sessions-chat-BOT-3:implement')).toHaveCount(0);
+    await expect(page.getByTestId('sessions-copy-BOT-3:implement')).toHaveCount(0);
+    // Chat rows have no Chat slot (the row opens the chat) but keep Copy.
+    await expect(page.getByTestId(`sessions-chat-off-${working}:chat`)).toHaveCount(0);
+    await expect(page.getByTestId(`sessions-copy-${CHAT_SESSION_ID}:chat`)).toBeVisible();
+
+    const cases = [
+      [
+        chatOff('BOT-3:implement'),
+        'Chat with BOT-3 Implement plan session',
+        'No session to chat with',
+      ],
+      [
+        copyOff('BOT-3:implement'),
+        'Copy command to continue BOT-3 Implement plan session',
+        'No resume command available',
+      ],
+      [
+        copyOff('BOT-2:review'),
+        'Copy command to continue BOT-2 Code review session',
+        'No resume command available',
+      ],
+      [chatOff('BOT-4:review'), 'Chat with BOT-4 Code review session', 'No session to chat with'],
+      [
+        copyOff(`${working}:chat`),
+        'Copy command to continue Busy chat Chat session',
+        'Working: no resume command yet',
+      ],
+    ];
+    const hash = await page.evaluate(() => location.hash);
+    for (const [slot, name, reason] of cases) {
+      await expect(slot).toHaveAccessibleName(`${name}, unavailable: ${reason}`);
+      await expect(slot).toHaveAttribute('aria-disabled', 'true');
+      await expect(slot).toHaveAttribute('tabindex', '0');
+      expect(await slot.evaluate((el) => el.tagName), 'not a link or a button element').toBe(
+        'SPAN',
+      );
+      expect(((await slot.innerText()) ?? '').trim(), 'no visible text').toBe('');
+      await expect(slot.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+      await expect(slot).not.toHaveAttribute('title', /.+/);
+      await expect(slot.locator('a, button')).toHaveCount(0);
+      // The reason shows on hover and on keyboard focus.
+      await slot.hover();
+      await expect(tip).toHaveText(reason);
+      await page.getByTestId('sessions-search').hover();
+      await expect(tip).toHaveCount(0);
+      // A key press first, so the focus counts as the keyboard's and the tooltip follows it.
+      await page.keyboard.press('Shift');
+      await slot.focus();
+      await expect(slot).toBeFocused();
+      await expect(tip).toHaveText(reason);
+      // Nothing happens on click, Enter or Space.
+      await slot.click({ force: true });
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Space');
+      await expect(slot).toBeVisible();
+      await slot.blur();
+      await expect(tip).toHaveCount(0);
+    }
+    expect(await page.evaluate(() => location.hash), 'nothing navigated').toBe(hash);
+    expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes)).toEqual([]);
+    await expect(page.getByTestId('sessions-drawer')).toBeVisible();
+    await expect(page.locator('dialog[open]')).toHaveCount(0);
+
+    // Tab order: the row's Open button, then its Chat slot, then its Copy slot.
+    await page.getByTestId('sessions-open-BOT-3:implement').focus();
+    await page.keyboard.press('Tab');
+    await expect(chatOff('BOT-3:implement')).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(copyOff('BOT-3:implement')).toBeFocused();
+
+    // The three trailing columns sit at the same place in every ticket row, live or not.
+    const slot = (key, kind) =>
+      page.locator(
+        `[data-testid="sessions-${kind}-${key}"], [data-testid="sessions-${kind}-off-${key}"]`,
+      );
+    const left = async (locator) => Math.round((await locator.boundingBox()).x);
+    for (const kind of ['chat', 'copy']) {
+      const xs = [];
+      for (const key of ['BOT-1:implement', 'BOT-2:review', 'BOT-3:implement', 'BOT-4:review'])
+        xs.push(await left(slot(key, kind)));
+      expect(new Set(xs).size, `${kind} slots share a column: ${xs}`).toBe(1);
+    }
+    const copies = [];
+    for (const key of ['BOT-1:implement', `${working}:chat`, `${CHAT_SESSION_ID}:chat`])
+      copies.push(await left(slot(key, 'copy')));
+    expect(new Set(copies).size, `copy slots of chat rows share it too: ${copies}`).toBe(1);
+    const times = [];
+    for (const key of ['BOT-1:implement', 'BOT-2:review', 'BOT-3:implement', 'BOT-4:review']) {
+      const box = await page.getByTestId(`sessions-when-${key}`).boundingBox();
+      times.push(Math.round(box.x + box.width));
+    }
+    expect(new Set(times), 'times end in one column').toHaveProperty('size', 1);
+  });
+}
+
 // The room kept for the controls follows their real height, the box cannot be dragged below a usable
 // text line, and a scrollbar never lies under the controls.
 test('the composer keeps room for the controls, a line of text and a scrollbar', async ({
@@ -943,18 +1103,19 @@ test('the composer keeps room for the controls, a line of text and a scrollbar',
       top: box.top,
       right: box.right,
       paddingTop: parseFloat(style.paddingTop),
-      paddingBottom: parseFloat(style.paddingBottom),
+      paddingLeft: parseFloat(style.paddingLeft),
+      textAlign: style.textAlign,
       minHeight: parseFloat(style.minHeight),
       overflows: el.scrollHeight > el.clientHeight,
     };
   });
-  expect(room.paddingTop, 'text starts below the controls').toBeGreaterThanOrEqual(
-    send.y + send.height - room.top,
+  // Text starts at the top left; the controls' room is on the right, and the smallest box holds them.
+  expect(room.paddingTop, 'text starts at the top').toBeLessThanOrEqual(16);
+  expect(room.paddingLeft, 'text starts at the left').toBeLessThanOrEqual(16);
+  expect(['start', 'left']).toContain(room.textAlign);
+  expect(room.minHeight, 'the smallest box holds the controls').toBeGreaterThanOrEqual(
+    send.y + send.height - room.top + 8,
   );
-  expect(
-    room.minHeight - room.paddingTop - room.paddingBottom,
-    'the smallest box still has room for a line of text',
-  ).toBeGreaterThanOrEqual(20);
   expect(room.overflows, 'the draft overflows the box').toBe(true);
   // Headless Chromium hides scrollbars, so none can be measured here: the controls must end at least
   // 16px (a classic scrollbar, 15-17px; the textarea asks for a thin one) inside the right edge.
@@ -963,6 +1124,84 @@ test('the composer keeps room for the controls, a line of text and a scrollbar',
     'the controls end before where a scrollbar sits',
   ).toBeGreaterThanOrEqual(16);
 });
+
+// The text and the placeholder start at the top left of the box; the room the floating controls need is
+// kept on the right, for every state they can be in (one, two or three of them), and the controls stay
+// inside the box even when it is dragged to its smallest height.
+for (const width of [1200, 390]) {
+  test(`the composer text starts top left and wraps before the controls in every state at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(`/#/chat?session=${SESSION}`);
+    // Idle and empty: Send alone. The placeholder is at the top left (computed padding: a rendered
+    // placeholder position cannot be read back reliably in headless Chromium).
+    await chatSay(page, SESSION, 'hello', hello({ items: [USER, ANSWER] }));
+    const style = await composer(page).evaluate((el) => {
+      const css = getComputedStyle(el);
+      return {
+        top: parseFloat(css.paddingTop),
+        left: parseFloat(css.paddingLeft),
+        align: css.textAlign,
+      };
+    });
+    expect(style.top, 'text starts at the top').toBeLessThanOrEqual(16);
+    expect(style.left, 'text starts at the left').toBeLessThanOrEqual(16);
+    expect(['start', 'left']).toContain(style.align);
+
+    const states = {
+      'Send alone': async () => {},
+      'Send and Retry': async () => {
+        await chatSay(page, SESSION, 'state', {
+          state: 'idle',
+          turn: turn({ outcome: 'failed', error: 'Boom' }),
+        });
+        await expect(page.getByTestId('chat-retry')).toBeVisible();
+      },
+      'Send, Retry and Refresh': async () => {
+        await page.evaluate((id) => {
+          const source = window.__dashboardMock.chats.find((it) => it.session === id);
+          source.readyState = 2;
+          source.dispatchEvent(new Event('error'));
+        }, SESSION);
+        await expect(page.getByTestId('chat-refresh')).toBeVisible();
+      },
+    };
+    for (const [name, enter] of Object.entries(states)) {
+      await enter();
+      await composer(page).fill('a long line of words without end '.repeat(12));
+      const room = await composer(page).evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const actions = document.querySelector('.chat-actions').getBoundingClientRect();
+        el.style.height = '1px'; // dragged to the smallest the box can be
+        const small = el.getBoundingClientRect();
+        const bottom = document.querySelector('.chat-actions').getBoundingClientRect().bottom;
+        el.style.height = '';
+        return {
+          textRight: box.right - parseFloat(getComputedStyle(el).paddingRight),
+          controlsLeft: actions.left,
+          controlsRight: actions.right,
+          boxRight: box.right,
+          controlsBottom: bottom,
+          smallBottom: small.bottom,
+          column: box.width - parseFloat(getComputedStyle(el).paddingRight) - 12,
+        };
+      });
+      expect(room.textRight, `${name}: the text ends before the controls`).toBeLessThanOrEqual(
+        room.controlsLeft,
+      );
+      expect(room.controlsRight, `${name}: clear of a scrollbar`).toBeLessThanOrEqual(
+        room.boxRight - 16,
+      );
+      expect(room.controlsBottom, `${name}: inside the smallest box`).toBeLessThanOrEqual(
+        room.smallBottom,
+      );
+      expect(room.column, `${name}: a text column wide enough to write in`).toBeGreaterThanOrEqual(
+        120,
+      );
+    }
+  });
+}
 
 // Headless Chromium cannot emulate `(hover: none)`, so the touch case reads the stylesheet: the room
 // kept under that query is the height base.css gives every button under it.

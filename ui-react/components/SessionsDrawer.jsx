@@ -69,6 +69,32 @@ const activityTitle = (iso, quiet) =>
     quiet ? ` · working but quiet for ${QUIET_WORKING_MS / 60_000}+ min` : ''
   }`;
 
+// Why a row has no Copy command, in words: a working chat has no command yet.
+const copyReason = ({ phase, state }) =>
+  phase === 'chat' && state === 'working'
+    ? 'Working: no resume command yet'
+    : 'No resume command available';
+
+// A slot with nothing to offer: dimmed and aria-disabled, but still focusable so its tooltip, and its
+// name, say why. It is not a link or a button element and does nothing when activated.
+function SlotOff({ slot, icon, testId, label, reason }) {
+  return (
+    <DashboardTooltip title={reason} placement="left">
+      <span
+        role="button"
+        tabIndex={0}
+        aria-disabled="true"
+        className="sessions-row-slot-off"
+        data-slot={slot}
+        data-testid={testId}
+        aria-label={`${label}, unavailable: ${reason}`}
+      >
+        <NavIcon name={icon} />
+      </span>
+    </DashboardTooltip>
+  );
+}
+
 function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
   const { key, ticket, phase, state, goTo, lastActiveAt, session } = row;
   const phaseWords = phaseOf(phase);
@@ -105,20 +131,29 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
           <RelativeTime iso={lastActiveAt} now={now} title={activityTitle(lastActiveAt, quiet)} />
         </span>
       )}
-      {session && phase !== 'chat' && (
-        <DashboardTooltip title="Chat" placement="left">
-          <a
-            className="sessions-row-chat"
-            href={chatHref(session)}
-            onClick={onClose}
-            data-testid={`sessions-chat-${key}`}
-            aria-label={`Chat with ${ticket} ${phaseWords} session`}
-          >
-            <NavIcon name="chat" />
-          </a>
-        </DashboardTooltip>
-      )}
-      {goTo && (
+      {phase !== 'chat' &&
+        (session ? (
+          <DashboardTooltip title="Chat" placement="left">
+            <a
+              className="sessions-row-chat"
+              href={chatHref(session)}
+              onClick={onClose}
+              data-testid={`sessions-chat-${key}`}
+              aria-label={`Chat with ${ticket} ${phaseWords} session`}
+            >
+              <NavIcon name="chat" />
+            </a>
+          </DashboardTooltip>
+        ) : (
+          <SlotOff
+            slot="chat"
+            icon="chat"
+            testId={`sessions-chat-off-${key}`}
+            label={`Chat with ${ticket} ${phaseWords} session`}
+            reason="No session to chat with"
+          />
+        ))}
+      {goTo ? (
         <DashboardTooltip title={outcome ?? copyWord(goTo)} placement="left">
           <Button
             className="subtle sessions-row-copy"
@@ -130,6 +165,14 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
             <NavIcon name={outcome === 'Copied' ? 'check' : 'copy'} />
           </Button>
         </DashboardTooltip>
+      ) : (
+        <SlotOff
+          slot="copy"
+          icon="copy"
+          testId={`sessions-copy-off-${key}`}
+          label={`Copy command to continue ${name} ${phaseWords} session`}
+          reason={copyReason(row)}
+        />
       )}
     </li>
   );

@@ -2114,3 +2114,112 @@ test('scenario 18: resume passes the CLI an environment without the credential n
   for (const name of names) assert.equal(name in options.env, false, name);
   assert.equal(options.env.PATH, process.env.PATH);
 });
+
+// ---- recoverSessionIds: the full id of a session the listing no longer shows, from its transcript ----
+
+const SHORT_A = SESSION_A.slice(0, 8);
+const siblingId = (short, tail = '9999-4999-8999-999999999999') => `${short}-${tail}`;
+
+test('recoverSessionIds: a short id resolves to the one transcript file that starts with it', async (t) => {
+  const env = await sessionsEnvironment(t);
+  assert.equal(typeof env.sessions.recoverSessionIds, 'function');
+  writeDated(projectFile(env.home, 'project-a', SESSION_A), OLD_MS);
+  writeDated(projectFile(env.home, 'project-b', SESSION_B), OLD_MS);
+
+  const found = await env.sessions.recoverSessionIds([SHORT_A, SESSION_B.slice(0, 8), 'cccccccc']);
+
+  assert.deepEqual(
+    [...found],
+    [
+      [SHORT_A, SESSION_A],
+      [SESSION_B.slice(0, 8), SESSION_B],
+    ],
+    'an id with no transcript is not in the answer',
+  );
+});
+
+test('recoverSessionIds: the same id in several project folders is one id; two different ids are no id', async (t) => {
+  const env = await sessionsEnvironment(t);
+  writeDated(projectFile(env.home, 'project-a', SESSION_A), OLD_MS);
+  writeDated(projectFile(env.home, 'project-b', SESSION_A), NEW_MS);
+  writeDated(projectFile(env.home, 'project-a', SESSION_B), OLD_MS);
+  writeDated(projectFile(env.home, 'project-b', siblingId(SESSION_B.slice(0, 8))), OLD_MS);
+
+  const found = await env.sessions.recoverSessionIds([SHORT_A, SESSION_B.slice(0, 8)]);
+
+  assert.deepEqual([...found], [[SHORT_A, SESSION_A]], 'two ids behind one prefix: unresolved');
+});
+
+test('recoverSessionIds: a folder, a file that is not a transcript and a name that is not a session id never match', async (t) => {
+  const env = await sessionsEnvironment(t);
+  const project = path.join(env.home, '.claude', 'projects', 'project-a');
+  fs.mkdirSync(path.join(project, SESSION_A, 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(project, `${SESSION_A}.txt`), 'x');
+  fs.writeFileSync(path.join(project, `${SHORT_A}-notauuid.jsonl`), 'x');
+  fs.writeFileSync(path.join(project, `${SHORT_A}.jsonl`), 'x');
+
+  assert.deepEqual([...(await env.sessions.recoverSessionIds([SHORT_A]))], []);
+
+  writeDated(path.join(project, `${SESSION_A}.jsonl`), OLD_MS);
+  assert.deepEqual([...(await env.sessions.recoverSessionIds([SHORT_A]))], [[SHORT_A, SESSION_A]]);
+});
+
+test('recoverSessionIds: only a short id (8 hex) is looked for, and nothing to look for reads nothing', async (t) => {
+  let reads = 0;
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: async (...args) => {
+        reads += 1;
+        return fs.promises.readdir(...args);
+      },
+      readFile: fs.promises.readFile,
+      stat: fs.promises.stat,
+    },
+  });
+  writeDated(projectFile(env.home, 'project-a', SESSION_A), OLD_MS);
+  for (const bad of [
+    [],
+    ['1111'],
+    ['11111111-1111-4111-8111-111111111111'],
+    ['../../etc'],
+    [7, null],
+  ])
+    assert.deepEqual([...(await env.sessions.recoverSessionIds(bad))], [], JSON.stringify(bad));
+  assert.equal(reads, 0);
+});
+
+test('recoverSessionIds: a missing or unreadable projects folder is no id, never an error, and no content is read', async (t) => {
+  let contentReads = 0;
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: async () => {
+        throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      },
+      readFile: async () => {
+        contentReads += 1;
+        return '';
+      },
+      stat: fs.promises.stat,
+    },
+  });
+  assert.deepEqual([...(await env.sessions.recoverSessionIds([SHORT_A]))], []);
+  assert.equal(contentReads, 0);
+  const plain = await sessionsEnvironment(t);
+  assert.deepEqual(
+    [...(await plain.sessions.recoverSessionIds([SHORT_A]))],
+    [],
+    'no folder at all',
+  );
+});
+
+test('isHeld: a session reads held from beginTurn until its release, and only that one', async () => {
+  const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+  const sessions = createClaudeSessions({ execFileImpl: () => {}, projectsDir: '/nowhere' });
+  const id = 'abab1212-0000-4000-8000-000000000000';
+  assert.equal(sessions.isHeld(id), false);
+  const release = sessions.beginTurn(id);
+  assert.equal(sessions.isHeld(id), true);
+  assert.equal(sessions.isHeld('cdcd3434-0000-4000-8000-000000000000'), false);
+  release();
+  assert.equal(sessions.isHeld(id), false);
+});

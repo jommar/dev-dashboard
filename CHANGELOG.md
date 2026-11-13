@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- A launched session the Claude CLI no longer lists (removed with `claude rm` or pruned, its conversation
+  kept) now keeps its Copy command and Chat in the Sessions drawer and its **Go to session** chip: the
+  dashboard recovers the full session id from the transcript on disk by the 8-character short id its launch
+  record keeps (needs the transcript to still be there and the prefix to match exactly one session). Such a
+  session has no process (it reads working only while a Chat turn of the dashboard is writing to it) and its
+  Copy is `cd ~/pathwise && claude --resume <id>`. Chat
+  continues it from `~/pathwise`; only a session the dashboard launched or chatted with qualifies, any other
+  unlisted id is still `session_not_found`. Review sessions now get a resume/attach command too
+  (`goTo.review` in `GET /api/claude/tickets`, for a ticket with a review record), so their drawer rows get
+  Copy like the other phases; the card state of a missing session is derived as before, from the flag files
+  and the listing. Covered by tests and run end
+  to end on the real CLI and in a browser with a removed scratch session.
+- The Chat message box now starts its text and placeholder at the top left again; the room for the floating
+  Send/Stop/Retry/Refresh controls is kept on its right instead of a reserved row at the top.
+- Every ticket row in the Sessions drawer now always shows both icon slots, Chat and Copy: live when the
+  session or command exists, otherwise a dimmed placeholder with a tooltip that says why, so rows look uniform.
 - Made the Sessions drawer's per-row **Copy attach** / **Copy resume** button an icon (the label is its
   tooltip, its accessible name is unchanged), and a refused copy now says **Copy failed** instead of staying
   silent.

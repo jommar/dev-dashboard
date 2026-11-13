@@ -142,6 +142,10 @@ function ChatConversation({ active, session, focusOnMount }) {
   const lastUser = view?.items.findLast(({ kind }) => kind === 'user');
   const retryable = !working && ['stopped', 'failed'].includes(view?.turn?.outcome) && lastUser;
   const note = view && !working ? turnNote(view.turn) : '';
+  // How many controls float over the field: Send, then Stop, Retry and Refresh when they show. The field
+  // keeps room on its right for them (chat.css).
+  const controls =
+    1 + Number(live) + Number(Boolean(retryable)) + Number(outside || Boolean(error));
 
   // A chat started from here is this component again under its own key: the writer keeps the focus.
   useEffect(() => {
@@ -232,11 +236,11 @@ function ChatConversation({ active, session, focusOnMount }) {
             {problem}
           </p>
         )}
-        <div className="chat-field">
+        <div className="chat-field" data-controls={controls}>
           <textarea
             id={fieldId}
             ref={field}
-            rows={3}
+            rows={4}
             value={text}
             readOnly={blocked}
             aria-disabled={blocked || undefined}

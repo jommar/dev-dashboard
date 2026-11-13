@@ -569,7 +569,7 @@ const byLastActiveFirst = (a, b) => {
 
 // The groups of `bots` (what `inActiveSprint` returns), each `{ state, title, rows }` and none of them
 // empty. A row is the bot plus `goTo`, the `{ kind, command }` that joins its session in a terminal
-// (the entry's own `goTo` for that phase; a review session has none), or null, and `lastActiveAt`, the
+// (the entry's own `goTo` for that phase), or null, and `lastActiveAt`, the
 // ISO time that session was last written to, or null. `lastActive` is the map GET /api/claude/tickets
 // sends beside the tickets (`{ [ticket]: { [phase]: ISO } }`, sparse). Within a group the most recently
 // active session comes first and one with no time last; rows with the same time (or none) keep the

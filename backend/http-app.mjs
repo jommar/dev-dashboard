@@ -182,11 +182,16 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     integrations.claudeSessions || createClaudeSessions({ store: slackWatchStore });
   const claudePrompts = integrations.claudePrompts || createPromptStore();
   const claudeArtifacts = integrations.claudeArtifacts || createClaudeArtifacts();
-  const claudeChat = integrations.claudeChat || createClaudeChat({ claudeSessions });
   const browserDevtools = integrations.browserDevtools || createBrowserDevtools();
   const claudeLauncher =
     integrations.claudeLauncher ||
     createClaudeLauncher({ claudeSessions, browsers: browserDevtools });
+  const claudeChat =
+    integrations.claudeChat ||
+    createClaudeChat({
+      claudeSessions,
+      launchedName: (id) => claudeLauncher.launchedName?.(id) ?? null,
+    });
   const browserScreencast =
     integrations.browserScreencast || createBrowserScreencast({ devtools: browserDevtools });
   const devtoolsStreams =

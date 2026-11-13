@@ -40,6 +40,7 @@ import {
   isQuestionId,
   isShortId,
   isTicketKey,
+  phaseRecords,
   phaseSessions,
   readE2e,
   readGroom,
@@ -73,6 +74,9 @@ export const pause = (timers) =>
   });
 // What the dashboard reads of session-writable state: a bigger file is unreadable, and only this
 // many ticket folders are listed.
+// How long the answer of a transcript scan for a session the listing lacks (found or not) is kept
+// before the transcript folders are read for it again.
+const ORPHAN_RETRY_MS = 5 * 60_000;
 const MAX_STATE_BYTES = 1024 * 1024;
 const MAX_TICKETS = 500;
 const PLAN_FILE = '02-plan.md';
@@ -219,6 +223,11 @@ export function createClaudeLauncher({
 }) {
   const launchDirectory = path.join(home, 'pathwise');
   const locks = new Map();
+  // Short id -> full session id, for sessions the listing no longer shows but whose transcript is on
+  // disk (see `recoverOrphans`), and when each short id was last looked for. Every answer, found or
+  // not, is trusted for `ORPHAN_RETRY_MS`, so a poll does not read the transcript folders each time.
+  const recovered = new Map();
+  const scannedAt = new Map();
 
   const ticketDir = (key) => path.join(stateDir, key);
   const statusPath = (key) => path.join(ticketDir(key), 'status.json');
@@ -304,6 +313,8 @@ export function createClaudeLauncher({
       entries,
       now: now(),
       planPresent: status?.[INVESTIGATE] === true && planExists(key),
+      recovered,
+      held: claudeSessions.isHeld,
     });
   }
 
@@ -724,7 +735,15 @@ export function createClaudeLauncher({
   // Each ticket's phase sessions as the listing resolves them: `Map<KEY, { phase: entry or null }>`.
   const phaseSessionsOf = (keys, entries) =>
     new Map(
-      keys.map((key) => [key, phaseSessions(readObject(launchPath(key)).value ?? null, entries)]),
+      keys.map((key) => [
+        key,
+        phaseSessions(
+          readObject(launchPath(key)).value ?? null,
+          entries,
+          recovered,
+          claudeSessions.isHeld,
+        ),
+      ]),
     );
 
   // The full session id of each phase's listed session: `{ KEY: { phase: uuid } }`, sparse, so a
@@ -760,11 +779,51 @@ export function createClaudeLauncher({
     return lastActive;
   }
 
+  // Whether the answer for a short id is missing or older than the retry window.
+  const isStale = (short) => !(now() - (scannedAt.get(short) ?? -Infinity) < ORPHAN_RETRY_MS);
+
+  // Asks the sessions module for the full id of every recorded session the listing does not show,
+  // unless it was asked about it within the retry window. Only called with a listing: without one
+  // every session would look like one.
+  async function recoverOrphans(keys, entries) {
+    const missing = new Set();
+    for (const key of keys) {
+      const launch = readObject(launchPath(key)).value ?? null;
+      for (const record of Object.values(phaseRecords(launch)))
+        if (record?.id && !resolveSession(entries, record) && isStale(record.id))
+          missing.add(record.id);
+    }
+    if (!missing.size) return;
+    const found = await claudeSessions.recoverSessionIds([...missing]);
+    const at = now();
+    for (const short of missing) {
+      scannedAt.set(short, at);
+      if (found.has(short)) recovered.set(short, found.get(short));
+      else recovered.delete(short);
+    }
+  }
+
+  // The session name of the launch record whose short id is the first eight characters of
+  // `sessionId`, or null when no record has it. The chat uses it to continue a session the listing
+  // lost, and as its title.
+  function launchedName(sessionId) {
+    try {
+      const short = sessionId.slice(0, 8);
+      for (const key of ticketKeys())
+        for (const record of Object.values(phaseRecords(readObject(launchPath(key)).value ?? null)))
+          if (record?.id === short) return record.name;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // Every ticket folder's entry from one shared listing; no folder, no CLI call. This is the one
   // place a finished e2e session is seen, so its browser is stopped here; that never fails the list.
   async function list() {
     const keys = ticketKeys();
     const entries = keys.length ? await claudeSessions.entries() : [];
+    if (entries) await recoverOrphans(keys, entries);
     const stopping = keys.filter((key) => e2eBrowserToStop(key, entries));
     const settled = await Promise.allSettled(stopping.map((key) => stopE2eBrowser(key, entries)));
     settled.forEach((result, index) => {
@@ -785,5 +844,5 @@ export function createClaudeLauncher({
     };
   }
 
-  return { list, launch, answer, approve, rereview };
+  return { list, launch, answer, approve, rereview, launchedName };
 }

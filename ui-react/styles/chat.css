@@ -289,24 +289,48 @@
   gap: var(--s2);
 }
 /* The controls float over the textarea's top right corner, out of the strip the bot bar lies over at the
-   bottom of the screen. The text starts below them (the top padding is a button's height plus a gap
-   either side), the box cannot shrink below that plus a line of text, and the resize handle at the bottom
-   right stays free. The controls are as tall as a button is (base.css: 44px where there is no hover) and
-   end before the textarea's thin scrollbar. */
+   bottom of the screen. The text starts at the top left; the room they need is kept on the right
+   (padding-right: their row's width, the 16px they sit in from the edge, and a gap), by how many show at
+   once (data-controls: 1 to 3), and the box cannot shrink below them plus the resize handle at the bottom
+   right. They are as tall as a button is (base.css: 44px where there is no hover) and end before the
+   textarea's thin scrollbar. Under 760px three controls wrap into two rows of two, so the text column
+   stays a usable width. */
 .chat-field {
   --chat-actions-h: 36px;
+  --chat-button-w: 80px; /* the widest control, Refresh */
+  --chat-actions-cols: 1;
+  --chat-actions-rows: 1;
+  --chat-actions-w: calc(
+    var(--chat-actions-cols) * var(--chat-button-w) + (var(--chat-actions-cols) - 1) * var(--s2)
+  );
   position: relative;
+}
+.chat-field[data-controls='2'] {
+  --chat-actions-cols: 2;
+}
+.chat-field[data-controls='3'] {
+  --chat-actions-cols: 3;
 }
 @media (hover: none) {
   .chat-field {
     --chat-actions-h: 44px;
   }
 }
+@media (max-width: 759px) {
+  .chat-field[data-controls='3'] {
+    --chat-actions-cols: 2;
+    --chat-actions-rows: 2;
+  }
+}
 .chat-composer textarea {
   width: 100%;
-  min-height: calc(var(--chat-actions-h) + var(--s2) * 3 + var(--s6));
+  min-height: calc(
+    var(--s2) + var(--chat-actions-rows) * var(--chat-actions-h) + (var(--chat-actions-rows) - 1) *
+      var(--s2) + var(--s5)
+  );
   max-height: 240px;
-  padding: calc(var(--chat-actions-h) + var(--s2) * 2) var(--s3) var(--s2);
+  padding: var(--s2) calc(var(--chat-actions-w) + var(--s4) + var(--s2)) var(--s2) var(--s3);
+  text-align: start;
   scrollbar-width: thin;
   border: 0;
   border-radius: var(--radius);
@@ -330,6 +354,9 @@
   top: var(--s2);
   right: var(--s4);
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: var(--chat-actions-w);
   gap: var(--s2);
 }
 /* Opaque, so a draft scrolled under the controls does not show through them. */

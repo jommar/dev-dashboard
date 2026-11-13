@@ -231,6 +231,7 @@ export function createFakeSessions() {
     dying: null,
     listingFails: false,
     stopOutcome: null,
+    recoverable: new Map(),
   };
   const find = (sessionId) => state.entries.find((entry) => entry.sessionId === sessionId);
   return {
@@ -242,6 +243,10 @@ export function createFakeSessions() {
     },
     setTranscript(sessionId, file) {
       state.transcripts.set(sessionId, file);
+    },
+    // A session the listing lost whose transcript is on disk: its short id gives this full id.
+    setRecoverable(sessionId) {
+      state.recoverable.set(sessionId.slice(0, 8), sessionId);
     },
     failListing() {
       state.listingFails = true;
@@ -294,6 +299,14 @@ export function createFakeSessions() {
     async transcriptFile(sessionId) {
       return state.transcripts.get(sessionId) ?? null;
     },
+    async recoverSessionIds(shortIds) {
+      events.push('recover');
+      return new Map(
+        shortIds
+          .filter((id) => state.recoverable.has(id))
+          .map((id) => [id, state.recoverable.get(id)]),
+      );
+    },
   };
 }
 
@@ -334,7 +347,10 @@ export function scratchDir(t, prefix) {
 // chat keeps its records in `<stateDir>/chat`), the fake sessions, the fake spawn, fake timers on
 // a fixed clock, a recording `fs` over the real one and a log that records every line.
 // `home/.claude/projects/p` holds the transcripts the sessions double points at (`writeTranscript`).
-export async function chatEnvironment(t, { claudeSessions, spawn, withFs = true } = {}) {
+export async function chatEnvironment(
+  t,
+  { claudeSessions, spawn, withFs = true, launchedName } = {},
+) {
   const { createClaudeChat } = await import('../backend/claude-chat.mjs');
   const root = scratchDir(t, 'chat-test-');
   const home = path.join(root, 'home');
@@ -358,6 +374,7 @@ export async function chatEnvironment(t, { claudeSessions, spawn, withFs = true 
       }),
     stateDir,
     home,
+    ...(launchedName && { launchedName }),
     ...(withFs && { fs: recorder.fs }),
     now: clock.now,
     timers,

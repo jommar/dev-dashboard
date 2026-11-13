@@ -1,11 +1,12 @@
 // claude-chat.mjs — a conversation with a Claude session from the dashboard. A turn is one `claude -p`
 // process (stream-json both ways): the message goes in on stdin, the CLI's lines are turned into the
 // chat's events (claude-chat-items.mjs) and sent to every stream open on the session, and the
-// process ends with the turn. Two kinds of session can be chatted with: a standalone chat, which
+// process ends with the turn. Three kinds of session can be chatted with: a standalone chat, which
 // the dashboard keeps a record of under `<stateDir>/chat/<uuid>.json` (no ticket, no listing entry,
-// because the CLI does not list a `-p` run), and any listed session, which includes every ticket
-// session. A session is addressed by its UUID only; the directory it runs in comes from the record or
-// the listing, never from a request.
+// because the CLI does not list a `-p` run), any listed session, which includes every ticket
+// session, and an orphan: a session a launch record names that the CLI no longer lists but whose
+// transcript is on disk (`orphanSession`). A session is addressed by its UUID only; the directory it
+// runs in comes from the record or the listing (`~/pathwise` for an orphan), never from a request.
 //
 // One writer per session: a turn holds `claudeSessions.beginTurn`, which every other writer (the
 // launcher, the Slack watcher, a resume) reads as work in progress. A listed session that is idle is
@@ -95,6 +96,9 @@ export function createClaudeChat({
   now = Date.now,
   timers = { setTimeout, clearTimeout },
   log = defaultClaudeLog,
+  // The session name of the dashboard's launch record that has this session's short id, or null:
+  // what lets the chat continue a session the CLI listing lost (see `orphanSession`).
+  launchedName = () => null,
 }) {
   const recordsDir = path.join(stateDir, 'chat');
   const recordFile = (id) => path.join(recordsDir, `${id}.json`);
@@ -171,13 +175,26 @@ export function createClaudeChat({
     const entries = await claudeSessions.entries({ fresh: true });
     if (!entries) throw failed('listing_unavailable');
     const entry = entries.find((candidate) => candidate.sessionId === id);
-    if (!entry) throw refused('session_not_found');
+    if (!entry) return orphanSession(id);
     return {
       kind: 'session',
       entry,
       title: typeof entry.name === 'string' ? entry.name : String(entry.id),
       cwd: entry.cwd,
     };
+  }
+
+  // A session the CLI no longer lists (removed or pruned, its conversation kept) that this dashboard
+  // launched: some launch record names its short id, and the transcript on disk for that short id is
+  // exactly this session. Anything else unlisted is still `session_not_found`. It is idle (it has no
+  // process), runs from the standalone directory (the CLI finds a session by id, not by directory),
+  // and has no listing entry to stop or wait for.
+  async function orphanSession(id) {
+    const short = id.slice(0, 8);
+    const name = launchedName(id);
+    if (name === null || (await claudeSessions.recoverSessionIds([short])).get(short) !== id)
+      throw refused('session_not_found');
+    return { kind: 'session', orphan: true, title: name, cwd: path.join(home, 'pathwise') };
   }
 
   // The size of the session's transcript now, 0 when it has none.
@@ -443,7 +460,7 @@ export function createClaudeChat({
       // Counted after the session is known, so a listing that fails says so before the cap does.
       if (turns.size + starting.size > MAX_TURNS) throw refused('too_many_turns');
       let { record = null, cwd } = target;
-      if (target.kind === 'session') {
+      if (target.kind === 'session' && !target.orphan) {
         if (target.entry.state === 'working') throw refused('session_running');
         cwd = (await settle(id)).cwd;
         // Without a directory the process would run in the dashboard's own.

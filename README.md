@@ -1244,14 +1244,32 @@ My Tickets tab is open and the page is visible, and straight after a launch or a
 Each **Go to session** button copies the command for its own phase's session, one of these
 strings, built only from ids that pass a pattern check and never from listing text:
 
-| That phase's session                              | Copied                                          |
-| ------------------------------------------------- | ----------------------------------------------- |
-| Has a process (live, busy or idle), or is blocked | `claude attach <id>` (the 8-character short id) |
-| Finished, with no process                         | `cd ~/pathwise && claude --resume <sessionId>`  |
-| Never launched, not listed, or its id fails check | No chip is shown                                |
+| That phase's session                                                      | Copied                                          |
+| ------------------------------------------------------------------------- | ----------------------------------------------- |
+| Has a process (live, busy or idle), or is blocked                         | `claude attach <id>` (the 8-character short id) |
+| Finished, with no process                                                 | `cd ~/pathwise && claude --resume <sessionId>`  |
+| No longer listed, but its transcript is on disk                           | the same resume string (see below)              |
+| Never launched, not listed and no transcript found, or its id fails check | No chip is shown                                |
 
-The resume string starts with `cd ~/pathwise &&` because a resumed conversation is found from the
-directory it started in; `claude attach` needs no `cd`. When the browser refuses the clipboard
+The resume string always starts with `cd ~/pathwise &&`, the launcher's own directory. It also works
+for a session that started elsewhere: the CLI finds a conversation by its session id (checked against
+CLI 2.1.323 with a session started in another directory); `claude attach` needs no `cd`.
+
+**A session the CLI no longer lists** (`claude rm` removed it, or the CLI pruned it; its conversation
+is kept) used to lose its chip, its Copy and its Chat. `launch.json` keeps only the 8-character short id,
+so the dashboard recovers the full session id from the transcript on disk: the one regular file
+`~/.claude/projects/*/<short id>*.jsonl` (a folder of that name does not count). It is recovered only for
+a session a launch record names, only while the CLI listing itself is available (a failed listing never
+turns every session into a missing one), and only when the 8-character prefix matches exactly one
+session id among all transcripts; two different ids behind one prefix, or no transcript, recover nothing
+and the session stays without a chip. A recovered id is a finished session: it has no process, so it is
+always resumed, never attached. It fills that phase's `goTo` side and
+`sessionIds` entry in `GET /api/claude/tickets` (so the Sessions drawer's Copy and
+[Chat](#chat) work for it) and its `lastActive`; the listing still wins whenever it shows the session,
+and the card's state is derived as before, from the flag files and the listing, not from the transcript
+(with the phase flag set it reads `done`, with none it still reads `failed`, `session_missing`). While a
+[Chat](#chat) turn of this dashboard is writing to the session, the card and the drawer row read working and
+the Copy command goes away, as for a listed session. When the browser refuses the clipboard
 write, the dialog shows the command in a read-only field. The dialog shows one `Copied` (or one
 such field) at a time, for the button you used last. Both buttons work at once after Implement plan
 has launched, each pointing at its own session even when the two are in different states, so the
@@ -1661,7 +1679,9 @@ Workflow and groom sessions neither block nor are blocked by review.
   exist. Investigate resets preserve both review and groom records.
 - **Completion is not approval.** The dialog reports launch/session lifecycle and errors, not
   review quality or verified publishing outcomes. Review never changes workflow flags,
-  questions, My Tickets icon state or Go to session fields. Tests cover prompt intent with a
+  questions, My Tickets icon state or the other Go to session sides; it only adds `goTo.review`
+  (for a ticket with a review record, the same attach or resume command as any other phase), which
+  the Sessions drawer's copy icon reads. The review dialog has no Go to session chip. Tests cover prompt intent with a
   fake CLI and intercepted browser APIs; actual Claude reviews, PR publication and Slack
   replies have not been exercised by those tests.
 
@@ -1811,7 +1831,7 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
 `{ phase, state, reason, flags, questions[], unanswered, unsent, groom, review, specReview, e2e, blocks, goTo }`
 (`groom` and `blocks.groom` are described under [Groom ticket](#groom-ticket);
 `e2e`, `blocks.e2e` and `goTo.e2e` under [E2E check](#e2e-check);
-`review` and `blocks.review` under [Code review](#code-review), `specReview` and `blocks.specReview` under [Spec review lane](#spec-review-lane)):
+`review`, `blocks.review` and `goTo.review` under [Code review](#code-review), `specReview` and `blocks.specReview` under [Spec review lane](#spec-review-lane)):
 
 - `phase` is `investigate-and-plan`, `implement-plan` or `null` (no workflow launched). `flags` holds
   the two phase flags and `done`, as read (`done` is `false` when missing).
@@ -1840,9 +1860,9 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
 - `unsent` is `true` when the answers are complete, the plan flag is `true`, Implement plan was
   never launched, they differ from the last send and no session works: the conditions under which
   a **Save answers** would send. The same conditions make `answers_not_sent` the Implement block.
-- `goTo` is always `{ investigate, implement, groom }` (plus `e2e` for a ticket with an e2e record), each side `{ kind, command }` (`kind` is `attach`
+- `goTo` is always `{ investigate, implement, groom }` (plus `review` for a ticket with a review record and `e2e` for one with an e2e record), each side `{ kind, command }` (`kind` is `attach`
   or `resume`) or `null`: `null` for a phase with no launch record, a session that cannot be
-  joined, or an unavailable listing, so a ticket never launched has every side `null`. It used to
+  joined (not listed and no transcript to recover it from), or an unavailable listing, so a ticket never launched has every side `null`. It used to
   be one `{ kind, command }` or `null` for the current phase only, so anything reading `goTo`
   must now read a side.
 
@@ -1973,10 +1993,13 @@ has none, so there a chat cannot start.
   reload. The chat is titled with the first line of your first message (60 characters at most). The list
   on the left holds your standalone chats, newest first, each with its state and age.
 - **Continue a ticket's session.** In the [Sessions drawer](#bot-bar) a ticket session whose id is known
-  has a **Chat** icon link (tooltip "Chat") beside its copy button; it opens that same session here (and closes the drawer). The
+  has a live **Chat** icon link (tooltip "Chat") beside its copy button (without an id the slot is a dimmed placeholder); it opens that same session here (and closes the drawer). The
   session is continued, never copied: if it is idle, the dashboard stops it, waits for it to be gone and
   resumes it under the same id, so the conversation lands in the same transcript. The Open button still
-  opens the Claude dialog.
+  opens the Claude dialog. A session the CLI no longer lists can be continued too, when a launch record
+  of this dashboard names it and its transcript is still on disk (see [Icon and dialog](#icon-and-dialog)): it has no process,
+  so it is idle, nothing is stopped, and it runs from `~/pathwise`. Any other id the CLI does not list
+  is still refused (`session_not_found`).
 - **Start a chat from the drawer.** The Sessions drawer's header has a **New chat** link (also when no
   sessions are listed): it opens the Chat tab on a fresh conversation, the same as the tab's own **New
   chat**, and closes the drawer.
@@ -2015,12 +2038,12 @@ has none, so there a chat cannot start.
 
 ### Chat routes and events
 
-| Route                                      | Purpose                                                                                                                                                                                    |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /api/claude/tickets`                  | also answers `chats` (the standalone chats, at most 100, newest turn first) and `sessionIds` (`{ KEY: { phase: uuid } }`, sparse, `{}` when the listing is unavailable)                    |
-| `POST /api/claude/chat/send`               | body `{ message, session? }`; without `session` a new standalone chat is created. Answers `{ ok: true, session, chat }` once the process has started (`chat` is null for a listed session) |
-| `POST /api/claude/chat/stop`               | body `{ session }`; answers `{ ok: true }` once the signal is sent                                                                                                                         |
-| `GET /api/claude/chat/stream?session=<id>` | `text/event-stream` for one chat: `hello` first, then `item`, `delta` and `state`                                                                                                          |
+| Route                                      | Purpose                                                                                                                                                                                                                |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/claude/tickets`                  | also answers `chats` (the standalone chats, at most 100, newest turn first) and `sessionIds` (`{ KEY: { phase: uuid } }`, sparse, `{}` when the listing is unavailable; includes sessions recovered from a transcript) |
+| `POST /api/claude/chat/send`               | body `{ message, session? }`; without `session` a new standalone chat is created. Answers `{ ok: true, session, chat }` once the process has started (`chat` is null for a listed session)                             |
+| `POST /api/claude/chat/stop`               | body `{ session }`; answers `{ ok: true }` once the signal is sent                                                                                                                                                     |
+| `GET /api/claude/chat/stream?session=<id>` | `text/event-stream` for one chat: `hello` first, then `item`, `delta` and `state`                                                                                                                                      |
 
 `session` is always a full session UUID; the dashboard works out the directory itself and never accepts a
 path, directory, model or flag. A `message` is a string of 1 to 32000 characters after trimming. The routes
@@ -2028,14 +2051,14 @@ keep the launcher's rules (loopback Host, same-origin writes, JSON content type,
 `Cache-Control: no-store`), work while setup is incomplete, and fail with the usual
 `{ code, error, errors[] }`:
 
-| Status | Code               | When                                                                                                                                                                                                                         |
-| ------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_SESSION`  | `session` is present and not a UUID (send, stop, stream); checked before any file is read or process started                                                                                                                 |
-| `400`  | `INVALID_MESSAGE`  | `message` is not a string, is empty once trimmed or is over 32000 characters                                                                                                                                                 |
-| `409`  | `CLAUDE_REFUSED`   | `chat_busy` (a turn is already running in this chat), `session_running` (a listed session works outside the chat), `session_not_found`, `too_many_turns` (4 running), `no_turn` (stop with none)                             |
-| `502`  | `CLAUDE_FAILED`    | `listing_unavailable` (a listed session needs the CLI listing), `live_at_resume` (a stopped session still had a process after the wait), `spawn_failed` (the CLI could not be started, or a listed session has no directory) |
-| `429`  | `TOO_MANY_STREAMS` | 8 chat streams are already open                                                                                                                                                                                              |
-| `403`  | `INVALID_ORIGIN`   | the stream was requested cross-site (`Sec-Fetch-Site` `cross-site` or `same-site`); the other routes answer `OPERATION_FAILED` for that, this one says why                                                                   |
+| Status | Code               | When                                                                                                                                                                                                                                                                                |
+| ------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_SESSION`  | `session` is present and not a UUID (send, stop, stream); checked before any file is read or process started                                                                                                                                                                        |
+| `400`  | `INVALID_MESSAGE`  | `message` is not a string, is empty once trimmed or is over 32000 characters                                                                                                                                                                                                        |
+| `409`  | `CLAUDE_REFUSED`   | `chat_busy` (a turn is already running in this chat), `session_running` (a listed session works outside the chat), `session_not_found` (not a chat, not listed, and not a launched session recovered from its transcript), `too_many_turns` (4 running), `no_turn` (stop with none) |
+| `502`  | `CLAUDE_FAILED`    | `listing_unavailable` (a listed session needs the CLI listing), `live_at_resume` (a stopped session still had a process after the wait), `spawn_failed` (the CLI could not be started, or a listed session has no directory)                                                        |
+| `429`  | `TOO_MANY_STREAMS` | 8 chat streams are already open                                                                                                                                                                                                                                                     |
+| `403`  | `INVALID_ORIGIN`   | the stream was requested cross-site (`Sec-Fetch-Site` `cross-site` or `same-site`); the other routes answer `OPERATION_FAILED` for that, this one says why                                                                                                                          |
 
 A refused stream is a JSON error, because the stream's headers go out with its first event. Every event's
 data is JSON:
@@ -2078,10 +2101,24 @@ appears twice.
   same moment is not seen and would interleave with it.
 - **Cross-site stream requests** get `INVALID_ORIGIN`, on purpose, while the other routes answer
   `OPERATION_FAILED` for the same thing.
+- **Orphan recovery needs the transcript.** A session the CLI dropped from its listing keeps its Copy and
+  Chat only while its transcript is still on disk and its 8-character short id is unique among all
+  transcripts (two different ids behind one prefix recover nothing). The scan's answer, found or not, is
+  kept for 5 minutes, so a transcript that appears or goes is noticed within that time. An orphan has no
+  process, so it is never attached and the CLI never reports it Working; it reads working only while a Chat
+  turn of this dashboard is writing to it, and its Copy command is the resume string,
+  `cd ~/pathwise && claude --resume <id>`, which also works for a session started elsewhere (checked on the
+  real CLI). Its card state comes from the flag files and the listing, not from the transcript, so a row such
+  as `Code review · failed · session no longer listed` can sit beside a live Chat and Copy: the state words
+  say the CLI no longer lists the session, and the conversation can still be continued.
 - **Not covered by a check on the real CLI.** Resuming a finished `--bg` ticket session and the
   `session_running` refusal of a working one were run with scratch sessions on the real CLI. Sessions
-  started with the launcher's extra flags (`--add-dir`, `--tools`, `--strict-mcp-config`) and the Chat link
-  on a ticket's row in a real browser were not run end to end.
+  started with the launcher's extra flags (`--add-dir`, `--tools`, `--strict-mcp-config`) were not run end
+  to end. The Chat icon on the Sessions drawer's rows (live and placeholder, an orphan row included) was run
+  in a real browser; any other way into Chat from a ticket was not. Chatting with a recovered orphan through the
+  dashboard was also run end to end on the real CLI and in a real browser (a removed scratch session: its
+  drawer row's Chat icon opens the history from the transcript, and a reply keeps the context), besides the
+  tests.
 - **Out of scope:** approving tool calls in the app, choosing a directory, model or MCP servers, renaming,
   deleting or archiving a chat, live output of a session running in the background (Refresh reads its
   transcript), syntax highlighting and attachments.
@@ -2193,9 +2230,9 @@ while there is no session to show.
   the most recently active session first (one with no time last). Unlike the
   bar it does not forget a done bot after 10 minutes or a dismissed one, so a finished session stays
   reachable. A row opens the same Claude dialog its bot opens (the review dialog for a review session),
-  and a session with something to join has a copy icon button (tooltip **Copy attach** when live, **Copy resume** when finished)
-  that copies the same command as the dialog's Go to session. A ticket session whose id is known also has a
-  **Chat** icon link that opens it in the [Chat](#chat) tab. Rows are one compact line each, and one **Search sessions** box filters them by
+  and every ticket row has two icon slots, always: a copy icon button (tooltip **Copy attach** when live, **Copy resume** when finished)
+  that copies the same command as the dialog's Go to session, and a **Chat** icon link that opens the session in the [Chat](#chat) tab.
+  A slot with nothing to offer (no session id yet, no command to copy) stays as a dimmed placeholder whose tooltip says why. Rows are one compact line each, and one **Search sessions** box filters them by
   everything a row shows (ticket, phase, state, reason, the copy button's word, the group heading and
   **quiet**, never the time); every term must match, Escape clears the search before it closes the drawer.
   Each row ends with **9m ago** (read out as "active 9m ago"), when its session was last written to: the newest modification time

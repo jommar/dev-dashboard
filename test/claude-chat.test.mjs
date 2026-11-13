@@ -856,3 +856,90 @@ test('the list holds at most 100 chats, and a record over 64 KiB is not one', as
   assert.equal(chats[0].id, ids[0], 'newest first');
   assert.equal(chats.at(-1).id, ids[99], 'the 101st is the one left out');
 });
+
+// ---- a session the CLI no longer lists, that this dashboard launched ----
+
+const ORPHAN = UUID_5;
+const orphanName = (id) => (id === ORPHAN ? 'TAP-9-implement-plan' : null);
+
+async function orphanEnvironment(t, { known = true, recoverable = true } = {}) {
+  const env = await chatEnvironment(t, { launchedName: known ? orphanName : () => null });
+  env.sessions.setEntries([entry(UUID_2)]);
+  if (recoverable) env.sessions.setRecoverable(ORPHAN);
+  return env;
+}
+
+test('an orphaned launch session is continued: --resume in the standalone directory, no stop, no copy, no record', async (t) => {
+  const env = await orphanEnvironment(t);
+  env.writeTranscript(ORPHAN, [tUser('u1', null, 'q'), tAssistant('a1', 'u1', [tText('a')])]);
+
+  const result = await env.chat.send({ session: ORPHAN, message: 'carry on' });
+
+  assert.deepEqual(result, { ok: true, session: ORPHAN, chat: null });
+  assert.deepEqual(env.spawner.last().args, [...BASE_ARGS, '--resume', ORPHAN]);
+  assert.equal(env.spawner.last().options.cwd, env.pathwise);
+  assert.deepEqual(env.sessions.stops(), []);
+  assert.deepEqual(env.records(), []);
+  assert.deepEqual(
+    [...env.sessions.held],
+    [ORPHAN],
+    'the one-writer mark is held as for any session',
+  );
+});
+
+test('an orphaned launch session streams its history from its transcript, named by its launch record, idle', async (t) => {
+  const env = await orphanEnvironment(t);
+  env.writeTranscript(ORPHAN, [
+    tUser('u1', null, 'question'),
+    tAssistant('a1', 'u1', [tText('answer')]),
+  ]);
+
+  const { sink } = await env.openStream(ORPHAN);
+
+  const hello = sink.messages[0].payload;
+  assert.deepEqual(
+    [hello.session, hello.kind, hello.title, hello.state, hello.live],
+    [ORPHAN, 'session', 'TAP-9-implement-plan', 'idle', false],
+  );
+  assert.deepEqual(
+    hello.items.map((item) => item.text),
+    ['question', 'answer'],
+  );
+});
+
+for (const [label, options] of [
+  ['no launch record names it', { known: false }],
+  ['its short id does not recover to exactly this id', { recoverable: false }],
+]) {
+  test(`an unlisted session is still session_not_found when ${label}`, async (t) => {
+    const env = await orphanEnvironment(t, options);
+    env.writeTranscript(ORPHAN, [tUser('u1', null, 'q')]);
+    await assert.rejects(
+      env.chat.send({ session: ORPHAN, message: 'hi' }),
+      refused('session_not_found'),
+    );
+    await assert.rejects(env.openStream(ORPHAN), refused('session_not_found'));
+    assert.equal(env.spawner.calls.length, 0);
+    assert.equal(env.sessions.held.size, 0);
+  });
+}
+
+test('an unlisted session whose prefix recovers to a different id is not the orphan', async (t) => {
+  const env = await orphanEnvironment(t);
+  const sibling = `${ORPHAN.slice(0, 8)}-9999-4999-8999-999999999999`;
+  await assert.rejects(
+    env.chat.send({ session: sibling, message: 'hi' }),
+    refused('session_not_found'),
+  );
+});
+
+test('a listed session never asks for recovery, and an unreadable listing still says listing_unavailable', async (t) => {
+  const env = await orphanEnvironment(t);
+  await env.chat.send({ session: UUID_2, message: 'hi' });
+  assert.equal(env.sessions.events.includes('recover'), false);
+  env.sessions.failListing();
+  await assert.rejects(
+    env.chat.send({ session: ORPHAN, message: 'hi' }),
+    failedWith('listing_unavailable'),
+  );
+});
