@@ -16,8 +16,11 @@
   to end on the real CLI and in a browser with a removed scratch session.
 - The Chat message box now starts its text and placeholder at the top left again; the room for the floating
   Send/Stop/Retry/Refresh controls is kept on its right instead of a reserved row at the top.
-- Every ticket row in the Sessions drawer now always shows both icon slots, Chat and Copy: live when the
+- Every row in the Sessions drawer now always shows both icon slots, Chat and Copy: live when the
   session or command exists, otherwise a dimmed placeholder with a tooltip that says why, so rows look uniform.
+  A standalone chat's row has the Chat icon too, and each row's phase (chat, code review, implement plan,
+  investigate and plan, groom, E2E check) is now a small icon with the phase name as its tooltip, followed by
+  the state and reason; the search still matches the phase words.
 - Made the Sessions drawer's per-row **Copy attach** / **Copy resume** button an icon (the label is its
   tooltip, its accessible name is unchanged), and a refused copy now says **Copy failed** instead of staying
   silent.

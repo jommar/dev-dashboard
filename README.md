@@ -2226,13 +2226,13 @@ while there is no session to show.
 - **The session list.** A **Sessions** tab on the right edge of every screen (with a count, amber when
   something needs you) opens a drawer that lists the same sessions as the bot lane: every session of a
   ticket in an active sprint, plus the standalone chats of the last 24 hours (a chat row is named by its
-  title and reads `Chat · working`, and opens the chat), grouped **Needs you**, **Working**, **Failed** and **Done**, each group with
+  title, shows `working` after its chat icon, and opens the chat), grouped **Needs you**, **Working**, **Failed** and **Done**, each group with
   the most recently active session first (one with no time last). Unlike the
   bar it does not forget a done bot after 10 minutes or a dismissed one, so a finished session stays
   reachable. A row opens the same Claude dialog its bot opens (the review dialog for a review session),
   and every ticket row has two icon slots, always: a copy icon button (tooltip **Copy attach** when live, **Copy resume** when finished)
   that copies the same command as the dialog's Go to session, and a **Chat** icon link that opens the session in the [Chat](#chat) tab.
-  A slot with nothing to offer (no session id yet, no command to copy) stays as a dimmed placeholder whose tooltip says why. Rows are one compact line each, and one **Search sessions** box filters them by
+  A slot with nothing to offer (no session id yet, no command to copy) stays as a dimmed placeholder whose tooltip says why; a chat row has the Chat icon too. A row's phase (chat, code review, implement plan, investigate and plan, groom, E2E check) is a small icon with the phase name as its tooltip, followed by the state and reason. Rows are one compact line each, and one **Search sessions** box filters them by
   everything a row shows (ticket, phase, state, reason, the copy button's word, the group heading and
   **quiet**, never the time); every term must match, Escape clears the search before it closes the drawer.
   Each row ends with **9m ago** (read out as "active 9m ago"), when its session was last written to: the newest modification time

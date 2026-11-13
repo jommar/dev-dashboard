@@ -13,6 +13,12 @@ const paths = {
   tools: 'M5 6h14M5 12h14M5 18h14',
   // Not tabs: the copy buttons of the Sessions drawer's rows, and their done mark.
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
+  // The phase of a Claude session in the Sessions drawer (investigate and review also draw a circle).
+  investigate: 'm20 20-4.5-4.5',
+  implement: 'm8 8-4 4 4 4M16 8l4 4-4 4M13.5 6l-3 12',
+  review: 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z',
+  groom: 'M4 20l1-4L16 5l3 3L8 19zM13.5 7.5l3 3',
+  e2e: 'M4 5h16v14H4zM10 9l5 3-5 3z',
   check: 'm5 12 5 5 9-10',
 };
 
@@ -38,6 +44,8 @@ export function NavIcon({ name }) {
         </>
       )}
       {name === 'settings' && <circle cx="11" cy="12.5" r="3" />}
+      {name === 'investigate' && <circle cx="11" cy="11" r="6" />}
+      {name === 'review' && <circle cx="12" cy="12" r="3" />}
     </svg>
   );
 }

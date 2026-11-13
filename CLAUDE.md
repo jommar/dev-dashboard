@@ -199,7 +199,7 @@ the same response's `lastActive` map (`{ [ticket]: { [phase]: ISO } }`, `{}` whe
 each row its last-activity time. It makes no request,
 mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
 `Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`; a chat row's name is its title:
-`Open <title> Chat session`, detail `Chat · working`, with no reason; the header's **New chat** link, `#/chat` as on the Chat screen, is there with or without rows and closes the drawer, focus back on the tab), and its styles live in
+`Open <title> Chat session`; a row's detail is the phase as an icon (`sessions-phase-<key>`, `NavIcon`, `aria-hidden`, not a tab stop, the words from `phaseOf` in its app tooltip) followed by the state and reason, a chat's just `working`/`done`; the search still matches the phase words; the header's **New chat** link, `#/chat` as on the Chat screen, is there with or without rows and closes the drawer, focus back on the tab), and its styles live in
 `ui-react/styles/sessions-drawer.css` because `bot-bar.css` selectors must all start `.bot-bar`. A row's
 time is a `.sessions-row-when` span after its button, linked by the button's `aria-describedby` so the
 name stays as above, with no live region. `isQuiet` (`QUIET_WORKING_MS`) marks a working row whose time
@@ -207,8 +207,8 @@ is five minutes old, and the open drawer re-reads the clock (`ACTIVITY_CLOCK_MS`
 Chat rows are in the same groups, appended after the sprint filter like their bots (so they are the
 24-hour chats, not every chat on disk). `sessionGroups` prefers a bot's own `goTo` and `lastActiveAt` when
 it has the key (a chat's `goTo` is null while it works), and looks the rest up under the ticket as before.
-Every ticket row always has both icon slots, **Chat** and copy (a standalone chat's row has only the copy slot:
-the row itself opens the chat). Each is live when its action exists (a `session`, a `goTo`) and otherwise a dimmed
+Every row always has both icon slots, **Chat** and copy (a chat row's Chat link is the chat itself, name
+`Chat with <title> Chat session`, the same form as a ticket row's `Chat with <KEY> <phase> session`). Each is live when its action exists (a `session`, a `goTo`) and otherwise a dimmed
 `aria-disabled` placeholder (`SlotOff`, a focusable `span role="button"` that does nothing, test ids
 `sessions-chat-off-<key>` / `sessions-copy-off-<key>`) whose tooltip and name say why (`No session to chat with`;
 `Working: no resume command yet` for a working chat, else `No resume command available`).

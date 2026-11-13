@@ -36,8 +36,10 @@ const PHASE_WORDS = {
   e2e: 'E2E check',
   chat: 'Chat',
 };
-// The words a row shows after its ticket: the phase, then the state with its reason when it adds one.
+// The words of a phase: the tooltip of its icon in a row, the row button's name and what the search matches.
 const phaseOf = (phase) => PHASE_WORDS[phase] ?? phase;
+// A phase's icon (NavIcon.jsx); a phase without one shows its words.
+const PHASE_ICONS = new Set(Object.keys(PHASE_WORDS));
 function stateText({ state, reason, phase }) {
   // A chat has no reason to give: it is working, done or failed.
   if (phase === 'chat') return BOT_STATE_WORDS[state];
@@ -117,7 +119,22 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
           <StatusMark status={MARK[state]} />
         </span>
         <span className="sessions-row-ticket">{name}</span>
-        <span className="sessions-row-detail">{`${phaseWords} · ${stateText(row)}`}</span>
+        <span className="sessions-row-detail">
+          {PHASE_ICONS.has(phase) ? (
+            <DashboardTooltip title={phaseWords} placement="top">
+              <span
+                className="sessions-row-phase"
+                data-testid={`sessions-phase-${key}`}
+                data-phase={phase}
+              >
+                <NavIcon name={phase} />
+              </span>
+            </DashboardTooltip>
+          ) : (
+            `${phaseWords} · `
+          )}
+          <span className="sessions-row-state">{stateText(row)}</span>
+        </span>
       </button>
       {lastActiveAt && (
         <span
@@ -131,28 +148,27 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
           <RelativeTime iso={lastActiveAt} now={now} title={activityTitle(lastActiveAt, quiet)} />
         </span>
       )}
-      {phase !== 'chat' &&
-        (session ? (
-          <DashboardTooltip title="Chat" placement="left">
-            <a
-              className="sessions-row-chat"
-              href={chatHref(session)}
-              onClick={onClose}
-              data-testid={`sessions-chat-${key}`}
-              aria-label={`Chat with ${ticket} ${phaseWords} session`}
-            >
-              <NavIcon name="chat" />
-            </a>
-          </DashboardTooltip>
-        ) : (
-          <SlotOff
-            slot="chat"
-            icon="chat"
-            testId={`sessions-chat-off-${key}`}
-            label={`Chat with ${ticket} ${phaseWords} session`}
-            reason="No session to chat with"
-          />
-        ))}
+      {session ? (
+        <DashboardTooltip title="Chat" placement="left">
+          <a
+            className="sessions-row-chat"
+            href={chatHref(session)}
+            onClick={onClose}
+            data-testid={`sessions-chat-${key}`}
+            aria-label={`Chat with ${name} ${phaseWords} session`}
+          >
+            <NavIcon name="chat" />
+          </a>
+        </DashboardTooltip>
+      ) : (
+        <SlotOff
+          slot="chat"
+          icon="chat"
+          testId={`sessions-chat-off-${key}`}
+          label={`Chat with ${name} ${phaseWords} session`}
+          reason="No session to chat with"
+        />
+      )}
       {goTo ? (
         <DashboardTooltip title={outcome ?? copyWord(goTo)} placement="left">
           <Button

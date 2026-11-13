@@ -206,12 +206,27 @@
   font-weight: 600;
 }
 .sessions-row-detail {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
   min-width: 0;
-  overflow: hidden;
   color: var(--muted);
   font-size: var(--fs-xs);
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The phase is an icon, its words in the tooltip; the state and reason follow, cut short with an ellipsis. */
+.sessions-row-phase {
+  display: flex;
+  flex: none;
+}
+.sessions-row-phase .nav-icon {
+  width: 14px;
+  height: 14px;
+}
+.sessions-row-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* When the session was last written to: after the row's button, so it sits at the row's end. A working
    session that has been quiet a while is amber and bold (weight as well as colour); its popup says why. */

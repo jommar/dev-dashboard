@@ -454,7 +454,13 @@ test('a chat row in the drawer reads as a chat, and opening a chat closes the dr
   await page.goto('/#/services');
   await page.getByTestId('sessions-tab').click();
   const row = page.getByTestId(`sessions-row-${SESSION}:chat`);
-  await expect(row).toContainText('Chat · done');
+  // The phase is an icon (its words are in the tooltip and the button's name); the state is text.
+  await expect(row).toContainText('done');
+  await expect(row).not.toContainText('Chat');
+  await expect(page.getByTestId(`sessions-phase-${SESSION}:chat`)).toBeVisible();
+  await expect(page.getByTestId(`sessions-open-${SESSION}:chat`)).toHaveAccessibleName(
+    'Open Plan the release notes Chat session',
+  );
   await expect(row).not.toContainText('status unavailable');
   await page.getByTestId(`sessions-open-${SESSION}:chat`).click();
   await expect(page).toHaveURL(new RegExp(`#/chat\\?session=${SESSION}$`));
@@ -859,8 +865,9 @@ test('a ticket row Chat link is an icon with a tooltip, and the row columns line
     await right('sessions-copy-BOT-1:implement'),
   );
   await expect(page.getByTestId('sessions-copy-BOT-2:review')).toHaveCount(0);
-  await expect(page.getByTestId(`sessions-chat-${OTHER}:chat`)).toHaveCount(0);
-  // The slots are still there, as placeholders: Copy for the review row, none for a chat row's Chat.
+  // A chat row has a live Chat icon too (it used to have none), never a placeholder.
+  await expect(page.getByTestId(`sessions-chat-${OTHER}:chat`)).toHaveCount(1);
+  // The slots are still there, as placeholders: Copy for the review row.
   await expect(page.getByTestId('sessions-copy-off-BOT-2:review')).toBeVisible();
   await expect(page.getByTestId(`sessions-chat-off-${OTHER}:chat`)).toHaveCount(0);
 
@@ -993,8 +1000,9 @@ for (const width of [1200, 390]) {
     await expect(page.getByTestId('sessions-copy-off-BOT-4:review')).toHaveCount(0);
     await expect(page.getByTestId('sessions-chat-BOT-3:implement')).toHaveCount(0);
     await expect(page.getByTestId('sessions-copy-BOT-3:implement')).toHaveCount(0);
-    // Chat rows have no Chat slot (the row opens the chat) but keep Copy.
+    // Chat rows have a live Chat icon (a session id is always known) and keep Copy.
     await expect(page.getByTestId(`sessions-chat-off-${working}:chat`)).toHaveCount(0);
+    await expect(page.getByTestId(`sessions-chat-${working}:chat`)).toBeVisible();
     await expect(page.getByTestId(`sessions-copy-${CHAT_SESSION_ID}:chat`)).toBeVisible();
 
     const cases = [
@@ -1084,6 +1092,135 @@ for (const width of [1200, 390]) {
       times.push(Math.round(box.x + box.width));
     }
     expect(new Set(times), 'times end in one column').toHaveProperty('size', 1);
+  });
+}
+
+// A row names its phase with an icon and a tooltip (the words are the row button's name and still what
+// the search matches), and a standalone chat's row has a live Chat icon like every other row.
+const PHASE_ROWS = [
+  ['BOT-1:investigate', 'Investigate and plan', 'BOT-1'],
+  ['BOT-2:implement', 'Implement plan', 'BOT-2'],
+  ['BOT-3:review', 'Code review', 'BOT-3'],
+  ['BOT-4:groom', 'Groom ticket', 'BOT-4'],
+  ['BOT-5:e2e', 'E2E check', 'BOT-5'],
+];
+const LONG_TITLE =
+  'A very long conversation title that goes on and on well past the width of the drawer row';
+for (const width of [1200, 390]) {
+  test(`drawer rows show the phase as an icon with a tooltip, and a chat row has a live Chat icon, at ${width}px`, async ({
+    page,
+    dashboard,
+  }) => {
+    const { data } = dashboard;
+    const resume = { kind: 'resume', command: 'claude --resume demo' };
+    data.claude.tickets['BOT-1'] = claudeEntry('working', 'running');
+    data.claude.tickets['BOT-2'] = claudeEntry('done', 'implemented', { phase: 'implement-plan' });
+    data.claude.tickets['BOT-3'] = claudeEntry('none', null, {
+      review: { state: 'done', reason: 'finished' },
+    });
+    data.claude.tickets['BOT-4'] = claudeEntry('none', null, {
+      groom: { state: 'done', reason: 'finished' },
+    });
+    data.claude.tickets['BOT-5'] = claudeEntry('none', null, {
+      e2e: { state: 'done', reason: 'finished' },
+    });
+    data.claude.activeSprint.keys = PHASE_ROWS.map(([, , key]) => key);
+    data.claude.sessionIds = { 'BOT-2': { implement: SESSION } };
+    const chatId = '7a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
+    data.claude.chats = [
+      { ...chatEntry(chatId, 'done', hour, 'Plan the release notes'), goTo: resume },
+      { ...chatEntry(CHAT_SESSION_ID, 'done', 2 * hour, LONG_TITLE), goTo: resume },
+    ];
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/#/services');
+    await page.getByTestId('sessions-tab').click();
+    const tip = page.getByRole('tooltip');
+
+    const glyphs = new Set();
+    const rowKeys = [...PHASE_ROWS.map(([key]) => key), `${chatId}:chat`];
+    for (const key of rowKeys) {
+      const words = key.endsWith(':chat')
+        ? 'Chat'
+        : PHASE_ROWS.find(([rowKey]) => rowKey === key)[1];
+      const name = key.endsWith(':chat') ? 'Plan the release notes' : key.split(':')[0];
+      const row = page.getByTestId(`sessions-row-${key}`);
+      const icon = page.getByTestId(`sessions-phase-${key}`);
+      // An icon, not the phase words; the row button's name still carries them.
+      await expect(row.locator('.sessions-row-detail')).not.toContainText(words);
+      await expect(row.locator('.sessions-row-detail')).toContainText(/done|working/);
+      await expect(icon.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+      await expect(icon).not.toHaveAttribute('title', /.+/);
+      await expect(icon.locator('title')).toHaveCount(0);
+      glyphs.add(await icon.locator('path').first().getAttribute('d'));
+      await expect(page.getByTestId(`sessions-open-${key}`)).toHaveAccessibleName(
+        `Open ${name} ${words} session`,
+      );
+      // No extra tab stop for the icon.
+      expect(await icon.evaluate((el) => el.tabIndex)).toBe(-1);
+      await icon.hover();
+      await expect(tip).toHaveText(words);
+      await page.getByTestId('sessions-search').hover();
+      await expect(tip).toHaveCount(0);
+    }
+    expect(glyphs.size, 'one distinct glyph a phase').toBe(6);
+
+    // The search still matches the phase words that are no longer visible.
+    const search = page.getByTestId('sessions-search');
+    const rows = page.locator('[data-testid^="sessions-row-"]');
+    for (const [word, key] of [
+      ['review', 'BOT-3:review'],
+      ['implement', 'BOT-2:implement'],
+      ['groom', 'BOT-4:groom'],
+      ['e2e', 'BOT-5:e2e'],
+      ['investigate', 'BOT-1:investigate'],
+      ['chat', `${chatId}:chat`],
+    ]) {
+      await search.fill(word);
+      await expect(rows, `search "${word}"`).toHaveCount(word === 'chat' ? 2 : 1);
+      await expect(page.getByTestId(`sessions-row-${key}`)).toBeVisible();
+    }
+    await search.fill('');
+
+    // A chat row has a live Chat icon: same link, name form and tooltip, and it closes the drawer.
+    const link = page.getByTestId(`sessions-chat-${chatId}:chat`);
+    await expect(link).toHaveAttribute('href', `#/chat?session=${chatId}`);
+    await expect(link).toHaveAccessibleName('Chat with Plan the release notes Chat session');
+    expect((await link.innerText()).trim()).toBe('');
+    await expect(page.getByTestId(`sessions-chat-off-${chatId}:chat`)).toHaveCount(0);
+    await link.hover();
+    await expect(tip).toHaveText('Chat');
+    await page.getByTestId('sessions-search').hover();
+
+    // Columns line up across ticket rows and chat rows, long titles are cut short, nothing overflows.
+    const left = async (testId) => Math.round((await page.getByTestId(testId).boundingBox()).x);
+    const chatXs = [
+      await left(`sessions-chat-${chatId}:chat`),
+      await left(`sessions-chat-${CHAT_SESSION_ID}:chat`),
+      await left('sessions-chat-BOT-2:implement'),
+    ];
+    expect(new Set(chatXs).size, `Chat icons share a column: ${chatXs}`).toBe(1);
+    const copyXs = [
+      await left(`sessions-copy-${chatId}:chat`),
+      await left(`sessions-copy-${CHAT_SESSION_ID}:chat`),
+      await left('sessions-copy-off-BOT-2:implement'),
+    ];
+    expect(new Set(copyXs).size, `Copy icons share a column: ${copyXs}`).toBe(1);
+    const title = page
+      .getByTestId(`sessions-row-${CHAT_SESSION_ID}:chat`)
+      .locator('.sessions-row-ticket');
+    expect(await title.evaluate((el) => el.scrollWidth > el.clientWidth), 'cut short').toBe(true);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      'the page does not overflow',
+    ).toBe(true);
+    expect(
+      await page.getByTestId('sessions-body').evaluate((el) => el.scrollWidth <= el.clientWidth),
+      'the list does not overflow',
+    ).toBe(true);
+
+    await link.click();
+    await expect(page).toHaveURL(new RegExp(`#/chat\\?session=${chatId}$`));
+    await expect(page.getByTestId('sessions-drawer')).toBeHidden();
   });
 }
 
