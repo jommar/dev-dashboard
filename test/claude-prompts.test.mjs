@@ -1,5 +1,6 @@
 // claude-prompts.test.mjs — the prompt store: the one module that knows the prompt files
-// (`investigate.md`, `implement.md`, `answers.md`, `groom.md` in the prompts folder). It reads them under the
+// (`investigate.md`, `implement.md`, `answers.md`, `answers-implement.md`, `groom.md` in the prompts
+// folder). It reads them under the
 // rules the launcher already uses (a missing file is the built-in text, a file that cannot be used
 // is `unusable`), lists them for the editor, writes one whole or not at all, and removes one.
 //
@@ -11,13 +12,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  ANSWERS_IMPLEMENT_TEMPLATE,
   ANSWERS_TEMPLATE,
+  APPROVE_TEMPLATE,
   BAD_PROMPT_FILES,
+  E2E_TEMPLATE,
   GROOM_TEMPLATE,
+  IMPLEMENT_TEMPLATE,
   INVESTIGATE_TEMPLATE,
   PROMPT_MAX_CHARS,
   PROMPT_NAMES,
+  REREVIEW_TEMPLATE,
   REVIEW_TEMPLATE,
+  SPEC_REVIEW_TEMPLATE,
   fsChanges,
   promptEntry,
   recordingFs,
@@ -62,7 +69,7 @@ test('scenario 140: with no files and no folder every prompt is the built-in tex
   assert.deepEqual(
     list,
     NAMES.map((name) => entry(name, 'default')),
-    'nine entries, in this order, each with its label, placeholders and the built-in text',
+    'ten entries, in this order, each with its label, placeholders and the built-in text',
   );
   assert.equal(fs.existsSync(p.promptsDir), false, 'listing creates no folder');
   assert.deepEqual(fsChanges(p.recorder), [], 'and changes nothing');
@@ -86,6 +93,7 @@ test('scenario 140: a file that is usable is custom with its trimmed text, place
     ),
     entry('implement', 'default'),
     entry('answers', 'custom', 'only {CHANGE}'),
+    entry('answers-implement', 'default'),
     entry('approve', 'default'),
     entry('rereview', 'default'),
     entry('groom', 'default'),
@@ -115,7 +123,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
     assert.deepEqual(
       list,
       NAMES.map((name) => entry(name, 'unusable')),
-      'every one of the nine',
+      'every one of the ten',
     );
     for (const name of NAMES)
       assert.deepEqual(await p.store.read(name), entry(name, 'unusable'), `read ${name}`);
@@ -130,6 +138,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
         ['investigate', 'unusable'],
         ['implement', 'default'],
         ['answers', 'custom'],
+        ['answers-implement', 'unusable'],
         ['approve', 'unusable'],
         ['rereview', 'unusable'],
         ['groom', 'unusable'],
@@ -238,7 +247,7 @@ const BAD_NAMES = [
   7,
 ];
 
-test('scenario 143: only the nine names are known, anything else is refused before any file is looked at', async (t) => {
+test('scenario 143: only the ten names are known, anything else is refused before any file is looked at', async (t) => {
   const p = await promptStore(t);
   // Where `../investigate` would land if a name were put into a path.
   const sentinel = path.join(p.root, 'investigate.md');
@@ -274,6 +283,7 @@ test('scenario 144: write keeps the trimmed text and one newline, and answers wi
     assert.deepEqual(await p.store.read(name), saved, 'and read gives the same');
   }
   assert.deepEqual(p.files(), [
+    'answers-implement.md',
     'answers.md',
     'approve.md',
     'e2e.md',
@@ -547,6 +557,7 @@ test('scenario 150: a file that contains a NUL byte is unusable, shown with the 
     entry('investigate', 'unusable'),
     entry('implement', 'unusable'),
     entry('answers', 'custom', 'a fine text'),
+    entry('answers-implement', 'default'),
     entry('approve', 'default'),
     entry('rereview', 'default'),
     entry('groom', 'default'),
@@ -660,12 +671,30 @@ for (const [name, placeholders] of [
 
 // ---- the registered names and the groom prompt ----
 
-test('scenario 200: the nine registered prompt names retain their order', async () => {
+test('scenario 200: the ten registered prompt names retain their order', async () => {
   const { PROMPT_NAMES: names, PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
 
   assert.deepEqual(names, NAMES);
+  assert.equal(names.indexOf('answers-implement'), names.indexOf('answers') + 1, 'after answers');
   assert.deepEqual(Object.keys(PROMPT_TEMPLATES), names);
   assert.equal(PROMPT_TEMPLATES.groom, GROOM_TEMPLATE, 'the built-in text, word for word');
+});
+
+test('scenario 200: the ten built-ins are the fixture texts, so the registry and wording agree', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+
+  assert.deepEqual(PROMPT_TEMPLATES, {
+    investigate: INVESTIGATE_TEMPLATE,
+    implement: IMPLEMENT_TEMPLATE,
+    answers: ANSWERS_TEMPLATE,
+    'answers-implement': ANSWERS_IMPLEMENT_TEMPLATE,
+    approve: APPROVE_TEMPLATE,
+    rereview: REREVIEW_TEMPLATE,
+    groom: GROOM_TEMPLATE,
+    review: REVIEW_TEMPLATE,
+    'spec-review': SPEC_REVIEW_TEMPLATE,
+    e2e: E2E_TEMPLATE,
+  });
 });
 
 test('scenario 200: the groom entry has its label and only {KEY} and {SLUG} as placeholders', async (t) => {
@@ -680,7 +709,7 @@ test('scenario 200: the groom entry has its label and only {KEY} and {SLUG} as p
     text: GROOM_TEMPLATE,
     placeholders: ['{KEY}', '{SLUG}'],
   });
-  assert.deepEqual((await p.store.list())[5], groom, 'the groom entry keeps its position');
+  assert.deepEqual((await p.store.list())[6], groom, 'the groom entry keeps its position');
   assert.ok(!groom.text.includes('{STATUS_FILE}'), 'the built-in text has no status file');
   assert.ok(groom.text.includes('`groom-ticket` skill'), 'it runs the groom-ticket skill');
   assert.ok(groom.text.includes('.orchestrator/{SLUG}/groom.md'), 'and names its deliverable');
@@ -705,17 +734,42 @@ test('scenario 202: the investigate text asks for lettered options inside each q
   assert.ok(questions.includes('its options inline as (a) ..., (b) ..., (c) ...'));
   assert.ok(questions.includes('Always put lettered options (a, b, c) inside the question text'));
   assert.ok(questions.includes('under 450 characters'));
-  assert.ok(questions.includes('Do not change the shape of the array or add keys.'));
+  assert.ok(
+    questions.includes(
+      'Every new question has exactly the keys id, question, answer and phase, and a new ' +
+        'question here carries "phase": "investigate-and-plan".',
+    ),
+  );
+  assert.ok(
+    questions.includes(
+      'Preserve all existing questions and answered history as they are, including an existing ' +
+        'question with no phase.',
+    ),
+  );
   assert.ok(!questions.includes('best-guess default'), 'the old wording is gone');
 });
 
-test('planning prompts preserve question history and require decision documentation', async () => {
+test('planning prompts preserve question history, phase and decision documentation', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
   for (const name of ['investigate', 'answers']) {
     const text = PROMPT_TEMPLATES[name];
-    assert.match(text, /Never change an answered question's id, text or answer/, name);
+    assert.match(text, /Never change an answered question's id, text, answer or phase/, name);
+    assert.match(
+      text,
+      /Preserve all existing questions and answered history as they are, including an existing question with no phase/,
+      name,
+    );
+    assert.doesNotMatch(
+      text,
+      /Preserve every existing question's phase/,
+      `${name} no longer forces a phase onto legacy questions`,
+    );
     assert.match(text, /fresh unique qN id greater than every existing numeric id/, name);
-    assert.match(text, /\{\s*"id": "q[1N]", "question": [^\n]+"answer": null\}/, name);
+    assert.match(
+      text,
+      /\{\s*"id": "q[1N]", "question": [^\n]+"answer": null,\s*"phase":\s*"investigate-and-plan"\}/,
+      `${name} names the four keys`,
+    );
     assert.match(text, /## Decision documentation/, name);
     assert.match(
       text,
@@ -724,6 +778,71 @@ test('planning prompts preserve question history and require decision documentat
     );
     assert.match(text, /confirmed decisions separate from provisional defaults/, name);
   }
+});
+
+test('the implement prompt tags an appended blocker implement-plan and preserves phases', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  const text = PROMPT_TEMPLATES.implement;
+
+  assert.match(
+    text,
+    /Append one object to `questions` with the next id, `"answer": null`, `"phase":\s*"implement-plan"/,
+    'the blocker is the implement session’s own',
+  );
+  assert.match(
+    text,
+    /Every new question has exactly the keys id, question, answer and phase, and a new question here carries "phase": "implement-plan"/,
+  );
+  assert.match(
+    text,
+    /Preserve existing questions and answered history as they are, including one with no phase/,
+  );
+  assert.doesNotMatch(text, /preserve every existing question's phase/i);
+  assert.match(text, /never change an answered question's id, text, answer or phase/i);
+});
+
+test('the implement answers message continues implementation and never returns to the approval gate', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  const text = PROMPT_TEMPLATES['answers-implement'];
+
+  assert.match(text, /Continue: you are already implementing the approved plan/);
+  assert.match(text, /Resume the implementation and its verification with these decisions/);
+  assert.match(text, /Do not stop for plan approval/);
+  assert.match(text, /Do not redirect to the planning approval gate/);
+  assert.doesNotMatch(text, /Stop at the approval gate/i, 'not the planning message');
+  assert.doesNotMatch(text, /start the next workflow step/i, 'no redirect to planning');
+  assert.match(text, /"phase": "implement-plan"/, 'a blocker is tagged implement');
+  assert.match(
+    text,
+    /Preserve all existing questions and answered history as they are, including an existing question with no phase/i,
+  );
+  assert.doesNotMatch(text, /preserve every existing question's phase/i);
+  assert.match(text, /Never change an answered question's id, text, answer or phase/i);
+  assert.match(text, /Do not commit, push or open a pull request/i);
+  assert.match(
+    text,
+    /leave the changes in the worktree with a short report in `\.orchestrator\/\{SLUG\}\/`/,
+  );
+  assert.doesNotMatch(text, /change no file outside/, 'the implement session edits code');
+  assert.match(text, /change only `"implement-plan": false` to `"implement-plan": true`/);
+  assert.doesNotMatch(text, /investigate-and-plan/, 'it sets only implement-plan');
+});
+
+test('override: the implement answers message is listed, editable and resettable like the others', async (t) => {
+  const p = await promptStore(t);
+  assert.deepEqual(await p.store.read('answers-implement'), entry('answers-implement', 'default'));
+  assert.deepEqual((await p.store.list())[3], entry('answers-implement', 'default'), 'fourth');
+
+  const saved = await p.store.write('answers-implement', 'custom {KEY} for {QUESTION_IDS}');
+  assert.deepEqual(saved, entry('answers-implement', 'custom', 'custom {KEY} for {QUESTION_IDS}'));
+  assert.equal(p.bytes('answers-implement'), 'custom {KEY} for {QUESTION_IDS}\n');
+  assert.deepEqual(await p.store.read('answers-implement'), saved);
+
+  assert.deepEqual(
+    await p.store.remove('answers-implement'),
+    entry('answers-implement', 'default'),
+  );
+  assert.deepEqual(await p.store.read('answers-implement'), entry('answers-implement', 'default'));
 });
 
 test('answer continuation repeats reassessment and gates completion on current questions and docs', async () => {

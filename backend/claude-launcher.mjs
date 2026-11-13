@@ -32,9 +32,8 @@ import {
   SPEC_REVIEW,
   answerHash,
   answersToSend,
-  currentRecord,
-  deriveEntry,
   approveBlock,
+  deriveEntry,
   implementBlock,
   implementStatus,
   isQuestionId,
@@ -42,6 +41,7 @@ import {
   isTicketKey,
   phaseRecords,
   phaseSessions,
+  questionPhase,
   readE2e,
   readGroom,
   readLaunch,
@@ -96,6 +96,9 @@ const PROMPT_NAME = {
   [SPEC_REVIEW]: 'spec-review',
   [E2E]: 'e2e',
 };
+
+// The message each workflow phase gets when the user answers a question it asked.
+const ANSWER_PROMPT = { [INVESTIGATE]: 'answers', [IMPLEMENT]: 'answers-implement' };
 
 // What the spec review launch enforces on the command line, which no prompt can widen. The built-in
 // tools are only these (no Bash, Edit, Write, Grep, Glob, WebFetch or Agent), so the `Read` deny rules
@@ -576,42 +579,71 @@ export function createClaudeLauncher({
     return sendFailed(reason);
   }
 
-  // Routes the saved answers back to the planning session that asked, when every question has one
-  // and they differ from the last send (or `resend` asks for the whole set again). The answers are
-  // saved already, so a send that cannot be made only reports why and the next save retries it;
-  // nothing is rolled back and `sent` is recorded only once the resume delivered. Answers that
-  // differ from the last send revise the plan, so the approval is withdrawn with the send.
+  // Each lane's saved answers go to its own session, and `sent` is stamped only after that resume
+  // delivered. Only the planning send mutates status (resets `done`, withdraws a revised approval).
   async function sendAnswers(key, { resend = false } = {}) {
     const status = readObject(statusPath(key)).value;
     const launched = readObject(launchPath(key)).value;
-    const plan = answersToSend(status, launched, { resend });
-    if (plan.skip) return { status: 'skipped', reason: plan.skip };
+    const records = readLaunch(launched);
+    const recordOf = (phase) => records.find(({ phase: asked }) => asked === phase) ?? null;
+    const planning = {
+      phase: INVESTIGATE,
+      record: recordOf(INVESTIGATE),
+      plan: answersToSend(status, launched, { resend }),
+    };
+    const implementing = {
+      phase: IMPLEMENT,
+      record: recordOf(IMPLEMENT),
+      plan: answersToSend(status, launched, { phase: IMPLEMENT }),
+    };
+    // In `PHASES` order, one lane at a time; a lane with nothing pending is left alone. When
+    // neither is pending, the planning lane's own reason is what the card explains.
+    const lanes = [planning, implementing].filter(({ record, plan }) => record && !plan.skip);
+    if (!lanes.length) return { status: 'skipped', reason: planning.plan.skip };
 
-    // The message is settled first: a message file that cannot be used stops the send before the
+    // The messages are settled first: a message file that cannot be used fails the send before any
     // session is listed, stopped or touched.
-    const record = readLaunch(launched).find(({ phase }) => phase === INVESTIGATE);
-    const template = promptTemplate('answers');
-    if (!template) return sendFailed('prompt_unreadable');
-    const notice = fillTemplate(template, {
-      ...promptValues(key),
-      QUESTION_IDS: plan.changed.join(', '),
-      CHANGE: resend ? 'answers (sent again)' : record.sent ? 'changed answers' : 'answers',
-    });
-    const revised = Object.keys(plan.hashes).some(
-      (id) => plan.hashes[id] !== record.sent?.answers[id],
-    );
+    const messages = lanes.map((lane) => ({
+      ...lane,
+      template: promptTemplate(ANSWER_PROMPT[lane.phase]),
+    }));
+    if (messages.some(({ template }) => !template)) return sendFailed('prompt_unreadable');
 
+    // Answers that differ from the last planning send revise the plan, so the approval is
+    // withdrawn with that send. The reset `done` goes in before the resume, so a session that
+    // finishes at once and sets it again is never overwritten afterwards.
+    const revised =
+      planning.plan.hashes &&
+      Object.keys(planning.plan.hashes).some(
+        (id) => planning.plan.hashes[id] !== planning.record?.sent?.answers[id],
+      );
     const nextStatus = { ...status, done: false, ...(revised && { approved: false }) };
-    const result = await deliverToSession(key, record, notice, {
-      beforeResume: () => writeJson(statusPath(key), nextStatus),
-    });
-    if (result.status !== 'sent') return result;
 
-    const sent = { at: new Date(now()).toISOString(), answers: plan.hashes };
-    const next = { ...launched[INVESTIGATE], sent };
-    if (revised) delete next.approved;
-    writeJson(launchPath(key), { ...launched, [INVESTIGATE]: next });
-    return result;
+    let failure = null;
+    let nextLaunch = launched;
+    for (const lane of messages) {
+      const isPlanning = lane.phase === INVESTIGATE;
+      const change = lane.record.sent ? 'changed answers' : 'answers';
+      const notice = fillTemplate(lane.template, {
+        ...promptValues(key),
+        QUESTION_IDS: lane.plan.changed.join(', '),
+        CHANGE: resend && isPlanning ? 'answers (sent again)' : change,
+      });
+      const result = await deliverToSession(key, lane.record, notice, {
+        ...(isPlanning && { beforeResume: () => writeJson(statusPath(key), nextStatus) }),
+      });
+      // A failed lane keeps its saved answers (and no `sent`), so the next save retries it.
+      if (result.status !== 'sent') {
+        failure ??= result;
+        continue;
+      }
+      const sent = { at: new Date(now()).toISOString(), answers: lane.plan.hashes };
+      const next = { ...nextLaunch[lane.phase], sent };
+      if (isPlanning && revised) delete next.approved;
+      nextLaunch = { ...nextLaunch, [lane.phase]: next };
+      writeJson(launchPath(key), nextLaunch);
+    }
+    return failure ?? { status: 'sent' };
   }
 
   // Tells the planning session the user approved its finished plan. Approving asks for a plan that
@@ -656,28 +688,41 @@ export function createClaudeLauncher({
     if (value === undefined) throw invalid('INVALID_ANSWER', 'The ticket has no status file.');
     if (value === null) throw refused('status_unreadable');
 
-    // Only the answer of a question that exists changes; an empty text clears it. The hash of each
-    // saved text goes on the current phase's record, which is what makes it count as answered.
+    // Only a question that exists changes, and the whole batch is validated before any write. Each
+    // id's hash is revoked on every lane first, so a stale hash from a pre-tag save cannot answer it.
     const questions = readQuestions(value);
-    const current = currentRecord(launched.value);
-    if (!current || pairs.some(([id]) => !questions.some((question) => question.id === id)))
-      throw invalid('INVALID_ANSWER', 'Unknown question or no launch record.');
-    const answered = { ...current.answered };
+    const records = readLaunch(launched.value);
+    const recorded = (phase) => records.find(({ phase: asked }) => asked === phase)?.answered;
     const texts = new Map(pairs);
-    for (const question of questions) {
-      if (!texts.has(question.id)) continue;
+    const targets = questions
+      .filter((question) => texts.has(question.id))
+      .map((question) => ({ question, phase: questionPhase(question, launched.value) }));
+    const known = new Set(questions.map(({ id }) => id));
+    if (pairs.some(([id]) => !known.has(id)) || targets.some(({ phase }) => !recorded(phase)))
+      throw invalid('INVALID_ANSWER', 'Unknown question or no launch record.');
+    const answered = new Map(records.map(({ phase, answered: hashes }) => [phase, { ...hashes }]));
+    const written = new Set();
+    for (const { question, phase } of targets) {
       const text = texts.get(question.id);
       question.answer = text || null;
-      if (text) answered[question.id] = answerHash(question.id, question.question, text);
-      else delete answered[question.id];
+      // Revoke the id on the other lanes first: union counting would otherwise still honour a hash
+      // those records hold, so a cleared or replaced answer would come back with its old text.
+      for (const [lane, hashes] of answered) {
+        if (lane === phase || !(question.id in hashes)) continue;
+        delete hashes[question.id];
+        written.add(lane);
+      }
+      if (text) answered.get(phase)[question.id] = answerHash(question.id, question.question, text);
+      else delete answered.get(phase)[question.id];
+      written.add(phase);
     }
     // status.json first: if the second write fails the answer stays unrecorded, so unanswered.
     if (pairs.length) {
       writeJson(statusPath(key), value);
-      writeJson(launchPath(key), {
-        ...launched.value,
-        [current.phase]: { ...launched.value[current.phase], answered },
-      });
+      const next = { ...launched.value };
+      for (const phase of written)
+        next[phase] = { ...launched.value[phase], answered: answered.get(phase) };
+      writeJson(launchPath(key), next);
     }
     const send = await sendAnswers(key, { resend });
     // A delivered send has the session working again, which the first listing cannot show.

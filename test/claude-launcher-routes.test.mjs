@@ -12,6 +12,7 @@ import {
   E2E_NAME,
   EARLIER_ID,
   FIRST_ID,
+  FIRST_TEXT,
   GROOM,
   GROOM_NAME,
   IMPLEMENT,
@@ -28,6 +29,7 @@ import {
   assertReviewPrompt,
   claudeHttpFixture,
   groomPrompt,
+  implementAskedFiles,
   launchRecord,
   listed,
   question,
@@ -35,6 +37,7 @@ import {
   reviewEntry,
   reviewRecord,
   runningBrowser,
+  SECOND_TEXT,
   seedPlanned,
   sessionUuid,
   sleep,
@@ -227,7 +230,7 @@ test('scenario 12: the ticket list holds exactly the valid state folders, each w
     approved: false,
   });
   assert.deepEqual([second.state, second.reason], ['waiting', 'questions']);
-  assert.deepEqual(second.questions, [question('q1')]);
+  assert.deepEqual(second.questions, [question('q1', null, undefined, INVESTIGATE)]);
   assert.equal(second.unanswered, 1);
   assert.equal(f.cli.listings().length, 1, 'one listing for both tickets');
 });
@@ -566,8 +569,6 @@ test('scenario 76: the cross-phase refusals and blocks reach the HTTP replies wi
 
 // ---- saved answers go back to the session that asked ----
 
-const FIRST_TEXT = 'ANSWER-ALPHA-7731';
-const SECOND_TEXT = 'ANSWER-BETA-5520';
 const HALF_ANSWERED = [question('q1', FIRST_TEXT), question('q2')];
 
 // A planned ticket whose first question has an answer saved; `listing` is the investigate session.
@@ -707,6 +708,98 @@ test('scenario 110: over HTTP the reply polls the listing after the stop, then t
     .filter(({ args }) => args[0] === 'stop' || args.includes('--resume'))
     .map(({ args }) => args[0]);
   assert.deepEqual(order, ['stop', '--bg']);
+});
+
+// ---- an implement-asked answer goes over the same route, to the implement session ----
+
+const IMPLEMENT_ID = 'bbbb2222';
+
+// The shared two-lane files over the HTTP seam; only the listing is this suite's own.
+function seedImplementAskedRoute(f, { q2Answer = null } = {}) {
+  f.seed(KEY, implementAskedFiles({ q2Answer }));
+  f.writePlan();
+  f.cli.setListing([
+    listed({ id: EARLIER_ID }),
+    listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME }),
+  ]);
+}
+
+test('implement answer returns resumed implement ticket: the payload carries the phase and the resumed session', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedImplementAskedRoute(f);
+
+  const listedBody = (await f.http.bare('GET', TICKETS)).json();
+  const listedTicket = listedBody.tickets[KEY];
+  assert.deepEqual(
+    listedTicket.questions,
+    [
+      question('q1', FIRST_TEXT, undefined, INVESTIGATE),
+      question('q2', null, undefined, IMPLEMENT),
+    ],
+    'the list payload carries each question’s resolved phase',
+  );
+  assert.equal(listedTicket.state, 'waiting', 'the implement run waits on q2');
+  assert.equal(listedTicket.reason, 'questions');
+
+  // The resumed implement session keeps working, so the reply shows the fresh turn.
+  f.cli.resumeWorking();
+  const res = await save(f, { q2: SECOND_TEXT });
+
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(body.send, { status: 'sent' });
+  assert.deepEqual(
+    body.ticket.questions,
+    [
+      question('q1', FIRST_TEXT, undefined, INVESTIGATE),
+      question('q2', SECOND_TEXT, undefined, IMPLEMENT),
+    ],
+    'the reply ticket carries the saved answer and the phase',
+  );
+  assert.equal(body.ticket.unanswered, 0);
+  assert.equal(body.ticket.phase, IMPLEMENT, 'the current record is the implement one');
+  assert.equal(body.ticket.state, 'working', 'the reply ticket is recomputed after the save');
+  assert.equal(body.ticket.reason, 'running', 'the resumed implement session is working');
+
+  assert.equal(f.cli.resumes().length, 1, 'one session resumes');
+  const { args } = f.cli.resumes()[0];
+  assert.deepEqual(args.slice(0, 4), ['--bg', '--resume', sessionUuid(IMPLEMENT_ID), '--']);
+  assert.match(args[4], /implement/i, 'the implement continuation message');
+  assert.equal(f.cli.launches().length, 0, 'no new session is started');
+  assert.deepEqual(
+    f.parsed().launch[IMPLEMENT].sent.answers,
+    answeredMap([question('q2', SECOND_TEXT, undefined, IMPLEMENT)]),
+    'the send is recorded on the implement record',
+  );
+  assert.equal(
+    f.parsed().launch[INVESTIGATE].sent.answers.q2,
+    undefined,
+    'and not on the planning one',
+  );
+});
+
+test('self-written implement answer is not sent by an empty save or resend', async (t) => {
+  const f = await claudeHttpFixture(t);
+  seedImplementAskedRoute(f, { q2Answer: 'written by the implement session' });
+
+  const listed = (await f.http.bare('GET', TICKETS)).json().tickets[KEY];
+  assert.equal(listed.unanswered, 1, 'the session’s text is no answer');
+  assert.equal(listed.questions[1].answer, null);
+
+  const plain = await save(f, []);
+  assert.equal(plain.status, 200);
+  assert.deepEqual(plain.json().send, { status: 'skipped', reason: 'implement_started' });
+
+  const resent = await f.http.json('POST', ANSWERS, { key: KEY, answers: [], resend: true });
+  assert.equal(resent.status, 200);
+  assert.deepEqual(resent.json().send, { status: 'skipped', reason: 'implement_started' });
+
+  assert.equal(f.cli.resumes().length, 0, 'neither save resumes a session');
+  assert.deepEqual(
+    Object.keys(f.parsed().launch[IMPLEMENT].answered ?? {}),
+    [],
+    'no hash is reconstructed from text',
+  );
 });
 
 test('scenario 116: the ticket list gives a go-to command per phase, each from its own session', async (t) => {

@@ -1084,6 +1084,85 @@ test('the e2e check styles in the Claude launcher sheet use tokens only and shor
   }
 });
 
+test('question phase labels preserve accessible names', async () => {
+  const jsx = read('components/ClaudeDialog.jsx');
+
+  // The number, the phase and the tick sit outside the label, so its name is the question.
+  const rowStart = jsx.indexOf('{questions.map(');
+  const rowEnd = jsx.indexOf('<textarea', rowStart);
+  assert.ok(rowStart > -1 && rowEnd > rowStart, 'the question row is the one render site');
+  const row = jsx.slice(rowStart, rowEnd);
+  assert.equal(
+    (row.match(/className="claude-question-phase"/g) || []).length,
+    1,
+    'exactly one phase label per row',
+  );
+
+  // The label binds only the question text: any phase word inside it would join its name.
+  const labelStart = row.indexOf('<label');
+  const labelEnd = row.indexOf('</label>');
+  assert.ok(labelStart > -1 && labelEnd > labelStart, 'the question label is present');
+  assert.equal(
+    row.slice(labelStart, labelEnd + '</label>'.length),
+    '<label htmlFor={`${formId}-${id}`}>{question}</label>',
+    'the label is the question-only binding',
+  );
+  assert.doesNotMatch(
+    row.slice(labelStart, labelEnd),
+    /phase|claude-question|<span/i,
+    'no phase text or span inside the question label',
+  );
+
+  const phaseSpan = row.match(
+    /<span[\s\S]*?className="claude-question-phase"[\s\S]*?<\/span>/,
+  )?.[0];
+  assert.ok(phaseSpan, 'the phase is its own span');
+  assert.match(
+    phaseSpan,
+    /\{QUESTION_PHASE_LABEL\[\s*phase\s*\?\?\s*INVESTIGATE\s*\]\}/,
+    'the span shows the question’s own phase, investigate when absent',
+  );
+
+  const phaseAt = row.indexOf('claude-question-phase');
+  const tickAt = row.indexOf('claude-question-answered');
+  assert.ok(labelEnd > -1 && labelEnd < phaseAt, 'after the question text and outside the label');
+  assert.ok(tickAt === -1 || phaseAt < tickAt, 'before the answered tick');
+
+  // Each phase word is the existing step label, never a second hard-coded copy.
+  const mapStart = jsx.indexOf('const QUESTION_PHASE_LABEL');
+  const mapEnd = jsx.indexOf('};', mapStart);
+  assert.ok(mapStart > -1 && mapEnd > mapStart, 'the phase label map is declared');
+  const phaseLabels = jsx.slice(mapStart, mapEnd + 2);
+  assert.match(phaseLabels, /\[INVESTIGATE\]:\s*STEP_LABEL\.investigate\b/);
+  assert.match(phaseLabels, /\[IMPLEMENT\]:\s*STEP_LABEL\.implement\b/);
+  assert.doesNotMatch(phaseLabels, /['"`]/, 'the words come from STEP_LABEL, not literals');
+  assert.doesNotMatch(jsx, /phaseWords/, 'not the session drawer’s phase words');
+
+  // One rule, token-only, in the launcher sheet.
+  const css = read('styles/claude-launcher.css');
+  assert.equal(css.split('.claude-question-phase').length - 1, 1, 'exactly one rule');
+  const body = rulesFor(css, '.claude-question-phase');
+  assert.match(body, /flex:\s*none/);
+  assert.match(body, /align-self:\s*center/);
+  assert.match(body, /color:\s*var\(--muted\)/);
+  assert.match(body, /font-size:\s*var\(--fs-xs\)/);
+  assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|rgba?\(/i, 'colours come from tokens');
+
+  // The e2e question factory carries the asking phase and leaves an untagged question untagged.
+  const { claudeQuestion } = await import('../e2e/data.js');
+  assert.deepEqual(claudeQuestion('q1', 'Which repo owns the fix?'), {
+    id: 'q1',
+    question: 'Which repo owns the fix?',
+    answer: null,
+  });
+  assert.deepEqual(claudeQuestion('q1', 'Which repo owns the fix?', null, 'implement-plan'), {
+    id: 'q1',
+    question: 'Which repo owns the fix?',
+    answer: null,
+    phase: 'implement-plan',
+  });
+});
+
 // -- Chat (plan scenario 20) -------------------------------------------------------------------------
 
 test('scenario 20: chat.css loads after board.css and is token-only, short, small-radius and Chat-scoped', () => {

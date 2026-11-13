@@ -1000,6 +1000,367 @@ test('scenario 101: answers_not_sent never hides a running session, a missing pl
   }
 });
 
+// ---- question phase attribution: the asking lane bounds counting, delivery and the gates ----
+
+const PLANNING_ASKED = (id, answer = null, text) => question(id, answer, text, INVESTIGATE);
+const IMPLEMENT_ASKED = (id, answer = null, text) => question(id, answer, text, IMPLEMENT);
+
+// A ticket whose two phases both ran: `questions` from status.json, the answers the dashboard saved
+// on each record (`investigateAnswered`/`implementAnswered`) and what each record last sent. The
+// implement session is the current one (launched an hour ago, investigate two hours ago).
+function phased({
+  questions,
+  investigateAnswered,
+  investigateSent,
+  implementAnswered,
+  implementSent,
+  done = true,
+  approved = true,
+  implementFlag = true,
+  ...overrides
+} = {}) {
+  return {
+    status: statusFile({
+      investigate: true,
+      implement: implementFlag,
+      done,
+      approved,
+      questions,
+    }),
+    launch: {
+      [INVESTIGATE]: launchRecord({
+        launchedAt: START_MS - 2 * HOUR_MS,
+        id: INVESTIGATE_ID,
+        answered: investigateAnswered,
+        sent: investigateSent,
+      }),
+      [IMPLEMENT]: launchRecord({
+        name: IMPLEMENT_NAME,
+        launchedAt: START_MS - HOUR_MS,
+        id: IMPLEMENT_ID,
+        answered: implementAnswered,
+        sent: implementSent,
+      }),
+    },
+    entries: [listed({ id: INVESTIGATE_ID }), listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME })],
+    ...overrides,
+  };
+}
+
+test('phase attribution and fallback: views expose the effective lane of every question', async () => {
+  const questions = [
+    question('q1'), // absent tag: a legacy planning question
+    PLANNING_ASKED('q2'),
+    IMPLEMENT_ASKED('q3'),
+    { ...question('q4'), phase: 'scale' }, // an invalid tag is a legacy planning question
+  ];
+
+  const both = await derive(phased({ questions }));
+  assert.deepEqual(
+    both.questions.map(({ id, phase }) => [id, phase]),
+    [
+      ['q1', INVESTIGATE],
+      ['q2', INVESTIGATE],
+      ['q3', IMPLEMENT],
+      ['q4', INVESTIGATE],
+    ],
+    'valid tags resolve, absent and invalid tags fall back to planning',
+  );
+  for (const view of both.questions)
+    assert.deepEqual(
+      Object.keys(view).sort(),
+      ['answer', 'id', 'phase', 'question'],
+      'the view gains only its resolved phase',
+    );
+
+  // Without a valid implement record an implement tag is a planning question.
+  const planningOnly = await derive(planned({ questions }));
+  assert.equal(
+    planningOnly.questions[2].phase,
+    INVESTIGATE,
+    'no implement record, no implement lane',
+  );
+  const malformed = await derive(
+    phased({ questions, launch: { ...phased({ questions }).launch, [IMPLEMENT]: { name: 7 } } }),
+  );
+  assert.equal(malformed.questions[2].phase, INVESTIGATE, 'a record that is not shaped like one');
+});
+
+test('tagged strict / legacy union hashes: only a tagged question counts its own lane’s hash', async () => {
+  const { implementStatus } = await import('../backend/claude-ticket-state.mjs');
+  const implementQuestion = IMPLEMENT_ASKED('q2', 'Portage-frontend');
+  const planningQuestion = PLANNING_ASKED('q3', 'Portage-backend');
+  const legacy = question('q4', 'Portage-frontend');
+  const wrongLanes = phased({
+    questions: [implementQuestion, planningQuestion, legacy],
+    investigateAnswered: answeredMap([implementQuestion]),
+    implementAnswered: answeredMap([planningQuestion, legacy]),
+  });
+
+  const entry = await derive(wrongLanes);
+  assert.deepEqual(
+    entry.questions.map(({ id, answer }) => [id, answer]),
+    [
+      ['q2', null],
+      ['q3', null],
+      ['q4', 'Portage-frontend'],
+    ],
+    'an implement tag ignores the planning record and a planning tag ignores the implement one',
+  );
+  assert.equal(entry.unanswered, 2, 'the two mis-filed answers stay unanswered');
+  assert.deepEqual(
+    implementStatus(wrongLanes.status, wrongLanes.launch).questions.map(({ id, answer }) => [
+      id,
+      answer,
+    ]),
+    [
+      ['q2', null],
+      ['q3', null],
+      ['q4', 'Portage-frontend'],
+    ],
+    'the rewrite drops the same answers',
+  );
+
+  // Each hash on its own lane answers it; an invalid tag keeps the legacy union.
+  const invalid = { ...question('q5', 'Portage-backend'), phase: 'scale' };
+  const ownLanes = phased({
+    questions: [
+      IMPLEMENT_ASKED('q2', 'Portage-frontend'),
+      PLANNING_ASKED('q3', 'Portage-backend'),
+      invalid,
+    ],
+    investigateAnswered: answeredMap([PLANNING_ASKED('q3', 'Portage-backend')]),
+    implementAnswered: answeredMap([IMPLEMENT_ASKED('q2', 'Portage-frontend'), invalid]),
+  });
+  const own = await derive(ownLanes);
+  assert.deepEqual(
+    own.questions.map(({ id, answer }) => [id, answer]),
+    [
+      ['q2', 'Portage-frontend'],
+      ['q3', 'Portage-backend'],
+      ['q5', 'Portage-backend'],
+    ],
+    'own-lane hashes count and an invalid tag keeps the union',
+  );
+  assert.equal(own.unanswered, 0);
+});
+
+test('session-written answers in both lanes: text without its saved hash is unanswered', async () => {
+  const questions = [
+    IMPLEMENT_ASKED('q2', 'written by the implement session'),
+    PLANNING_ASKED('q3', 'written by the planning session'),
+    question('q4', 'written by the session'),
+  ];
+  const entry = await derive(phased({ questions }));
+
+  assert.deepEqual(
+    entry.questions.map(({ answer }) => answer),
+    [null, null, null],
+    'the session can write status.json but never the record that makes an answer count',
+  );
+  assert.equal(entry.unanswered, 3);
+
+  const saved = IMPLEMENT_ASKED('q2', 'the saved text');
+  const edited = await derive(
+    phased({
+      questions: [{ ...saved, answer: 'edited by hand' }],
+      implementAnswered: answeredMap([saved]),
+    }),
+  );
+  assert.equal(edited.questions[0].answer, null, 'an edit no longer matches its hash');
+  assert.equal(edited.unanswered, 1);
+});
+
+test('tag-preserving implementStatus: valid raw tags survive and legacy questions gain none', async () => {
+  const { implementStatus } = await import('../backend/claude-ticket-state.mjs');
+  const questions = [
+    question('q1', 'a'),
+    PLANNING_ASKED('q2', 'b'),
+    IMPLEMENT_ASKED('q3', 'c'),
+    { ...question('q4', 'd'), phase: 'scale' },
+    { ...IMPLEMENT_ASKED('q5'), answer: 'written by the session' },
+  ];
+  const launch = phased({
+    questions,
+    investigateAnswered: answeredMap([PLANNING_ASKED('q2', 'b')]),
+    implementAnswered: answeredMap([
+      question('q1', 'a'),
+      IMPLEMENT_ASKED('q3', 'c'),
+      { ...question('q4', 'd'), phase: 'scale' },
+    ]),
+  }).launch;
+
+  const rewritten = implementStatus(
+    statusFile({ investigate: true, done: true, approved: true, questions }),
+    launch,
+  );
+
+  assert.deepEqual(rewritten.questions, [
+    question('q1', 'a'),
+    PLANNING_ASKED('q2', 'b'),
+    IMPLEMENT_ASKED('q3', 'c'),
+    question('q4', 'd'),
+    question('q5', null, undefined, IMPLEMENT),
+  ]);
+
+  // A raw implement tag with no implement record falls back for counting but is preserved on rewrite.
+  const fallback = implementStatus(
+    statusFile({ investigate: true, questions: [IMPLEMENT_ASKED('q3', 'c')] }),
+    {
+      [INVESTIGATE]: launchRecord({
+        id: FIRST_ID,
+        answered: answeredMap([IMPLEMENT_ASKED('q3', 'c')]),
+      }),
+    },
+  );
+  assert.deepEqual(
+    fallback.questions,
+    [IMPLEMENT_ASKED('q3', 'c')],
+    'the tag survives the fallback',
+  );
+});
+
+test('per-phase completeness and implement_started: each lane needs only its own answers', async () => {
+  const { answersToSend } = await import('../backend/claude-ticket-state.mjs');
+  const planning = question('q1', 'Portage-backend');
+  const openImplement = IMPLEMENT_ASKED('q2');
+  const seeded = phased({
+    questions: [planning, openImplement],
+    investigateAnswered: answeredMap([planning]),
+    investigateSent: sentFor([planning]),
+  });
+
+  assert.deepEqual(answersToSend(seeded.status, seeded.launch), { skip: 'implement_started' });
+  assert.deepEqual(answersToSend(seeded.status, seeded.launch, { phase: IMPLEMENT }), {
+    skip: 'incomplete',
+  });
+
+  const answeredImplement = IMPLEMENT_ASKED('q2', 'Portage-frontend');
+  const complete = phased({
+    questions: [planning, answeredImplement],
+    investigateAnswered: answeredMap([planning]),
+    investigateSent: sentFor([planning]),
+    implementAnswered: answeredMap([answeredImplement]),
+  });
+  assert.deepEqual(answersToSend(complete.status, complete.launch, { phase: IMPLEMENT }), {
+    changed: ['q2'],
+    hashes: answeredMap([answeredImplement]),
+  });
+  assert.deepEqual(
+    answersToSend(complete.status, complete.launch),
+    { skip: 'implement_started' },
+    'complete planning answers still skip implement_started',
+  );
+
+  // The reverse: an open planning question leaves implement delivery pending on its own.
+  const openPlanning = phased({
+    questions: [question('q1'), answeredImplement],
+    implementAnswered: answeredMap([answeredImplement]),
+  });
+  assert.deepEqual(answersToSend(openPlanning.status, openPlanning.launch), { skip: 'incomplete' });
+  assert.deepEqual(answersToSend(openPlanning.status, openPlanning.launch, { phase: IMPLEMENT }), {
+    changed: ['q2'],
+    hashes: answeredMap([answeredImplement]),
+  });
+});
+
+test('own-phase sent comparison and any-phase unsent: each lane is measured by its own send', async () => {
+  const { answersToSend } = await import('../backend/claude-ticket-state.mjs');
+  const planning = question('q1', 'Portage-backend');
+  const implement = IMPLEMENT_ASKED('q2', 'Portage-frontend');
+  const ownHash = answeredMap([implement]);
+
+  const unchanged = phased({
+    questions: [planning, implement],
+    investigateAnswered: answeredMap([planning]),
+    investigateSent: {
+      at: SENT_AT,
+      answers: { q1: answeredMap([planning]).q1, q2: 'f'.repeat(64) },
+    },
+    implementAnswered: ownHash,
+    implementSent: sentFor([implement]),
+  });
+  assert.deepEqual(
+    answersToSend(unchanged.status, unchanged.launch, { phase: IMPLEMENT }),
+    { skip: 'unchanged' },
+    'the implement record’s own send suppresses delivery even with the other lane mismatched',
+  );
+  assert.deepEqual(
+    answersToSend(unchanged.status, unchanged.launch, { phase: IMPLEMENT, resend: true }),
+    { skip: 'unchanged' },
+    'an explicit Resend asks only the planning lane again',
+  );
+
+  const changed = phased({
+    questions: [planning, implement],
+    investigateAnswered: answeredMap([planning]),
+    investigateSent: { at: SENT_AT, answers: { q1: answeredMap([planning]).q1, q2: ownHash.q2 } },
+    implementAnswered: ownHash,
+    implementSent: { at: SENT_AT, answers: { q2: 'f'.repeat(64) } },
+  });
+  const plan = answersToSend(changed.status, changed.launch, { phase: IMPLEMENT });
+  assert.deepEqual(plan.changed, ['q2'], 'only the implement lane’s own baseline is compared');
+  assert.deepEqual(plan.hashes, ownHash, 'the hashes contain only that lane');
+
+  const entry = await derive(changed);
+  assert.equal(entry.unsent, true, 'a pending implement change makes the card unsent');
+  assert.equal(entry.unanswered, 0, 'while unanswered stays the global count');
+
+  const openImplement = await derive(
+    phased({
+      questions: [planning, IMPLEMENT_ASKED('q2')],
+      investigateAnswered: answeredMap([planning]),
+      investigateSent: sentFor([planning]),
+    }),
+  );
+  assert.equal(openImplement.unsent, false, 'an incomplete implement lane is not a pending change');
+  assert.equal(openImplement.unanswered, 1, 'but its question counts in the global total');
+});
+
+test('planning-only readiness gates: an implement question does not block implement, approve or resend', async () => {
+  const planning = question('q1', 'Portage-backend');
+  const implement = IMPLEMENT_ASKED('q2');
+  const ready = phased({
+    questions: [planning, implement],
+    investigateAnswered: answeredMap([planning]),
+    investigateSent: sentFor([planning]),
+  });
+
+  const entry = await derive(ready);
+  assert.equal(entry.blocks.implement, null, 'the plan may be implemented');
+  assert.equal(entry.blocks.approve, 'implement_started', 'the existing approval reason is kept');
+  assert.equal(entry.blocks.resend, 'implement_started', 'and the existing Resend reason');
+  assert.equal(entry.unanswered, 1, 'the card still counts it');
+
+  // An untagged or invalidly tagged question is a planning question and keeps the existing reasons.
+  for (const [label, blocked] of Object.entries({
+    untagged: question('q2'),
+    'invalid tag': { ...question('q2'), phase: 'scale' },
+  })) {
+    const result = await derive(
+      phased({
+        questions: [planning, blocked],
+        investigateAnswered: answeredMap([planning]),
+        investigateSent: sentFor([planning]),
+      }),
+    );
+    assert.equal(result.blocks.implement, 'questions_unanswered', `${label}: implement`);
+    assert.equal(result.blocks.approve, 'questions_unanswered', `${label}: approve`);
+    assert.equal(result.blocks.resend, 'questions_unanswered', `${label}: resend`);
+  }
+
+  // A forged implement tag does not hide a question from the planning gate before implement exists.
+  const noImplementRecord = await derive(
+    planned({ questions: [planning, IMPLEMENT_ASKED('q2')], sent: sentFor([planning]) }),
+  );
+  assert.equal(
+    noImplementRecord.blocks.implement,
+    'questions_unanswered',
+    'no implement record yet',
+  );
+  assert.equal(noImplementRecord.questions[1].phase, INVESTIGATE);
+});
+
 // ---- one go-to command per phase ----
 
 const bothStatus = statusFile({ investigate: true, implement: false, done: true });

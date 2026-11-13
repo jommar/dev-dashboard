@@ -569,6 +569,12 @@
   line-height: 1.4;
   text-wrap: pretty;
 }
+.claude-question-phase {
+  flex: none;
+  align-self: center;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
 .claude-question-answered {
   display: inline-flex;
   flex: none;

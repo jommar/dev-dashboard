@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Questions now record the workflow phase that asked them, and each saved answer is sent back to that
+  phase's session: planning questions to the Investigate and plan session as before, and a question the
+  implement session asked to that implement session with the new `answers-implement` message, which
+  continues the approved implementation and does not stop at the planning approval gate. A question with
+  no valid `phase` keeps the old behavior (it reads as planning, counts against any workflow record and,
+  after an Implement launch, its answers only save); a tagged question counts only its own phase's saved
+  hash, and a save or a clear also revokes that id's hash on the other record. Plan readiness,
+  **Approve plan** and **Resend answers** consider only planning questions, so an open implement question
+  no longer blocks Implement plan with `questions_unanswered`; `unanswered` stays the card's global count
+  and `unsent` is true while either phase has a pending change. Each question row shows a muted
+  `Investigate and plan` or `Implement plan` label. The prompt registry, editor and
+  `npm run claude:prompts` now list ten templates in the order investigate, implement, answers,
+  answers-implement, approve, rereview, groom, review, spec-review, e2e; existing overrides are not
+  upgraded, so a custom `investigate.md`, `implement.md` or `answers.md` must add the `phase` tag
+  instruction by hand.
 - A launched session the Claude CLI no longer lists (removed with `claude rm` or pruned, its conversation
   kept) now keeps its Copy command and Chat in the Sessions drawer and its **Go to session** chip: the
   dashboard recovers the full session id from the transcript on disk by the 8-character short id its launch
@@ -68,7 +83,8 @@
   before.
 - Added local prompt overrides for code review (`prompts/review.md`), spec review
   (`prompts/spec-review.md`) and E2E checks (`prompts/e2e.md`), bringing the shared editor, prompt API
-  and starter command to nine templates. Built-in prompt text, spec-review CLI restrictions and E2E
+  and starter command to nine templates at that point (ten now that `answers-implement` was added).
+  Built-in prompt text, spec-review CLI restrictions and E2E
   browser validation/lifecycle are unchanged. Added `prompts/README.md`; only the guide is tracked,
   not local overrides. Custom text replaces the whole template, with no automatic safety preamble.
 - Added a **Sessions** drawer for every screen: a tab on the right edge opens a list of the bot lane's

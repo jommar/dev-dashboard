@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
+  ANSWERS_IMPLEMENT_TEMPLATE,
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
   REREVIEW_TEMPLATE,
@@ -18,6 +19,7 @@ import {
   E2E_TEMPLATE,
   EARLIER_ID,
   FIRST_ID,
+  FIRST_TEXT,
   GROOM,
   GROOM_NAME,
   GROOM_TEMPLATE,
@@ -43,6 +45,7 @@ import {
   assertReviewPrompt,
   groomPrompt,
   fsChanges,
+  implementAskedFiles,
   implementPrompt,
   investigateParagraphs,
   e2eEntry,
@@ -57,6 +60,7 @@ import {
   resolvesWithin,
   routingEnvironment,
   runningBrowser,
+  SECOND_TEXT,
   seedPlanned,
   sentRecord,
   sessionUuid,
@@ -1313,13 +1317,15 @@ test('scenario 47: relaunching implement keeps the answers saved on its record, 
   env.writePlan();
   env.cli.setListing([listed({ id: EARLIER_ID })]);
   await env.launcher.answer(answerBody({ q1: 'Portage-backend' }));
-  // Implement ran, asked q2, and the user answered that too; the record is now the implement one.
+  // Implement ran, asked q2 (tagged as its own), and the user answered that too; the record is now
+  // the implement one.
+  const implementQuestion = question('q2', null, undefined, IMPLEMENT);
   env.seed(KEY, {
     status: statusFile({
       investigate: true,
       done: true,
       approved: true,
-      questions: [question('q1', 'Portage-backend'), question('q2')],
+      questions: [question('q1', 'Portage-backend'), implementQuestion],
     }),
     launch: {
       ...env.parsed().launch,
@@ -1336,16 +1342,26 @@ test('scenario 47: relaunching implement keeps the answers saved on its record, 
   const before = env.parsed().launch;
   assert.deepEqual(Object.keys(before[INVESTIGATE].answered), ['q1'], 'the investigate record');
   assert.deepEqual(Object.keys(before[IMPLEMENT].answered), ['q2'], 'the implement record');
+  assert.equal(
+    env.parsed().status.questions[1].phase,
+    IMPLEMENT,
+    'the answer did not drop the question’s tag',
+  );
 
   const { id } = await env.launcher.launch(launchBody(IMPLEMENT));
 
-  const { launch } = env.parsed();
+  const { launch, status } = env.parsed();
   assert.deepEqual(
     launch[IMPLEMENT].answered,
     before[IMPLEMENT].answered,
     'the new record keeps it',
   );
   assert.deepEqual(launch[INVESTIGATE], before[INVESTIGATE], 'the investigate record is untouched');
+  assert.deepEqual(
+    status.questions,
+    [question('q1', 'Portage-backend'), question('q2', 'Portage-frontend', undefined, IMPLEMENT)],
+    'the rewrite keeps the tag and the saved answer',
+  );
   env.cli.setListing([
     listed({ id: EARLIER_ID }),
     listed({ id: SECOND_ID }),
@@ -1474,6 +1490,468 @@ test('scenario 52: the recorded hash is the SHA-256 of the id, the question and 
 
   const expected = createHash('sha256').update(`${id}\n${text}\n${answer}`, 'utf8').digest('hex');
   assert.deepEqual(env.parsed().launch[INVESTIGATE].answered, { [id]: expected });
+});
+
+// ---- an answer goes back to the phase that asked, not the latest record ----
+
+// A planned, approved ticket on the fake sessions whose implement run asked q2, tagged as its own.
+// q1 was asked and answered in planning and already sent; `q2Answer` is what status.json holds.
+function seedImplementAsked(env, { q2Answer = null } = {}) {
+  env.seed(KEY, implementAskedFiles({ q2Answer }));
+  env.writePlan();
+  env.fake.setListing([
+    listed({ id: EARLIER_ID }),
+    listed({ id: SECOND_ID, name: IMPLEMENT_NAME }),
+  ]);
+}
+
+test('implement answer routes hash and continuation: the asking session resumes with its own message', async (t) => {
+  const env = await routingEnvironment(t);
+  seedImplementAsked(env);
+  const before = env.parsed();
+
+  const result = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 1, 'one session resumes');
+  assert.equal(env.fake.resumes()[0].sessionId, sessionUuid(SECOND_ID), 'the implement session');
+  assert.equal(
+    env.fake.resumes()[0].notice,
+    renderTemplate(ANSWERS_IMPLEMENT_TEMPLATE, {
+      statusPath: env.statusPath(),
+      questionIds: ['q2'],
+      change: 'answers',
+    }),
+    'the implement continuation message',
+  );
+  assert.notEqual(
+    env.fake.resumes()[0].notice,
+    renderTemplate(ANSWERS_TEMPLATE, {
+      statusPath: env.statusPath(),
+      questionIds: ['q2'],
+      change: 'answers',
+    }),
+    'never the planning answers message',
+  );
+
+  const { status, launch } = env.parsed();
+  assert.equal(status.questions[1].answer, SECOND_TEXT, 'the answer is saved with its tag');
+  assert.equal(status.questions[1].phase, IMPLEMENT, 'the tag is kept');
+  assert.equal(status.done, before.status.done, 'an implement send never resets done');
+  assert.equal(status.approved, before.status.approved, 'nor withdraws the planning approval');
+  assert.equal(status[IMPLEMENT], before.status[IMPLEMENT], 'the flags are untouched');
+  assert.equal(status[INVESTIGATE], before.status[INVESTIGATE]);
+
+  const savedHash = answeredMap([question('q2', SECOND_TEXT, undefined, IMPLEMENT)]);
+  assert.deepEqual(launch[IMPLEMENT].answered, savedHash, 'the hash lands on the implement record');
+  assert.deepEqual(launch[IMPLEMENT].sent, {
+    at: new Date(env.clock.now()).toISOString(),
+    answers: savedHash,
+  });
+  assert.deepEqual(
+    launch[INVESTIGATE],
+    before.launch[INVESTIGATE],
+    'the investigate record is untouched',
+  );
+
+  // The pending set has gone and the resumed session has finished its turn: an empty save and an
+  // explicit Resend resume nothing again.
+  env.fake.setListing([
+    listed({ id: EARLIER_ID }),
+    listed({ id: SECOND_ID, name: IMPLEMENT_NAME }),
+  ]);
+  const sends = env.fake.resumes().length;
+  const empty = await env.launcher.answer(answerBody([]));
+  assert.deepEqual(empty.send, { status: 'skipped', reason: 'implement_started' });
+  const resent = await env.launcher.answer({ ...answerBody([]), resend: true });
+  assert.deepEqual(resent.send, { status: 'skipped', reason: 'implement_started' });
+  assert.equal(env.fake.resumes().length, sends, 'no second implement resume');
+});
+
+test('a mixed batch saves both lanes but delivers only the implement one once implement started', async (t) => {
+  const env = await routingEnvironment(t);
+  seedImplementAsked(env);
+  const investigate = env.parsed().launch[INVESTIGATE];
+
+  const result = await env.launcher.answer(answerBody({ q1: CHANGED_TEXT, q2: SECOND_TEXT }));
+
+  assert.deepEqual(result.send, { status: 'sent' });
+  assert.deepEqual(
+    env.fake.resumes().map(({ sessionId }) => sessionId),
+    [sessionUuid(SECOND_ID)],
+    'the planning lane keeps its implement_started skip',
+  );
+  assert.equal(
+    env.fake.resumes()[0].notice,
+    renderTemplate(ANSWERS_IMPLEMENT_TEMPLATE, {
+      statusPath: env.statusPath(),
+      questionIds: ['q2'],
+      change: 'answers',
+    }),
+  );
+
+  const { status, launch } = env.parsed();
+  assert.equal(status.questions[0].answer, CHANGED_TEXT, 'the planning answer is still saved');
+  assert.deepEqual(
+    launch[INVESTIGATE].answered,
+    answeredMap([question('q1', CHANGED_TEXT)]),
+    'in its own answered map',
+  );
+  assert.deepEqual(launch[INVESTIGATE].sent, investigate.sent, 'with no planning send recorded');
+  assert.deepEqual(
+    launch[IMPLEMENT].answered,
+    answeredMap([question('q2', SECOND_TEXT, undefined, IMPLEMENT)]),
+  );
+  assert.ok(launch[IMPLEMENT].sent, 'only the implement send is recorded');
+  assert.equal(status.done, true, 'an implement send never resets done');
+  assert.equal(status.approved, true, 'nor withdraws the approval');
+});
+
+test('implement clear rejects self-written replacement: a cleared answer stays unanswered when the session types it back', async (t) => {
+  const env = await routingEnvironment(t);
+  seedImplementAsked(env);
+
+  // A saved answer first: its hash is on the implement record and it counts.
+  const saved = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+  assert.deepEqual(saved.send, { status: 'sent' });
+  assert.equal(saved.ticket.unanswered, 0, 'the saved answer counts');
+  let { status, launch } = env.parsed();
+  assert.equal(status.questions[1].answer, SECOND_TEXT);
+  assert.deepEqual(
+    launch[IMPLEMENT].answered,
+    answeredMap([question('q2', SECOND_TEXT, undefined, IMPLEMENT)]),
+    'its own hash is on the implement record',
+  );
+  const sends = env.fake.resumes().length;
+
+  // The resumed session finishes its turn, so the next save is allowed.
+  env.fake.setListing([
+    listed({ id: EARLIER_ID }),
+    listed({ id: SECOND_ID, name: IMPLEMENT_NAME }),
+  ]);
+
+  // Nothing is pending, so the settled envelope is the planning lane's skip reason.
+  const cleared = await env.launcher.answer(answerBody({ q2: '' }));
+  assert.deepEqual(cleared.send, { status: 'skipped', reason: 'implement_started' });
+  assert.equal(cleared.ticket.unanswered, 1, 'the cleared answer is unanswered again');
+  ({ status, launch } = env.parsed());
+  assert.equal(status.questions[1].answer, null, 'status.json holds a null answer');
+  assert.equal(launch[IMPLEMENT].answered?.q2, undefined, 'the hash is removed');
+  assert.equal(env.fake.resumes().length, sends, 'a clear sends nothing');
+
+  // The session writes the same text back: without its hash it is still no answer.
+  env.seed(KEY, {
+    status: {
+      ...status,
+      questions: [status.questions[0], { ...status.questions[1], answer: SECOND_TEXT }],
+    },
+  });
+  const entry = (await env.launcher.list()).tickets[KEY];
+  assert.equal(entry.unanswered, 1, 'the retyped text is still unanswered');
+  assert.equal(entry.questions[1].answer, null);
+  assert.equal(env.parsed().launch[IMPLEMENT].answered?.q2, undefined, 'and still has no hash');
+
+  const retry = await env.launcher.answer(answerBody([]));
+  assert.deepEqual(retry.send, { status: 'skipped', reason: 'implement_started' });
+  assert.equal(env.fake.resumes().length, sends, 'no resume for an unanswered set');
+  assert.equal(env.fake.stops().length, 0, 'and no stop');
+});
+
+test('legacy answer with implement stays skipped: an untagged question is saved in planning and sends nothing', async (t) => {
+  const env = await routingEnvironment(t);
+  const questions = [question('q1', FIRST_TEXT), question('q2')];
+  env.seed(KEY, {
+    status: statusFile({ investigate: true, done: true, approved: true, questions }),
+    launch: {
+      [INVESTIGATE]: launchRecord({
+        answered: answeredMap([question('q1', FIRST_TEXT)]),
+        sent: sentRecord([question('q1', FIRST_TEXT)]),
+      }),
+      [IMPLEMENT]: launchRecord({
+        name: IMPLEMENT_NAME,
+        launchedAt: START_MS - 1_800_000,
+        id: SECOND_ID,
+      }),
+    },
+  });
+  env.writePlan();
+  env.fake.setListing([
+    listed({ id: EARLIER_ID }),
+    listed({ id: SECOND_ID, name: IMPLEMENT_NAME }),
+  ]);
+
+  const result = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(result.send, { status: 'skipped', reason: 'implement_started' });
+  assertNothingSent(env, 'an untagged answer after implement started');
+  const { status, launch } = env.parsed();
+  assert.equal(status.questions[1].answer, SECOND_TEXT, 'the answer is saved');
+  assert.equal('phase' in status.questions[1], false, 'no tag is invented');
+  assert.deepEqual(
+    launch[INVESTIGATE].answered,
+    answeredMap([question('q1', FIRST_TEXT), question('q2', SECOND_TEXT)]),
+    'the hash lands in the resolved planning lane',
+  );
+  assert.equal(launch[IMPLEMENT].answered, undefined, 'the implement record is untouched');
+});
+
+// The pre-fix legacy state: an untagged question whose saved answer's hash lives only on the
+// implement record, where the union of records made it count and a planning-lane save could not
+// revoke it.
+const LEGACY_TEXT = 'saved before the phase tag existed';
+
+function seedLegacyImplementHash(env) {
+  env.seed(KEY, {
+    status: statusFile({
+      investigate: true,
+      implement: true,
+      done: true,
+      approved: true,
+      questions: [question('q1', FIRST_TEXT), question('q2', LEGACY_TEXT)],
+    }),
+    launch: {
+      [INVESTIGATE]: launchRecord({
+        answered: answeredMap([question('q1', FIRST_TEXT)]),
+        sent: sentRecord([question('q1', FIRST_TEXT)]),
+      }),
+      [IMPLEMENT]: launchRecord({
+        name: IMPLEMENT_NAME,
+        launchedAt: START_MS - 1_800_000,
+        id: SECOND_ID,
+        answered: answeredMap([question('q2', LEGACY_TEXT)]),
+      }),
+    },
+  });
+  env.writePlan();
+  env.fake.setListing([
+    listed({ id: EARLIER_ID }),
+    listed({ id: SECOND_ID, name: IMPLEMENT_NAME }),
+  ]);
+}
+
+test('legacy hash revocation: clearing an untagged answer drops the implement-record hash', async (t) => {
+  const env = await routingEnvironment(t);
+  seedLegacyImplementHash(env);
+
+  // Before any save the union still counts the implement record's hash.
+  let entry = (await env.launcher.list()).tickets[KEY];
+  assert.equal(entry.unanswered, 0, 'the legacy hash counts through the union');
+  assert.equal(entry.questions[1].answer, LEGACY_TEXT);
+  const { answered: beforeAnswered, ...implementRest } = env.parsed().launch[IMPLEMENT];
+
+  const cleared = await env.launcher.answer(answerBody({ q2: '' }));
+
+  assert.deepEqual(cleared.send, { status: 'skipped', reason: 'incomplete' });
+  const { status, launch } = env.parsed();
+  assert.equal(status.questions[1].answer, null, 'status.json holds the cleared answer');
+  assert.equal('phase' in status.questions[1], false, 'the legacy question gains no tag');
+  assert.equal(launch[IMPLEMENT].answered?.q2, undefined, 'the stale implement hash is gone');
+  assert.equal(launch[INVESTIGATE].answered?.q2, undefined, 'nothing lands in the planning lane');
+  const { answered: afterAnswered, ...implementRestAfter } = launch[IMPLEMENT];
+  assert.equal(afterAnswered?.q2, undefined);
+  assert.deepEqual(implementRestAfter, implementRest, 'the rest of the implement record is kept');
+  assert.ok(Object.keys(beforeAnswered).includes('q2'), 'the hash was the only one to remove');
+
+  // The session types the old text back: with no hash anywhere it is still no answer.
+  env.seed(KEY, {
+    status: {
+      ...status,
+      questions: [status.questions[0], { ...status.questions[1], answer: LEGACY_TEXT }],
+    },
+  });
+  entry = (await env.launcher.list()).tickets[KEY];
+  assert.equal(entry.unanswered, 1, 'the retyped legacy text stays unanswered');
+  assert.equal(entry.questions[1].answer, null);
+  assert.equal(env.parsed().launch[IMPLEMENT].answered?.q2, undefined, 'and no hash comes back');
+  assert.equal(env.fake.resumes().length, 0, 'no resume');
+  assert.equal(env.fake.stops().length, 0, 'no stop');
+});
+
+test('legacy hash revocation: replacing an untagged answer rebinds it to planning and drops the stale implement hash', async (t) => {
+  const env = await routingEnvironment(t);
+  seedLegacyImplementHash(env);
+  const NEW_TEXT = 'the corrected answer';
+
+  const replaced = await env.launcher.answer(answerBody({ q2: NEW_TEXT }));
+
+  assert.deepEqual(replaced.send, { status: 'skipped', reason: 'implement_started' });
+  const { status, launch: initialLaunch } = env.parsed();
+  let launch = initialLaunch;
+  assert.equal(status.questions[1].answer, NEW_TEXT, 'the new answer is saved');
+  assert.deepEqual(
+    launch[INVESTIGATE].answered,
+    answeredMap([question('q1', FIRST_TEXT), question('q2', NEW_TEXT)]),
+    'the new hash lands in the planning lane',
+  );
+  assert.equal(launch[IMPLEMENT].answered?.q2, undefined, 'the stale implement hash is gone');
+  assert.equal(env.fake.resumes().length, 0, 'no resume');
+
+  // The session writes the old text back: the revoked hash no longer answers it.
+  env.seed(KEY, {
+    status: {
+      ...status,
+      questions: [status.questions[0], { ...status.questions[1], answer: LEGACY_TEXT }],
+    },
+  });
+  let entry = (await env.launcher.list()).tickets[KEY];
+  assert.equal(entry.unanswered, 1, 'the old text is unanswered after the replacement');
+  assert.equal(entry.questions[1].answer, null);
+
+  // Saving the old text again records it in planning, where it now counts.
+  const resaved = await env.launcher.answer(answerBody({ q2: LEGACY_TEXT }));
+  assert.deepEqual(resaved.send, { status: 'skipped', reason: 'implement_started' });
+  launch = env.parsed().launch;
+  entry = (await env.launcher.list()).tickets[KEY];
+  assert.equal(entry.unanswered, 0, 'the re-saved legacy text counts');
+  assert.equal(entry.questions[1].answer, LEGACY_TEXT);
+  assert.deepEqual(
+    launch[INVESTIGATE].answered,
+    answeredMap([question('q1', FIRST_TEXT), question('q2', LEGACY_TEXT)]),
+    'and its hash is in the planning lane now',
+  );
+  assert.equal(launch[IMPLEMENT].answered?.q2, undefined, 'never back on the implement record');
+  assert.equal(env.fake.resumes().length, 0, 'nothing was delivered for the untagged lane');
+});
+
+test('implement send failure retains pending answer: no sent is stamped and a later save retries only it', async (t) => {
+  const env = await routingEnvironment(t);
+  seedImplementAsked(env);
+  const investigate = env.parsed().launch[INVESTIGATE];
+  env.fake.forceResume({ status: 'waiting', reason: 'live_at_resume' });
+
+  const failed = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(failed.send, { status: 'failed', reason: 'live_at_resume' });
+  assert.equal(failed.ticket.unanswered, 0, 'the saved answer still counts');
+  const { status, launch } = env.parsed();
+  assert.equal(status.questions[1].answer, SECOND_TEXT, 'the answer stays saved');
+  assert.deepEqual(
+    launch[IMPLEMENT].answered,
+    answeredMap([question('q2', SECOND_TEXT, undefined, IMPLEMENT)]),
+    'and its hash stays recorded',
+  );
+  assert.equal(launch[IMPLEMENT].sent, undefined, 'nothing is recorded as sent');
+  assert.equal(status.done, true, 'done was never reset');
+  assert.equal(status.approved, true, 'nor the approval withdrawn');
+
+  env.fake.forceResume(null);
+  const retry = await env.launcher.answer(answerBody([]));
+
+  assert.deepEqual(retry.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 2, 'the retry resumed again');
+  assert.deepEqual(idsIn(env, env.fake.resumes()[1].notice), ['q2'], 'only the pending change');
+  assert.deepEqual(
+    env.parsed().launch[IMPLEMENT].sent.answers,
+    answeredMap([question('q2', SECOND_TEXT, undefined, IMPLEMENT)]),
+  );
+  assert.deepEqual(env.parsed().launch[INVESTIGATE], investigate, 'the planning send is unchanged');
+});
+
+test('implement unreadable message: a broken answers-implement file keeps the pending answer and sends nothing', async (t) => {
+  const env = await routingEnvironment(t);
+  seedImplementAsked(env);
+  env.writePrompt('answers-implement', '   ');
+
+  const failed = await env.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(failed.send, { status: 'failed', reason: 'prompt_unreadable' });
+  const { status, launch } = env.parsed();
+  assert.equal(status.questions[1].answer, SECOND_TEXT, 'the answer is saved anyway');
+  assert.deepEqual(
+    launch[IMPLEMENT].answered,
+    answeredMap([question('q2', SECOND_TEXT, undefined, IMPLEMENT)]),
+    'with its hash on the implement record',
+  );
+  assert.equal(launch[IMPLEMENT].sent, undefined, 'nothing is recorded as sent');
+  assert.equal(env.fake.resumes().length, 0, 'no session resumes');
+  assert.equal(env.fake.stops().length, 0, 'no session is stopped');
+
+  // A usable file repairs the message; an empty save retries the pending set.
+  env.writePrompt('answers-implement', 'Continue the implementation for {KEY} on {QUESTION_IDS}.');
+  const retried = await env.launcher.answer(answerBody([]));
+
+  assert.deepEqual(retried.send, { status: 'sent' });
+  assert.equal(env.fake.resumes().length, 1, 'exactly one resume');
+  assert.equal(env.fake.resumes()[0].sessionId, sessionUuid(SECOND_ID), 'the implement session');
+  assert.equal(
+    env.fake.resumes()[0].notice,
+    `Continue the implementation for ${KEY} on q2.`,
+    'the repaired implement message',
+  );
+  assert.deepEqual(
+    env.parsed().launch[IMPLEMENT].sent.answers,
+    answeredMap([question('q2', SECOND_TEXT, undefined, IMPLEMENT)]),
+  );
+  assert.equal(env.parsed().launch[INVESTIGATE].sent.answers.q2, undefined);
+});
+
+test('phase-target validation is atomic: an unknown id or a missing lane record refuses before any write', async (t) => {
+  const env = await routingEnvironment(t);
+  seedImplementAsked(env);
+  let before = env.files();
+  await assertRejects(
+    () => env.launcher.answer(answerBody({ q2: SECOND_TEXT, nope: 'x' })),
+    { code: 'INVALID_ANSWER', status: 400 },
+    'an unknown id in the batch',
+  );
+  assert.deepEqual(env.files(), before, 'unknown id: both files are unchanged');
+  assertNothingSent(env, 'unknown id');
+
+  // Only an implement record: an untagged question resolves to a planning lane that does not exist.
+  const onlyImplement = await routingEnvironment(t);
+  onlyImplement.seed(KEY, {
+    status: statusFile({ investigate: true, questions: [question('q2')] }),
+    launch: { [IMPLEMENT]: launchRecord({ name: IMPLEMENT_NAME, id: SECOND_ID }) },
+  });
+  onlyImplement.writePlan();
+  onlyImplement.fake.setListing([listed({ id: SECOND_ID, name: IMPLEMENT_NAME })]);
+  before = onlyImplement.files();
+  await assertRejects(
+    () => onlyImplement.launcher.answer(answerBody({ q2: SECOND_TEXT })),
+    { code: 'INVALID_ANSWER', status: 400 },
+    'a question whose effective lane has no record',
+  );
+  assert.deepEqual(onlyImplement.files(), before, 'missing record: both files are unchanged');
+  assertNothingSent(onlyImplement, 'a missing lane record');
+
+  // An implement tag with no implement record falls back to the planning record that exists.
+  const fallback = await routingEnvironment(t);
+  fallback.seed(KEY, {
+    status: statusFile({
+      investigate: true,
+      done: true,
+      approved: true,
+      questions: [question('q1', FIRST_TEXT), question('q2', null, undefined, IMPLEMENT)],
+    }),
+    launch: {
+      [INVESTIGATE]: launchRecord({
+        id: EARLIER_ID,
+        answered: answeredMap([question('q1', FIRST_TEXT)]),
+        sent: sentRecord([question('q1', FIRST_TEXT)]),
+      }),
+    },
+  });
+  fallback.writePlan();
+  fallback.fake.setListing([listed({ id: EARLIER_ID })]);
+
+  const saved = await fallback.launcher.answer(answerBody({ q2: SECOND_TEXT }));
+
+  assert.deepEqual(saved.send, { status: 'sent' });
+  assert.equal(fallback.fake.resumes()[0].sessionId, sessionUuid(EARLIER_ID));
+  assert.deepEqual(
+    fallback.parsed().launch[INVESTIGATE].answered,
+    answeredMap([question('q1', FIRST_TEXT), question('q2', SECOND_TEXT, undefined, IMPLEMENT)]),
+    'the fallback answer lands in the planning lane',
+  );
+  assert.equal(
+    fallback.fake.resumes()[0].notice,
+    renderTemplate(ANSWERS_TEMPLATE, {
+      statusPath: fallback.statusPath(),
+      questionIds: ['q2'],
+      change: 'changed answers',
+    }),
+    'a fallback answer goes out as a planning message',
+  );
 });
 
 // ---- a running session names its phase in every refusal and block ----
@@ -1622,8 +2100,6 @@ test('scenario 74: a session the launcher just started for implement blocks inve
 
 // ---- saved answers go back to the session that asked ----
 
-const FIRST_TEXT = 'ANSWER-ALPHA-7731';
-const SECOND_TEXT = 'ANSWER-BETA-5520';
 const CHANGED_TEXT = 'ANSWER-GAMMA-1189';
 const THIRD_TEXT = 'ANSWER-DELTA-4046';
 const ALL_TEXTS = [FIRST_TEXT, SECOND_TEXT, CHANGED_TEXT, THIRD_TEXT];
@@ -2541,13 +3017,14 @@ test('scenario 121: with no answers file the message sent is the built-in text, 
   );
 });
 
-test('scenario 121: the built-in templates are exported as the nine texts, placeholders in them', async () => {
+test('scenario 121: the built-in templates are exported as the ten texts, placeholders in them', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
   assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
   assert.deepEqual(PROMPT_TEMPLATES, {
     investigate: INVESTIGATE_TEMPLATE,
     implement: IMPLEMENT_TEMPLATE,
     answers: ANSWERS_TEMPLATE,
+    'answers-implement': ANSWERS_IMPLEMENT_TEMPLATE,
     approve: APPROVE_TEMPLATE,
     rereview: REREVIEW_TEMPLATE,
     groom: GROOM_TEMPLATE,

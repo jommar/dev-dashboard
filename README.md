@@ -1176,12 +1176,14 @@ to use your `orchestrator` skill
 planning session writes `02-plan.md`, `02-checklist.md` and `02-spec.md` in
 `~/pathwise/.orchestrator/<key in lower case>/`, creates no branch, commit, push or pull request,
 and writes the questions it would have asked you into `status.json` instead, each with lettered
-options (a, b, c) inline in the question text and a recommended default, in under 450
-characters because the dashboard cuts a question off at 500. Once every question
-has an answer you saved, the dashboard sends the answers back to that same planning session, which
-is told to update the plan, checklist and spec and then set `done`. Once it has, you approve the
-plan with **Approve plan** (see [Approving the plan](#approving-the-plan)) and only then can Implement
-plan start. The implement session does not commit, push or open a pull request, and leaves its
+options (a, b, c) inline in the question text, a recommended default and the phase that asked it,
+in under 450 characters because the dashboard cuts a question off at 500. Once every question
+has an answer you saved, the dashboard sends the planning answers back to that same planning
+session, which is told to update the plan, checklist and spec and then set `done`. Once it has,
+you approve the plan with **Approve plan** (see [Approving the plan](#approving-the-plan)) and only
+then can Implement plan start. A question the implement session later asks is answered the same
+way and resumes that same implement session, which continues the approved implementation. The
+implement session does not commit, push or open a pull request, and leaves its
 changes in a worktree with a short report beside the plan.
 
 ### Requirements and limits
@@ -1221,15 +1223,15 @@ changes in a worktree with a short report beside the plan.
 The icon's colour, badge shape and words all carry the state, so no state is colour alone. Its
 label and tooltip read `Claude: <state word>`.
 
-| Icon                         | State word                                                                 | Meaning                                                                                                                                                                                                         |
-| ---------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Blue, turning ring (spinner) | `working`, `starting`                                                      | The session is listed as working, or it was launched under 30 seconds ago and is not listed yet. The ring stops turning (and stays a ring) when the system asks for reduced motion.                             |
-| Amber, filled dot            | `blocked, needs you`, `has questions for you`                              | The CLI lists the session as blocked (attach to it), or no session works and a question has no answer you saved.                                                                                                |
-| Amber, filled dot            | `answers not sent`                                                         | Every question has an answer you saved and the plan flag is `true`, but the answers (or a change to them) have not been sent to the session. **Save answers** sends them; until then Implement plan is blocked. |
-| Green, check                 | `plan ready`, `implemented`                                                | The phase's flag is `true` and no question is open; for `plan ready` the plan file `02-plan.md` exists, `done` is `true` and nothing is waiting to be sent.                                                     |
-| Red, cross                   | `plan file missing`, `ended without finishing`, `session no longer listed` | The planning flag is `true` but there is no `02-plan.md`; the session finished without setting its flag; or it has been unlisted for 30 seconds or more without setting its flag.                               |
-| Red, cross                   | `plan not done`                                                            | The plan flag is `true`, the plan file exists and nothing is waiting to be sent, but the session has not set `done`. Check the session before implementing.                                                     |
-| Muted, no badge              | `not started`, `status unavailable`                                        | Nothing was launched for the ticket; or the CLI listing failed or showed a state the dashboard does not know.                                                                                                   |
+| Icon                         | State word                                                                 | Meaning                                                                                                                                                                                                                                    |
+| ---------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Blue, turning ring (spinner) | `working`, `starting`                                                      | The session is listed as working, or it was launched under 30 seconds ago and is not listed yet. The ring stops turning (and stays a ring) when the system asks for reduced motion.                                                        |
+| Amber, filled dot            | `blocked, needs you`, `has questions for you`                              | The CLI lists the session as blocked (attach to it), or no session works and a question has no answer you saved.                                                                                                                           |
+| Amber, filled dot            | `answers not sent`                                                         | Every planning question has an answer you saved and the plan flag is `true`, but the planning answers (or a change to them) have not been sent to the planning session. **Save answers** sends them; until then Implement plan is blocked. |
+| Green, check                 | `plan ready`, `implemented`                                                | The phase's flag is `true` and no question is open; for `plan ready` the plan file `02-plan.md` exists, `done` is `true` and nothing is waiting to be sent.                                                                                |
+| Red, cross                   | `plan file missing`, `ended without finishing`, `session no longer listed` | The planning flag is `true` but there is no `02-plan.md`; the session finished without setting its flag; or it has been unlisted for 30 seconds or more without setting its flag.                                                          |
+| Red, cross                   | `plan not done`                                                            | The plan flag is `true`, the plan file exists and nothing is waiting to be sent, but the session has not set `done`. Check the session before implementing.                                                                                |
+| Muted, no badge              | `not started`, `status unavailable`                                        | Nothing was launched for the ticket; or the CLI listing failed or showed a state the dashboard does not know.                                                                                                                              |
 
 The icon shows the ticket's current phase, the one launched last. Grooming does not count: it
 shows only for a ticket with no workflow record, then with the same four looks, from the groom
@@ -1257,9 +1259,11 @@ outcome of an approval or a save is a short inline message beside what caused it
 dismiss it; it also clears by itself once the ticket stops working, so it never outlives the state
 it described.
 
-When the planning session asked questions, the dialog also shows a reminder that nothing is sent
-to the session until every question has an answer, and the questions as a numbered list. Each has
-a multi-line answer box with your saved answer filled in. The box grows with its text, from about
+When a workflow session asked questions, the dialog also shows a reminder that nothing is sent
+to the session until every question has an answer, and the questions as a numbered list. Each
+shows a muted `Investigate and plan` or `Implement plan` label after the question text, naming the
+phase that asked it (a question with no tag reads as `Investigate and plan`), and has a multi-line
+answer box with your saved answer filled in. The box grows with its text, from about
 two lines to about twelve, then scrolls; that is CSS only (`field-sizing: content`), so a browser
 without it shows a fixed-height box that scrolls. Password-manager overlays are turned off on the
 boxes. A question that has a saved answer shows a tick (accessible name `Answered`); a draft you
@@ -1269,17 +1273,17 @@ is on screen without scrolling. At its left is **Prompts**, which opens the prom
 none the footer holds **Prompts** and **Close**. With questions it also holds the count
 (`N of M answered`), the line saying what the last save did and **Save answers**, the one filled
 button there. The questions are cards under a heading with the count, a slim progress bar and
-**Resend answers**, which sends the saved answers to the session again even when nothing changed
-(for a send that never arrived; see
+**Resend answers**, which sends the saved planning answers to the planning session again even when
+nothing changed (for a send that never arrived; see
 [Saving and sending answers](#saving-and-sending-answers)); it is off while you have unsaved edits
 and while a session works. **Approve plan** is open only once the planning session has marked the
 plan `done` (see [Approving the plan](#approving-the-plan)); it says why when it is off, and the
 step reads `Approved` with the time afterwards.
 **Save answers** saves only the answers you changed
-and, when every question has one, sends them to the session (see
-[Saving and sending answers](#saving-and-sending-answers)). It is enabled when you changed an
-answer, or when every question is answered but the answers were not sent (the retry). The boxes
-are disabled while a session works or the status is unavailable. Escape and a click on the
+and, when every question of a phase has one, sends that phase's answers to the session that asked
+them (see [Saving and sending answers](#saving-and-sending-answers)). It is enabled when you
+changed an answer, or when every answer is saved but one phase's set was not sent (the retry). The
+boxes are disabled while a session works or the status is unavailable. Escape and a click on the
 backdrop close the dialog.
 
 The board reads every ticket's state from one `GET /api/claude/tickets` every 15 seconds while the
@@ -1335,14 +1339,24 @@ flight. nodemon reads the file only at start-up, so restart `npm run dev` once a
   "implement-plan": false,
   "done": false,
   "approved": false,
-  "questions": [{ "id": "q1", "question": "Which repo owns the fix?", "answer": null }]
+  "questions": [
+    {
+      "id": "q1",
+      "question": "Which repo owns the fix?",
+      "answer": null,
+      "phase": "investigate-and-plan"
+    }
+  ]
 }
 ```
 
 - **The session** writes `questions` (once, near the end of planning, or by appending one object
-  when Implement is blocked by something the plan and your answers do not settle) and changes its
-  own flag to `true` as its very last action, after everything else is saved. `done` is also the
-  session's: it means the planning phase is complete, every question answered and the plan,
+  whenever Implement is blocked by something the plan and your answers do not settle) and changes its
+  own flag to `true` as its very last action, after everything else is saved. Every new question
+  carries `"phase": "investigate-and-plan"` from the planning session or `"phase": "implement-plan"`
+  from the implement session; the built-in prompts require it. Existing questions are preserved as
+  they are, including one with no `phase`. `done` is also the session's: it means the planning
+  phase is complete, every question answered and the plan,
   checklist and spec updated. A planning session that asked no questions sets `done` to `true` in
   the same edit as its flag; one that asked questions leaves it `false` and sets it `true`, as its
   very last action, after the answers have been sent to it (see
@@ -1352,20 +1366,24 @@ flight. nodemon reads the file only at start-up, so restart `npm run dev` once a
   `false`, `approved` `false` and no questions, replacing any earlier file (a re-run resets it). At an Implement
   launch it rewrites the file from what it can read: the planning flag `true`, the implement flag
   `false`, `done` and `approved` as they were and the first 20 readable questions, each whole, with
-  `answer` kept only where you saved that answer; anything else a session left in the file is
-  dropped. When it sends answers it sets `done` to `false` first, and `approved` to `false` too
-  when the answers differ from the last send (the plan is being revised and needs approving again);
-  a resend of unchanged answers leaves `approved` as it was. Approve writes `approved: true` with
-  `done: false` just before it resumes the session. Otherwise it writes only the `answer` of an
-  existing question, when you save. Both keys are added when the file has none.
+  `answer` kept only where you saved that answer and a valid `phase` kept, while a question with no
+  tag gains none; anything else a session left in the file is dropped. When it sends planning
+  answers it sets `done` to `false` first, and `approved` to `false` too when the answers differ
+  from the last send (the plan is being revised and needs approving again); a resend of unchanged
+  answers leaves `approved` as it was, and an implement answer changes neither. Approve writes
+  `approved: true` with `done: false` just before it resumes the session. Otherwise it writes only
+  the `answer` of an existing question, when you save. Both keys are added when the file has none.
 - **Reads are defensive.** A flag counts only when it is exactly `true`, and so do `done` and
   `approved`: a file with no `done` or `approved`, or one that is not a boolean, reads as `false`
   (it is not unreadable), so a `status.json` written before the field existed reads `false` and
   needs one Approve before Implement plan opens. A question is read only
-  when its `id` matches `^[A-Za-z0-9_-]{1,32}$` and its `question` is a string; the board shows at
-  most 20 questions, each cut to 500 characters, as plain text. A file over 1 MiB, or one that is
-  not a JSON object, is unreadable: the card shows no flags and no questions, every action that
-  depends on it is refused with `status_unreadable`, and only an Investigate launch overwrites it.
+  when its `id` matches `^[A-Za-z0-9_-]{1,32}$` and its `question` is a string; a `phase` that is
+  not `investigate-and-plan` or `implement-plan` is ignored, and so is `implement-plan` until an
+  implement record exists, so the question reads and counts as planning either way. The board
+  shows at most 20 questions, each cut to 500 characters, as plain text. A file over 1 MiB, or one
+  that is not a JSON object, is unreadable: the card shows no flags and no questions, every action
+  that depends on it is refused with `status_unreadable`, and only an Investigate launch overwrites
+  it.
 
 `claude/<KEY>/launch.json` is written by the dashboard only, because `status.json` has no place for
 which session belongs to which phase and a re-run reuses its session name.
@@ -1380,7 +1398,13 @@ which session belongs to which phase and a re-run reuses its session name.
     "sent": { "at": "<ISO time>", "answers": { "q1": "<the same hash, at the time of the send>" } },
     "approved": { "at": "<ISO time>" }
   },
-  "implement-plan": { "name": "ABC-123-implement-plan", "launchedAt": 1731100500000, "id": null },
+  "implement-plan": {
+    "name": "ABC-123-implement-plan",
+    "launchedAt": 1731100500000,
+    "id": null,
+    "answered": { "q2": "<sha-256 hex of the id, question and answer you saved>" },
+    "sent": { "at": "<ISO time>", "answers": { "q2": "<the same hash, at the time of the send>" } }
+  },
   "groom": { "name": "ABC-123-groom", "launchedAt": 1731100900000, "id": "ef56ab78" },
   "e2e-ticket-check": {
     "name": "ABC-123-e2e-ticket-check",
@@ -1408,12 +1432,12 @@ Investigate launch drops the `implement-plan` entry, and with the rest of the in
 whatever `sent` it held; it keeps the `groom`, `pr-review-transact`, `spec-review` and `e2e-ticket-check` entries. Groom,
 review and e2e check launches each replace only their own record, have no flags or answers, and leave `status.json`
 alone. Relaunch uses the existing record/session tracking, not a separate review-history store.
-`answered` appears once you save an answer (see below). `sent` is on the
-investigate record only. It is written when answers were really delivered to the session, and again
-at each re-send, and holds the time and the hash of every question (the same hash as `answered`)
-at that moment. It is written only after the resume succeeded, so a failed send leaves it as it
-was. `approved` is on the investigate record only too: the time Approve was delivered, dropped with
-the next send of changed answers.
+`answered` appears once you save an answer, on the record of the lane that asked the question (see
+below). `sent` is written on that same record when its answers were really delivered to its
+session, and again at each re-send, and holds the time and the hash of every question of that lane
+(the same hash as `answered`) at that moment. It is written only after the resume succeeded, so a
+failed send leaves it as it was and the next save retries it. `approved` is on the investigate
+record only: the time Approve was delivered, dropped with the next send of changed answers.
 
 Folders are mode `0700` and files `0600`, and every dashboard write is a temp file, fsync and
 rename, under one lock per ticket. Workflow state writes require no workflow session to be
@@ -1428,23 +1452,28 @@ checked only when the planning flag is `true` and when Implement plan launches.
 
 ### Saving and sending answers
 
-**Save answers** always saves first: each changed answer goes into `status.json`, with its hash in
-`launch.json`. A save with nothing changed (`answers: []`) saves nothing. Partial answers just save
-and send nothing, so you can answer one question and come back. Then, in the same request, the
-dashboard decides whether to send the answers to the planning session. It sends only when all of
-these hold; otherwise the reply says `send: { status: "skipped", reason }` with the first that
-fails:
+**Save answers** always saves first: each changed answer goes into `status.json`, with its hash on
+the launch record of the phase that asked that question. A save with nothing changed
+(`answers: []`) saves nothing. Partial answers just save and send nothing, so you can answer one
+question and come back. Then, in the same request, the dashboard decides lane by lane whether to
+send the saved answers to the session that asked them, planning answers first and implement answers
+after. A lane sends only when all of these hold; otherwise the reply says
+`send: { status: "skipped", reason }` with the first that fails:
 
-1. Every question has an answer you saved (`incomplete`; a ticket with no questions never sends).
-2. The planning flag is `true` (`not_planned`).
-3. Implement plan has never been launched for the ticket (`implement_started`: after that, answers
-   only save).
-4. At least one answer is new or differs from what was last sent (`unchanged` otherwise), judged
-   by the hash in `sent`. So a save that changes nothing never re-sends answers that were already
-   delivered (after a failed send, where `sent` was never recorded, the same save sends them), and
-   typing a cleared answer back as it was restores `unchanged`.
+1. Every question of that phase has an answer you saved (`incomplete`; a ticket with no questions
+   never sends, and a phase with no questions has nothing to send).
+2. For planning answers, the planning flag is `true` (`not_planned`). An implement answer has no
+   such gate: the implement session exists only once Implement plan has started.
+3. For planning answers, Implement plan has never been launched for the ticket
+   (`implement_started`: after that, planning answers only save). An implement question's answer is
+   not skipped for this; it is delivered to the implement session.
+4. At least one answer of that phase is new or differs from what that phase's session was last sent
+   (`unchanged` otherwise), judged by the hash in that record's `sent`. So a save that changes
+   nothing never re-sends answers that were already delivered (after a failed send, where `sent`
+   was never recorded, the same save sends them), and typing a cleared answer back as it was
+   restores `unchanged`.
 
-To send, the dashboard reads a fresh listing and finds the planning session by its saved `id`, or
+To send, the dashboard reads a fresh listing and finds that phase's session by its saved `id`, or
 with none saved by its recorded name (`listing_unavailable`, `session_not_found`). A session with
 a process is stopped first, which the existing stop does only for an idle one: a busy session
 fails the send as `session_running`, one that is no longer listed as `session_not_found`, and any
@@ -1454,13 +1483,20 @@ second (`FINISH_POLL_MS`) until the session has no process at all, for at most 3
 tell, is never resumed, because resuming a session that has not gone yet makes the CLI start a
 copy of it. If the cap passes the send fails as `live_at_resume` and nothing was written. A
 session with no process (already finished) is resumed with no wait. Once it is gone the dashboard
-sets `done` to `false` in `status.json` (before the resume, so a session that finishes at once and
-sets it `true` is never overwritten) and resumes the same session with a notice. The Save request
-waits for all of this, so it can take several seconds when a live session had to be stopped (up to
-about 30 when it is slow to go), and the ticket stays locked meanwhile. Only
-after the CLI delivered the resume does the dashboard record `sent`; a resume that found no such
-session counts as `session_not_found`, a session still live at that moment as `live_at_resume`,
-and anything else (including the CLI reporting that it started a copy) as `resume_failed`.
+resumes the same session with that phase's notice; for planning answers it also sets `done` to
+`false` in `status.json` first, so a session that finishes at once and sets it `true` is never
+overwritten (an implement answer writes no status). The Save request waits for all of this, so it
+can take several seconds when a live session had to be stopped (up to about 30 when it is slow to
+go), and the ticket stays locked meanwhile. Only after the CLI delivered the resume does the
+dashboard record that lane's `sent`; a resume that
+found no such session counts as `session_not_found`, a session still live at that moment as
+`live_at_resume`, and anything else (including the CLI reporting that it started a copy) as
+`resume_failed`.
+
+The two lanes are sent one at a time, planning first; normally only one is ever pending, because an
+implement record makes planning answers skip. A lane whose send fails keeps its saved answers and
+its earlier `sent`, so the next **Save answers** retries only what is still pending; the reply then
+reports the first failure.
 
 **Every dashboard send uses this one path** (`deliverToSession` in `backend/claude-launcher.mjs`):
 saving answers, **Resend answers**, **Approve plan** and **Re-review**. Each passes only what is
@@ -1476,16 +1512,17 @@ never logged (it is replaced by `[notice]` if the CLI echoed it), and nothing is
 that succeeded. The sessions module stays silent for callers that pass no ticket, which is how the
 Slack wake keeps its no-CLI-output guarantee.
 
-By default the notice (the message in `prompts/answers.md` if you wrote one, see
+By default the planning notice (the message in `prompts/answers.md` if you wrote one, see
 [Custom prompts](#custom-prompts)) names the ticket, says you answered the open questions, lists
 the ids (it reads "answers to questions q1, q2" the first time and "changed answers to questions
 q2" after a send, naming the answers that are new or differ from the last send) and points at
 `status.json`, where the answers are in `questions[].answer`. The dashboard never puts answer text
-in it. On every delivery the session reads the latest status and plan, checklist and spec under
-`.orchestrator/<key in lower case>/`, applies all current decisions, and reassesses ambiguities and
+in it. On every planning delivery the session reads the latest status and plan, checklist and spec
+under `.orchestrator/<key in lower case>/`, applies all current decisions, and reassesses ambiguities and
 follow-up questions. It may revise still-unanswered questions in place; answered questions and their
 history stay unchanged, with new or revised follow-ups appended under fresh increasing `qN` ids and
-`answer: null`. This loop can repeat after each answer delivery. A **Decision documentation** section
+`answer: null`, tagged with `"phase": "investigate-and-plan"`. This loop can repeat after each
+answer delivery. A **Decision documentation** section
 in the plan maps question ids and decisions to their effects and affected doc sections, separating
 confirmed decisions from provisional defaults. The session updates all three artifacts in place,
 removes superseded assumptions, aligns scenarios and checklist proving commands, and records concrete
@@ -1495,16 +1532,26 @@ questions remain and all three artifacts reflect the latest decisions may its la
 to `true`; otherwise it keeps or resets `done` to `false` and stops for the next answer delivery. Status
 edits preserve unrelated state and leave the planning flag intact.
 
+An implement answer gets the `answers-implement` message instead (`prompts/answers-implement.md`
+when you override it). It has the same placeholders and no planning-approval stop: it tells the
+session the plan is approved already, resumes the implementation and its verification with the
+latest decisions, and appends any new blocker as a question tagged `"phase": "implement-plan"`. It
+sets only `"implement-plan": true` when it finishes, never `done` or `approved`, and it still does
+not commit, push or open a pull request. The dashboard's `sent` line for a delivered implement
+answer is the same `Answers sent. Claude is updating the plan.` as for planning answers.
+
 The reply is `{ ok, key, send, ticket }` with `send` `{ status, reason? }`, `status` being `sent`,
 `skipped` or `failed`. A failed send is not an HTTP error: the answers stay saved (they are never
-rolled back), `sent` is not recorded, and the call answers `200` with `send.status` `failed`. The
-next **Save answers** retries it, with or without edits: with nothing changed the dialog posts
-`answers: []`, which saves nothing and runs the same decision. **Resend answers** posts
-`{ answers: [], resend: true }`: the same decision with the one gate that skips an unchanged set
-(`unchanged`) lifted, so every saved answer goes again (the notice reads "answers (sent again) to
-questions q1, q2"), whether or not the plan is `done`. Every other gate still applies. It records
-`sent` and resets `done` like any send, and leaves `approved` alone because nothing changed. After a
-save the dialog shows one of:
+rolled back), that lane's `sent` is not recorded, and the call answers `200` with `send.status`
+`failed`. The next **Save answers** retries it, with or without edits: with nothing changed the
+dialog posts `answers: []`, which saves nothing and runs the same decision. **Resend answers** posts
+`{ answers: [], resend: true }`. It is the planning lane's action: the same decision with the one
+gate that skips an unchanged set (`unchanged`) lifted, so every saved planning answer goes again
+(the notice reads "answers (sent again) to questions q1, q2"), whether or not the plan is `done`.
+An implement answer that was already sent is not forced again; a pending implement change is sent
+by its own gate 4 comparison. Every other gate still applies. A resend records the planning `sent`
+and resets `done` like any planning send, and leaves `approved` alone because nothing changed.
+After a save the dialog shows one of:
 
 | `send`                         | The dialog says                                                                                           |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
@@ -1520,14 +1567,17 @@ The reason in that last line is the dialog's sentence for the code, without its 
 (`session_not_found`), `A Claude session is already running for this ticket` (`session_running`),
 `The Claude session is still running` (`live_at_resume`), `The Claude session could not be
 resumed` (`resume_failed`) or `A custom prompt file could not be used. Fix or remove it in the
-dashboard's prompts folder` (`prompt_unreadable`, from a bad `answers.md`; see
-[Custom prompts](#custom-prompts)). A save is still refused (`CLAUDE_REFUSED`, `session_running`)
-while a session works.
+dashboard's prompts folder` (`prompt_unreadable`, from a bad `answers.md` or
+`answers-implement.md`; see [Custom prompts](#custom-prompts)). A save is still refused
+(`CLAUDE_REFUSED`, `session_running`) while a session works.
 
 Limits:
 
-- **Planning session only.** Answers are sent to the `investigate-and-plan` session. After an
-  Implement launch they only save.
+- **Answers go to the session that asked.** Planning questions are delivered to the
+  `investigate-and-plan` session and implement questions to the `implement-plan` session. After an
+  Implement launch, planning answers only save (the plan is already being implemented) while
+  implement answers are delivered. A question with no `phase` reads as planning, so an older
+  `status.json` behaves exactly as it did before.
 - **The settle gap is a design constant.** The 15 seconds after a stop are the Slack wake's
   `SETTLE_MS` (see [Watch](#watch)), not a measured timing there or here. The watcher's record is
   that a resume 3 seconds after a stop started a copy and one 10 seconds after continued. That no
@@ -1543,17 +1593,26 @@ Limits:
 ### Answers and the Implement gate
 
 **Implement plan** launches only when the status file is readable (`status_unreadable`), the
-planning flag is `true` (`not_planned`), the plan file exists (`plan_missing`), no question is
-unanswered (`questions_unanswered`), no answer is waiting to be sent (`answers_not_sent`) and
-`done` is `true` (`plan_not_done`) and you approved the plan (`not_approved`), in that order, and
-neither phase's session works (`session_running` or `investigate_running`, which come first). A
-refused launch starts nothing and changes no file.
+planning flag is `true` (`not_planned`), the plan file exists (`plan_missing`), no planning
+question is unanswered (`questions_unanswered`), no planning answer is waiting to be sent
+(`answers_not_sent`) and `done` is `true` (`plan_not_done`) and you approved the plan
+(`not_approved`), in that order, and neither phase's session works (`session_running` or
+`investigate_running`, which come first). A question the implement session asked is not the plan's
+to answer, so it never blocks Implement or Approve. A refused launch starts nothing and changes no
+file.
 
 For each answer you save, the dashboard records a hash of it (SHA-256 of the question id, the
-question text and the answer, untrimmed) in `launch.json` and counts an answer only when its text
-still matches. A best-guess default that a session copied into `status.json` itself, or an answer
-or a question edited after you saved it, therefore reads as unanswered and keeps Implement plan
-disabled. This is accident-proofing, not a security boundary: a launched session can write the
+question text and the answer, untrimmed) on the record of the phase that asked it, and counts an
+answer only when its text still matches. A tagged question counts only the hash on its own phase's
+record; a question with no valid tag counts a match on any workflow record, the union an older
+`status.json` relies on. An `implement-plan` tag counts only once an implement record exists:
+until then the question reads and counts as planning, so a tag written into `status.json` by
+itself cannot take a question out of the planning gates. A save or a clear also drops that
+question's hash from the other workflow record, so a hash recorded before the question was tagged
+cannot answer it again after you clear or replace it. A best-guess default that a session copied
+into `status.json` itself, or an answer or a question edited after you saved it, therefore reads as
+unanswered: it keeps the planning gates closed, or its own phase's answer unsent, until you save
+it. This is accident-proofing, not a security boundary: a launched session can write the
 whole `claude/` folder, `launch.json` included, so a hostile session could forge the hashes. Your
 real protection is that Approve plan and Implement plan are manual clicks, made after you read the
 plan (the dialog shows its path) and the answers you saved yourself.
@@ -1562,13 +1621,13 @@ plan (the dialog shows its path) and the answers you saved yourself.
 
 **Approve plan** tells the planning session that you approved its finished plan, and unlocks
 Implement plan. It is open only when the plan is ready and done: the status file is readable, the
-planning flag is `true`, the plan file exists, no question is unanswered, the answers were all sent
-and `done` is `true`. Otherwise `POST /api/claude/approve` is refused (`409` `CLAUDE_REFUSED`, the
-reason in `errors[0]`) with the first reason that applies: `status_unreadable`, `not_planned`,
-`plan_missing`, `questions_unanswered`, `answers_not_sent` or `plan_not_done`, then
+planning flag is `true`, the plan file exists, no planning question is unanswered, the planning
+answers were all sent and `done` is `true`. Otherwise `POST /api/claude/approve` is refused (`409`
+`CLAUDE_REFUSED`, the reason in `errors[0]`) with the first reason that applies: `status_unreadable`,
+`not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent` or `plan_not_done`, then
 `implement_started` once Implement plan has been launched and `already_approved` after an approval;
-`session_running` and `investigate_running` come first while a session works. Nothing is written
-on a refusal.
+`session_running` and `investigate_running` come first while a session works. A question the
+implement session asked does not block an approval. Nothing is written on a refusal.
 
 An approval is sent as the answers are: the idle session is stopped, the dashboard waits for it to
 go (the poll above), sets `done` to `false` and `approved` to `true` in `status.json` (adding the key to an older
@@ -1585,8 +1644,10 @@ answers, and **Approve plan** can be pressed again. After a delivery `launch.jso
 sent: <reason>. Press Approve plan to retry.`
 
 Implement plan stays its own step and its launch is the only thing that starts an implement
-session. Changed answers withdraw the approval (see [Saving and sending answers](#saving-and-sending-answers)):
-the plan is being revised, so it needs approving again after the session marks it `done`.
+session. Changed planning answers withdraw the approval (see
+[Saving and sending answers](#saving-and-sending-answers)): the plan is being revised, so it needs
+approving again after the session marks it `done`. An implement answer never changes `done` or
+`approved`.
 
 ### Groom ticket
 
@@ -1736,38 +1797,53 @@ browser localStorage on rollback; older code ignores review records and treats p
 ### Custom prompts
 
 All six launch prompts (investigate, implement, groom, review, spec-review and e2e) and the
-messages sent with your answers, your approval and a re-review are editable templates: nine in
-all. By default they use the original built-in text. You can change each one in the app (see
-**Edit in the app** below) or by hand. See also the standalone [prompt guide](prompts/README.md).
-Both edit the same file, a file of that name in the `prompts/` folder of the dashboard (the repo
-root, next to `claude/`), so a hand edit and an app edit always agree:
+messages sent with your answers, your approval and a re-review are editable templates: ten in
+all, in the registry order investigate, implement, answers, answers-implement, approve, rereview,
+groom, review, spec-review, e2e. By default they use the original built-in text. You can change
+each one in the app (see **Edit in the app** below) or by hand. See also the standalone
+[prompt guide](prompts/README.md). Both edit the same file, a file of that name in the `prompts/`
+folder of the dashboard (the repo root, next to `claude/`), so a hand edit and an app edit always
+agree:
 
-| File                     | Replaces                                 | Placeholders                                                     |
-| ------------------------ | ---------------------------------------- | ---------------------------------------------------------------- |
-| `prompts/investigate.md` | the Investigate and plan prompt          | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `prompts/implement.md`   | the Implement plan prompt                | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `prompts/answers.md`     | the message sent with your saved answers | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
-| `prompts/approve.md`     | the message sent when you approve a plan | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `prompts/rereview.md`    | the message sent for a re-review         | `{KEY}`, `{SLUG}`                                                |
-| `prompts/groom.md`       | the Groom ticket prompt                  | `{KEY}`, `{SLUG}`                                                |
-| `prompts/review.md`      | the prompt for a new code review session | `{KEY}`, `{SLUG}`                                                |
-| `prompts/spec-review.md` | the spec review prompt                   | `{KEY}`, `{SLUG}`, `{PR}`                                        |
-| `prompts/e2e.md`         | the E2E ticket check prompt              | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
+| File                           | Replaces                                           | Placeholders                                                     |
+| ------------------------------ | -------------------------------------------------- | ---------------------------------------------------------------- |
+| `prompts/investigate.md`       | the Investigate and plan prompt                    | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/implement.md`         | the Implement plan prompt                          | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/answers.md`           | the message sent with your saved planning answers  | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+| `prompts/answers-implement.md` | the message sent with your saved implement answers | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+| `prompts/approve.md`           | the message sent when you approve a plan           | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/rereview.md`          | the message sent for a re-review                   | `{KEY}`, `{SLUG}`                                                |
+| `prompts/groom.md`             | the Groom ticket prompt                            | `{KEY}`, `{SLUG}`                                                |
+| `prompts/review.md`            | the prompt for a new code review session           | `{KEY}`, `{SLUG}`                                                |
+| `prompts/spec-review.md`       | the spec review prompt                             | `{KEY}`, `{SLUG}`, `{PR}`                                        |
+| `prompts/e2e.md`               | the E2E ticket check prompt                        | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
 
 `{KEY}` is the validated ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
 `{STATUS_FILE}` the absolute path of the ticket's `status.json`, `{QUESTION_IDS}` the ids of the new
 or changed answers joined with `, `, and `{CHANGE}` is `answers` for a normal send with no prior
-successful answer send for that planning session, `changed answers` for a later normal send with
-new or changed answers, and `answers (sent again)` for an explicit resend (`resend: true`), whether
-or not the answers changed. `{PR}` is the validated spec PR number, and `{PORT}` is the
-running browser's port (9300-9399), read from the DevTools registry, not client text. Any
-placeholder not listed for that template stays in the text as written, so in
-`groom.md`, which has no status file, `{STATUS_FILE}` is left as literal text. The file is read
-as UTF-8, trimmed, and otherwise used as written.
+successful answer send for that phase's session, `changed answers` for a later normal send with
+new or changed answers, and `answers (sent again)` for an explicit resend (`resend: true`), which
+only the planning lane has, whether or not the answers changed. `{PR}` is the validated spec PR
+number, and `{PORT}` is the running browser's port (9300-9399), read from the DevTools registry,
+not client text. Any placeholder not listed for that template stays in the text as written, so in
+`groom.md`, which has no status file, `{STATUS_FILE}` is left as literal text. The file is read as
+UTF-8, trimmed, and otherwise used as written.
+
+The two answers messages take the same placeholders. `answers-implement` is the continuation
+message for a question the implement session asked: it continues the approved implementation and
+its verification instead of stopping at the planning approval gate. The question-writing templates
+(investigate, implement, answers and answers-implement) depend on the `phase` key: every **new**
+question carries `"phase": "investigate-and-plan"` or `"phase": "implement-plan"` and exactly the
+keys id, question, answer and phase, while every existing question is preserved as it is,
+including one with no `phase`, and an answered question's id, text, answer and phase never change.
+A custom file you wrote earlier is not upgraded automatically: if you customized
+`investigate.md`, `implement.md` or `answers.md`, add that tag instruction and the preservation
+wording by hand, or press **Reset to default** to take the built-in text. `answers-implement.md`
+is a new, optional override name.
 
 - **Edit in the app.** **Prompts**, at the left of the Claude dialog's footer, swaps the dialog's
   body for an editor in the same dialog. The footer then holds **Back**, at the left where
-  **Prompts** was, and **Close**. The editor loads the nine prompts once when it opens, not on
+  **Prompts** was, and **Close**. The editor loads the ten prompts once when it opens, not on
   the dialog's 15 second refresh; if the load fails it shows the error and a **Retry** button.
   Each prompt has:
   - a badge: `default` (no file, so the built-in text), `custom` (a usable file) or
@@ -1788,12 +1864,12 @@ as UTF-8, trimmed, and otherwise used as written.
   were typing in the dialog survive **Back**.
 
 - **A missing `{STATUS_FILE}` is a warning, never a block.** While the text in the box of a prompt
-  that takes `{STATUS_FILE}` (investigate, implement, answers or approve) lacks the literal `{STATUS_FILE}`, the
-  editor says so under the box as you type: "This prompt does not
+  that takes `{STATUS_FILE}` (investigate, implement, answers, answers-implement or approve) lacks
+  the literal `{STATUS_FILE}`, the editor says so under the box as you type: "This prompt does not
   contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done
   will not work." **Save** stays enabled and the server never refuses a prompt for it.
 - **Absent means built-in.** A missing file is never an error. `npm run claude:prompts` creates
-  `prompts/` and writes the nine built-in templates into it, placeholders intact, for you to edit
+  `prompts/` and writes the ten built-in templates into it, placeholders intact, for you to edit
   by hand. It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that
   exists. It needs no Settings setup.
 - **Applied at once.** The files are read on every launch and every send, never cached, so an edit
@@ -1847,13 +1923,14 @@ session; `rereview.md` is only the continuation message (not `re-review.md`). Th
 `prompts/README.md` is documentation, not a registered prompt.
 
 Each built-in investigate and implement prompt carries the protocol the dashboard relies on: the
-questions go into `status.json`, the phase flag (and `done`) is set as the very last action, and
+questions go into `status.json`, each new one tagged with its asking phase, the phase flag (and
+`done`) is set as the very last action, and
 the session never asks in chat. The built-in investigate prompt also tells the session to give
 every question lettered options (a, b, c) inline in the question text, with its recommended
 default, and to keep each question under 450 characters. That wording lives in the built-in text
 only: a `prompts/investigate.md` you made earlier keeps its own words until you add the
-instruction by hand or press **Reset to default**. The dashboard does not check that a custom
-file keeps any of this. A prompt that drops it
+instruction (and the `phase` tag) by hand or press **Reset to default**. The dashboard does not
+check that a custom file keeps any of this. A prompt that drops it
 leaves sessions red (`ended without finishing`, `plan not done`) and **Implement plan** locked; the
 editor's `{STATUS_FILE}` warning is the only guard. To go back to the built-in text, press **Reset
 to default** or delete the file.
@@ -1865,7 +1942,7 @@ to default** or delete the file.
 | `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets, lastActive }`; `listing` is `ok` or `unavailable`; `tickets` keyed by ticket key (entry below); `lastActive` is `{ key: { phase: ISO } }`, sparse |
 | `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, `e2e-ticket-check` also takes `browserId`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }` |
 | `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                                                                |
-| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; nine entries in the order investigate, implement, answers, approve, rereview, groom, review, spec-review, e2e                                            |
+| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; ten entries in the order investigate, implement, answers, answers-implement, approve, rereview, groom, review, spec-review, e2e                          |
 | `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                                                            |
 | `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                                                               |
 
@@ -1891,19 +1968,22 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
   null reason until a spec review is launched. `blocks.specReview` is present only for a ticket with
   that record; it is `session_running` while the spec review works, `listing_unavailable` when the CLI
   listing failed, and `null` otherwise.
-- Each question is `{ id, question, answer }`, with `answer` `null` unless it is one you saved;
-  `unanswered` counts the open ones.
+- Each question is `{ id, question, answer, phase }`, with `answer` `null` unless it is one you
+  saved and `phase` the lane that asked it (`investigate-and-plan` or `implement-plan`, and
+  `investigate-and-plan` for a question with no valid tag); `unanswered` counts the open ones
+  across both phases.
 - `blocks` is `{ investigate, implement, answer, groom, review }` (plus `specReview` and `e2e` for a ticket with that record), each a reason string or `null` (why that
   action is refused now). It is what the dialog words beside a disabled item. While Investigate
   and plan runs it is `session_running`, `investigate_running` and `session_running`; while
   Implement plan runs it is `implement_running`, `session_running` and `session_running`. The
   running reason comes before `not_planned`, `plan_missing`, `questions_unanswered`,
   `answers_not_sent` and `plan_not_done`, in that order. So `blocks.implement` is
-  `answers_not_sent` when no question is open but the answers are waiting to be sent, and
-  `plan_not_done` when they are sent (or nothing is waiting) and `done` is not `true`.
-- `unsent` is `true` when the answers are complete, the plan flag is `true`, Implement plan was
-  never launched, they differ from the last send and no session works: the conditions under which
-  a **Save answers** would send. The same conditions make `answers_not_sent` the Implement block.
+  `answers_not_sent` when no planning question is open but the planning answers are waiting to be
+  sent, and `plan_not_done` when they are sent (or nothing is waiting) and `done` is not `true`.
+- `unsent` is `true` when either phase has a complete set of saved answers that differ from what
+  its own session was last sent, under the conditions that would let its **Save answers** send,
+  and no session works. The same conditions make `answers_not_sent` the Implement block for the
+  planning lane.
 - `goTo` is always `{ investigate, implement, groom }` (plus `review` for a ticket with a review record and `e2e` for one with an e2e record), each side `{ kind, command }` (`kind` is `attach`
   or `resume`) or `null`: `null` for a phase with no launch record, a session that cannot be
   joined (not listed and no transcript to recover it from), or an unavailable listing, so a ticket never launched has every side `null`. It used to
@@ -1916,14 +1996,17 @@ extra properties such as `summary` or `prompt` in the body are ignored. Its answ
 8-character id, or `null` while the listing does not show the session yet) and `ticket` (the
 refreshed entry). `answers` takes
 `{ "<question id>": "<text>" }` with at most 20 entries, each text at most 2000 characters and an
-empty text clearing that answer; only the `answer` of an existing question changes, and nothing is
-written when any entry is invalid. The empty array `[]` is also accepted: it saves nothing and runs
-the send decision (the retry). The reply's `send` is described under
+empty text clearing that answer, and an optional `resend` forces the planning set again; only the
+`answer` of an existing question changes, and nothing is written when any entry is invalid. There
+is no phase in the body: the server routes each id to the phase that asked it and refuses the batch
+if that phase has no launch record. The empty array `[]` is also accepted: it saves nothing and
+runs the send decision (the retry). The reply's `send` is described under
 [Saving and sending answers](#saving-and-sending-answers).
 
 A prompt entry is `{ name, label, source, text, placeholders }`. `name` is one of `investigate`,
-`implement`, `answers`, `approve`, `rereview`, `groom`, `review`, `spec-review` or `e2e`; a path
-with any other name matches no prompt route. `label` is its human-readable editor heading. `source` is
+`implement`, `answers`, `answers-implement`, `approve`, `rereview`, `groom`, `review`,
+`spec-review` or `e2e`; a path with any other name matches no prompt route. `label` is its
+human-readable editor heading. `source` is
 `default` (no file), `custom` (a usable file) or `unusable` (a file that exists but cannot be
 used). `text` is the file's trimmed text for `custom` and the built-in text for the other two, so
 a fix can be saved from it, and `placeholders` lists the `{WORD}`s the prompt takes. `PUT` needs a
@@ -1941,7 +2024,7 @@ so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 | Status | Code             | When                                                                                                                                                                                                                                                                                                                         |
 | ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the supported launch actions, `pr` is bad for `spec-review`, or `browserId` is not `b-` and eight hex digits for `e2e-ticket-check`                                                                                                                         |
-| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record                                                                                                |
+| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record for the question's phase                                                                       |
 | `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                                                                                                 |
 | `409`  | `CLAUDE_REFUSED` | `session_running` (the action asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable`, `status_unreadable`, `unrecognised_state` (review), or `browser_not_found` and `browser_not_running` (e2e check) |
 | `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist; for an e2e check the browser is left for the finish-time stop), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused)                   |
@@ -1989,7 +2072,7 @@ nothing was sent.` and that the session received nothing (attach to it).
    `prompts/investigate.md` (keep the rest), and launch **Investigate and plan** on a throwaway
    ticket. Confirm the session's first message contains your line. Delete the file, launch again
    once the first session has finished, and confirm the built-in text is back.
-10. Open a ticket's Claude dialog and press **Prompts**. Confirm the nine prompts load with the
+10. Open a ticket's Claude dialog and press **Prompts**. Confirm the ten prompts load with the
     badge `default` (or `custom` if you kept a file), and that deleting `{STATUS_FILE}` from a box
     shows the warning while **Save** stays enabled. Add a line you will recognise at the top of
     **Investigate and plan prompt**, press **Save**, and confirm `Saved.`, the badge `custom` and

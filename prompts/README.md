@@ -1,50 +1,72 @@
 # Claude prompt overrides
 
 This folder holds local overrides for the dashboard's Claude launcher. This README is a guide,
-not a prompt: only the nine exact filenames below are registered. Overrides (including nested
+not a prompt: only the ten exact filenames below are registered. Overrides (including nested
 contents) stay gitignored; this guide is the only tracked file here.
 
 ## Templates and placeholders
 
 The shared editor, prompt API and `npm run claude:prompts` use this registry order:
 
-| File             | Replaces                                                | Supported placeholders                                           |
-| ---------------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
-| `investigate.md` | Investigate and plan launch                             | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `implement.md`   | Implement plan launch                                   | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `answers.md`     | Saved/resend answers message                            | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
-| `approve.md`     | Approve plan message                                    | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `rereview.md`    | Continuation message to an existing code review session | `{KEY}`, `{SLUG}`                                                |
-| `groom.md`       | Groom ticket launch                                     | `{KEY}`, `{SLUG}`                                                |
-| `review.md`      | New code review session, including Start new review     | `{KEY}`, `{SLUG}`                                                |
-| `spec-review.md` | Spec review launch                                      | `{KEY}`, `{SLUG}`, `{PR}`                                        |
-| `e2e.md`         | E2E ticket check launch                                 | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
+| File                   | Replaces                                                | Supported placeholders                                           |
+| ---------------------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
+| `investigate.md`       | Investigate and plan launch                             | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `implement.md`         | Implement plan launch                                   | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `answers.md`           | Saved/resend planning answers message                   | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+| `answers-implement.md` | Saved implement answers message                         | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+| `approve.md`           | Approve plan message                                    | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `rereview.md`          | Continuation message to an existing code review session | `{KEY}`, `{SLUG}`                                                |
+| `groom.md`             | Groom ticket launch                                     | `{KEY}`, `{SLUG}`                                                |
+| `review.md`            | New code review session, including Start new review     | `{KEY}`, `{SLUG}`                                                |
+| `spec-review.md`       | Spec review launch                                      | `{KEY}`, `{SLUG}`, `{PR}`                                        |
+| `e2e.md`               | E2E ticket check launch                                 | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
 
 - `{KEY}` is the validated ticket key; `{SLUG}` is its lowercase form, used for the
   `.orchestrator/` folder name.
 - `{STATUS_FILE}` is the absolute path to the ticket's `status.json`. Keep the workflow's
   question and completion-flag protocol when customizing its prompts.
 - `{QUESTION_IDS}` lists new or changed answer IDs joined with `, `. `{CHANGE}` is `answers`
-  for a normal send with no prior successful answer send for that planning session,
+  for a normal send with no prior successful answer send for that phase's session,
   `changed answers` for a later normal send with new or changed answers, and `answers (sent again)`
-  for an explicit resend (`resend: true`), whether or not the answers changed.
+  for an explicit resend (`resend: true`), which only the planning lane has, whether or not the
+  answers changed.
 - `{PR}` is the validated spec PR number. `{PORT}` is the running browser's port (9300-9399),
   read from the DevTools registry, never from client-supplied prompt text or a client port.
 
 Only the placeholders listed for each template are substituted; others remain literal.
 `review.md` is not the continuation message: that is `rereview.md`, never `re-review.md`.
 
+## Question phase tags
+
+The four question-writing prompts (`investigate.md`, `implement.md`, `answers.md` and
+`answers-implement.md`) must keep the dashboard's question protocol. Every **new** question has
+exactly the keys `id`, `question`, `answer` and `phase`: `investigate.md` and `answers.md` write
+`"phase": "investigate-and-plan"`, while `implement.md` and `answers-implement.md` write
+`"phase": "implement-plan"`. Every existing question is preserved as it is, including one with no
+`phase`, and an answered question's id, text, answer and phase never change. The session never
+fills in an answer itself. A new question without the tag is read and counted as a planning one,
+so dropping it changes routing; rewriting existing questions can lose or invent answers the
+dashboard trusts.
+
+`answers-implement.md` is the continuation message for a question the implement session asked. It
+continues the approved implementation and its verification with the latest decisions, appends any
+new blocker tagged `implement-plan`, and sets only `"implement-plan": true`. It never redirects to
+the planning approval gate, and it still does not commit, push or open a pull request.
+
 ## Edit, apply and reset
 
 - **In the app:** open a ticket's Claude dialog in My Tickets, then **Prompts** in its footer.
-  The existing shared editor lists all nine templates; the separate review dialog has no editor
+  The existing shared editor lists all ten templates; the separate review dialog has no editor
   button. **Save** writes the corresponding file; **Reset to default** removes it. Reopen the
   editor to pick up hand edits made while it was open; saving uses the last writer's text.
 - **By hand:** create or edit one of the files above in this folder. Optionally run
-  `npm run claude:prompts` from the repository root to write all nine built-in starters with
+  `npm run claude:prompts` from the repository root to write all ten built-in starters with
   placeholders intact. The command keeps every existing override unchanged.
 - **Default:** a missing override uses the original built-in text. Delete the override or use
-  **Reset to default** to restore it. Existing overrides are never automatically upgraded.
+  **Reset to default** to restore it. Existing overrides are never automatically upgraded: if you
+  customized `investigate.md`, `implement.md` or `answers.md`, add the phase-tag instruction from
+  its built-in text by hand. `answers-implement.md` is a new optional override name; without the
+  file the built-in continuation message is used.
 - **Application:** files are reread on the next launch or send, with no dashboard restart.
   Editing a file does not change a session's already-delivered prompt. The editor and prompt
   API use the same files as hand edits.

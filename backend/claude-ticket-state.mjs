@@ -67,32 +67,57 @@ export function readQuestions(status) {
 export const answerHash = (id, question, answer) =>
   createHash('sha256').update(`${id}\n${question}\n${answer}`).digest('hex');
 
+// The lane a question's own tag names, or null when it has no valid one: only the two workflow
+// tags count, and an implement tag counts only once an implement record exists, so a forged tag
+// cannot take a question out of the planning lane before an implement run has started.
+function askedPhase(question, launch) {
+  const { phase } = question;
+  if (!PHASES.includes(phase)) return null;
+  if (phase === IMPLEMENT && !readLaunch(launch).some((record) => record.phase === IMPLEMENT))
+    return null;
+  return phase;
+}
+
+// The lane a question counts in: the one that asked it, or the planning lane when it has none.
+export const questionPhase = (question, launch) => askedPhase(question, launch) ?? INVESTIGATE;
+
 // An answer counts only when it is the one the dashboard saved for that question (its hash is in
 // a launch.json record): the session can write status.json too, and an answer it wrote itself, or
-// an edit of a saved answer or question, reads as no answer.
+// an edit of a saved answer or question, reads as no answer. A question with a valid tag counts
+// only the record of the lane that asked it; an untagged one keeps the union of every record,
+// which is all an older status.json gives to go by.
 function answerCheck(launch) {
+  const records = readLaunch(launch);
   const saved = new Set(
-    readLaunch(launch).flatMap(({ answered }) =>
+    records.flatMap(({ answered }) =>
       Object.entries(answered).map(([id, hash]) => `${id}:${hash}`),
     ),
   );
-  return ({ id, question, answer }) =>
-    isText(answer) && saved.has(`${id}:${answerHash(id, question, answer)}`);
+  const answeredIn = (phase) => records.find((record) => record.phase === phase)?.answered ?? {};
+  return (question) => {
+    const { id, question: text, answer } = question;
+    if (!isText(answer)) return false;
+    const hash = answerHash(id, text, answer);
+    const phase = askedPhase(question, launch);
+    return phase ? answeredIn(phase)[id] === hash : saved.has(`${id}:${hash}`);
+  };
 }
 
-// The questions as the card shows them.
+// The questions as the card shows them, each in the lane it counts in.
 function questionViews(status, launch) {
   const isSaved = answerCheck(launch);
   return readQuestions(status).map((question) => ({
     id: question.id,
     question: question.question.slice(0, QUESTION_TEXT_LIMIT),
     answer: isSaved(question) ? question.answer.slice(0, ANSWER_MAX_LENGTH) : null,
+    phase: questionPhase(question, launch),
   }));
 }
 
 // The status.json an implement launch writes: the locked shape with the investigate flag set, `done`
 // and `approved` as they were, and the questions the dashboard reads, each whole, keeping only the
-// answers it saved. Nothing else the session left in the file survives.
+// answers it saved and the valid tag it carries (so a question stays with the lane that asked it,
+// even when that lane fell back to planning). Nothing else the session left in the file survives.
 export function implementStatus(status, launch) {
   const isSaved = answerCheck(launch);
   return {
@@ -104,6 +129,8 @@ export function implementStatus(status, launch) {
       id: question.id,
       question: question.question,
       answer: isSaved(question) ? question.answer : null,
+      // An untagged (or invalidly tagged) question gains no tag here.
+      ...(PHASES.includes(question.phase) && { phase: question.phase }),
     })),
   };
 }
@@ -112,14 +139,16 @@ export function implementStatus(status, launch) {
 const isUnanswered = ({ answer }) => !(isText(answer) && answer.trim());
 
 // Why the plan cannot be approved from this status.json (null: unreadable), launch.json and plan
-// file, or null when it can: the plan is ready (planned, the file there, every question answered
-// and the answers sent) and the session has marked it `done`. Answers not yet sent to the planning
+// file, or null when it can: the plan is ready (planned, the file there, every planning question
+// answered and the answers sent) and the session has marked it `done`. An implement question is
+// not the plan's to answer, so it never blocks approval. Answers not yet sent to the planning
 // session block it, so an answer whose send failed is never approved against a stale `done`.
 function planReadyBlock(status, launch, planPresent) {
   if (status === null) return 'status_unreadable';
   if (status?.[INVESTIGATE] !== true) return 'not_planned';
   if (!planPresent) return 'plan_missing';
-  if (questionViews(status, launch).some(isUnanswered)) return 'questions_unanswered';
+  const planning = questionViews(status, launch).filter(({ phase }) => phase === INVESTIGATE);
+  if (planning.some(isUnanswered)) return 'questions_unanswered';
   if (!answersToSend(status, launch).skip) return 'answers_not_sent';
   return isDone(status) ? null : 'plan_not_done';
 }
@@ -140,10 +169,12 @@ export function approveBlock(status, launch, planPresent) {
 }
 
 // Why the saved answers cannot be sent again as they are, or null when they can: the gates of
-// `answersToSend` without the one that skips an unchanged set.
+// `answersToSend` without the one that skips an unchanged set. Resend is the planning lane's
+// action, so its questions are the ones it needs.
 export function resendBlock(status, launch) {
   if (status === null) return 'status_unreadable';
-  if (readQuestions(status).length === 0) return 'no_questions';
+  if (!questionViews(status, launch).some(({ phase }) => phase === INVESTIGATE))
+    return 'no_questions';
   const { skip } = answersToSend(status, launch, { resend: true });
   return skip === 'incomplete' ? 'questions_unanswered' : (skip ?? null);
 }
@@ -231,31 +262,30 @@ const isRunning = (session, { launchedAt }, now) =>
 export const sessionRunning = (entries, record, now) =>
   isRunning(resolveSession(entries, record), record, now);
 
-// The hash of every question whose saved answer counts, by question id: the shape of `answered`
-// and of a send's `answers`.
-function savedHashes(status, launch) {
+// The hash of every question of `phase` whose saved answer counts, by question id: the shape of
+// that record's `answered` and of a send's `answers`.
+function savedHashes(status, launch, phase) {
   const isSaved = answerCheck(launch);
   return Object.fromEntries(
     readQuestions(status)
-      .filter(isSaved)
+      .filter((question) => questionPhase(question, launch) === phase && isSaved(question))
       .map(({ id, question, answer }) => [id, answerHash(id, question, answer)]),
   );
 }
 
-// Whether the saved answers should go to the planning session: { skip: reason } when not (the first
-// of: every question answered, the plan flag set, no implement run, an answer that differs from the
-// last send), otherwise { changed } (the ids of the answers that are new or differ from the last
-// send) and { hashes } (every question's hash, to record once the send is delivered). A `resend`
-// sends the whole set again: an unchanged set is no reason to skip and every id is listed.
-export function answersToSend(status, launch, { resend = false } = {}) {
-  const questions = questionViews(status, launch);
+// Whether the saved answers of `phase` should go to its own session: only that record's last
+// `sent` suppresses a resend, and only the planning lane is vetoed by an implement run.
+export function answersToSend(status, launch, { resend = false, phase = INVESTIGATE } = {}) {
+  const questions = questionViews(status, launch).filter((question) => question.phase === phase);
   if (questions.length === 0 || questions.some(isUnanswered)) return { skip: 'incomplete' };
-  if (status?.[INVESTIGATE] !== true) return { skip: 'not_planned' };
+  if (phase === INVESTIGATE && status?.[INVESTIGATE] !== true) return { skip: 'not_planned' };
   const records = readLaunch(launch);
-  if (records.some(({ phase }) => phase === IMPLEMENT)) return { skip: 'implement_started' };
-  const sent = records.find(({ phase }) => phase === INVESTIGATE)?.sent?.answers ?? {};
-  const hashes = savedHashes(status, launch);
-  const changed = Object.keys(hashes).filter((id) => resend || hashes[id] !== sent[id]);
+  if (phase === INVESTIGATE && records.some(({ phase: started }) => started === IMPLEMENT))
+    return { skip: 'implement_started' };
+  const sent = records.find(({ phase: started }) => started === phase)?.sent?.answers ?? {};
+  const hashes = savedHashes(status, launch, phase);
+  const force = phase === INVESTIGATE && resend;
+  const changed = Object.keys(hashes).filter((id) => force || hashes[id] !== sent[id]);
   return changed.length ? { changed, hashes } : { skip: 'unchanged' };
 }
 
@@ -395,7 +425,7 @@ export function deriveEntry({ status, launch, entries, now, planPresent, recover
     approved: isApproved(status),
   };
   const questions = questionViews(status, launch);
-  const sendable = !answersToSend(status, launch).skip;
+  const sendable = PHASES.some((phase) => !answersToSend(status, launch, { phase }).skip);
   const unanswered = questions.filter(isUnanswered).length;
   const record = currentRecord(launch);
   const listedSession = record && entries ? resolveSession(entries, record) : null;

@@ -1539,8 +1539,10 @@ export const CHAT_SESSION_ID = '5b0c7e3a-2d41-4c8e-9f16-0a7d3b9e4c21';
 const CLAUDE_NO_SESSIONS = { investigate: null, implement: null, groom: null };
 const CLAUDE_NO_GROOM = { state: 'none', reason: null };
 
-export function claudeQuestion(id, question, answer = null) {
-  return { id, question, answer };
+// A question as the card receives one: the asking phase is written only when given, so the existing
+// fixtures (three arguments) stay untagged and are labelled with the planning fallback.
+export function claudeQuestion(id, question, answer = null, phase) {
+  return { id, question, answer, ...(phase !== undefined && { phase }) };
 }
 
 // An entry's `unanswered` count and `blocks` follow from its state, phase, flags and questions, as

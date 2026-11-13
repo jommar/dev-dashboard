@@ -127,6 +127,10 @@ const STEP_LABEL = {
 };
 // The shorter name a reason line leads with.
 const STEP_SHORT = { investigate: 'Investigate', approve: 'Approve', implement: 'Implement' };
+const QUESTION_PHASE_LABEL = {
+  [INVESTIGATE]: STEP_LABEL.investigate,
+  [IMPLEMENT]: STEP_LABEL.implement,
+};
 const HINT_TESTID = {
   investigate: 'claude-action-hint-investigate',
   approve: 'claude-approve-hint',
@@ -576,14 +580,20 @@ export function ClaudeDialog({
                     answer.
                   </p>
                   <ol className="claude-question-list">
-                    {questions.map(({ id, question, answer: saved }, index) => (
+                    {questions.map(({ id, question, answer: saved, phase }, index) => (
                       <li key={id} className="claude-question">
-                        {/* The number and the tick sit outside the label, so its name is the question. */}
+                        {/* The number, the phase and the tick sit outside the label, so its name is the question. */}
                         <div className="claude-question-head">
                           <span className="claude-question-number" aria-hidden="true">
                             {index + 1}
                           </span>
                           <label htmlFor={`${formId}-${id}`}>{question}</label>
+                          <span
+                            className="claude-question-phase"
+                            data-testid={`claude-question-phase-${id}`}
+                          >
+                            {QUESTION_PHASE_LABEL[phase ?? INVESTIGATE]}
+                          </span>
                           {saved?.trim() && (
                             <span
                               className="claude-question-answered"
