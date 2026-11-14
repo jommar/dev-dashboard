@@ -52,6 +52,9 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Browser tests
         run: npm run test:ui
+        env:
+          # The runner has fewer cores than the config's default of 4 workers; at 4, timing-based specs fail.
+          PW_WORKERS: 2
       - name: Upload report
         if: failure()
         uses: actions/upload-artifact@v7
