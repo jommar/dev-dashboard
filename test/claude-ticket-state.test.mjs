@@ -2346,3 +2346,73 @@ test('a recovered session that is held reads working with no resume command, and
   });
   assert.equal(working.state, listedHeld.state, 'the same state a held listed session gets');
 });
+
+// ---- continue: a failed workflow session that is still listed can be messaged ----
+
+test('continue: failed with a listed session', async () => {
+  const listedDone = [listed({ id: FIRST_ID, state: 'done' })];
+  for (const [label, overrides] of [
+    ['ended_without_flag', { status: statusFile(), entries: listedDone }],
+    [
+      'plan_not_done',
+      { status: statusFile({ investigate: true, done: false }), entries: listedDone },
+    ],
+    [
+      'plan_missing',
+      {
+        status: statusFile({ investigate: true, done: true }),
+        entries: listedDone,
+        planPresent: false,
+      },
+    ],
+  ]) {
+    const entry = await derive(overrides);
+    assert.equal(entry.state, 'failed', label);
+    assert.equal(entry.reason, label);
+    assert.equal(entry.blocks.continue, null, label);
+  }
+});
+
+test('continue: no listed session', async () => {
+  const missing = await derive({
+    status: statusFile(),
+    launch: launchedAgo(SIXTY_SECONDS_MS),
+    entries: [],
+  });
+  assert.equal(missing.reason, 'session_missing');
+  assert.equal(missing.blocks.continue, 'session_not_found');
+  // A session recovered from disk is not listed: it cannot be continued either (Chat can).
+  const recovered = await derive({
+    status: statusFile(),
+    entries: [],
+    recovered: new Map([[FIRST_ID, sessionUuid(FIRST_ID)]]),
+  });
+  assert.equal(recovered.state, 'failed');
+  assert.equal(recovered.blocks.continue, 'session_not_found');
+});
+
+test('continue: other states have no continue key', async () => {
+  const states = {
+    none: { launch: null, entries: [] },
+    working: { entries: [workingEntry({ id: FIRST_ID })] },
+    waiting: { entries: [listed({ id: FIRST_ID, state: 'blocked' })] },
+    done: {},
+    unknown: { entries: null },
+  };
+  for (const [state, overrides] of Object.entries(states)) {
+    const entry = await derive(overrides);
+    assert.equal(entry.state, state, state);
+    assert.equal(Object.hasOwn(entry.blocks, 'continue'), false, state);
+  }
+});
+
+test('continue: continueBlock is one rule for the entry and the route', async () => {
+  const { continueBlock } = await import('../backend/claude-ticket-state.mjs');
+  const session = { id: FIRST_ID };
+  assert.equal(continueBlock({ state: 'failed', session }), null);
+  assert.equal(continueBlock({ state: 'failed', session: null }), 'session_not_found');
+  assert.equal(continueBlock({ state: 'unknown', session }), 'listing_unavailable');
+  assert.equal(continueBlock({ state: 'working', session }), 'session_running');
+  for (const state of ['none', 'waiting', 'done'])
+    assert.equal(continueBlock({ state, session }), 'not_failed', state);
+});

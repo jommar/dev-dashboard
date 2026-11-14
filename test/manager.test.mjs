@@ -590,3 +590,279 @@ test('checkout 13: identical settings apply while an overridden service runs, a 
     (error) => error.code === 'SERVICE_IN_USE',
   );
 });
+
+// Service lifecycle: SIGKILL escalation, a restart that waits, throttled output.
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+const app = repoService('app', 'project');
+
+// A process that ignores SIGTERM, and SIGKILL as well unless `sigkill` is set.
+function ignoreSigterm(f, { sigkill = false } = {}) {
+  process.kill.mock.mockImplementation((...args) => {
+    f.kills.push(args);
+    if (sigkill && args[1] === 'SIGKILL') f.spawns.at(-1).proc.emit('exit', null, 'SIGKILL');
+  });
+}
+
+// A process whose exit arrives `ms` after the signal, on the mocked clock.
+function exitAfter(f, ms) {
+  process.kill.mock.mockImplementation((...args) => {
+    f.kills.push(args);
+    const { proc } = f.spawns.at(-1);
+    setTimeout(() => proc.emit('exit', 0, 'SIGTERM'), ms);
+  });
+}
+
+// Spawned processes that have stdout and stderr to write to.
+function withOutput(f) {
+  childProcess.spawn.mock.mockImplementation((cmd, args, options) => {
+    const proc = new EventEmitter();
+    proc.pid = 987654;
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    f.spawns.push({ cmd, args, options, proc });
+    return proc;
+  });
+}
+
+const outLog = (f, id = 'test') => path.join(f.logs, id, 'out.log');
+
+test('stopAndWait escalates to SIGKILL for a process that ignores SIGTERM', async (t) => {
+  const f = await fixture(t);
+  await f.service.start();
+  ignoreSigterm(f, { sigkill: true });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const stopping = f.service.stopAndWait(1000, { killAfterMs: 50 });
+  assert.deepEqual(f.kills, [[-987654, 'SIGTERM']]);
+  t.mock.timers.tick(49);
+  assert.equal(f.kills.length, 1);
+  t.mock.timers.tick(1);
+  assert.deepEqual(f.kills, [
+    [-987654, 'SIGTERM'],
+    [-987654, 'SIGKILL'],
+  ]);
+  assert.equal(await stopping, true);
+  assert.equal(f.service.proc, null);
+});
+
+test('stopAndWait gives up at the timeout when SIGKILL does not work either', async (t) => {
+  const f = await fixture(t);
+  await f.service.start();
+  ignoreSigterm(f);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const stopping = f.service.stopAndWait(100, { killAfterMs: 20 });
+  t.mock.timers.tick(20);
+  assert.equal(f.kills.at(-1)[1], 'SIGKILL');
+  t.mock.timers.tick(80);
+  assert.equal(await stopping, false);
+  assert.ok(f.service.proc, 'the process is still set');
+});
+
+test('stopAndWait does not kill when the grace is longer than the timeout', async (t) => {
+  const f = await fixture(t);
+  await f.service.start();
+  ignoreSigterm(f);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const stopping = f.service.stopAndWait(100, { killAfterMs: 5000 });
+  t.mock.timers.tick(100);
+  assert.equal(await stopping, false);
+  t.mock.timers.tick(6000);
+  assert.deepEqual(
+    f.kills.map((call) => call[1]),
+    ['SIGTERM'],
+  );
+});
+
+test('stopAndWait sends no SIGKILL after a clean exit', async (t) => {
+  const f = await fixture(t);
+  await f.service.start();
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  assert.equal(await f.service.stopAndWait(1000, { killAfterMs: 50 }), true);
+  t.mock.timers.tick(5000);
+  assert.deepEqual(
+    f.kills.map((call) => call[1]),
+    ['SIGTERM'],
+  );
+});
+
+test('restart waits for the old process before starting the new one', async (t) => {
+  const f = await fixture(t);
+  await f.service.start();
+  exitAfter(f, 1500);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const old = f.spawns[0].proc;
+  let oldExited = false;
+  old.on('exit', () => {
+    oldExited = true;
+  });
+  const restarting = f.service.restart();
+  t.mock.timers.tick(1499);
+  await tick();
+  assert.equal(f.spawns.length, 1, 'no second process while the old one is alive');
+  t.mock.timers.tick(1);
+  assert.equal(await restarting, true);
+  assert.equal(oldExited, true);
+  assert.equal(f.spawns.length, 2);
+  assert.equal(f.service.status, 'running');
+});
+
+test('restart reports failure when the service will not stop', async (t) => {
+  const f = await fixture(t);
+  const manager = new f.Manager({ local: { root: f.root, services: [app] }, logsDir: f.logs });
+  await manager.start('app');
+  ignoreSigterm(f);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const outcome = manager.restart('app');
+  for (let second = 0; second < 12; second += 1) {
+    await tick();
+    t.mock.timers.tick(1000);
+  }
+  assert.deepEqual(await outcome, { ok: false, error: 'service did not stop' });
+  assert.equal(f.spawns.length, 1);
+  assert.equal(manager.get('app').pending, false);
+  assert.deepEqual(
+    f.kills.map((call) => call[1]),
+    ['SIGTERM', 'SIGKILL'],
+  );
+});
+
+test('restart of a stopped service starts it at once', async (t) => {
+  const f = await fixture(t);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  assert.equal(await f.service.restart(), true);
+  assert.equal(f.spawns.length, 1);
+  assert.equal(f.kills.length, 0);
+});
+
+test('stopAll stops every running service outside the settings lock and lists survivors', async (t) => {
+  const f = await fixture(t);
+  const manager = new f.Manager({
+    local: { root: f.root, services: [app, repoService('other', 'project')] },
+    logsDir: f.logs,
+  });
+  await manager.start('app');
+  manager.withSettingsLock(() => new Promise(() => {})); // never released
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  assert.deepEqual(await manager.stopAll({ timeoutMs: 100, killAfterMs: 20 }), []);
+  assert.equal(manager.get('app').proc, null);
+  // Shutdown is terminal (the manager refuses new starts), so the survivor case gets a fresh manager.
+  const second = new f.Manager({ local: { root: f.root, services: [app] }, logsDir: f.logs });
+  await second.startUnlocked('app');
+  ignoreSigterm(f);
+  const stopping = second.stopAll({ timeoutMs: 100, killAfterMs: 20 });
+  t.mock.timers.tick(100);
+  assert.deepEqual(await stopping, ['app']);
+});
+
+test('stopAll during a restart in flight leaves no live process behind', async (t) => {
+  const f = await fixture(t);
+  const manager = new f.Manager({ local: { root: f.root, services: [app] }, logsDir: f.logs });
+  await manager.start('app');
+  exitAfter(f, 500);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const restarting = manager.restart('app');
+  await tick();
+  const stopping = manager.stopAll({ timeoutMs: 2000, killAfterMs: 1000 });
+  for (let step = 0; step < 4; step += 1) {
+    await tick();
+    t.mock.timers.tick(500);
+  }
+  await Promise.all([restarting, stopping]);
+  assert.equal(f.spawns.length, 1, 'no new process after shutdown began');
+  assert.equal(manager.get('app').proc, null);
+});
+
+test('a start that is still freeing its port when stopAll runs does not spawn', async (t) => {
+  const f = await fixture(t);
+  const manager = new f.Manager({
+    local: { root: f.root, services: [{ ...app, port: 4321 }] },
+    logsDir: f.logs,
+  });
+  // The service's own start() enters #start synchronously and parks on freePort; Manager.start
+  // would defer through the settings lock, so stopAll would win before the entry check.
+  const starting = manager.get('app').start();
+  await manager.stopAll({ timeoutMs: 100, killAfterMs: 20 });
+  await starting;
+  assert.equal(f.spawns.length, 0);
+  assert.equal(manager.get('app').proc, null);
+});
+
+test('persist failure never throws and keeps the in-memory buffer', async (t) => {
+  const f = await fixture(t);
+  withOutput(f);
+  const blocker = path.join(f.root, 'not-a-directory');
+  fs.writeFileSync(blocker, '');
+  const service = new f.service.constructor(app, { root: f.root, logsDir: blocker });
+  await service.start();
+  assert.doesNotThrow(() => f.spawns[0].proc.stdout.emit('data', Buffer.from('still here\n')));
+  assert.match(service.logTail(), /still here/);
+});
+
+test('output burst is throttled and the first chunk is on disk at once', async (t) => {
+  const f = await fixture(t);
+  withOutput(f);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let updates = 0;
+  f.service.onUpdate = () => {
+    updates += 1;
+  };
+  await f.service.start();
+  assert.equal(updates, 1);
+  assert.match(fs.readFileSync(outLog(f), 'utf8'), /started/);
+  const { stdout } = f.spawns[0].proc;
+  for (let n = 0; n < 100; n += 1) stdout.emit('data', Buffer.from(`line ${n}\n`));
+  assert.equal(updates, 1, 'a burst inside the window is held back');
+  assert.doesNotMatch(fs.readFileSync(outLog(f), 'utf8'), /line 99/);
+  t.mock.timers.tick(250);
+  assert.equal(updates, 2);
+  assert.equal(fs.readFileSync(outLog(f), 'utf8'), f.service.logTail());
+  t.mock.timers.tick(5000);
+  assert.equal(updates, 2, 'a quiet window publishes nothing');
+});
+
+test('pending persist is flushed or cancelled', async (t) => {
+  const f = await fixture(t);
+  withOutput(f);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const output = (n) => f.spawns[n].proc.stdout.emit('data', Buffer.from(`chunk ${n}\n`));
+
+  await f.service.start();
+  output(0); // pending
+  f.spawns[0].proc.emit('exit', 0, null);
+  assert.equal(fs.readFileSync(outLog(f), 'utf8'), f.service.logTail(), 'flushed on exit');
+  assert.match(f.service.logTail(), /chunk 0[\s\S]*process exited/);
+
+  await f.service.start();
+  ignoreSigterm(f);
+  output(1); // pending
+  f.service.stop();
+  assert.equal(fs.readFileSync(outLog(f), 'utf8'), f.service.logTail(), 'flushed on stop');
+  assert.match(f.service.logTail(), /chunk 1/);
+
+  output(1); // leading publish: the window is open again
+  output(1); // pending
+  f.service.clearLogs();
+  assert.equal(fs.existsSync(outLog(f)), false);
+  t.mock.timers.tick(5000);
+  assert.equal(fs.existsSync(outLog(f)), false, 'a cancelled write does not recreate the file');
+  assert.equal(f.service.logTail(), '');
+});
+
+test('oversized line keeps a valid tail', async (t) => {
+  const f = await fixture(t);
+  const line = `${'x'.repeat(10)}${'€'.repeat(350_000)}`; // about 1 MB, 3 bytes per character
+  f.service.buffer.push(line);
+  const [kept] = f.service.buffer.tail();
+  assert.ok(Buffer.byteLength(kept) <= 65536);
+  assert.ok(Buffer.byteLength(kept) > 65536 - 4, 'only a partial character is dropped');
+  assert.ok(line.endsWith(kept));
+  assert.equal(kept.includes('�'), false);
+});
+
+test('oversized line is fast', async (t) => {
+  const f = await fixture(t);
+  const line = '€'.repeat(350_000);
+  const started = performance.now();
+  f.service.buffer.push(line);
+  assert.ok(performance.now() - started < 50, 'tail of a 1 MB line takes under 50 ms');
+});

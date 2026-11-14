@@ -13,6 +13,7 @@ import {
   ANSWERS_IMPLEMENT_TEMPLATE,
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
+  CONTINUE_TEMPLATE,
   EARLIER_ID,
   GROOM,
   GROOM_TEMPLATE,
@@ -88,7 +89,7 @@ const assertFailed = (res, label) => {
 
 // ---- GET /api/claude/prompts ----
 
-test('scenario 170: GET lists the ten prompts in order, each the built-in text when there is no file', async (t) => {
+test('scenario 170: GET lists the eleven prompts in order, each the built-in text when there is no file', async (t) => {
   const f = await claudeHttpFixture(t);
 
   const res = await list(f);
@@ -116,6 +117,7 @@ test('scenario 171: GET shows a usable file as custom with its trimmed text, the
     promptEntry('answers', 'custom', 'Read {STATUS_FILE}: {CHANGE} {QUESTION_IDS}'),
     promptEntry('answers-implement', 'default'),
     promptEntry('approve', 'default'),
+    promptEntry('continue', 'default'),
     promptEntry('rereview', 'default'),
     promptEntry('groom', 'default'),
     promptEntry('review', 'default'),
@@ -137,6 +139,7 @@ test('scenario 171: GET shows a file that cannot be used as unusable, with the b
     promptEntry('answers', 'default'),
     promptEntry('answers-implement', 'default'),
     promptEntry('approve', 'default'),
+    promptEntry('continue', 'default'),
     promptEntry('rereview', 'default'),
     promptEntry('groom', 'default'),
     promptEntry('review', 'default'),
@@ -181,6 +184,7 @@ test('scenario 173: PUT saves the trimmed text with one newline and answers with
     'answers-implement.md',
     'answers.md',
     'approve.md',
+    'continue.md',
     'e2e.md',
     'groom.md',
     'implement.md',
@@ -302,6 +306,7 @@ test('scenario 180: DELETE removes the file and answers with the built-in entry,
       'default',
       'default',
       'default',
+      'default',
     ],
   );
   // Every registered prompt, including the three initial side-action prompts, supports reset.
@@ -347,7 +352,7 @@ const UNKNOWN_PATHS = [
   PROMPTS,
 ];
 
-test('scenario 183: any name but the ten is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
+test('scenario 183: any name but the eleven is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
   const f = await claudeHttpFixture(t);
   // Where `../investigate` and `../answers` would land if a name became part of a path.
   fs.writeFileSync(path.join(f.root, 'investigate.md'), 'outside');
@@ -476,7 +481,7 @@ test('scenario 185: the prompt routes answer while setup is incomplete, like the
   const removed = await reset(f, 'implement');
 
   assert.equal(listed.status, 200);
-  assert.equal(listed.json().prompts.length, 10);
+  assert.equal(listed.json().prompts.length, 11);
   assert.equal(saved.status, 200);
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.json().prompt, promptEntry('implement', 'default'));
@@ -642,6 +647,7 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['answers', 'default', ANSWERS_TEMPLATE],
       ['answers-implement', 'default', ANSWERS_IMPLEMENT_TEMPLATE],
       ['approve', 'default', APPROVE_TEMPLATE],
+      ['continue', 'default', CONTINUE_TEMPLATE],
       ['rereview', 'default', REREVIEW_TEMPLATE],
       ['groom', 'default', GROOM_TEMPLATE],
       ['review', 'default', REVIEW_TEMPLATE],
@@ -664,6 +670,7 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['answers', 'custom'],
       ['answers-implement', 'default'],
       ['approve', 'default'],
+      ['continue', 'default'],
       ['rereview', 'default'],
       ['groom', 'default'],
       ['review', 'default'],

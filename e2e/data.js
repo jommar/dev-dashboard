@@ -1640,6 +1640,11 @@ function claudeDerived(entry) {
       }),
       groom,
       ...(entry.e2e && { e2e: e2eBlock }),
+      // The server adds `continue` for a failed workflow session only: null while the CLI still
+      // lists it, `session_not_found` when it is missing.
+      ...(entry.state === 'failed' && {
+        continue: entry.reason === 'session_missing' ? 'session_not_found' : null,
+      }),
       review: reviewBlock,
       rereview,
     },
@@ -1725,6 +1730,9 @@ function claudeData() {
     // one's Jira status name, and whether Jira can say (`available: false` is an unreachable or
     // unconfigured Jira). `asks` logs each key list.
     activeSprint: { available: true, keys: [], statuses: {}, asks: [] },
+    // What GET /api/claude/usage knows: `sessions` is `{ [uuid]: { tokens, models, messages, complete } }`
+    // (a session not set reads as an empty, complete tally) and `asks` logs each id list.
+    usage: { sessions: {}, asks: [] },
     calls: [],
     sends: [],
     // The Markdown each ticket's sessions left, by ticket key then file name: `{ [key]: { [name]: text } }`.
@@ -1817,6 +1825,21 @@ function claudeResponse(url, method, { claude, devtools }, body) {
         size: text.length,
         updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
         text,
+      },
+    };
+  }
+  if (method === 'GET' && pathname === '/api/claude/usage') {
+    const asked = (url.searchParams.get('sessions') || '').split(',').filter(Boolean);
+    claude.usage.asks.push(asked);
+    const empty = { tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }, models: {} };
+    return {
+      json: {
+        sessions: Object.fromEntries(
+          asked.map((id) => [
+            id,
+            claude.usage.sessions[id] ?? { ...empty, messages: 0, complete: true },
+          ]),
+        ),
       },
     };
   }
@@ -2026,6 +2049,20 @@ function claudeResponse(url, method, { claude, devtools }, body) {
     claude.tickets[body.key] = ticket;
     return { json: { ok: true, key: body.key, ticket: structuredClone(ticket), send } };
   }
+  if (pathname === '/api/claude/continue') {
+    const entry = claude.tickets[body?.key];
+    if (!entry) return claudeFailure(400, 'INVALID_TICKET');
+    if (entry.blocks.continue !== null)
+      return claudeFailure(409, 'CLAUDE_REFUSED', [entry.blocks.continue ?? 'not_failed']);
+    const send = claude.sends.shift() ?? { status: 'sent' };
+    // The resumed session works at once; nothing else on the entry changes.
+    const ticket =
+      send.status === 'sent'
+        ? claudeDerived({ ...entry, state: 'working', reason: 'running' })
+        : entry;
+    claude.tickets[body.key] = ticket;
+    return { json: { ok: true, key: body.key, ticket: structuredClone(ticket), send } };
+  }
   if (pathname === '/api/claude/approve') {
     const entry = claude.tickets[body?.key];
     if (!entry) return claudeFailure(400, 'INVALID_TICKET');
@@ -2130,6 +2167,29 @@ function devtoolsResponse(url, method, { devtools }, body) {
   return null;
 }
 
+// GET /api/health when every integration has answered well. A spec sets `data.health` to the whole
+// body (see `degradedHealth`) to show a board note.
+export const healthyIntegrations = () => ({
+  generatedAt: '2026-11-14T10:00:00.000Z',
+  integrations: Object.fromEntries(
+    ['github', 'jira', 'slack'].map((name) => [
+      name,
+      { status: 'ok', lastOkAt: '2026-11-14T09:59:00.000Z', lastFailure: null },
+    ]),
+  ),
+});
+
+// The same body with `name` degraded for `kind` (`auth`, `rate_limit`, `upstream`, `timeout`, `network`).
+export function degradedHealth(name, kind, retryAfterSec = null) {
+  const health = healthyIntegrations();
+  health.integrations[name] = {
+    status: 'degraded',
+    lastOkAt: '2026-11-14T09:00:00.000Z',
+    lastFailure: { kind, status: null, at: '2026-11-14T09:59:30.000Z', retryAfterSec },
+  };
+  return health;
+}
+
 export function apiResponse(url, method, data, body) {
   if (
     data.statefulSettings &&
@@ -2169,6 +2229,7 @@ export function apiResponse(url, method, data, body) {
     if (url.pathname === '/api/config') return { json: data.config };
     if (url.pathname === '/api/settings') return { json: data.settings };
     if (url.pathname === '/api/services') return { json: { services: data.services } };
+    if (url.pathname === '/api/health') return { json: data.health ?? healthyIntegrations() };
     const worktrees = url.pathname.match(/^\/api\/repos\/([^/]+)\/worktrees$/);
     if (worktrees) {
       const dir = decodeURIComponent(worktrees[1]);

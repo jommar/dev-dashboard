@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BOT_STATE_WORDS,
   addCallouts,
+  announcementText,
   attendCallout,
   liveCallouts,
   nextCalloutChange,
@@ -20,8 +20,12 @@ import {
 // Returns `callouts` (the bubbles to draw, `{ key, ticket, state, leaving }`), `announcements` (one
 // `{ id, text }` per change of the latest batch, for the one polite live region) and `attend(key)`,
 // which starts a waiting or failed bubble on its way out once its bot is hovered, focused or clicked.
-export function useBotCallouts(byTicket, loaded, bots) {
+// `onReady(ready)`, when given, is told the same batch of changes that gets bubbles (once per batch, in the
+// same effect), so the opt-in desktop notification shares the first-load and sprint-filter rules.
+export function useBotCallouts(byTicket, loaded, bots, onReady) {
   const baseline = useRef(null);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
   const [pending, setPending] = useState([]);
   const [callouts, setCallouts] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
@@ -46,10 +50,14 @@ export function useBotCallouts(byTicket, loaded, bots) {
     setPending(waiting);
     if (!ready.length) return;
     setCallouts((previous) => addCallouts(previous, ready, now));
+    onReadyRef.current?.(ready);
     setAnnouncements(
-      ready.map(({ key, ticket, phase, to }) => ({
-        id: `${key}@${now}`,
-        text: `${ticket} ${phase}: ${BOT_STATE_WORDS[to]}`,
+      ready.map((change) => ({
+        id: `${change.key}@${now}`,
+        text: announcementText(
+          change,
+          bots.find(({ key }) => key === change.key),
+        ),
       })),
     );
   }, [pending, bots]);
@@ -72,6 +80,7 @@ export function useBotCallouts(byTicket, loaded, bots) {
   }, [callouts, clock]);
 
   // `clock` is not read: it is what makes the bubbles be worked out again when one is due to go.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- clock is the recompute trigger for a bubble's time, not a value read
   const live = useMemo(() => liveCallouts(callouts, Date.now()), [callouts, clock]);
   const attend = useCallback(
     (key) => setCallouts((previous) => attendCallout(previous, key, Date.now())),

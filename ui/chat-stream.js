@@ -16,6 +16,14 @@ export const chatSessionFromQuery = (query) => {
   return UUID.test(session ?? '') ? session : null;
 };
 
+// The line the Chat head shows for a turn's `costUsd`, which the CLI reports as the session's total so
+// far (cumulative, not this turn's). Empty for anything that is not a finite, non-negative number, so
+// a chat this process has not run a turn on shows nothing.
+export function costLabel(cost) {
+  if (!Number.isFinite(cost) || cost < 0) return '';
+  return `Session cost so far ${cost < 0.01 ? 'under $0.01' : `$${cost.toFixed(2)}`}`;
+}
+
 // The view after one event, `{ type, data }` (the event's name and its parsed JSON). `view` is null
 // before `hello`, and every other event leaves it null: a stream that has not said hello has said
 // nothing yet. The view is the hello's fields plus `tail`, the reply being written (not an item until

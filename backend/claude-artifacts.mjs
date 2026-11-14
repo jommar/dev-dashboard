@@ -15,6 +15,37 @@ const ARTIFACT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md$/;
 // The plan is what a reader wants first, then the rest by name.
 const FIRST = '02-plan.md';
 
+// The one-line outcome a finished e2e check or groom session writes first in its report: a closed
+// enum per file, read from the head only. The values are mirrored, by hand and pinned by a test, in
+// `ui/claude-verdict.js`; the backend imports nothing from `ui/`.
+export const VERDICT_FILES = Object.freeze({
+  'e2e.md': Object.freeze({
+    label: 'Verdict',
+    values: Object.freeze(['PASS', 'FAIL', 'PARTIAL', 'BLOCKED']),
+  }),
+  'groom.md': Object.freeze({
+    label: 'Readiness',
+    values: Object.freeze(['READY', 'NEEDS_INFO', 'BLOCKED']),
+  }),
+});
+export const VERDICT_HEAD_BYTES = 512;
+const MAX_VERDICTS = 500;
+
+// The value of the first non-empty line of `head` (a Buffer or a string) in file `name`, or null.
+// Optional leading `#`, `>`, `*` and spaces are skipped, the label and value must match exactly
+// (case-sensitive, the value not followed by a word character), and the text after `BLOCKED:` is
+// never read. Anything else, including a NUL byte, is no verdict.
+export function parseVerdict(name, head) {
+  const rule = Object.hasOwn(VERDICT_FILES, name) ? VERDICT_FILES[name] : null;
+  const text = Buffer.isBuffer(head) ? head.toString('utf8') : head;
+  if (!rule || typeof text !== 'string' || text.includes('\0')) return null;
+  const line = text.split('\n').find((one) => one.trim() !== '');
+  const match = new RegExp(
+    `^[#>*\\s]*${rule.label}:[ \\t]*(${rule.values.join('|')})(?![A-Za-z0-9_])`,
+  ).exec(line ?? '');
+  return match ? match[1] : null;
+}
+
 const refusal = (code, message, status) => Object.assign(new Error(message), { code, status });
 const invalidTicket = () => refusal('INVALID_TICKET', 'Invalid ticket.', 400);
 const invalidArtifact = () => refusal('INVALID_ARTIFACT', 'Invalid file name.', 400);
@@ -82,5 +113,40 @@ export function createClaudeArtifacts({ home = os.homedir(), fs = fsDefault } = 
     }
   }
 
-  return { list, read };
+  // name -> { stamp, value }: a verdict is read again only when the file's time or size changed.
+  const verdicts = new Map();
+
+  // The verdict of a ticket's `e2e.md` or `groom.md`, or null for anything else: the same ticket
+  // and link checks as `read`, a regular file only, only the first VERDICT_HEAD_BYTES read (and the
+  // file opened without following a link), and never an error.
+  function verdict(key, name) {
+    if (!isTicketKey(key) || !Object.hasOwn(VERDICT_FILES, name)) return null;
+    try {
+      const dir = ticketDirectory(key);
+      if (!dir) return null;
+      const file = path.join(dir, name);
+      const info = fs.lstatSync(file);
+      if (!info.isFile()) return null;
+      const stamp = `${info.mtimeMs}:${info.size}`;
+      const cached = verdicts.get(file);
+      if (cached?.stamp === stamp) return cached.value;
+      const head = Buffer.alloc(VERDICT_HEAD_BYTES);
+      const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      let length;
+      try {
+        length = fs.readSync(fd, head, 0, VERDICT_HEAD_BYTES, 0);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const value = parseVerdict(name, head.subarray(0, length));
+      verdicts.delete(file);
+      verdicts.set(file, { stamp, value });
+      if (verdicts.size > MAX_VERDICTS) verdicts.delete(verdicts.keys().next().value);
+      return value;
+    } catch {
+      return null;
+    }
+  }
+
+  return { list, read, verdict };
 }

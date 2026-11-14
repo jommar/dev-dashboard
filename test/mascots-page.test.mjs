@@ -200,7 +200,12 @@ test('the tab is registered after DevTools, with a nav icon', () => {
   const app = read('App.jsx');
   const ids = [...app.matchAll(/\{ id: '([\w-]+)', label:/g)].map((match) => match[1]);
   assert.equal(ids.indexOf('mascots'), ids.indexOf('devtools') + 1);
-  assert.match(app, /<MascotsPanel active=\{active === 'mascots'\} \/>/);
+  // The gallery loads on first visit, through ScreenSlot, so its code is not in the first-paint bundle.
+  assert.match(
+    app,
+    /<ScreenSlot\s+id="mascots"[^>]*Screen=\{Mascots\}[^>]*active=\{active === 'mascots'\}/s,
+  );
+  assert.match(app, /import\('\.\/panels\/MascotsPanel\.jsx'\), 'MascotsPanel'/);
   assert.match(read('components/NavIcon.jsx'), /^\s*mascots:/m);
 });
 

@@ -422,10 +422,11 @@ test('Jira public metadata lookup and PR HTTP response carry configured preferre
     },
   ];
   const requests = [];
-  t.mock.method(globalThis, 'fetch', async (input) => {
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
     const url = new URL(input);
     assert.equal(url.origin, 'https://jira.example.invalid');
     assert.equal(url.pathname, '/rest/api/3/search/jql');
+    assert.ok(init.signal instanceof AbortSignal, 'a stalled Jira cannot hang the request');
     requests.push(url);
     return Response.json({ issues, isLast: true });
   });

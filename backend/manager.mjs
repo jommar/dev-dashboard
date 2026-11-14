@@ -50,18 +50,21 @@ class RingBuffer {
     this.bytes = 0;
   }
 
+  // Keep the trailing bytes of an oversized line, starting on a character boundary.
   #tailOf(line, maxBytes) {
-    // Keep the trailing bytes of an oversized line.
-    let out = line;
-    while (Buffer.byteLength(out, 'utf8') > maxBytes && out.length > 1) {
-      out = out.slice(1);
-    }
-    return out;
+    const bytes = Buffer.from(line, 'utf8');
+    let start = Math.max(0, bytes.length - maxBytes);
+    while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start += 1;
+    return bytes.subarray(start).toString('utf8');
   }
 }
 
 // How long a checkout switch waits for a stopped service to exit before giving up.
 const STOP_WAIT_MS = 10_000;
+// How long a stopped process gets after SIGTERM before it is sent SIGKILL.
+const STOP_GRACE_MS = 5000;
+// Output is written to disk and broadcast at most once per window (leading and trailing).
+const PERSIST_THROTTLE_MS = 250;
 
 // A checkout store that forgets on exit, for a Manager built without a file-backed one.
 function memoryCheckoutStore() {
@@ -85,6 +88,7 @@ export class ServiceProcess {
     this.id = def.id;
     this.buffer = new RingBuffer(BUFFER_BYTES);
     this.proc = null;
+    this.closing = false; // set by Manager.stopAll: no start may spawn after shutdown began
     this.status = 'stopped'; // stopped | running | exited
     this.exitCode = null;
     this.startedAt = null;
@@ -194,7 +198,7 @@ export class ServiceProcess {
   }
 
   async #start({ env, version, nodePath }) {
-    if (this.proc) return false;
+    if (this.proc || this.closing) return false;
     const dir = this.cwd();
 
     // Fresh logs on every start/restart so the previous run's output (and any
@@ -206,6 +210,7 @@ export class ServiceProcess {
     // app is already running on (e.g. from a run.sh session in another terminal).
     if (typeof this.def.port === 'number') {
       await freePort(this.def.port);
+      if (this.closing) return false; // shutdown began while the port was being freed
     }
 
     // `npm`/`node` are resolved from PATH (now pointing at the pinned version).
@@ -231,12 +236,14 @@ export class ServiceProcess {
       this.exitCode = code ?? (signal ? `signal:${signal}` : 1);
       this.#write(`[dashboard] process exited (${code ?? ''} ${signal ?? ''})\n`);
       this.proc = null;
+      this.#flush();
     });
 
-    if (version) {
-      this.#write(`[dashboard] Node ${version}: ${nodePath}\n`);
-    }
-    this.#write(`[dashboard] started (${cmd} ${args.join(' ')})\n`);
+    // One write, so the first persisted file already holds both header lines.
+    this.#write(
+      (version ? `[dashboard] Node ${version}: ${nodePath}\n` : '') +
+        `[dashboard] started (${cmd} ${args.join(' ')})\n`,
+    );
     return true;
   }
 
@@ -247,25 +254,60 @@ export class ServiceProcess {
       this.buffer.push(line + (line === '' ? '' : '\n'));
     }
     this.lastLineAt = Date.now();
+    if (this.#throttleTimer) {
+      this.#pending = true;
+      return;
+    }
+    this.#publish();
+    this.#armThrottle();
+  }
+
+  // Leading+trailing throttle: the first write publishes at once, a burst coalesces into one
+  // trailing publish when the window ends, and a quiet window releases the timer.
+  #throttleTimer = null;
+  #pending = false;
+  #armThrottle() {
+    this.#throttleTimer = setTimeout(() => {
+      this.#throttleTimer = null;
+      if (!this.#pending) return;
+      this.#pending = false;
+      this.#publish();
+      this.#armThrottle();
+    }, PERSIST_THROTTLE_MS);
+    this.#throttleTimer?.unref?.();
+  }
+
+  #publish() {
     this.#persist();
     if (this.onUpdate) this.onUpdate(this.id);
   }
 
-  timeoutRef = null;
+  // Publish a pending trailing write now (exit, stop).
+  #flush() {
+    if (!this.#pending) return;
+    clearTimeout(this.#throttleTimer);
+    this.#throttleTimer = null;
+    this.#pending = false;
+    this.#publish();
+  }
+
   #persist() {
-    const dir = path.join(this.logsDir, this.id);
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, 'out.log');
-    // Write the full rolling buffer so the agent can grep/read it.
+    // Write the full rolling buffer so the agent can grep/read it. Best effort: the logs dir
+    // may be missing or unwritable, and that must never crash the manager.
     try {
-      fs.writeFileSync(file, this.buffer.tail().join(''));
+      const dir = path.join(this.logsDir, this.id);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'out.log'), this.buffer.tail().join(''));
     } catch {
-      // best effort; logs dir may be unwritable — never crash the manager
+      // ignore
     }
   }
 
-  // Wipe the in-memory rolling buffer and the persisted tail file.
+  // Wipe the in-memory rolling buffer and the persisted tail file; a pending write is dropped.
   clearLogs() {
+    clearTimeout(this.#throttleTimer);
+    this.#throttleTimer = null;
+    this.#pending = false;
     this.buffer.clear();
     const file = path.join(this.logsDir, this.id, 'out.log');
     try {
@@ -275,45 +317,55 @@ export class ServiceProcess {
     }
   }
 
-  stop() {
-    if (!this.proc) return false;
-    // Kill the whole process group (detached children share it).
+  // Signal the whole process group (detached children share it).
+  #signal(proc, name) {
     try {
-      process.kill(-this.proc.pid, 'SIGTERM');
+      process.kill(-proc.pid, name);
     } catch {
       try {
-        this.proc.kill('SIGTERM');
+        proc.kill(name);
       } catch {
         /* already gone */
       }
     }
+  }
+
+  stop() {
+    if (!this.proc) return false;
+    this.#flush();
+    this.#signal(this.proc, 'SIGTERM');
     return true;
   }
 
   // Stop and resolve true once the process has exited; false when it is still running after
-  // `timeoutMs`.
-  stopAndWait(timeoutMs) {
+  // `timeoutMs`. A process that ignores SIGTERM is sent SIGKILL after `killAfterMs`.
+  stopAndWait(timeoutMs, { killAfterMs = STOP_GRACE_MS } = {}) {
     const proc = this.proc;
     if (!proc) return Promise.resolve(true);
     return new Promise((resolve) => {
+      let settled = false;
       const finish = (exited) => {
+        settled = true;
         clearTimeout(timer);
+        clearTimeout(killTimer);
         proc.off('exit', onExit);
         resolve(exited);
       };
       const onExit = () => finish(true);
       const timer = setTimeout(() => finish(false), timeoutMs);
+      const killTimer = setTimeout(() => {
+        if (!settled) this.#signal(proc, 'SIGKILL');
+      }, killAfterMs);
       proc.once('exit', onExit);
       this.stop();
     });
   }
 
+  // Resolves false, without starting a second process, when the old one will not stop.
   async restart() {
     // Reject configuration errors before interrupting the existing process.
     const runtime = this.#nodeRuntime();
-    this.stop();
-    // Give the old process a beat to release ports before starting a new one.
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (!(await this.stopAndWait(STOP_WAIT_MS))) return false;
     await this.#start(runtime);
     return true;
   }
@@ -461,6 +513,17 @@ export class Manager {
     return { ok: true };
   }
 
+  // Stop every service and resolve the ids still alive at `timeoutMs`. Deliberately outside
+  // `withSettingsLock`: shutdown is terminal, so a held lock must not delay it.
+  async stopAll({ timeoutMs = STOP_WAIT_MS, killAfterMs } = {}) {
+    // Shutdown is terminal: mark every service closing so a start or restart already in flight
+    // cannot spawn a detached process after this returns.
+    for (const svc of Object.values(this.services)) svc.closing = true;
+    const running = Object.values(this.services).filter((svc) => svc.proc);
+    await Promise.all(running.map((svc) => svc.stopAndWait(timeoutMs, { killAfterMs })));
+    return running.filter((svc) => svc.proc).map((svc) => svc.id);
+  }
+
   restart(id) {
     return this.withSettingsLock(() => this.restartUnlocked(id));
   }
@@ -470,8 +533,7 @@ export class Manager {
     if (!svc) return { ok: false, error: `unknown service: ${id}` };
     svc.pending = true;
     try {
-      await svc.restart();
-      return { ok: true };
+      return (await svc.restart()) ? { ok: true } : { ok: false, error: 'service did not stop' };
     } finally {
       svc.pending = false;
     }

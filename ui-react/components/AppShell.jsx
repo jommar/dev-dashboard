@@ -1,9 +1,31 @@
+import { memo, useCallback, useMemo } from 'react';
 import { Button, DashboardTooltip } from './Primitives.jsx';
-import { AppTabs } from './AppTabs.jsx';
-import { BotBar } from './BotBar.jsx';
+import { AppTabs as AppTabsView } from './AppTabs.jsx';
+import { BotBar as BotBarView } from './BotBar.jsx';
+import { LazyDialog } from './ScreenSlot.jsx';
+import { ShortcutsHelp } from '../lib/lazy-overlays.js';
+import { useGlobalShortcuts } from '../hooks/useGlobalShortcuts.js';
+import { useRouteChange } from '../hooks/useRouteChange.js';
+import { ShortcutsContext } from '../lib/shortcuts-context.js';
 import logoUrl from '../assets/logo.svg?no-inline';
 
+// The service feed re-renders App, and so this shell, on every status or log line; neither the tab
+// row (stable `tabs` and `onNavigate`) nor the bot bar (no props, its own polling) depends on it.
+const AppTabs = memo(AppTabsView);
+const BotBar = memo(BotBarView);
+
 export function AppShell({ children, tabs, active, onNavigate, connection, ready }) {
+  const { palette, setPalette, helpOpen, setHelpOpen } = useGlobalShortcuts({
+    tabs,
+    active,
+    onNavigate,
+  });
+  const announcement = useRouteChange({ active, tabs });
+  const shortcuts = useMemo(
+    () => ({ palette, setPalette, tabs, onNavigate }),
+    [palette, setPalette, tabs, onNavigate],
+  );
+  const closeHelp = useCallback(() => setHelpOpen(false), [setHelpOpen]);
   const connectionLabel =
     connection === 'connected'
       ? 'Live service feed'
@@ -62,8 +84,18 @@ export function AppShell({ children, tabs, active, onNavigate, connection, ready
       <main className="panels" id="workspace" tabIndex={-1}>
         {children}
       </main>
-      {/* An overlay on every screen once the app is set up; setup-only mode (Settings alone) has none. */}
-      {ready && <BotBar />}
+      {/* The one polite region that says which screen was opened; empty on first load. */}
+      <div className="sr-only" role="status" aria-live="polite" data-testid="route-announcement">
+        {announcement}
+      </div>
+      {/* An overlay on every screen once the app is set up; setup-only mode (Settings alone) has none.
+          It also renders the command palette, which needs the shortcuts' state. */}
+      <ShortcutsContext.Provider value={shortcuts}>{ready && <BotBar />}</ShortcutsContext.Provider>
+      {helpOpen && (
+        <LazyDialog label="The shortcuts help" onClose={closeHelp}>
+          <ShortcutsHelp tabs={tabs} onClose={closeHelp} />
+        </LazyDialog>
+      )}
     </>
   );
 }

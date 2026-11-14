@@ -6,6 +6,7 @@
 // Colour never carries a state alone: every mark has a shape and every step a word.
 import { Button } from './Primitives.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
+import { VERDICT_TONE, verdictWord } from '../../ui/claude-verdict.js';
 
 const INVESTIGATE = 'investigate-and-plan';
 const IMPLEMENT = 'implement-plan';
@@ -176,6 +177,22 @@ export function SessionChip({ phase, onGoTo }) {
       </svg>
       Go to session
     </Button>
+  );
+}
+
+// The one-line outcome a finished e2e or groom session reported (`Verdict: Fail`): the word is always
+// shown and the tone is only a colour hint. A value outside the known set draws nothing.
+export function VerdictChip({ side, label, verdict }) {
+  const word = verdictWord(verdict);
+  if (!word) return null;
+  return (
+    <span
+      className="claude-verdict"
+      data-testid={`claude-verdict-${side}`}
+      data-tone={VERDICT_TONE[verdict]}
+    >
+      {`${label}: ${word}`}
+    </span>
   );
 }
 

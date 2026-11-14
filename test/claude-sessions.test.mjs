@@ -2223,3 +2223,41 @@ test('isHeld: a session reads held from beginTurn until its release, and only th
   release();
   assert.equal(sessions.isHeld(id), false);
 });
+
+test('transcriptFiles: the newest copy of the transcript, then its subagents; stat and listings only', async (t) => {
+  const reads = [];
+  const env = await sessionsEnvironment(t, {
+    metadataIO: {
+      readdir: fs.promises.readdir,
+      stat: fs.promises.stat,
+      readFile: async (...args) => {
+        reads.push(args[0]);
+        return fs.promises.readFile(...args);
+      },
+    },
+  });
+  const newest = writeDated(projectFile(env.home, 'project-a', SESSION_A), NEW_MS);
+  writeDated(projectFile(env.home, 'project-b', SESSION_A), OLD_MS);
+  const agent1 = writeDated(
+    subagentFile(env.home, 'project-a', SESSION_A, 'agent-1.jsonl'),
+    NEW_MS,
+  );
+  const agent2 = writeDated(
+    subagentFile(env.home, 'project-a', SESSION_A, 'agent-2.jsonl'),
+    NEW_MS,
+  );
+  fs.writeFileSync(path.join(path.dirname(agent1), 'notes.txt'), 'x');
+  writeDated(subagentFile(env.home, 'project-b', SESSION_A), OLD_MS);
+
+  const files = await env.sessions.transcriptFiles(SESSION_A);
+
+  assert.deepEqual(files[0], newest);
+  assert.deepEqual(files.slice(1).sort(), [agent1, agent2].sort());
+  assert.deepEqual(reads, [], 'no content was read');
+  assert.deepEqual(
+    await env.sessions.transcriptFiles(SESSION_B),
+    [],
+    'a session with no transcript',
+  );
+  assert.deepEqual(await env.sessions.transcriptFiles('../../etc/passwd'), [], 'not a session id');
+});

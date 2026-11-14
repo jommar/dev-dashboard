@@ -108,6 +108,10 @@ export const setCheckout = (dir, path, { restart = false, ids }) =>
     }),
   );
 
+// Which worktree of each service repo belongs to the ticket: read once, on a click, never polled.
+export const getCheckoutMatches = (key) =>
+  getJson(`/api/repos/checkout-matches?key=${encodeURIComponent(key)}`);
+
 export async function getPrs() {
   const res = await fetch('/api/prs');
   if (res.status === 401) return null;
@@ -119,6 +123,7 @@ export const getReviewTickets = () => getJson('/api/review-tickets');
 export const getSpecReviews = (limit = 3, signal) =>
   getJson(`/api/spec-reviews?limit=${encodeURIComponent(limit)}`, { signal });
 export const getTeamVelocity = () => getJson('/api/team-velocity');
+export const getHealth = () => getJson('/api/health');
 
 export async function getMyTickets(includeDone = false) {
   const res = await fetch(`/api/my-tickets${includeDone ? '?includeDone=1' : ''}`);
@@ -320,6 +325,11 @@ export const stopChat = (session) =>
 export const openChatStream = (session) =>
   new EventSource(`/api/claude/chat/stream?session=${encodeURIComponent(session)}`);
 
+// Token tallies of up to 8 sessions, asked for on demand (never polled): resolves with `ok` and
+// `sessions`, `{ [id]: { tokens, models, messages, complete } }`.
+export const getClaudeUsage = (sessions) =>
+  watchRequest(`/api/claude/usage?sessions=${encodeURIComponent(sessions.join(','))}`);
+
 // Which of `keys` are in a sprint Jira calls active (the bot bar's filter) and their status names.
 // Resolves like the other watch calls: `ok`, `available` (false when Jira could not say), `keys` and
 // `statuses` (a ticket key -> Jira status name object, only for the tickets Jira reported).
@@ -348,6 +358,10 @@ export const answerClaude = (key, answers, { resend = false } = {}) =>
 
 export const approveClaude = (key) =>
   watchRequest('/api/claude/approve', { method: 'POST', body: { key } });
+
+// Asks the ticket's failed workflow session, which the CLI still lists, to carry on.
+export const continueClaude = (key) =>
+  watchRequest('/api/claude/continue', { method: 'POST', body: { key } });
 
 // Asks the ticket's review session to review its linked PRs again.
 export const rereviewClaude = (key) =>

@@ -1220,3 +1220,24 @@ test('scenario 20: Chat is a tools-row tab, its components use no native title, 
   for (const route of ['/api/claude/chat/send', '/api/claude/chat/stop', '/api/claude/chat/stream'])
     assert.ok(api.includes(route), `API route ${route} is a literal in api.js`);
 });
+
+test('every custom property a stylesheet reads is declared by the shared sheets, a sheet, or set inline', () => {
+  const sheets = fs
+    .readdirSync(path.join(root, 'styles'))
+    .filter((file) => file.endsWith('.css'))
+    .map((file) => [`styles/${file}`, read(`styles/${file}`)]);
+  sheets.push(['styles.css', read('styles.css')]); // declares the legacy --fg/--ok/--panel-2 names
+  const declared = new Set(
+    sheets.flatMap(([, css]) => [...css.matchAll(/(--[\w-]+)\s*:/g)].map(([, name]) => name)),
+  );
+  // Set per element from script (style={{ '--name': ... }}): the bot bar, the mascot gallery and
+  // the velocity chart. Names are matched by prefix or exactly, so a typo elsewhere still fails.
+  const setInline = (name) =>
+    name.startsWith('--bot-') || name.startsWith('--mascots-') || name === '--sprint-count';
+  for (const [file, css] of sheets)
+    for (const [, name, fallback] of css.matchAll(/var\((--[\w-]+)\s*(,)?/g))
+      assert.ok(
+        declared.has(name) || setInline(name) || fallback,
+        `${file} reads ${name}, which nothing declares`,
+      );
+});

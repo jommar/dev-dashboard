@@ -13,6 +13,7 @@ import { WorkFilters } from '../components/WorkFilters.jsx';
 import { ReviewTicketCard } from '../components/ReviewTicketCard.jsx';
 import { SpecReviewCard } from '../components/SpecReviewCard.jsx';
 import { ClaudePlaceholderDialog } from '../components/ClaudePlaceholderDialog.jsx';
+import { UpstreamNote } from '../components/UpstreamNote.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
@@ -306,6 +307,11 @@ export function PrsPanel({ config, active }) {
         }
         notes={
           <>
+            <UpstreamNote
+              integrations={['github', 'jira']}
+              active={active}
+              refreshKey={countdown.lastLoadedAt}
+            />
             {data && failure && (
               <BoardNote testId="prs-stale">
                 {failure} Showing the last successful update{' '}

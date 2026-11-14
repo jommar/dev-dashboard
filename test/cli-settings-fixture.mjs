@@ -6,7 +6,11 @@ import { settingsFixture } from './settings-fixture.mjs';
 // The `checkouts.mjs` the copied `cli.mjs` imports, for every CLI fixture that stubs its modules.
 export const CHECKOUT_STORE_STUB = `export const createCheckoutStore = () => ({ get: () => undefined, set() {} });`;
 
-export async function invokeCli(t, command, { ready = false, dashboard = 'gated' } = {}) {
+export async function invokeCli(
+  t,
+  command,
+  { ready = false, dashboard = 'gated', controlResult = { ok: true } } = {},
+) {
   const f = settingsFixture(t);
   const root = f.paths.dashboardDir;
   fs.copyFileSync(new URL('../backend/cli.mjs', import.meta.url), path.join(root, 'cli.mjs'));
@@ -45,9 +49,9 @@ export async function invokeCli(t, command, { ready = false, dashboard = 'gated'
       constructor(options) { calls.push(['manager', options]); }
       list() { return [{ id: 'app', status: 'stopped', label: 'Saved app' }]; }
       logs(id) { calls.push(['logs', id]); return 'saved logs'; }
-      async start(id) { calls.push(['start', id]); return { ok: true }; }
-      stop(id) { calls.push(['stop', id]); return { ok: true }; }
-      async restart(id) { calls.push(['restart', id]); return { ok: true }; }
+      async start(id) { calls.push(['start', id]); return ${JSON.stringify(controlResult)}; }
+      stop(id) { calls.push(['stop', id]); return ${JSON.stringify(controlResult)}; }
+      async restart(id) { calls.push(['restart', id]); return ${JSON.stringify(controlResult)}; }
     }
   `,
   );

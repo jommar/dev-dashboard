@@ -8,7 +8,9 @@ import {
 } from '../components/BoardShell.jsx';
 import { WorkFilters } from '../components/WorkFilters.jsx';
 import { TicketBoard } from '../components/TicketBoard.jsx';
-import { ClaudeDialog } from '../components/ClaudeDialog.jsx';
+import { LazyDialog } from '../components/ScreenSlot.jsx';
+import { ClaudeDialog, loadClaudeDialog } from '../lib/lazy-overlays.js';
+import { UpstreamNote } from '../components/UpstreamNote.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
@@ -48,7 +50,9 @@ const PR_TRUNCATED_NOTE = 'Not all open PRs were fetched, so some tickets may sh
 // One shared empty map until the first PR answer, so the board's props stay equal between ticks.
 const NO_PR_LINES = Object.freeze({});
 
-export function MyTicketsPanel({ config, active }) {
+// `requestedTicket` is the key a #/my-tickets?ticket=KEY address asks to open (or null); the panel opens
+// it once its list is in, then calls `onTicketHandled` so the address is cleared.
+export function MyTicketsPanel({ config, active, requestedTicket = null, onTicketHandled }) {
   const api = useDashboardApi();
   const [includeDone, setIncludeDone] = useState(false);
   const [data, setData] = useState(null);
@@ -60,6 +64,19 @@ export function MyTicketsPanel({ config, active }) {
   // The ticket whose Claude dialog is open. It is held here, not in a card, so a card that
   // remounts (a filter or column change) does not close it.
   const [openClaudeKey, setOpenClaudeKey] = useState(null);
+  const closeClaude = useCallback(() => setOpenClaudeKey(null), []);
+  // Load the dialog's code first, then open it (also when the load fails: Reload alert).
+  const openClaude = useCallback((key) => {
+    const show = () => setOpenClaudeKey(key);
+    loadClaudeDialog().then(show, show);
+  }, []);
+  // A deep-linked ticket that is not in the assigned list: named in a note until the tab is left.
+  const [missingTicket, setMissingTicket] = useState(null);
+  // A deep-linked ticket not in the list yet, while the list on screen is older than a poll: the
+  // activation load decides, so "missing" is never said from stale data.
+  const [checkingTicket, setCheckingTicket] = useState(null);
+  const loadedAt = useRef(0);
+  const ticketBaseline = useRef(null);
   const [filters, setFilters] = useState({
     search: '',
     status: '',
@@ -116,6 +133,7 @@ export function MyTicketsPanel({ config, active }) {
           return;
         }
         setData(result);
+        loadedAt.current = Date.now();
         setMeta(
           `${result.total} assigned to me${result.includeDone ? ' (incl. Done)' : ''} · updated ${new Date().toLocaleTimeString()}`,
         );
@@ -150,7 +168,36 @@ export function MyTicketsPanel({ config, active }) {
   useEffect(() => {
     if (openClaudeKey && (!active || !openClaudeTicket)) setOpenClaudeKey(null);
   }, [active, openClaudeKey, openClaudeTicket]);
-  const options = ticketFilterOptions(rows, data?.allSprints);
+  useEffect(() => {
+    if (!requestedTicket || !active || !data) return;
+    const row = rows.find(({ key }) => key.toUpperCase() === requestedTicket);
+    if (!row) {
+      if (ticketBaseline.current?.ticket !== requestedTicket)
+        ticketBaseline.current = { ticket: requestedTicket, data };
+      const current =
+        ticketBaseline.current.data !== data || Date.now() - loadedAt.current <= MY_TICKETS_POLL_MS;
+      if (!current) {
+        setCheckingTicket(requestedTicket);
+        return;
+      }
+    }
+    ticketBaseline.current = null;
+    if (row) openClaude(row.key);
+    setCheckingTicket(null);
+    setMissingTicket(row ? null : requestedTicket);
+    onTicketHandled?.();
+  }, [requestedTicket, active, data, rows, onTicketHandled, openClaude]);
+  useEffect(() => {
+    if (!active) {
+      setMissingTicket(null);
+      setCheckingTicket(null);
+      ticketBaseline.current = null;
+    }
+  }, [active]);
+  const options = useMemo(
+    () => ticketFilterOptions(rows, data?.allSprints),
+    [rows, data?.allSprints],
+  );
   // The board is memoized as an element: the countdown re-renders this panel every second,
   // and an identical element lets React skip the board and its card-wide DOM scan.
   const board = useMemo(
@@ -163,17 +210,29 @@ export function MyTicketsPanel({ config, active }) {
         prsByTicket={prs?.byTicket || NO_PR_LINES}
         claudeByTicket={claude.byTicket}
         onOpenThread={openThread}
-        onOpenClaude={setOpenClaudeKey}
+        onOpenClaude={openClaude}
       />
     ),
-    [filtered, config.jiraBase, data?.activeSprints, linksByTicket, prs?.byTicket, claude.byTicket],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the board element is memoized on purpose (see the comment above); openThread is left out so it stays stable
+    [
+      filtered,
+      config.jiraBase,
+      data?.activeSprints,
+      linksByTicket,
+      prs?.byTicket,
+      claude.byTicket,
+      openClaude,
+    ],
   );
+  // The sub line is a set of elements, so memoize it with the options above: only a new answer
+  // changes either, not the other re-renders this panel gets.
+  const sprint = useMemo(() => data && sprintHtml(data.activeSprints), [data]);
   return (
     <BoardPanel id="my-tickets" active={active} busy={loading}>
       <BoardSection
         name="my-tickets"
         title="My Tickets"
-        sub={data && sprintHtml(data.activeSprints)}
+        sub={sprint}
         subHidden={!data}
         testIds={{ sub: 'my-tickets-sprint' }}
         meta={meta}
@@ -214,6 +273,22 @@ export function MyTicketsPanel({ config, active }) {
         }
         notes={
           <>
+            <UpstreamNote
+              integrations={['jira', 'github', 'slack']}
+              active={active}
+              refreshKey={countdown.lastLoadedAt}
+            />
+            {checkingTicket && (
+              <BoardNote testId="my-tickets-ticket-checking">
+                Looking for {checkingTicket} in your assigned tickets…
+              </BoardNote>
+            )}
+            {missingTicket && (
+              <BoardNote testId="my-tickets-ticket-missing">
+                {missingTicket} is not in your assigned tickets, so it cannot be opened here. Tick
+                Include Done if it is finished work.
+              </BoardNote>
+            )}
             {(prStale || prs?.truncated) && (
               <BoardNote testId="my-tickets-prs-note">
                 {prStale ? prNoteText(prs) : PR_TRUNCATED_NOTE}
@@ -259,16 +334,19 @@ export function MyTicketsPanel({ config, active }) {
       </BoardSection>
       {dialog}
       {openClaudeTicket && (
-        <ClaudeDialog
-          key={openClaudeTicket.key}
-          ticketKey={openClaudeTicket.key}
-          summary={openClaudeTicket.summary}
-          entry={claude.byTicket[openClaudeTicket.key]}
-          onClose={() => setOpenClaudeKey(null)}
-          launch={claude.launch}
-          answer={claude.answer}
-          approve={claude.approve}
-        />
+        <LazyDialog key={openClaudeTicket.key} label="The Claude dialog" onClose={closeClaude}>
+          <ClaudeDialog
+            ticketKey={openClaudeTicket.key}
+            summary={openClaudeTicket.summary}
+            entry={claude.byTicket[openClaudeTicket.key]}
+            onClose={closeClaude}
+            launch={claude.launch}
+            answer={claude.answer}
+            approve={claude.approve}
+            continueSession={claude.continueSession}
+            sessionIds={claude.sessionIds[openClaudeTicket.key]}
+          />
+        </LazyDialog>
       )}
     </BoardPanel>
   );

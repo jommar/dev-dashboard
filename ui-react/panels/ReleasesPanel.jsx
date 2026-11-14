@@ -99,6 +99,7 @@ export function ReleasesPanel({ config, active, view = 'cards', onViewChange }) 
   }, [active, restored]);
   useEffect(() => {
     if (active && restored && !data && !busy) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loads once when the tab is activated and restored, not on every change of load, data or busy
   }, [active, restored]);
   const versionChange = (event) => {
     const next = event.target.value;

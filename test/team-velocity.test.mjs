@@ -191,6 +191,34 @@ test('fetchTeamIssues throws when Jira is not configured', async () => {
   }
 });
 
+test('fetchTeamIssues gives every Jira request a timeout signal', async (t) => {
+  const prev = {
+    base: process.env.JIRA_BASE_URL,
+    email: process.env.JIRA_EMAIL,
+    token: process.env.JIRA_TOKEN,
+  };
+  t.after(() => {
+    for (const [name, value] of Object.entries({
+      JIRA_BASE_URL: prev.base,
+      JIRA_EMAIL: prev.email,
+      JIRA_TOKEN: prev.token,
+    }))
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+  });
+  process.env.JIRA_BASE_URL = 'https://example.atlassian.net';
+  process.env.JIRA_EMAIL = 'me@example.com';
+  process.env.JIRA_TOKEN = 'tok';
+  const signals = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    signals.push(init.signal);
+    return { ok: true, json: async () => ({ issues: [], isLast: true }) };
+  });
+  await fetchTeamIssues();
+  assert.equal(signals.length, 2, 'the open and the closed sprint searches');
+  for (const signal of signals) assert.ok(signal instanceof AbortSignal);
+});
+
 test('buildTeamBoards totals points by status band per sprint', () => {
   const s17 = [sprint(1404, 'Nexus Sprint 17', 'active', '2026-09-11')];
   const boards = buildTeamBoards([

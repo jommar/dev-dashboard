@@ -11,8 +11,11 @@
 // ticket) opens in Chat instead of a dialog (BotBar's open handler). The header's "New chat" link is
 // the Chat screen's own (`#/chat`, a fresh conversation), shown with or without sessions. The rows are mounted only while
 // the drawer is open, so nothing here is on the page, or in its accessibility tree, while it is shut.
+// Each row also shows the tokens its session used (useSessionsUsage: read when the drawer opens, never polled),
+// and the header's "Notify me" switch turns on the desktop notification for sessions that need you.
 // Escape closes it and puts focus back on the tab.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useSessionsUsage } from '../hooks/useSessionsUsage.js';
 import { Button, DashboardTooltip } from './Primitives.jsx';
 import { StatusMark } from './ClaudeSteps.jsx';
 import { NavIcon } from './NavIcon.jsx';
@@ -25,6 +28,7 @@ import {
   isQuiet,
 } from '../../ui/bot-bar.js';
 import { chatHref } from '../../ui/chat-stream.js';
+import { rowUsageLabel } from '../../ui/session-usage.js';
 import { copyText } from '../../ui/dom.js';
 import { PHASES, phaseWords } from '../../ui/session-phases.js';
 
@@ -90,13 +94,16 @@ function SlotOff({ slot, icon, testId, label, reason }) {
   );
 }
 
-function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
+function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
   const { key, ticket, phase, state, goTo, lastActiveAt, session } = row;
   const phaseWords = phaseOf(phase);
   // A standalone chat has no ticket; its title is what names it.
   const name = row.title ?? ticket;
   const whenId = useId();
+  const usageId = useId();
   const quiet = isQuiet(row, now);
+  const tokens = rowUsageLabel(usage);
+  const described = [tokens && usageId, lastActiveAt && whenId].filter(Boolean).join(' ');
   return (
     <li className="sessions-row" data-testid={`sessions-row-${key}`} data-state={state}>
       <button
@@ -104,7 +111,7 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
         className="sessions-row-open"
         data-testid={`sessions-open-${key}`}
         aria-label={`Open ${name} ${phaseWords} session`}
-        aria-describedby={lastActiveAt ? whenId : undefined}
+        aria-describedby={described || undefined}
         aria-haspopup={phase === 'chat' ? undefined : 'dialog'}
         onClick={() => onOpen(ticket, phase)}
       >
@@ -128,6 +135,11 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
           {hasPhaseIcon(phase) ? stateText(row) : `${phaseWords} · ${stateText(row)}`}
         </span>
       </button>
+      {tokens && (
+        <span id={usageId} className="sessions-row-usage" data-testid={`sessions-usage-${key}`}>
+          {tokens}
+        </span>
+      )}
       {lastActiveAt && (
         <span
           id={whenId}
@@ -186,7 +198,25 @@ function Row({ row, now, outcome, onOpen, onCopy, onClose }) {
   );
 }
 
-export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
+// The header's "Notify me" switch: an opt-in desktop notification (and tab-title count) when a session
+// needs you while this page is hidden. Pressing it is the user gesture that asks the browser for
+// permission; a refusal leaves it off and the drawer says why (`notifyBlocked`, below the header).
+function NotifyToggle({ notify, noteId }) {
+  return (
+    <Button
+      className="subtle sessions-notify"
+      data-testid="sessions-notify"
+      aria-pressed={notify.active}
+      aria-describedby={notifyBlocked(notify) ? noteId : undefined}
+      onClick={() => (notify.active ? notify.disable() : notify.enable())}
+    >
+      Notify me
+    </Button>
+  );
+}
+const notifyBlocked = (notify) => Boolean(notify?.supported) && notify.permission === 'denied';
+
+export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify }) {
   const count = groups.reduce((total, { rows }) => total + rows.length, 0);
   const waiting = groups.find(({ state }) => state === 'waiting')?.rows.length ?? 0;
   const titleId = useId();
@@ -197,6 +227,8 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
   const [query, setQuery] = useState('');
   // The time the rows are aged against. It is read again while the drawer is open, and only then.
   const [now, setNow] = useState(() => Date.now());
+  // Each row's tokens: asked once per open for every row's session, not per search.
+  const usage = useSessionsUsage({ groups, active: open });
   const shown = useMemo(
     () => filterSessionGroups(groups, query, (row) => searchText(row, now)),
     [groups, query, now],
@@ -275,6 +307,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
             <header className="sessions-head">
               <h2 id={titleId}>Claude sessions</h2>
               <div className="sessions-head-actions">
+                {notify?.supported && <NotifyToggle notify={notify} noteId={`${titleId}-notify`} />}
                 <Button
                   href="#/chat"
                   className="subtle"
@@ -294,6 +327,15 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
                 </Button>
               </div>
             </header>
+            {notifyBlocked(notify) && (
+              <p
+                id={`${titleId}-notify`}
+                className="sessions-notify-note"
+                data-testid="sessions-notify-note"
+              >
+                Notifications are blocked in the browser settings.
+              </p>
+            )}
             {count > 0 && (
               <div className="sessions-search">
                 <input
@@ -337,6 +379,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession }) {
                           row={row}
                           now={now}
                           outcome={copied?.key === row.key ? copied.outcome : null}
+                          usage={row.session ? usage[row.session] : undefined}
                           onOpen={openRow}
                           onCopy={copy}
                           onClose={close}

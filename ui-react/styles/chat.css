@@ -125,6 +125,14 @@
 .chat-state[data-state='failed'] {
   color: var(--bad);
 }
+.chat-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .chat-note,
 .chat-empty,
 .chat-disabled-reason {

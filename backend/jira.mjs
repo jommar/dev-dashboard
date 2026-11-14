@@ -9,6 +9,7 @@
 // resolves to {} rather than throwing, so PRs are never blocked by a missing
 // token.
 import { captureConfiguration } from './settings.mjs';
+import { upstreamFetch, upstreamError } from './upstream.mjs';
 import { collectCappedJiraIssues } from './jira-search.mjs';
 import { allSprints } from '../ui/sprint-data.js';
 import { isTicketKey } from './claude-ticket-state.mjs';
@@ -53,8 +54,9 @@ export async function fetchTicketMetadata(keys, { snapshot, strict = false } = {
   url.searchParams.set('maxResults', String(unique.length));
 
   try {
-    const res = await fetch(url, {
+    const res = await upstreamFetch('jira', url, {
       redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
@@ -62,7 +64,7 @@ export async function fetchTicketMetadata(keys, { snapshot, strict = false } = {
       },
     });
     if (!res.ok) {
-      if (strict) throw new Error(`jira search failed: ${res.status}`);
+      if (strict) throw upstreamError('jira', res, `jira search failed: ${res.status}`);
       return empty;
     }
     const data = await res.json();
@@ -211,7 +213,7 @@ export async function fetchReviewReadyTickets({ snapshot } = {}) {
     );
     url.searchParams.set('maxResults', String(MY_TICKETS_PAGE_SIZE));
     if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
-    const res = await fetch(url, {
+    const res = await upstreamFetch('jira', url, {
       redirect: 'error',
       signal: AbortSignal.timeout(15_000),
       headers: {
@@ -220,7 +222,7 @@ export async function fetchReviewReadyTickets({ snapshot } = {}) {
         Authorization: authorization(cfg.email, cfg.token),
       },
     });
-    if (!res.ok) throw new Error('Jira review search failed.');
+    if (!res.ok) throw upstreamError('jira', res, 'Jira review search failed.');
     const data = await res.json();
     if (!Array.isArray(data?.issues) || typeof data.isLast !== 'boolean')
       throw new Error('Invalid Jira review pagination.');
@@ -266,8 +268,9 @@ export async function fetchUatPromoteTickets({ snapshot } = {}) {
   url.searchParams.set('jql', buildUatPromoteJql());
   url.searchParams.set('fields', [UAT_PROMOTE_FIELDS, cfg.sprintField].filter(Boolean).join(','));
   url.searchParams.set('maxResults', String(UAT_PROMOTE_MAX_ISSUES));
-  const res = await fetch(url, {
+  const res = await upstreamFetch('jira', url, {
     redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
@@ -275,7 +278,7 @@ export async function fetchUatPromoteTickets({ snapshot } = {}) {
     },
   });
   if (!res.ok) {
-    throw new Error(`jira search failed: ${res.status}`);
+    throw upstreamError('jira', res, `jira search failed: ${res.status}`);
   }
   const data = await res.json();
   const tickets = [];
@@ -441,8 +444,9 @@ export async function fetchMyTickets({ includeDone = false, snapshot } = {}) {
       );
       url.searchParams.set('maxResults', String(MY_TICKETS_PAGE_SIZE));
       if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
-      const res = await fetch(url, {
+      const res = await upstreamFetch('jira', url, {
         redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
@@ -450,7 +454,7 @@ export async function fetchMyTickets({ includeDone = false, snapshot } = {}) {
         },
       });
       if (!res.ok) {
-        throw new Error(`jira search failed: ${res.status}`);
+        throw upstreamError('jira', res, `jira search failed: ${res.status}`);
       }
       return res.json();
     },

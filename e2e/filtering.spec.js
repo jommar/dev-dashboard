@@ -7,8 +7,10 @@ const controls = (panel) => ({
   select: (name) => panel.getByRole('combobox', { name, exact: true }),
   clear: panel.getByRole('button', { name: 'Clear filters', exact: true }),
 });
+// Activating a board reads /api/health by design (an in-memory answer, no upstream call), so it is
+// not a "fetch" that local filtering must avoid.
 const apiRequests = (dashboard) =>
-  dashboard.requests.filter(({ path }) => path.startsWith('/api/'));
+  dashboard.requests.filter(({ path }) => path.startsWith('/api/') && path !== '/api/health');
 
 function populateFilters(data) {
   const [active, previous] = data.tickets.allSprints;

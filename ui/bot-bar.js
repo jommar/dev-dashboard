@@ -7,6 +7,7 @@
 // roams or rests, and when a finished one leaves.
 
 import { jiraStatusKind } from './jira-status.js';
+import { verdictWord } from './claude-verdict.js';
 
 // Every session an entry can describe, in the order a ticket's bots are drawn, each with how to read
 // it off the entry. A ticket's workflow entry is the session of its current phase (`entry.phase`), so a
@@ -70,6 +71,8 @@ export function botsFromTickets(response) {
                     phase,
                     state,
                     reason: session.reason ?? null,
+                    // A done e2e or groom session's outcome, only when it is one of the known values.
+                    ...(verdictWord(session.verdict) && { verdict: session.verdict }),
                   },
                 ]
               : [];
@@ -249,6 +252,22 @@ export const CALLOUT_TEXT = Object.freeze({
   done: 'Done ✓',
   failed: 'Failed',
 });
+// The bubble's text: `<TICKET> · <text>`, and for a done session with a known verdict
+// `<TICKET> · Done ✓ · Fail`.
+export const calloutText = (ticket, state, verdict) =>
+  `${ticket} · ${CALLOUT_TEXT[state]}${
+    state === 'done' && verdictWord(verdict) ? ` · ${verdictWord(verdict)}` : ''
+  }`;
+
+// The live-region message for a change: `<TICKET> <phase>: <state word>`, with `, verdict fail` for
+// a done session whose `bot` carries a known verdict (the bubble itself is `aria-hidden`).
+export const announcementText = ({ ticket, phase, to }, bot) =>
+  `${ticket} ${phase}: ${BOT_STATE_WORDS[to]}${
+    to === 'done' && verdictWord(bot?.verdict)
+      ? `, verdict ${verdictWord(bot.verdict).toLowerCase()}`
+      : ''
+  }`;
+
 // Working and done callouts go by themselves after this long; waiting and failed ones stay until the
 // bot is hovered, focused or clicked, or its state changes again.
 export const CALLOUT_AUTO_HIDE_MS = 6000;

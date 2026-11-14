@@ -943,3 +943,40 @@ test('a listed session never asks for recovery, and an unreadable listing still 
     failedWith('listing_unavailable'),
   );
 });
+
+test('over 500 records the newest are the ones kept, whatever order the folder is read in', async (t) => {
+  const { createClaudeChat } = await import('../backend/claude-chat.mjs');
+  const env = await chatEnvironment(t);
+  const total = 501;
+  const at = (number) => SLACK_START_MS - (total - number) * 1_000;
+  const idOf = (number) => `0a1b2c3d-1111-4111-8111-${String(number).padStart(12, '0')}`;
+  for (let number = 1; number <= total; number++) {
+    env.seedRecord(idOf(number), { lastTurnAt: new Date(at(number)).toISOString() });
+    fs.utimesSync(env.recordFile(idOf(number)), at(number) / 1000, at(number) / 1000);
+  }
+  // A folder read oldest first: a cap taken from the front of that order drops the newest.
+  const oldestFirst = new Proxy(fs, {
+    get: (target, property) =>
+      property === 'readdirSync'
+        ? (dir) =>
+            target
+              .readdirSync(dir)
+              .sort(
+                (a, b) =>
+                  target.statSync(path.join(dir, a)).mtimeMs -
+                  target.statSync(path.join(dir, b)).mtimeMs,
+              )
+        : target[property],
+  });
+  const chat = createClaudeChat({
+    claudeSessions: env.sessions,
+    stateDir: env.stateDir,
+    home: env.home,
+    fs: oldestFirst,
+  });
+  t.after(() => chat.close?.());
+  const ids = (await chat.list()).map((entry) => entry.id);
+  assert.equal(ids[0], idOf(total), 'the newest chat is listed first');
+  assert.equal(ids.length, 100);
+  assert.equal(ids.at(-1), idOf(total - 99));
+});

@@ -114,6 +114,14 @@
   white-space: nowrap;
 }
 
+/* The tokens the ticket's sessions have used, beside the state pill. */
+.claude-dialog-usage {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
 /* The state as a pill: a mark and a word, tinted by tone, so colour is never the only cue. */
 .claude-dialog-state {
   display: inline-flex;
@@ -755,4 +763,59 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--s2) var(--s3);
+}
+
+/* The one-line outcome of a finished e2e check or groom session. The word is always shown; the tone
+   only colours it. */
+.claude-verdict {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin: 0;
+  padding: 0 var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.claude-verdict[data-tone='good'] {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+  color: var(--green);
+}
+.claude-verdict[data-tone='caution'] {
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--border));
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  color: var(--amber);
+}
+.claude-verdict[data-tone='bad'] {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--red);
+}
+
+/* Continue: for a failed workflow session only, a quiet button with its reason or hint beside it. */
+.claude-continue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s3);
+}
+.claude-continue .btn.subtle.claude-groom-run {
+  border: 1px solid var(--border);
+  padding: 2px var(--s3);
+  color: var(--text);
+}
+
+/* Use in Services: the button and its hint, then the line saying what happened. */
+.claude-use-in-services {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.claude-use-in-services .claude-note:empty {
+  margin-top: calc(var(--s1) * -1);
 }

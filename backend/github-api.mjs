@@ -1,3 +1,5 @@
+import { upstreamFetch } from './upstream.mjs';
+
 // Shared GraphQL wire plumbing only: callers own batching and response/error policy.
 export function headers(tokenStr) {
   return {
@@ -21,7 +23,7 @@ export function pullRequestQuery(prs, selectionForPr) {
 }
 
 export async function postGraphql(config, query) {
-  return fetch(`${config.github.api}/graphql`, {
+  return upstreamFetch('github', `${config.github.api}/graphql`, {
     method: 'POST',
     redirect: 'error',
     headers: headers(config.credentials.githubToken),

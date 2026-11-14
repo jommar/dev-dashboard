@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   BOT_PHASES,
+  BOT_STATE_WORDS,
   DONE_TTL_MS,
   FADE_MS,
   NO_MEMORY,
@@ -697,7 +698,7 @@ test('the bar is mounted once in the shell, behind setup, with its own tickets p
   assert.match(read('components/AppShell.jsx'), /\{ready && <BotBar \/>\}/);
   assert.match(
     read('components/BotBar.jsx'),
-    /useClaudeTickets\(\{ active: true, source: 'bot-bar' \}\)/,
+    /useClaudeTickets\(\{ active: true, source: 'bot-bar', whileHidden: notify.active \}\)/,
   );
   assert.match(read('components/BotBar.jsx'), /inActiveSprint\(sessions, sprint\?\.keys\)/);
   assert.match(read('components/BotBar.jsx'), /heldDoneBots\(bots, sprint\?\.statuses\)/);
@@ -997,7 +998,8 @@ test('the bar hands the drawer the last-activity times with the tickets, and the
     /sessionGroups\(bots, claude\.byTicket, claude\.lastActive\)/,
   );
   assert.match(read('hooks/useClaudeTickets.js'), /result\.lastActive \?\? NO_ACTIVITY/);
-  assert.match(read('hooks/useClaudeTickets.js'), /return \{ byTicket, lastActive, /);
+  // The hook's returned object carries `lastActive`, however Prettier wraps it.
+  assert.match(read('hooks/useClaudeTickets.js'), /return \{[^}]*\blastActive\b[^}]*\}/);
 });
 
 test('isQuiet: a working session with no write for five minutes or more is quiet; other states, no time and a future time never are', () => {
@@ -1173,4 +1175,69 @@ test("scenario 15: a session-list row prefers its bot's own join command and tim
   // Newest activity first within a group, chat rows and ticket rows together.
   const working = groups.find(({ state }) => state === 'working').rows.map(({ key }) => key);
   assert.deepEqual(working, [`${CHAT_B}:chat`, 'TAP-1:implement']);
+});
+
+// ---- verdict: the one-line outcome of a finished e2e check or groom session ----
+
+test('verdict: bots', () => {
+  const tickets = {
+    'TAP-1': entry(null, 'none', { e2e: { state: 'done', reason: 'finished', verdict: 'FAIL' } }),
+    'TAP-2': entry(null, 'none', { e2e: { state: 'done', reason: 'finished', verdict: '<b>x' } }),
+    'TAP-3': entry(null, 'none', { e2e: { state: 'done', reason: 'finished' } }),
+    'TAP-4': entry(null, 'none', {
+      groom: { state: 'done', reason: 'finished', verdict: 'NEEDS_INFO' },
+    }),
+    'TAP-5': entry(null, 'none', {
+      e2e: { state: 'done', reason: 'finished', verdict: 'toString' },
+    }),
+  };
+  const bots = botsFromTickets({ tickets });
+  const by = Object.fromEntries(bots.map((bot) => [bot.ticket, bot]));
+  assert.equal(by['TAP-1'].verdict, 'FAIL');
+  assert.equal(by['TAP-4'].verdict, 'NEEDS_INFO');
+  for (const ticket of ['TAP-2', 'TAP-3', 'TAP-5'])
+    assert.equal('verdict' in by[ticket], false, ticket);
+  assert.deepEqual(by['TAP-3'], {
+    key: 'TAP-3:e2e',
+    ticket: 'TAP-3',
+    phase: 'e2e',
+    state: 'done',
+    reason: 'finished',
+  });
+  assert.deepEqual(
+    { ...by['TAP-1'], verdict: undefined },
+    {
+      key: 'TAP-1:e2e',
+      ticket: 'TAP-1',
+      phase: 'e2e',
+      state: 'done',
+      reason: 'finished',
+      verdict: undefined,
+    },
+  );
+});
+
+test('verdict: callout text', () => {
+  assert.equal(bar.calloutText('TAP-1', 'done', 'FAIL'), 'TAP-1 · Done ✓ · Fail');
+  assert.equal(bar.calloutText('TAP-1', 'done', 'NEEDS_INFO'), 'TAP-1 · Done ✓ · Needs info');
+  // No verdict, an invalid one, or a state other than done: today's text.
+  assert.equal(bar.calloutText('TAP-1', 'done'), `TAP-1 · ${CALLOUT_TEXT.done}`);
+  assert.equal(bar.calloutText('TAP-1', 'done', '<b>x'), `TAP-1 · ${CALLOUT_TEXT.done}`);
+  for (const state of ['working', 'waiting', 'failed'])
+    assert.equal(bar.calloutText('TAP-1', state, 'FAIL'), `TAP-1 · ${CALLOUT_TEXT[state]}`);
+
+  const change = { key: 'TAP-1:e2e', ticket: 'TAP-1', phase: 'e2e', from: 'working', to: 'done' };
+  assert.equal(bar.announcementText(change, { verdict: 'FAIL' }), 'TAP-1 e2e: done, verdict fail');
+  assert.equal(
+    bar.announcementText({ ...change, phase: 'groom' }, { verdict: 'NEEDS_INFO' }),
+    'TAP-1 groom: done, verdict needs info',
+  );
+  assert.equal(bar.announcementText(change, {}), 'TAP-1 e2e: done');
+  assert.equal(bar.announcementText(change, undefined), 'TAP-1 e2e: done');
+  assert.equal(bar.announcementText(change, { verdict: 'nope' }), 'TAP-1 e2e: done');
+  for (const to of ['working', 'waiting', 'failed'])
+    assert.equal(
+      bar.announcementText({ ...change, to }, { verdict: 'FAIL' }),
+      `TAP-1 e2e: ${BOT_STATE_WORDS[to]}`,
+    );
 });

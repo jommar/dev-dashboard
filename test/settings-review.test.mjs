@@ -226,9 +226,9 @@ test('production shutdown lifecycle ends active SSE and completes within deadlin
   );
   await h.manager.applySettings(h.f.configuration.local);
   const stops = [];
-  t.mock.method(h.manager, 'stop', async (id) => {
-    stops.push(id);
-    return { ok: true };
+  t.mock.method(h.manager, 'stopAll', async () => {
+    stops.push('app');
+    return [];
   });
   const stream = http.get(h.origin + '/api/events');
   let end;
@@ -255,10 +255,6 @@ test('production shutdown lifecycle ends active SSE and completes within deadlin
     }),
   ]);
   assert.equal(h.server.listening, false);
-  assert.deepEqual(
-    stops,
-    ['app'],
-    'shutdown stops each owned service through public Manager control',
-  );
+  assert.deepEqual(stops, ['app'], 'shutdown stops every owned service through Manager.stopAll');
   assert.deepEqual(effects, []);
 });

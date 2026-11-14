@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavIcon } from './NavIcon.jsx';
 import { DashboardTooltip } from './Primitives.jsx';
+import { tabLabelWithChord } from '../../ui/command-palette.js';
 
 const PRIMARY_ROUTES = new Set(['home', 'my-tickets', 'slack']);
 
-function NavLink({ tab: { id, label, badge }, active, onNavigate }) {
+// `chords` is false in setup-only mode (Settings alone), where the keyboard layer is off.
+function NavLink({ tab: { id, label, badge }, active, onNavigate, chords }) {
   return (
-    <DashboardTooltip title={label} describeChild>
+    <DashboardTooltip title={chords ? tabLabelWithChord(label, id) : label} describeChild>
       <a
         className={`tab${active === id ? ' active' : ''}`}
         href={`#/${id}`}
@@ -72,7 +74,13 @@ export function AppTabs({ tabs, active, onNavigate }) {
       {primary.length > 0 && (
         <div className="nav-primary">
           {primary.map((tab) => (
-            <NavLink key={tab.id} tab={tab} active={active} onNavigate={onNavigate} />
+            <NavLink
+              key={tab.id}
+              tab={tab}
+              active={active}
+              onNavigate={onNavigate}
+              chords={tabs.length > 1}
+            />
           ))}
         </div>
       )}
@@ -105,6 +113,7 @@ export function AppTabs({ tabs, active, onNavigate }) {
               key={tab.id}
               tab={tab}
               active={active}
+              chords={tabs.length > 1}
               onNavigate={(id) => {
                 if (open) toggleRef.current?.focus();
                 setOpen(false);

@@ -167,3 +167,58 @@ test('checkout 1: a directory that is not a listed worktree root is WORKTREES_UN
     (error) => error.code === 'WORKTREES_UNAVAILABLE' && error.status === 502,
   );
 });
+
+// ---- matchWorktrees: which worktree of a repo belongs to a ticket ----
+
+const wt = (label, extra = {}) => ({ path: `/r/.wt/${label}`, label, isMain: false, ...extra });
+const MAIN_WT = { path: '/r/main', label: 'master', isMain: true };
+
+test('matchWorktrees one: a single worktree branch naming the ticket is the match', async () => {
+  const { matchWorktrees } = await checkouts();
+  const result = matchWorktrees('TAP-14', [
+    MAIN_WT,
+    wt('tap-14-other'),
+    wt('tap-145-x'),
+    wt('tap-1454-fix'),
+  ]);
+  assert.deepEqual(result, { status: 'match', path: '/r/.wt/tap-14-other', label: 'tap-14-other' });
+  // Case and a leading folder in the branch name do not matter; a longer word around it does.
+  assert.equal(matchWorktrees('TAP-14', [MAIN_WT, wt('feature/TAP-14-x')]).status, 'match');
+  assert.equal(matchWorktrees('TAP-14', [MAIN_WT, wt('xtap-14-x')]).status, 'none');
+});
+
+test('matchWorktrees ambiguous: two matches refuse, naming both and choosing neither', async () => {
+  const { matchWorktrees } = await checkouts();
+  const result = matchWorktrees('TAP-14', [MAIN_WT, wt('tap-14-b'), wt('tap-14-a')]);
+  assert.deepEqual(result, { status: 'ambiguous', candidates: ['tap-14-a', 'tap-14-b'] });
+  assert.equal('path' in result, false);
+});
+
+test('matchWorktrees none: the main checkout, a detached head and no hit never match', async () => {
+  const { matchWorktrees } = await checkouts();
+  assert.deepEqual(
+    matchWorktrees('TAP-14', [
+      { path: '/r/main', label: 'tap-14-main', isMain: true },
+      wt('abc1234 (detached)', { path: '/r/.wt/tap-14-loose' }),
+    ]),
+    { status: 'none' },
+  );
+  assert.deepEqual(matchWorktrees('TAP-14', [MAIN_WT]), { status: 'none' });
+  assert.deepEqual(matchWorktrees('TAP-14', []), { status: 'none' });
+  for (const bad of ['x', '', null, undefined, 'tap-14', 'TAP-', 'TAP-14-x', 14])
+    assert.deepEqual(matchWorktrees(bad, [wt('tap-14-x')]), { status: 'none' }, String(bad));
+});
+
+test('matchWorktrees alias: a TAP key also matches a pre-rename trips branch, and the reverse', async () => {
+  const { matchWorktrees } = await checkouts();
+  const trips = [MAIN_WT, wt('trips-1877-fix')];
+  assert.equal(matchWorktrees('TAP-1877', trips).label, 'trips-1877-fix');
+  assert.equal(matchWorktrees('TRIPS-1877', [MAIN_WT, wt('tap-1877-fix')]).label, 'tap-1877-fix');
+  assert.equal(matchWorktrees('TAP-1877', [MAIN_WT, wt('tap-18770')]).status, 'none');
+  assert.equal(matchWorktrees('TAP-1877', [MAIN_WT, wt('trips-18770')]).status, 'none');
+  // Any other project key matches only itself.
+  assert.equal(matchWorktrees('ABC-5', [MAIN_WT, wt('tap-5-x')]).status, 'none');
+  assert.equal(matchWorktrees('ABC-5', [MAIN_WT, wt('abc-5-x')]).status, 'match');
+  // The same branch under both spellings is one worktree, so one match (not ambiguous).
+  assert.equal(matchWorktrees('TAP-1877', [MAIN_WT, wt('tap-1877-trips-1877')]).status, 'match');
+});

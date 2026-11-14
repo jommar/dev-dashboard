@@ -11,7 +11,8 @@ import { fetchReviewTickets } from './review-tickets.mjs';
 import { fetchSpecReviews, parseSpecReviewLimit } from './spec-reviews.mjs';
 import { fetchHomeVelocity } from './home-velocity.mjs';
 import { getOriginDiff } from './diff.mjs';
-import { listWorktrees } from './checkouts.mjs';
+import { listWorktrees, matchWorktrees } from './checkouts.mjs';
+import { isTicketKey } from './claude-ticket-state.mjs';
 import { fetchRelease } from './releases.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
 import { slackIntegration } from './slack.mjs';
@@ -21,17 +22,25 @@ import { createSlackWatchStore, isSessionId } from './slack-watch-store.mjs';
 import { createClaudeSessions } from './claude-sessions.mjs';
 import { createClaudeLauncher, failed } from './claude-launcher.mjs';
 import { createClaudeChat } from './claude-chat.mjs';
+import { createUsageReader } from './claude-usage.mjs';
 import { createClaudeArtifacts } from './claude-artifacts.mjs';
 import { PROMPT_NAMES, createPromptStore } from './claude-prompts.mjs';
 import { createSlackWatcher } from './slack-watcher.mjs';
 import { createBrowserDevtools } from './browser-devtools.mjs';
 import { createBrowserScreencast } from './browser-screencast.mjs';
 import { createDevtoolsStreams } from './devtools-stream.mjs';
+import {
+  upstreamHealth as defaultUpstreamHealth,
+  upstreamOf,
+  upstreamSentence,
+} from './upstream.mjs';
+import { defaultLog, logLine, scrubMessage } from './log.mjs';
 
 const MAX_LINKS_PER_REQUEST = 50;
 // The `Sec-Fetch-Site` values of a request that another site's page made. A client that sends none
 // (curl, older browsers) is not one.
 const CROSS_SITE = ['cross-site', 'same-site'];
+const MAX_USAGE_SESSIONS = 8;
 
 function json(res, status, value) {
   res.writeHead(status, {
@@ -189,6 +198,36 @@ function specReviewResponse(data) {
   };
 }
 
+// The routes whose failures never log a message: what was said in a chat or a Slack watch can end up in
+// the text of the error that refused it.
+const SILENT_MESSAGE_ROUTES = ['/api/claude/chat', '/api/slack/'];
+
+// One `[http]` line for a server failure (status 500 or more). A 4xx is the caller's mistake and its
+// message may quote the query or a header, so it logs nothing. Route is the pathname alone (never the
+// query), and the message is its scrubbed first line, left out on the chat and Slack routes and on a
+// SyntaxError (which quotes the text it failed to parse). A rate-limit cool-down answer is not logged
+// again: the health record already says why. A request body, header or token never reaches the line.
+function logFailure(log, req, error, status, code) {
+  try {
+    if (status < 500 || error?.coolDown === true) return;
+    const route = new URL(req.url, 'http://localhost').pathname;
+    const quiet =
+      error?.name === 'SyntaxError' ||
+      SILENT_MESSAGE_ROUTES.some((prefix) => route.startsWith(prefix));
+    logLine(log, 'http', {
+      method: req.method,
+      route,
+      status,
+      code,
+      name: typeof error?.name === 'string' ? error.name : undefined,
+      errCode: typeof error?.code === 'string' ? error.code : undefined,
+      message: quiet ? undefined : scrubMessage(error?.message),
+    });
+  } catch {
+    // A line that cannot be built is not worth a failed reply.
+  }
+}
+
 export function createHttpHandler({ settings, manager, integrations = {} }) {
   const slack = integrations.slack || slackIntegration;
   const slackWatchStore = integrations.slackWatchStore || createSlackWatchStore();
@@ -206,6 +245,9 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       claudeSessions,
       launchedName: (id) => claudeLauncher.launchedName?.(id) ?? null,
     });
+  const claudeUsage = integrations.claudeUsage || createUsageReader();
+  const upstreamHealth = integrations.upstreamHealth || defaultUpstreamHealth;
+  const log = integrations.log || defaultLog;
   const browserScreencast =
     integrations.browserScreencast || createBrowserScreencast({ devtools: browserDevtools });
   const devtoolsStreams =
@@ -318,6 +360,14 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       return { ok: true, state, checked };
     },
   };
+  // Integration health, from memory only: it makes no upstream call and needs no setup, so the
+  // boards can say why they are empty even while Settings is incomplete.
+  const healthRoutes = {
+    'GET /api/health': () => ({
+      generatedAt: new Date().toISOString(),
+      integrations: upstreamHealth.snapshot(),
+    }),
+  };
   const claudeRoutes = {
     // The launcher's reply and, beside it, the standalone chats: one poll for the bar and the Chat screen.
     'GET /api/claude/tickets': async () => ({
@@ -336,9 +386,27 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       const { key } = await readJson(req);
       return claudeLauncher.approve({ key });
     },
+    'POST /api/claude/continue': async (req) => {
+      const { key } = await readJson(req);
+      return claudeLauncher.continueSession({ key });
+    },
     'POST /api/claude/rereview': async (req) => {
       const { key } = await readJson(req);
       return claudeLauncher.rereview({ key });
+    },
+    // Token tallies for up to MAX_USAGE_SESSIONS sessions, read on request only: never part of the
+    // tickets poll above, which stays stat-only. The reply holds numbers and model ids, no path.
+    'GET /api/claude/usage': async (req) => {
+      if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+        throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+      const ids = (queryParam(req, 'sessions') ?? '').split(',');
+      if (ids.length > MAX_USAGE_SESSIONS)
+        throw httpError('INVALID_SESSION', 'Too many sessions.', 400);
+      ids.forEach(requireSessionId);
+      // One reader call per request, so its byte budget is shared by all the ids.
+      const filesById = {};
+      for (const id of new Set(ids)) filesById[id] = await claudeSessions.transcriptFiles(id);
+      return { sessions: await claudeUsage.tallyMany(filesById) };
     },
     'GET /api/claude/prompts': () => ({ ok: true, prompts: claudePrompts.list() }),
     // The Markdown a ticket's sessions left: the list, and one file by name. Read-only.
@@ -596,6 +664,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         devtoolsRoutes[routeKey] ||
         slackWatchRoutes[routeKey] ||
         claudeRoutes[routeKey] ||
+        healthRoutes[routeKey] ||
         promptRoutes[routeKey];
       if (tableRoute) {
         json(res, 200, await tableRoute(req));
@@ -653,6 +722,33 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
           : operation());
         broadcast();
         json(res, result.ok ? 200 : 400, result);
+        return;
+      }
+      // Which worktree of each service repo belongs to `?key=TAP-n`, read now (never polled) so the
+      // Claude dialog's Use in Services can switch through the PUT below. It switches nothing itself,
+      // and one repo whose listing fails is `unavailable` without failing the answer.
+      if (req.method === 'GET' && pathname === '/api/repos/checkout-matches') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        const keys = url.searchParams.getAll('key');
+        if (keys.length !== 1 || !isTicketKey(keys[0]))
+          throw httpError('INVALID_TICKET', 'Invalid ticket.', 400);
+        const dirs = [...new Set(manager.list().map(({ dir }) => dir))];
+        const repos = await Promise.all(
+          dirs.map(async (dir) => {
+            const group = manager.checkoutGroup(dir);
+            try {
+              return {
+                dir,
+                ids: group.ids,
+                ...matchWorktrees(keys[0], await api.listWorktrees(group.main)),
+              };
+            } catch {
+              return { dir, ids: group.ids, status: 'unavailable' };
+            }
+          }),
+        );
+        json(res, 200, { key: keys[0], repos });
         return;
       }
       const repo = pathname.match(/^\/api\/repos\/([^/]+)\/(worktrees|checkout)$/);
@@ -822,25 +918,39 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'INVALID_QUALITY',
         'TOO_MANY_STREAMS',
         'TOO_MANY_SUBSCRIPTIONS',
+        'UPSTREAM_FAILED',
       ];
-      const code = allowed.includes(error.code) ? error.code : 'OPERATION_FAILED';
+      const upstream = upstreamOf(error);
+      const code = upstream
+        ? 'UPSTREAM_FAILED'
+        : allowed.includes(error.code)
+          ? error.code
+          : 'OPERATION_FAILED';
       const conflict = ['SETUP_REQUIRED', 'REVISION_CONFLICT', 'SERVICE_IN_USE'].includes(code);
-      json(
-        res,
-        conflict
-          ? 409
-          : Number.isInteger(error.status)
-            ? error.status
-            : Number.isInteger(error.statusHint)
-              ? error.statusHint
-              : 502,
-        {
-          code,
-          error: code === 'SETUP_REQUIRED' ? 'Complete Settings setup.' : code.replaceAll('_', ' '),
-          errors: allowed.includes(error.code) ? error.errors || [] : [],
-          ...(code === 'SETUP_REQUIRED' ? { setup: settings.getSetupStatus() } : {}),
-        },
-      );
+      const status = conflict
+        ? 409
+        : Number.isInteger(error.status)
+          ? error.status
+          : Number.isInteger(error.statusHint)
+            ? error.statusHint
+            : 502;
+      logFailure(log, req, error, status, code);
+      json(res, status, {
+        code,
+        error:
+          code === 'SETUP_REQUIRED'
+            ? 'Complete Settings setup.'
+            : code === 'UPSTREAM_FAILED'
+              ? upstreamSentence(upstream?.name, upstream?.kind)
+              : code.replaceAll('_', ' '),
+        errors:
+          code === 'UPSTREAM_FAILED'
+            ? [upstream?.kind ?? error.errors?.[0]]
+            : allowed.includes(error.code)
+              ? error.errors || []
+              : [],
+        ...(code === 'SETUP_REQUIRED' ? { setup: settings.getSetupStatus() } : {}),
+      });
     }
   };
   handler.slackWatcher = slackWatcher;

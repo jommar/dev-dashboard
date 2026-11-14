@@ -35,6 +35,7 @@ export function ServicesPanel({ config, active, services: snapshots = [] }) {
   }, [api, services]);
   useEffect(() => {
     if (active && !services.length) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loads once when the tab is activated, not on every change of load or the service count
   }, [active]);
   // A repo's worktrees are read when the services load and when a picker gains focus, never on a timer.
   const listCheckouts = useCallback(

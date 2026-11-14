@@ -412,6 +412,16 @@ export function rereviewBlock(review, entries) {
   return review.state === 'done' ? null : 'session_running';
 }
 
+// Why Continue cannot go to a ticket's workflow session, or null when it can: only a `failed` one
+// still in the CLI listing is continued (a working one is live, a missing or merely recovered one
+// has nothing to resume here). `session` is the listed session of the current record, or null.
+export function continueBlock({ state, session }) {
+  if (state === 'unknown') return 'listing_unavailable';
+  if (state === 'working') return 'session_running';
+  if (state !== 'failed') return 'not_failed';
+  return session ? null : 'session_not_found';
+}
+
 // The entry for one ticket. `status` and `launch` are the parsed files (null when a file is not a
 // JSON object), `entries` is the CLI listing (null when unavailable) and `planPresent` says whether
 // the plan file exists. `recovered` is the short-to-full ids of sessions the listing no longer shows
@@ -476,6 +486,9 @@ export function deriveEntry({ status, launch, entries, now, planPresent, recover
     // ticket keep the shape they had.
     ...(specReviewRecord && { specReview: ownSessionBlock(specReview, entries) }),
     ...(e2eRecord && { e2e: ownSessionBlock(e2e, entries) }),
+    // The key is there only for a failed workflow session, so the blocks of every other state keep
+    // the shape they had.
+    ...(state === 'failed' && { continue: continueBlock({ state, session }) }),
   };
   return {
     phase: record?.phase ?? null,

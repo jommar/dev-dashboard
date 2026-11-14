@@ -129,6 +129,19 @@ test('CLI control reports the HTTP status when a failure has no JSON error', asy
   assert.deepEqual(result.output, []);
 });
 
+for (const command of ['start', 'stop', 'restart']) {
+  test(`CLI in-process ${command} reports ok:false as a failure without a success line`, async (t) => {
+    const result = await invokeCli(t, command, {
+      ready: true,
+      dashboard: 'unavailable',
+      controlResult: { ok: false, error: 'service did not stop' },
+    });
+    assert.equal(result.exitCode, 1);
+    assert.deepEqual(result.errors, ['service did not stop']);
+    assert.deepEqual(result.output, []);
+  });
+}
+
 test('all CLI operations reject setup before fallback or direct integrations; help and saved offline service IDs work', async (t) => {
   for (const dashboard of ['gated', 'unavailable']) {
     for (const command of [

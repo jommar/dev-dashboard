@@ -80,6 +80,28 @@ export async function listWorktrees(main, { run = runGit } = {}) {
   ];
 }
 
+// The ticket key's project may be written under its pre-rename spelling in an older branch name.
+const KEY_ALIASES = { TAP: ['tap', 'trips'], TRIPS: ['tap', 'trips'] };
+
+// Which linked worktree of a repo belongs to the ticket `key`: the one whose branch names it, as a
+// whole word (`tap-14-x` and `feature/tap-14` for TAP-14, never `tap-145` or `xtap-14`), under the
+// key's pre-rename spelling too. The main checkout and a detached head never match. `ambiguous`
+// names every candidate and picks none. `worktrees` is `listWorktrees`' answer.
+export function matchWorktrees(key, worktrees) {
+  const parsed = typeof key === 'string' ? /^([A-Z]{1,10})-(\d{1,7})$/.exec(key) : null;
+  if (!parsed) return { status: 'none' };
+  const [, project, number] = parsed;
+  const prefixes = KEY_ALIASES[project] ?? [project.toLowerCase()];
+  const named = new RegExp(`(?<![A-Za-z0-9])(?:${prefixes.join('|')})-${number}(?![0-9])`, 'i');
+  const hits = worktrees.filter(
+    ({ isMain, label }) => !isMain && !label.endsWith(' (detached)') && named.test(label),
+  );
+  if (hits.length === 0) return { status: 'none' };
+  if (hits.length > 1)
+    return { status: 'ambiguous', candidates: hits.map(({ label }) => label).sort() };
+  return { status: 'match', path: hits[0].path, label: hits[0].label };
+}
+
 // `<home>/.config/dev-dashboard/checkouts.json`, keyed by a repo's absolute main checkout.
 export function createCheckoutStore({ home = os.homedir(), fs = fsDefault } = {}) {
   const file = path.join(home, '.config', 'dev-dashboard', 'checkouts.json');

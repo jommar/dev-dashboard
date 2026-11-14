@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   answerClaude,
   approveClaude,
+  continueClaude,
   getClaudeTickets,
   launchClaude,
   rereviewClaude,
 } from '../lib/api.js';
 import { CLAUDE_POLL_MS } from '../../ui/polling.js';
+import { keepIfEqual } from '../../ui/keep-if-equal.js';
 
 // Anything that changes a chat's state announces it here, so every reader of the tickets (the bot bar,
 // the Chat screen) reads again at once instead of at its next poll.
@@ -21,17 +23,14 @@ const NO_ACTIVITY = Object.freeze({});
 const NO_CHATS = Object.freeze([]);
 const NO_SESSION_IDS = Object.freeze({});
 
-// `previous` while `next` holds the same JSON, so a poll that found nothing new keeps the same object.
-const keepIfEqual = (previous, next) =>
-  JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
-
 // Every ticket's Claude status from one GET /api/claude/tickets, never one request per card.
 // It is read when the tab opens, every CLAUDE_POLL_MS while the tab is active and the page is
-// visible, and right after a launch, an answer, an approval or a re-review. A failed read keeps the last map. `byTicket`,
+// visible (`whileHidden`, which only the bot bar sets, and only while the user's notification opt-in is on,
+// keeps the tick going on a hidden page), and right after a launch, an answer, an approval or a re-review. A failed read keeps the last map. `byTicket`,
 // `lastActive`, `chats` and `sessionIds` keep their identity while the answer is equal, so the memoized board is not re-rendered by a poll
 // that found nothing new. `launch`, `answer`, `approve` and `rereview` resolve with the API result, whose `ticket` entry
 // is put in the map at once: a poll that was already in flight cannot put the old state back.
-export function useClaudeTickets({ active, source }) {
+export function useClaudeTickets({ active, source, whileHidden = false }) {
   const [byTicket, setByTicket] = useState(NO_TICKETS);
   // Per ticket and phase, the ISO time that session was last written to: `{}` until a read has one.
   const [lastActive, setLastActive] = useState(NO_ACTIVITY);
@@ -66,15 +65,19 @@ export function useClaudeTickets({ active, source }) {
     if (!active) return undefined;
     refresh();
     const tick = () => {
+      if (whileHidden || !document.hidden) refresh();
+    };
+    // Showing the page reads at once; hiding it never does.
+    const onVisible = () => {
       if (!document.hidden) refresh();
     };
     const timer = setInterval(tick, CLAUDE_POLL_MS);
-    document.addEventListener('visibilitychange', tick);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       clearInterval(timer);
-      document.removeEventListener('visibilitychange', tick);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [active, refresh]);
+  }, [active, refresh, whileHidden]);
 
   useEffect(() => {
     if (!active) return undefined;
@@ -103,7 +106,22 @@ export function useClaudeTickets({ active, source }) {
     [settle],
   );
   const approve = useCallback(async (key) => settle(key, await approveClaude(key)), [settle]);
+  const continueSession = useCallback(
+    async (key) => settle(key, await continueClaude(key)),
+    [settle],
+  );
   const rereview = useCallback(async (key) => settle(key, await rereviewClaude(key)), [settle]);
 
-  return { byTicket, lastActive, chats, sessionIds, loaded, launch, answer, approve, rereview };
+  return {
+    byTicket,
+    lastActive,
+    chats,
+    sessionIds,
+    loaded,
+    launch,
+    answer,
+    approve,
+    continueSession,
+    rereview,
+  };
 }

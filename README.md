@@ -371,7 +371,10 @@ Every operational command first checks setup, including direct GitHub/Jira
 commands and offline service controls. If the dashboard reports `SETUP_REQUIRED`
 or the persisted setup is unready, the command exits nonzero with a Settings
 diagnostic instead of falling back. Ready offline fallback uses saved service IDs
-and configuration; `node backend/cli.mjs --help` works before setup.
+and configuration; `node backend/cli.mjs --help` works before setup. In that in-process
+fallback, `start`, `stop` and `restart` exit 1 and print the manager's error to stderr when it
+returns `{ ok: false }` (for example `service did not stop`) instead of the `(in-process)`
+success line.
 
 ## Agent interface
 
@@ -384,6 +387,7 @@ An agent can read the same logs three ways:
    - `GET /api/services`
    - `POST /api/services/:id/{start|stop|restart}`
    - `GET /api/repos/:dir/worktrees` and `PUT /api/repos/:dir/checkout` (a repo's git worktrees, and which one its services run from; see [Worktree picker](#worktree-picker))
+   - `GET /api/repos/checkout-matches?key=TAP-n` (which worktree of each service repo belongs to a ticket; read at click time only, see [Worktree picker](#worktree-picker))
    - `GET /api/events` (SSE live status)
    - `GET /api/prs`
    - `GET /api/review-tickets` (other-assigned review-ready Jira tickets with all linked open PRs in watched repos; see [PR review board](#open-prs))
@@ -392,10 +396,49 @@ An agent can read the same logs three ways:
    - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
-   - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers`, `POST /api/claude/approve` and `POST /api/claude/rereview` (see [Claude launcher](#claude-launcher))
+   - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers`, `POST /api/claude/approve`, `POST /api/claude/continue` and `POST /api/claude/rereview` (see [Claude launcher](#claude-launcher))
+   - `GET /api/claude/usage?sessions=<uuid>,...` (token tallies per session; see [Claude usage](#claude-usage))
+   - `GET /api/health` (integration health; see [Integration health](#integration-health))
    - `POST /api/claude/chat/send`, `POST /api/claude/chat/stop` and `GET /api/claude/chat/stream?session=<uuid>` (SSE; chat with a session, with or without a ticket; see [Chat](#chat))
    - `GET /api/active-sprint-tickets?keys=A-1,B-2` (which of those tickets are in an active Jira sprint; see [Bot bar](#bot-bar))
    - `GET /api/config` and the [Settings APIs](#setup-gate-and-apis)
+
+## Integration health
+
+`GET /api/health` answers `{ generatedAt, integrations: { github, jira, slack } }`; each entry is
+`{ status: 'ok' | 'degraded' | 'unknown', lastOkAt, lastFailure: null | { kind, status, at, retryAfterSec } }`.
+It is memory only: no upstream call, answered before the setup gate, and it holds no URL, header,
+body or secret. My Tickets (Jira, GitHub, Slack), Pull Requests (GitHub, Jira) and Slack (Slack) show
+a note from it in their toolbar when an integration is `degraded`; it is read once when a screen
+becomes active and again on each refresh, never on a timer.
+
+- **Kinds.** `auth` (401, or 403 without a rate-limit signal), `rate_limit` (429, or 403 with
+  `x-ratelimit-remaining: 0` or `Retry-After`; the retry time comes from `Retry-After` or
+  `x-ratelimit-reset`), `upstream` (5xx and any other 4xx), `timeout` (a `TimeoutError` or
+  `AbortError`) and `network` (everything else a failed fetch raises). A `rate_limit` with a retry time
+  blocks later calls to that integration without a request until the time passes, at most 900 s. A
+  `Retry-After` in HTTP-date form is ignored (GitHub and Atlassian send seconds).
+- **Error envelope.** A classified upstream failure answers `502`
+  `{ code: 'UPSTREAM_FAILED', error: '<fixed sentence>', errors: ['<kind>'] }` with one of `Jira
+rejected the token.`, `GitHub is rate limiting requests.`, `Slack did not answer in time.`, `<X>
+could not be reached.` or `<X> is having trouble answering.`. The underlying error text stays inside
+  the server, and a plain error stays `OPERATION_FAILED`.
+- **What counts.** The record is made at the response headers, so a body read that times out is not
+  counted (the route answers `OPERATION_FAILED` and health stays `ok`). Any 4xx other than 401, 403 and
+  429 (a 404 for a deleted PR, a 422) records the integration as `degraded` / `upstream` until the next
+  good call. The board note words its retry time once per health answer, not per second.
+- **Log lines** (stderr, `[tag] {json}`, one per event, never a stack, body, query, header, token or
+  chat text). `[http]` `{ method, route, status, code, name, errCode, message }` is written only for a
+  status of 500 or more: every 4xx logs nothing, and a rate-limit cool-down answer (`coolDown: true`)
+  is not logged again, since `GET /api/health` already says why. `route` is the pathname only.
+  `message` is the first line, scrubbed of `Bearer` / `Basic` values, `ghp_`, `github_pat_` and `xox*-`
+  tokens, URL userinfo (`scheme://[token]@host`) and URL queries, cut to 200 characters, and absent
+  under `/api/claude/chat` and `/api/slack/` and for any `SyntaxError`. `[server]`
+  `{ step: 'listen' | 'startup', port?, name, code, message }` exits with code 1 as before, and
+  `[process]` `{ event: 'unhandledRejection' | 'uncaughtException', name, code, message }`.
+- **Process handlers** (installed by `start()` only). An unhandled rejection is logged and the process
+  continues; an uncaught exception is logged, runs the graceful shutdown (stops the detached services)
+  once and exits 1, and a second one during shutdown exits at once.
 
 ## Home
 
@@ -1182,9 +1225,10 @@ has an answer you saved, the dashboard sends the planning answers back to that s
 session, which is told to update the plan, checklist and spec and then set `done`. Once it has,
 you approve the plan with **Approve plan** (see [Approving the plan](#approving-the-plan)) and only
 then can Implement plan start. A question the implement session later asks is answered the same
-way and resumes that same implement session, which continues the approved implementation. The
-implement session does not commit, push or open a pull request, and leaves its
-changes in a worktree with a short report beside the plan.
+way and resumes that same implement session, which continues the approved implementation. Implement
+builds what the plan, checklist and spec say: they are the single source of truth, and the session
+does not read the saved answers as decisions. It commits its changes in the worktree on that
+worktree's own branch, never pushes or opens a pull request, and leaves a short report beside the plan.
 
 ### Requirements and limits
 
@@ -1258,6 +1302,14 @@ hairline, labelled `Independent`, with its note and, once it has a session, its 
 outcome of an approval or a save is a short inline message beside what caused it, with a **×** to
 dismiss it; it also clears by itself once the ticket stops working, so it never outlives the state
 it described.
+
+The header also shows the tokens the ticket's sessions used (`~1.2M tokens`, or `at least 1.2M tokens`
+for a lower bound; nothing when zero), from one `GET /api/claude/usage` per dialog open that carries
+every phase's session id (see [Claude usage](#claude-usage)); the bot bar never asks. A `failed`
+workflow session the CLI still lists gets a **Continue** button (see
+[Continue a failed session](#continue-a-failed-session)). On a done implement row **Use in Services**
+runs the services of the repo that holds the ticket's worktree from it (see
+[Worktree picker](#worktree-picker)).
 
 When a workflow session asked questions, the dialog also shows a reminder that nothing is sent
 to the session until every question has an answer, and the questions as a numbered list. Each
@@ -1351,7 +1403,7 @@ flight. nodemon reads the file only at start-up, so restart `npm run dev` once a
 ```
 
 - **The session** writes `questions` (once, near the end of planning, or by appending one object
-  whenever Implement is blocked by something the plan and your answers do not settle) and changes its
+  whenever Implement is blocked by something the plan, checklist and spec do not settle) and changes its
   own flag to `true` as its very last action, after everything else is saved. Every new question
   carries `"phase": "investigate-and-plan"` from the planning session or `"phase": "implement-plan"`
   from the implement session; the built-in prompts require it. Existing questions are preserved as
@@ -1536,8 +1588,11 @@ An implement answer gets the `answers-implement` message instead (`prompts/answe
 when you override it). It has the same placeholders and no planning-approval stop: it tells the
 session the plan is approved already, resumes the implementation and its verification with the
 latest decisions, and appends any new blocker as a question tagged `"phase": "implement-plan"`. It
-sets only `"implement-plan": true` when it finishes, never `done` or `approved`, and it still does
-not commit, push or open a pull request. The dashboard's `sent` line for a delivered implement
+applies only the answers to implement questions; the plan, checklist and spec are the source of truth
+for every other decision, because a planning answer saved in the dashboard can be older than a plan
+you changed in the CLI. It commits its changes in the worktree on that worktree's own branch and
+never pushes or opens a pull request. It sets only `"implement-plan": true` when it finishes, never
+`done` or `approved`. The dashboard's `sent` line for a delivered implement
 answer is the same `Answers sent. Claude is updating the plan.` as for planning answers.
 
 The reply is `{ ok, key, send, ticket }` with `send` `{ status, reason? }`, `status` being `sent`,
@@ -1649,6 +1704,26 @@ session. Changed planning answers withdraw the approval (see
 approving again after the session marks it `done`. An implement answer never changes `done` or
 `approved`.
 
+### Continue a failed session
+
+**Continue** asks the same finished session of a ticket to carry on when its workflow state is
+`failed` and the CLI still lists the session (`reason` `ended_without_flag`, `plan_not_done` or
+`plan_missing`). `POST /api/claude/continue` takes `{ key }` and sends the built-in `continue` message
+(`{KEY}`, `{SLUG}` and `{STATUS_FILE}` only; `prompts/continue.md` replaces it) through the shared send
+path (`deliverToSession`), so the one-writer mark applies and an idle session is stopped, waited for and
+resumed under its own id. It writes neither `status.json` nor `launch.json`, before or after: a failed
+send leaves every file as it was, and the effect shows as `working` on the next listing.
+
+- **Block.** `blocks.continue` exists only on a `failed` entry: `null`, or `session_not_found` when the
+  session is missing or only recovered from its transcript (use [Chat](#chat) for those). The dialog
+  shows **Continue** beside the workflow strip with the reason in words when it is disabled.
+- **Refusals** (`409` `CLAUDE_REFUSED`): `session_running` (working, or held by a chat turn),
+  `not_failed` (none, waiting or done) and `session_not_found`; `502` `CLAUDE_FAILED`
+  `listing_unavailable`. A `prompts/continue.md` that cannot be used is `send: { status: 'failed',
+reason: 'prompt_unreadable' }`, and a failed resume is `resume_failed`; both can be retried.
+- **Reply.** `{ ok, key, send, ticket }`, as for answers. A session that is working but quiet
+  (stalled) and an orphan are out of scope.
+
 ### Groom ticket
 
 **Groom ticket** runs your `groom-ticket` skill (from `~/pathwise/.claude/skills/groom-ticket/`)
@@ -1666,8 +1741,16 @@ another Groom launch (`session_running`, and `listing_unavailable` when the CLI 
 - **Output.** The session writes `~/pathwise/.orchestrator/<key in lower case>/groom.md`
   (overwriting an earlier one) and ends with a chat summary of at most ten lines: the readiness
   verdict, the open decisions with their options and that path. While the groom session is
-  `done` the dialog shows the path under the row. The dashboard does not read `groom.md` and
-  cannot answer the decisions: use the row's **Go to session** and reply in the session.
+  `done` the dialog shows the path under the row. The dashboard reads only the first 512 bytes of
+  `groom.md`, for its first line `Readiness: READY`, `Readiness: NEEDS_INFO` or `Readiness: BLOCKED` (a
+  closed enum, case-sensitive, optional leading `#`, `>` or `*`; anything else is no verdict; never
+  logged), and shows it as a **Readiness** chip beside **View groom notes** and in the bot's bubble. It
+  cannot answer the decisions: use the row's **Go to session** and reply in the session. A
+  `NEEDS_INFO` or `BLOCKED` readiness before any plan exists shows one note under the workflow strip
+  (`claude-groom-warning`); Investigate and plan stays enabled, because the verdict is advisory and
+  gates nothing. The built-in groom prompt asks for that line; a custom `prompts/groom.md` is not
+  upgraded and shows no chip until it asks for the line (see [Custom prompts](#custom-prompts)). The
+  ticket entry's `groom` gains an optional `verdict`, only while it is `done`.
 - **State.** The ticket entry gains `groom: { state, reason }`, `blocks.groom` and `goTo.groom`.
   `state` is `none` (never groomed), `working` (`running` or `starting`), `waiting` (`blocked`),
   `done` (`finished`), `failed` (`session_missing`) or `unknown` (`listing_unavailable` or
@@ -1707,9 +1790,13 @@ ticket refuses another (`session_running`).
   with `agent-browser --session e2e-<key in lower case> connect <port>` and to pass that `--session`
   on every agent-browser command, so concurrent checks stay apart. By default the session writes
   `~/pathwise/.orchestrator/<key in lower case>/e2e.md`, whose first line is `Verdict: PASS`,
-  `FAIL`, `PARTIAL` or `BLOCKED: <reason>`. The dashboard does not read the verdict: the row shows the
-  session's state, a **Go to e2e check session** chip, and once `done` a **View e2e result** link
-  that opens `e2e.md` in the artifact viewer.
+  `FAIL`, `PARTIAL` or `BLOCKED: <reason>`. The dashboard reads only that first line (the first 512
+  bytes, the closed enum `PASS`, `FAIL`, `PARTIAL` or `BLOCKED`; the text after `BLOCKED:` is never
+  read) and shows it as a **Verdict** chip beside **View e2e result** and in the bot's bubble
+  (`TAP-1 · Done ✓ · Fail`) and live-region message (`TAP-1 e2e: done, verdict fail`); it is advisory
+  and gates nothing. The row also shows the session's state, a **Go to e2e check session** chip, and
+  once `done` a **View e2e result** link that opens `e2e.md` in the artifact viewer. The entry's `e2e`
+  gains an optional `verdict`, only while it is `done`.
 - **Browser.** The dashboard stops the browser, never removes it (the signed-in profile stays on
   disk and the browser stays in the DevTools tab as stopped), in two cases. Closing the dialog at
   step 2 before Start (Close, Esc, the backdrop; also closing while Launch browser is still
@@ -1797,26 +1884,27 @@ browser localStorage on rollback; older code ignores review records and treats p
 ### Custom prompts
 
 All six launch prompts (investigate, implement, groom, review, spec-review and e2e) and the
-messages sent with your answers, your approval and a re-review are editable templates: ten in
-all, in the registry order investigate, implement, answers, answers-implement, approve, rereview,
-groom, review, spec-review, e2e. By default they use the original built-in text. You can change
+messages sent with your answers, your approval, a Continue and a re-review are editable templates:
+eleven in all, in the registry order investigate, implement, answers, answers-implement, approve,
+continue, rereview, groom, review, spec-review, e2e. By default they use the original built-in text. You can change
 each one in the app (see **Edit in the app** below) or by hand. See also the standalone
 [prompt guide](prompts/README.md). Both edit the same file, a file of that name in the `prompts/`
 folder of the dashboard (the repo root, next to `claude/`), so a hand edit and an app edit always
 agree:
 
-| File                           | Replaces                                           | Placeholders                                                     |
-| ------------------------------ | -------------------------------------------------- | ---------------------------------------------------------------- |
-| `prompts/investigate.md`       | the Investigate and plan prompt                    | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `prompts/implement.md`         | the Implement plan prompt                          | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `prompts/answers.md`           | the message sent with your saved planning answers  | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
-| `prompts/answers-implement.md` | the message sent with your saved implement answers | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
-| `prompts/approve.md`           | the message sent when you approve a plan           | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
-| `prompts/rereview.md`          | the message sent for a re-review                   | `{KEY}`, `{SLUG}`                                                |
-| `prompts/groom.md`             | the Groom ticket prompt                            | `{KEY}`, `{SLUG}`                                                |
-| `prompts/review.md`            | the prompt for a new code review session           | `{KEY}`, `{SLUG}`                                                |
-| `prompts/spec-review.md`       | the spec review prompt                             | `{KEY}`, `{SLUG}`, `{PR}`                                        |
-| `prompts/e2e.md`               | the E2E ticket check prompt                        | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
+| File                           | Replaces                                             | Placeholders                                                     |
+| ------------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------- |
+| `prompts/investigate.md`       | the Investigate and plan prompt                      | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/implement.md`         | the Implement plan prompt                            | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/answers.md`           | the message sent with your saved planning answers    | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+| `prompts/answers-implement.md` | the message sent with your saved implement answers   | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`, `{QUESTION_IDS}`, `{CHANGE}` |
+| `prompts/approve.md`           | the message sent when you approve a plan             | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/continue.md`          | the message sent by **Continue** to a failed session | `{KEY}`, `{SLUG}`, `{STATUS_FILE}`                               |
+| `prompts/rereview.md`          | the message sent for a re-review                     | `{KEY}`, `{SLUG}`                                                |
+| `prompts/groom.md`             | the Groom ticket prompt                              | `{KEY}`, `{SLUG}`                                                |
+| `prompts/review.md`            | the prompt for a new code review session             | `{KEY}`, `{SLUG}`                                                |
+| `prompts/spec-review.md`       | the spec review prompt                               | `{KEY}`, `{SLUG}`, `{PR}`                                        |
+| `prompts/e2e.md`               | the E2E ticket check prompt                          | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
 
 `{KEY}` is the validated ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
 `{STATUS_FILE}` the absolute path of the ticket's `status.json`, `{QUESTION_IDS}` the ids of the new
@@ -1839,11 +1927,25 @@ including one with no `phase`, and an answered question's id, text, answer and p
 A custom file you wrote earlier is not upgraded automatically: if you customized
 `investigate.md`, `implement.md` or `answers.md`, add that tag instruction and the preservation
 wording by hand, or press **Reset to default** to take the built-in text. `answers-implement.md`
-is a new, optional override name.
+and `continue.md` are new, optional override names.
+
+A change to a built-in prompt never reaches an override you saved or wrote by hand, and your
+`prompts/*.md` files are local, gitignored state the dashboard does not touch. After the built-in
+`implement` and `answers-implement` text changed (see below), edit your `prompts/implement.md` and
+`prompts/answers-implement.md` by hand or press **Reset to default** in the Prompts editor; the same
+goes for a custom `groom.md`, which shows no **Readiness** chip until it asks for that line (see
+[Groom ticket](#groom-ticket)).
+
+The built-in `implement` prompt names `02-plan.md`, `02-checklist.md` and `02-spec.md` as the single
+source of truth and tells the session not to take decisions from the `answer` fields in the status
+file; the built-in `answers-implement` message applies only the answers to implement questions
+(`"phase": "implement-plan"`). Both built-in texts also tell the session to commit its changes in the
+worktree on that worktree's own branch and to never push or open a pull request. The built-in
+`continue` message is the one **Continue** sends (see [Continue a failed session](#continue-a-failed-session)).
 
 - **Edit in the app.** **Prompts**, at the left of the Claude dialog's footer, swaps the dialog's
   body for an editor in the same dialog. The footer then holds **Back**, at the left where
-  **Prompts** was, and **Close**. The editor loads the ten prompts once when it opens, not on
+  **Prompts** was, and **Close**. The editor loads the eleven prompts once when it opens, not on
   the dialog's 15 second refresh; if the load fails it shows the error and a **Retry** button.
   Each prompt has:
   - a badge: `default` (no file, so the built-in text), `custom` (a usable file) or
@@ -1869,7 +1971,7 @@ is a new, optional override name.
   contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done
   will not work." **Save** stays enabled and the server never refuses a prompt for it.
 - **Absent means built-in.** A missing file is never an error. `npm run claude:prompts` creates
-  `prompts/` and writes the ten built-in templates into it, placeholders intact, for you to edit
+  `prompts/` and writes the eleven built-in templates into it, placeholders intact, for you to edit
   by hand. It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that
   exists. It needs no Settings setup.
 - **Applied at once.** The files are read on every launch and every send, never cached, so an edit
@@ -1942,7 +2044,9 @@ to default** or delete the file.
 | `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets, lastActive }`; `listing` is `ok` or `unavailable`; `tickets` keyed by ticket key (entry below); `lastActive` is `{ key: { phase: ISO } }`, sparse |
 | `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, `e2e-ticket-check` also takes `browserId`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }` |
 | `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                                                                |
-| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; ten entries in the order investigate, implement, answers, answers-implement, approve, rereview, groom, review, spec-review, e2e                          |
+| `POST /api/claude/continue`         | body `{ key }`; answers `{ ok: true, key, send, ticket }` (see [Continue a failed session](#continue-a-failed-session))                                                           |
+| `GET /api/claude/usage`             | `?sessions=<uuid>,...`; token tallies per session (see [Claude usage](#claude-usage))                                                                                             |
+| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; eleven entries in the order investigate, implement, answers, answers-implement, approve, continue, rereview, groom, review, spec-review, e2e             |
 | `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                                                            |
 | `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                                                               |
 
@@ -1972,7 +2076,7 @@ otherwise concurrent callers share one `claude agents --json --all`. An entry is
   saved and `phase` the lane that asked it (`investigate-and-plan` or `implement-plan`, and
   `investigate-and-plan` for a question with no valid tag); `unanswered` counts the open ones
   across both phases.
-- `blocks` is `{ investigate, implement, answer, groom, review }` (plus `specReview` and `e2e` for a ticket with that record), each a reason string or `null` (why that
+- `blocks` is `{ investigate, implement, answer, groom, review }` (plus `specReview` and `e2e` for a ticket with that record, and `continue` on a `failed` entry, see [Continue a failed session](#continue-a-failed-session)), each a reason string or `null` (why that
   action is refused now). It is what the dialog words beside a disabled item. While Investigate
   and plan runs it is `session_running`, `investigate_running` and `session_running`; while
   Implement plan runs it is `implement_running`, `session_running` and `session_running`. The
@@ -2004,8 +2108,8 @@ runs the send decision (the retry). The reply's `send` is described under
 [Saving and sending answers](#saving-and-sending-answers).
 
 A prompt entry is `{ name, label, source, text, placeholders }`. `name` is one of `investigate`,
-`implement`, `answers`, `answers-implement`, `approve`, `rereview`, `groom`, `review`,
-`spec-review` or `e2e`; a path with any other name matches no prompt route. `label` is its
+`implement`, `answers`, `answers-implement`, `approve`, `continue`, `rereview`, `groom`,
+`review`, `spec-review` or `e2e`; a path with any other name matches no prompt route. `label` is its
 human-readable editor heading. `source` is
 `default` (no file), `custom` (a usable file) or `unusable` (a file that exists but cannot be
 used). `text` is the file's trimmed text for `custom` and the built-in text for the other two, so
@@ -2021,13 +2125,13 @@ Slack routes, because they need neither GitHub nor Jira. They run behind the sam
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 `Cache-Control: no-store`. Failures answer `{ code, error, errors[] }`, with `errors[0]` the reason:
 
-| Status | Code             | When                                                                                                                                                                                                                                                                                                                         |
-| ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the supported launch actions, `pr` is bad for `spec-review`, or `browserId` is not `b-` and eight hex digits for `e2e-ticket-check`                                                                                                                         |
-| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record for the question's phase                                                                       |
-| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                                                                                                 |
-| `409`  | `CLAUDE_REFUSED` | `session_running` (the action asked for runs), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable`, `status_unreadable`, `unrecognised_state` (review), or `browser_not_found` and `browser_not_running` (e2e check) |
-| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist; for an e2e check the browser is left for the finish-time stop), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused)                   |
+| Status | Code             | When                                                                                                                                                                                                                                                                                                                                                  |
+| ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the supported launch actions, `pr` is bad for `spec-review`, or `browserId` is not `b-` and eight hex digits for `e2e-ticket-check`                                                                                                                                                  |
+| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record for the question's phase                                                                                                |
+| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                                                                                                                          |
+| `409`  | `CLAUDE_REFUSED` | `session_running` (the action asked for runs), `not_failed` (Continue), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable`, `status_unreadable`, `unrecognised_state` (review), or `browser_not_found` and `browser_not_running` (e2e check) |
+| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist; for an e2e check the browser is left for the finish-time stop), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused)                                            |
 
 `INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt a
 launch sends and the name are never logged or returned beyond the validated `id` and the computed
@@ -2072,7 +2176,7 @@ nothing was sent.` and that the session received nothing (attach to it).
    `prompts/investigate.md` (keep the rest), and launch **Investigate and plan** on a throwaway
    ticket. Confirm the session's first message contains your line. Delete the file, launch again
    once the first session has finished, and confirm the built-in text is back.
-10. Open a ticket's Claude dialog and press **Prompts**. Confirm the ten prompts load with the
+10. Open a ticket's Claude dialog and press **Prompts**. Confirm the eleven prompts load with the
     badge `default` (or `custom` if you kept a file), and that deleting `{STATUS_FILE}` from a box
     shows the warning while **Save** stays enabled. Add a line you will recognise at the top of
     **Investigate and plan prompt**, press **Save**, and confirm `Saved.`, the badge `custom` and
@@ -2135,7 +2239,10 @@ has none, so there a chat cannot start.
   rendered Markdown with a **Copy code** button on each code block, and a **Copy** button on each message.
   A tool call is one collapsed chip (name, running, done or failed) that opens to its input and result;
   long inputs and results are cut at 8192 characters. The reply being written streams in as it arrives.
-  Thinking and subagent traffic are not shown.
+  Thinking and subagent traffic are not shown. The head also shows the open session's token tally from
+  `GET /api/claude/usage` (`~1.2M tokens`, `at least 1.2M tokens` while incomplete), asked for when a
+  chat opens and again each time a turn ends, never on a timer, and "Session cost so far" (see
+  [Chat limits](#chat-limits)).
 - **Working, idle and working elsewhere.** The state pill reads **Working** while a turn that this
   dashboard runs is in flight: the message box is read-only (the reason shows beneath it) and **Stop** is
   shown. It reads **Idle**, **Stopped** or **Failed**
@@ -2211,6 +2318,28 @@ screen then says only the latest messages are shown), and a running turn keeps a
 turn runs, history is read only up to where the transcript stood when the turn started, so no message
 appears twice.
 
+### Claude usage
+
+`GET /api/claude/usage?sessions=<uuid>,<uuid>` (at most 8 ids, each a session UUID, otherwise 400
+`INVALID_SESSION`; a cross-site or same-site `Sec-Fetch-Site` is 403) answers
+`{ sessions: { <uuid>: { tokens: { input, output, cacheRead, cacheCreation }, models: { <model id>: <message count> }, messages, complete } } }`,
+summed over the session's newest transcript and its subagents' transcripts. A session with no
+transcript answers an empty, complete tally. The body holds numbers and model ids only, never a path, a
+working directory or any text. Tokens only: there is no price table and no dollar figure.
+
+The reader (`backend/claude-usage.mjs`) keeps a byte offset per transcript file and parses only newly
+appended complete lines. Lines of one API message id repeat the same usage and are contiguous, so one
+pending `{ id, usage }` per file is committed when a different id arrives. A file that shrinks or
+changes inode is read again from byte 0. One request reads at most 8 MiB in all: a bigger backlog
+answers `complete: false` and the next request continues, and a single line longer than the whole
+budget is skipped. An unreadable file also makes the answer `complete: false`. One request looks at
+256 files at most (the rest are left out and the answer is `complete: false`), and at most 256 files
+are cached (least recently used out), holding numbers and model ids only. Requests are served one at a
+time. The route is read on demand only: it is never part of `GET /api/claude/tickets`, which stays
+stat-only (names, directory listings and modification times), and it takes no one-writer mark. The
+Chat head, the Claude dialog header and the Sessions drawer's rows ask for it (see
+[Bot bar](#bot-bar)); the bot bar itself never does.
+
 ### Chat limits
 
 - **A dev restart can leave a turn running.** `npm run dev` restarts the server through nodemon's `SIGUSR2`
@@ -2222,7 +2351,10 @@ appears twice.
   under your own Claude settings, like the launcher. There is no approve or deny prompt in the app: a tool
   that needs approval is denied and shown in the turn's note (`denials`).
 - **Cost is cumulative.** The turn's `costUsd` is the CLI's total for the session, so on a resumed
-  session it is cumulative, not per turn. The screen does not show it.
+  session it is cumulative, not per turn. The Chat head shows it as "Session cost so far $0.42"
+  ("under $0.01" below a cent), only while the chat is idle and only for a chat this process has run a
+  turn on (a `hello` with `turn: null` shows nothing). It is a number only: nothing said is logged. The
+  claim that the CLI's total is cumulative has not been re-checked against the real CLI.
 - **One writer is a dashboard rule.** The one-turn-at-a-time rule covers the chat, the launcher's
   resumes and the Slack watcher, all in this dashboard. A terminal that resumes the same session at the
   same moment is not seen and would interleave with it.
@@ -2333,7 +2465,8 @@ while there is no session to show.
   while you hover or focus it.
 - **Callouts.** When a bot's state changes between two polls while the page is open (working to done,
   working to idle, any state to failed, or a session starting to work), a small speech bubble in the
-  tooltip's look appears above it, for example `TAP-1451 · Done ✓`. The words are the small map
+  tooltip's look appears above it, for example `TAP-1451 · Done ✓` (a finished e2e check or groom adds its
+  verdict, `TAP-1451 · Done ✓ · Fail`, see [E2E check](#e2e-check)). The words are the small map
   `CALLOUT_TEXT` in `ui/bot-bar.js`. There is none on first load, for a bot that appears already in a
   state, or when a dismissed or timed-out bot merely comes back. Working and done bubbles go after about
   6 seconds (`CALLOUT_AUTO_HIDE_MS`); idle and failed ones stay until you hover, focus or click the bot
@@ -2370,14 +2503,55 @@ while there is no session to show.
   30 seconds while the drawer is open (`ACTIVITY_CLOCK_MS`). The time is the row's description, not part of
   its name, and there is no live region. The drawer is a non-modal overlay (the app
   stays usable beside it; Escape or Close shuts it and focus returns to the tab), uses the bar's data
-  (no request of its own) and renders no rows while shut.
+  (its one request of its own is the token read below) and renders no rows while shut. Each row also
+  shows the tokens its session used (`~1.2M tokens`, `at least 1.2M tokens` for a lower bound; nothing
+  for an empty tally or a row with no session id), read with `GET /api/claude/usage` in batches of 8
+  for the rows' distinct session ids (24 at most) when the drawer opens or the rows' sessions change,
+  never while it is shut and never on a timer.
+- **Needs-you notifications (opt-in, off by default).** The **Notify me** button in the Sessions
+  drawer header turns on a desktop notification, `<KEY> · Needs you` or `<KEY> · Failed`, for a
+  ticket session that changes to waiting or failed while the tab is hidden (at most three per poll;
+  never chat text, a title or a reason, and chat bots and `done` never notify), and a `(N) ` prefix on
+  the tab title while hidden (N is the visible ticket bots waiting or failed). The choice is kept in
+  `localStorage` (`dev-dashboard.needs-you.notify`), the browser permission is asked for only from
+  that click, and a blocked permission is shown in the drawer. While it is on and permitted the bar
+  also keeps polling while the tab is hidden (every 15 s; the browser may throttle background tabs, so
+  a notification can arrive late).
 - **The bar polls.** It reads `GET /api/claude/tickets` itself, on every screen, every 15 seconds
-  while the page is visible, through its own `useClaudeTickets` (a failed read keeps the last
+  while the page is visible (and while hidden only when Notify me is on and permitted), through its own `useClaudeTickets` (a failed read keeps the last
   answer; there is no countdown). Its requests carry `?surface=bot-bar`, which the server ignores,
   so a request log or a test counting a board's own reads can tell them apart. It reads no
   other route than `/api/active-sprint-tickets` above (in particular never `/api/team-velocity`). It also
   reads again at once when the Chat tab reports a send or a turn changing state, so a chat's bot follows it
   without waiting for the poll.
+
+## Keyboard shortcuts and ticket links
+
+- **Command palette.** Ctrl+K (Cmd+K on a Mac) opens it over every screen once setup is done. It lists
+  **Go to** (every tab, with its chord), **Sessions** (the same sprint-filtered rows as the Sessions
+  drawer, chats included) and **Actions** (New chat, Refresh for My Tickets, Slack, Pull Requests and
+  DevTools when open, and `Open KEY in My Tickets` when a whole ticket key is typed). Type to filter
+  (every word must match), arrows move, Enter chooses, Esc closes. It works from the Chat composer, and
+  focus returns there on close.
+- **Chords.** `g` then a letter jumps to a tab (1.5 s window, any other key cancels): `h` Home, `t` My
+  Tickets, `s` Slack, `p` Pull Requests, `c` Chat, `r` Releases, `v` Services, `d` DevTools, `m` Mascots
+  and `,` Settings. `?` lists the shortcuts. Plain keys are ignored while typing in a field, while any
+  dialog is open, inside an open menu or listbox popup (the Services Actions menu, say) and on a
+  screencast stage in Take control. Ctrl+K is always kept from the browser's own shortcut (address-bar
+  search), also while the palette or help is open and on key repeat. The palette and help close on a
+  backdrop click only when the press and the click both landed on the backdrop. Tab tooltips show the
+  chord, for example "My Tickets (g then t)".
+- **Ticket links.** `#/my-tickets?ticket=TAP-123` opens that ticket's Claude dialog once My Tickets has
+  loaded, then the address becomes `#/my-tickets`. Only assigned tickets are found (Include Done is not
+  switched on for you); otherwise the note `my-tickets-ticket-missing` explains. When the list on
+  screen is older than one poll and does not hold the ticket, a neutral `my-tickets-ticket-checking`
+  note ("Looking for KEY ...") shows until the activation load answers, so "missing" is only said from a
+  current answer. A value that is not a key is ignored and dropped.
+- **Screen changes.** Changing screen sets `document.title` to `<Screen> · EZAT Dev Dashboard`,
+  announces the screen in a polite sr-only region, and moves focus to the screen's heading only when
+  focus was lost (on the page, removed or in a hidden screen).
+- No request, poll or Home velocity fetch is added by any of this; Refresh in the palette runs the
+  board's own guarded load.
 
 ## Mascots page
 
@@ -3089,6 +3263,16 @@ without executable `node` and `npm`, before clearing logs or freeing ports.
 Restart validates before stopping the running service. Successful pinned starts
 log the selected Node version and executable path.
 
+**Stopping.** The plain **Stop** button and `POST /api/services/:id/stop` send `SIGTERM` to the
+service's process group and no more. **Restart**, a checkout switch and the dashboard's shutdown wait
+for the old process to exit and escalate: `SIGTERM`, then `SIGKILL` to the same group after 5 s
+(`STOP_GRACE_MS`). A restart waits up to 10 s and answers `{ ok: false, error: 'service did not
+stop' }` (HTTP 400) when the service survives both signals; no second process is started then. A
+restart can hold the settings lock for up to 10 s. A grandchild that outlives a group leader that
+exited on `SIGTERM` is left alone on purpose. Service output is written to `logs/<id>/out.log` and
+broadcast at most once per 250 ms (the first chunk at once, a trailing write after a burst, flushed
+on exit and stop).
+
 ### Worktree picker
 
 Each service card has a **checkout** select (`service-checkout-<id>`) that runs
@@ -3120,8 +3304,17 @@ badge (`service-checkout-badge-<id>`, full path on hover) on each of its cards.
   main checkouts. A missing or corrupt file reads as no overrides. Services
   start stopped when the dashboard starts, so a remembered choice never swaps
   anything that is running. The CLI's in-process fallback reads the same file.
-- **The list is read on demand**: when the Services tab loads (once per repo) and
-  when a select gains focus. Nothing polls it.
+- **The list is read on demand**: when the Services tab loads (once per repo), when a select
+  gains focus and when you click the Claude dialog's **Use in Services** (below). Nothing polls it.
+- **Use in Services.** On a done implement row the Claude dialog's **Use in Services** reads
+  `GET /api/repos/checkout-matches?key=TAP-n` once and, for a single matching repo, calls the existing
+  `PUT /api/repos/:dir/checkout` with `restart: false`. Several matching repos get one button each; an
+  ambiguous or missing match sends nothing (`pick one in Services`, `No worktree branch contains
+TAP-n`); a running repo (`CHECKOUT_IN_USE`) asks before a second `PUT` with `restart: true`. It
+  starts no service (a new worktree has no `node_modules`) and says that stopped services stay
+  stopped. A match is a linked worktree whose branch contains `tap-n` or `trips-n` as a whole word
+  (TAP and TRIPS are aliases, and `tap-145` never matches TAP-14); the main checkout and a detached
+  head never match.
 
 **Failure behaviour.**
 
@@ -3174,6 +3367,10 @@ git runs. Errors use the usual `{ code, error, errors }` body.
   `INVALID_CHECKOUT`. Choosing the main checkout's path removes the override. It
   answers `200` `{ "ok": true, "dir", "checkout", "checkoutLabel", "restarted": ["be"] }`
   and broadcasts the status feed (it does after an error too).
+- `GET /api/repos/checkout-matches?key=TAP-n` is read-only and lists each service repo's worktrees in
+  parallel. It answers `{ key, repos: [{ dir, ids, status, ... }] }` with `status` `match` (plus `path`
+  and `label`), `ambiguous` (plus `candidates`), `none` or `unavailable`; a bad key is 400
+  `INVALID_TICKET`, a cross-site request 403, and one failing repo does not fail the answer.
 - `409 CHECKOUT_IN_USE` (a service of the repo is running and `restart` is not
   `true`, or one did not exit in time), `422 CHECKOUT_UNUSABLE`,
   `503 PERSISTENCE_FAILED`.
@@ -3211,9 +3408,20 @@ with `npm run build`. `npm run dev:ui` runs Vite for frontend development and
 proxies the existing `/api/*` endpoints to the local dashboard server.
 `team-velocity.html` remains a separate standalone page.
 
-Run `npm run lint` to check JavaScript and JSX with ESLint. `npm run format`
+Run `npm run lint` to check JavaScript and JSX with ESLint (`eslint . --max-warnings 0`, so a warning
+fails it). `react-hooks/rules-of-hooks` (error) and `react-hooks/exhaustive-deps` (warn) apply to
+`ui-react/`; an intentional exception carries
+`eslint-disable-next-line react-hooks/exhaustive-deps -- <reason>`. `npm run format`
 formats JavaScript, JSX, CSS, HTML and JSON files; use `npm run format:check`
-to verify formatting without changing files.
+to verify formatting without changing files (`team-velocity.html`, `.video-deck/` and `.playwright/`
+are ignored by Prettier). `npm run check` runs lint, `format:check` and the unit suite (`npm test`) in
+that order: it is the one-line local gate.
+
+`.github/workflows/ci.yml` runs on a push to `master` and on pull requests. Job `check` (Node from
+`.nvmrc`) runs `npm ci`, lint, `format:check`, `npm test`, `npm run build` and
+`npm audit --omit=dev --audit-level=high`. Job `e2e` (Playwright, `npm run test:ui`) is separate and
+non-blocking (`continue-on-error`, no `needs`) and uploads its report on failure. Which checks are
+required is a repository setting.
 
 `npm run test:ui` uses the main Playwright config, defaulting to four workers
 with full parallelism. It runs against a fresh unminified production build of the
@@ -3236,6 +3444,8 @@ existing files there.
 ui-react/
   main.jsx              React entry; mounts the themed App shell
   App.jsx               readiness gate, hash routes and one shared service feed
+  lib/lazy-screen.js    React.lazy for a named export; lib/lazy-overlays.js for on-demand dialogs
+  components/ScreenSlot.jsx  mounts a lazy screen on first visit, with its loading and error panels
   theme.js              compact dark MUI theme
   lib/api.js            one browser API boundary
   hooks/                shared service event, polling and API hooks
@@ -3248,6 +3458,7 @@ ui/
   home-velocity.js      Home Team preference and validated aggregate snapshot storage
   work-filters.js       shared PR, ticket and action filtering (DOM-free)
   releases-data.js      release grouping and remembered version (DOM-free)
+  keep-if-equal.js      keeps a state value when a new snapshot is byte-identical (DOM-free)
   ticket-board.js       My Tickets column order and CI / review wording (DOM-free)
   review-board.js       PR ticket progress and whole-ticket filters (DOM-free)
   components/           domain-free helpers and tested card/diff data rendering
@@ -3270,6 +3481,20 @@ it is in [`CLAUDE.md`](CLAUDE.md). Legacy DOM panel controllers,
 entry points, stylesheet tree and the API compatibility re-export have been
 retired.
 
+**Lazy screens and the bundle.** Chat, Releases, DevTools and Mascots load their code on first visit,
+and so do the command palette, the shortcuts help, the ticket Claude dialog (with the prompts editor
+and Use in Services it holds), the artifact viewer and the E2E check dialog. `npm run build` emits one
+entry chunk plus per-screen chunks, about 621 KiB raw / 197 KiB gzip before first paint (it was 831
+KiB / 252 KiB). A screen mounts on the render it is first active, or at once when the boot route names
+it (`#/chat?session=<uuid>`, `#/releases?view=list`), and stays mounted, hidden, afterwards. While a
+chunk loads a panel with the screen's own shape stands in; a chunk that fails (usually a tab that
+outlived a deploy) shows a **Reload** state in place and the other tabs keep working. An opener of a
+lazy overlay loads it first and opens when it settles, so the first press or click is never lost.
+`test/bundle-budget.test.mjs` builds in memory and holds the initial JS to 640 KiB raw and 200 KiB
+gzip, so a new eager import of a lazy module fails it. Identical service snapshots no longer re-render
+the app (`ui/keep-if-equal.js`), and the refresh countdown re-renders only its own label and pauses
+while the page is hidden or its screen is not shown.
+
 `GET /api/config` supplies the tail line count, derived Jira browse URL and setup
 status used to choose Settings-only or ready-mode boot.
 
@@ -3281,7 +3506,7 @@ treat those names as a contract and don't rename them.
 - The dashboard server uses Node built-ins at runtime; `nodemon` is a
   development dependency used by `npm run dev`.
 - On shutdown the dashboard SIGTERMs each service's process group and every running [Chat](#chat) turn,
-  then exits. A `npm run dev` restart (nodemon's `SIGUSR2`) does not run that clean-up; see
+  waits for every service to exit (up to 8 s, `SIGKILL` after 3 s) and then exits. A `npm run dev` restart (nodemon's `SIGUSR2`) does not run that clean-up; see
   [Chat limits](#chat-limits).
 - **Logs are cleared on every start/restart** — a service always begins with a
   fresh in-memory buffer and empty `logs/<id>/out.log`, so previous-run output

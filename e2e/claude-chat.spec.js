@@ -11,6 +11,7 @@ import { CHAT_SESSION_ID, claudeEntry } from './data.js';
 //   chat-message-<item id> (data-kind user|assistant), chat-copy-<item id> (Copy on a message)
 //   chat-tail (the reply being written), chat-tool-<tool id> (a <details>, data-status running|done|failed)
 //   chat-turn-note (an error or denials note under the turn), chat-disabled-reason
+//   chat-cost ("Session cost so far $…", idle only), chat-usage (the token tally, "~1.2M tokens")
 //   chat-stop, chat-retry, chat-refresh, chat-send; the composer is the textarea labelled "Message"
 //   a code block's button is named "Copy code"
 //   bot: bot-bar-bot-chat-<first 8 of the uuid>-chat; drawer: sessions-row-<key>, sessions-open-<key>,
@@ -1384,4 +1385,40 @@ test('the room kept for the controls follows the touch button height', async ({ 
   });
   expect(heights.button, 'base.css makes buttons taller on touch').toBeTruthy();
   expect(heights.room).toBe(heights.button);
+});
+
+test('session cost: the head shows the last turn cost only while the chat is idle', async ({
+  page,
+}) => {
+  await page.goto(`/#/chat?session=${SESSION}`);
+  await chatSay(page, SESSION, 'hello', hello({ items: [USER], turn: null }));
+  await expect(page.getByTestId('chat-state')).toHaveText('Idle');
+  await expect(page.getByTestId('chat-cost')).toHaveCount(0);
+
+  await chatSay(page, SESSION, 'state', { state: 'working' });
+  await chatSay(page, SESSION, 'state', { state: 'idle', turn: turn({ costUsd: 0.4213 }) });
+  await expect(page.getByTestId('chat-cost')).toHaveText('Session cost so far $0.42');
+
+  await chatSay(page, SESSION, 'state', { state: 'working' });
+  await expect(page.getByTestId('chat-cost')).toHaveCount(0);
+});
+
+test('chat usage: the head shows the session token tally, asked for per idle view and never polled', async ({
+  page,
+  dashboard,
+}) => {
+  dashboard.data.claude.usage.sessions[SESSION] = {
+    tokens: { input: 900, output: 200, cacheRead: 100_000, cacheCreation: 1_100_000 },
+    models: { 'claude-sonnet-5-5': 3 },
+    messages: 3,
+    complete: false,
+  };
+  await page.goto(`/#/chat?session=${SESSION}`);
+  await chatSay(page, SESSION, 'hello', hello({ items: [USER] }));
+  await expect(page.getByTestId('chat-usage')).toHaveText('at least 1.2M tokens');
+  expect(dashboard.data.claude.usage.asks).toEqual([[SESSION]]);
+
+  await chatSay(page, SESSION, 'state', { state: 'working' });
+  await chatSay(page, SESSION, 'state', { state: 'idle', turn: turn() });
+  await expect.poll(() => dashboard.data.claude.usage.asks).toHaveLength(2);
 });

@@ -12,7 +12,8 @@ after making code changes:
 - Run Prettier on the changed supported files before finishing (use `npx prettier --write <files>`;
   don't format the entire repository unless asked).
 - Run `npm run lint` after code changes and fix all reported issues, including warnings, before
-  finishing.
+  finishing (it is `eslint . --max-warnings 0`, so a warning fails it). `npm run check` is the
+  aggregate: lint, `format:check`, then `npm test`; CI (`.github/workflows/ci.yml`) runs the same.
 - Run the relevant tests for behavioral changes; run `npm test` when the change may affect broader
   behavior.
 - Report any check that could not be run and why.
@@ -166,14 +167,31 @@ at a spread-out place inside their own zone. Hover detail is the app's own `Dash
 (keyboard focus works), never a native `title`, `data-tooltip` or SVG `<title>`. A state change between
 polls raises a callout bubble (`CALLOUT_TEXT`, detection in the pure `stateChanges`, state in
 `useBotCallouts`; never on first load; at most three; the bubble sits outside the mirrored face and only
-fades under reduced motion) plus one polite live-region message per change.
+fades under reduced motion) plus one polite live-region message per change. The bubble text is
+`calloutText(ticket, state, verdict)` and the live-region text `announcementText`; a bot may carry an
+optional closed-enum `verdict` (done e2e or groom only, see "E2E ticket check" below).
+
+**Needs-you notification (opt-in, off by default).** Pure rules in `ui/needs-you.js`
+(`notificationsFor`, `needsYouCount`, `composeTitle`, `readPreference`/`writePreference`, key
+`dev-dashboard.needs-you.notify`); browser side in `ui-react/hooks/useNeedsYou.js`. The Sessions
+drawer's **Notify me** button (`sessions-notify`, `aria-pressed`) is the only place permission is
+requested, from its click. The notifier is fed by `useBotCallouts`'s `onReady` batch (the same
+batch that gets bubbles, so the first poll is never news and the sprint filter applies) and
+notifies only when the opt-in is on, permission is `granted` and `document.hidden`, only for a
+change to `waiting` or `failed` of a ticket session whose ticket matches the key pattern; the body is
+`<KEY> · <CALLOUT_TEXT[state]>`, never chat text, a title or a reason. `useClaudeTickets` takes
+`whileHidden` (default false; **only `BotBar` passes it**, and only while the opt-in is on and
+permission granted; the permission is re-read on `visibilitychange` and `focus`, so a revoked one stops
+the hidden poll). The tab title has one composer, `composeTitle` in `ui/needs-you.js`, used by
+`useRouteChange` and the count hook. README "Bot bar" has the user-facing rules.
 
 The mascot is deterministic per session (rendezvous hashing of the session key
 over the registry ids), so a session keeps it for life; the mascot list lives only in
 `ui-react/components/mascots/index.js` (see `ui-react/components/mascots/README.md`, "Adding a
 mascot"), so do not hard-code a mascot count or order. The bar polls `GET /api/claude/tickets`
-itself on every screen (its own `useClaudeTickets({ active: true, source: 'bot-bar' })`, 15 s,
-paused while the page is hidden, requests marked `?surface=bot-bar`): specs that count a board's own
+itself on every screen (its own `useClaudeTickets({ active: true, source: 'bot-bar', whileHidden: notify.active })`, 15 s,
+paused while the page is hidden **except while the user's "Notify me" opt-in is on and the browser
+permission is granted**, requests marked `?surface=bot-bar`): specs that count a board's own
 Claude reads must exclude that marker.
 
 Every bot carries a poster (`BotPoster.jsx`) with its ticket key above its head: picked per session by
@@ -196,7 +214,10 @@ data: `sessionGroups(bots, byTicket, lastActive)` in `ui/bot-bar.js` over the sp
 NOT the TTL/dismissal-filtered `visible`, so a faded or dismissed session stays reachable. Rows open the
 same dialog as a bot and copy the entry's `goTo[phase]` command (review included, when it has one). The third argument is
 the same response's `lastActive` map (`{ [ticket]: { [phase]: ISO } }`, `{}` when unknown), which gives
-each row its last-activity time. It makes no request,
+each row its last-activity time. Its only request is the token read: each row shows the tokens its
+session used (`sessions-usage-<key>`, `useSessionsUsage`, `GET /api/claude/usage` in batches of 8 for at
+most 24 distinct session ids, asked when the drawer opens or its sessions change, never while shut,
+never on a timer, never from the bar or the tickets poll). It
 mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
 `Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`; a chat row's name is its title:
 `Open <title> Chat session`; a row's phase is an icon, coloured per phase from the one `PHASES` table in `ui/session-phases.js` (words, `NavIcon` name, `--phase-*` token in `tokens.css`; a new or restyled phase is a row there, never a second list) (`sessions-phase-<key>`, `NavIcon`, `aria-hidden`, not a tab stop, the words from `phaseOf` in its app tooltip) in a column of its own right after the state mark and before the key or title, and the detail after the title is just the state and reason, a chat's `working`/`done`; the search still matches the phase words; the header's **New chat** link, `#/chat` as on the Chat screen, is there with or without rows and closes the drawer, focus back on the tab), and its styles live in
@@ -265,10 +286,17 @@ contract, so a refactor never renames them):
 - `BoardSection` — one `Card.board-section`: `.board-toolbar` (title, a `sub` line, `meta` status
   text, `controls`, then the `filters` row and the `notes` slot) over `.board-body`. With
   `activeTab` the body is the panel of a `BoardTabs` row (below).
-- `RefreshControl` (Refresh button and `refresh in N s` countdown) takes the `load` that
-  `useActivePolling` returns, so a click restarts the countdown and goes through the hook's
-  in-flight guard; all three board screens do this. Pull Requests intentionally adopted the shared
-  `.board-next` countdown; retained legacy PR styles do not govern the PR board.
+- `RefreshControl` (Refresh button and `refresh in N s` countdown) takes the `load` and the
+  `countdown` that `useActivePolling` returns, so a click restarts the countdown and goes through the
+  hook's in-flight guard. `countdown` is a descriptor `{ lastLoadedAt, interval, loaded, active }`, not
+  text: `RefreshControl` renders `BoardCountdown` (private to `BoardShell.jsx`), the only 1 s clock a
+  board has, so only its span re-renders per second, never the panel; it ticks only while its screen is
+  `active` and the page is visible, and holds `refresh paused (Ns)` while hidden. Pass `countdown`
+  straight through, never read it as a string. All four board screens (My Tickets, Slack, Pull
+  Requests, DevTools) do this. `RefreshControl` also registers its guarded `onRefresh` under its
+  `name` (`ui-react/lib/board-refresh.js`) for the command palette; Home has no entry (its velocity
+  stays explicit). Pull Requests intentionally adopted the shared `.board-next` countdown; retained
+  legacy PR styles do not govern the PR board.
 - `BoardTabs` is a segmented switch between views of one board (Slack's Started, Mentions and Watch
   threads). My Tickets has no `BoardTabs`: its filter row is `WorkFilters`. It is a real tab set:
   give it the same `name` as its `BoardSection` and pass the selected tab there as `activeTab`, and
@@ -348,9 +376,13 @@ Each service card's checkout select runs a repo's services from a git worktree (
 - **The card header is two rows, never three.** Row 1 is name, shrinking directory/port and the status
   chip; row 2 is the checkout select and the Actions button. Nothing wraps: it truncates. The status
   dot is the chip's `currentColor` (green running, red `data-exit="error"`, else grey).
-- **The worktree list is never polled.** It is read when the panel loads its services and when a select
-  gains focus; the PUT lists again and accepts only an exact listed path. Do not add a timer or accept
-  a path the listing did not return.
+- **The worktree list is never polled.** It is read when the panel loads its services, when a select
+  gains focus and on a click of the Claude dialog's **Use in Services**
+  (`GET /api/repos/checkout-matches`, one listing per repo in parallel, click time only); the PUT lists
+  again and accepts only an exact listed path. Do not add a timer or accept a path the listing did not
+  return. `switchCheckoutUnlocked` has exactly two call sites in `backend` (its definition and the PUT
+  route): Use in Services switches only through that PUT, with `restart: false` unless the user
+  confirms, and starts no service.
 - **A running service is never swapped without `restart: true`** (409 `CHECKOUT_IN_USE`), and the
   `.nvmrc` preflight runs before anything stops.
 
@@ -386,6 +418,19 @@ like groom and review; the contracts the backend and UI hold:
   (no separate unmount code). Closing at step 2 before Start stops the browser; while Start runs, close
   does nothing and unmount stops nothing; after `timed_out` no close path stops it (the backend's
   auto-stop owns it). No `EventSource` in the component.
+- **Verdict.** `ticketEntry` in the launcher adds `verdict` to `entry.e2e` / `entry.groom` only while
+  that side is `done`, from `createClaudeArtifacts.verdict(key, name)` (the `VERDICT_FILES` table in
+  `backend/claude-artifacts.mjs`: `e2e.md` `Verdict:` PASS|FAIL|PARTIAL|BLOCKED, `groom.md` `Readiness:`
+  READY|NEEDS_INFO|BLOCKED). `verdict()` is a bounded artifact reader: first 512 bytes only, opened
+  with `O_NOFOLLOW`, regular file only, the ticket-folder link checks of `read`, cached by mtime and
+  size, never throws, never logs, and the text after `BLOCKED:` is never read. It is advisory and
+  never a gate (`claude-groom-warning` is a note; Investigate stays enabled). `deriveEntry` stays pure.
+  The UI words and tones live only in `ui/claude-verdict.js` (a test pins that its keys equal the
+  backend enums).
+- **Continue writes no state.** `POST /api/claude/continue` goes through `deliverToSession`, so the
+  one-writer mark applies, and writes neither `status.json` nor `launch.json`, before or after; the
+  status.json single-writer rule holds by construction. `blocks.continue` exists only on a `failed`
+  entry. README "Continue a failed session" has the refusals.
 
 ## Chat: facts not to break
 
@@ -399,8 +444,8 @@ chats. The contract is README "Chat" (routes, errors, events, items); its two en
 client reducer).
 
 - **One writer per session, and its refusals.** `claudeSessions.beginTurn(sessionId)` in
-  `backend/claude-sessions.mjs` is the only writer mark; the chat turn and `resume()` (so the launcher and
-  the Slack watcher) go through it, never through a second lock. A held session reads `state: "working"` in
+  `backend/claude-sessions.mjs` is the only writer mark; the chat turn and `resume()` (so the launcher's
+  answers, approve, re-review and Continue, and the Slack watcher) go through it, never through a second lock. A held session reads `state: "working"` in
   `entries()`, so the launcher's guards, the ticket card and the bot bar see a turn as work in progress.
   The refusals are 409 `CLAUDE_REFUSED` with `errors[0]` `chat_busy` (a turn is already in flight on this
   session), `session_running` (a listed session is working outside the chat, or the mark is held),
@@ -493,13 +538,106 @@ client reducer).
   the contract test reads. The primary route row is pinned by a test, so a new tab goes in the tools row.
   `ui-react/styles/chat.css` follows the board stylesheet rules (every selector starts `.chat`, tokens only,
   no hex, short named transitions, a reduced-motion block, no `columns:`) and is imported after `board.css`.
+- **Usage is read on request, never on the poll.** `GET /api/claude/usage` (`createUsageReader` in
+  `backend/claude-usage.mjs`, paths from `claudeSessions.transcriptFiles`) is the only place
+  transcript content is read for tokens: byte-offset incremental, deduped by message id, 8 MiB per
+  request, 256 files cached, numbers and model ids only, nothing logged, tokens only (no dollars, no
+  price table). It is never called from `GET /api/claude/tickets`, the bot bar or the tickets poll; a
+  screen asks once when it opens (`useClaudeUsage`, `useSessionsUsage`) and the Chat head again only
+  when a turn ends. README "Claude usage" has the contract.
 - **Known limits, so nobody "fixes" them by accident.** (a) `npm run dev` restarts through nodemon's
   SIGUSR2, which `server.mjs` does not handle, so its SIGTERM cleanup does not run and a `claude` child
   mid-turn can outlive a dev restart. Production `npm start` handles SIGTERM. This was deliberately left
   alone: switching nodemon to SIGTERM would also stop every managed service on each dev restart. (b) Chat
   turns pass no permission flag, so a tool that needs approval is denied (listed in the turn's `denials`
   and shown as a note); there is no in-app approve or deny. (c) `costUsd` on a turn is the CLI's
-  `total_cost_usd`, cumulative for a resumed session, not per turn; the screen does not show it. (d)
+  `total_cost_usd`, cumulative for a resumed session, not per turn; the Chat head shows it as "Session
+  cost so far" only while idle (`costLabel` in `ui/chat-stream.js`). That the total is cumulative on the
+  real CLI is not verified. (d)
   Resuming a finished `--bg` ticket session and `session_running` on a working one were checked on the
   real CLI with scratch sessions; sessions started with the launcher's extra flags (`--add-dir`,
   `--tools`, `--strict-mcp-config`) and the ticket row's Chat link in a real browser were not.
+
+## Lazy screens and the first-paint bundle
+
+Chat, Releases, DevTools and Mascots load their code on first visit; Home, My Tickets, Slack, Pull
+Requests, Services, Settings (the only screen in setup-only mode) and the bot bar are eager. The ticket
+Claude dialog, the command palette and the shortcuts help are lazy overlays too
+(`ui-react/lib/lazy-overlays.js`, a `[load, Overlay]` pair each), and `ArtifactViewer` and
+`E2eCheckDialog` are lazy inside `ClaudeDialog` through `LazyDialog`. README "UI layout" has the numbers.
+
+- `App.jsx` mounts each lazy screen through `ScreenSlot` with `lazyScreen(() => import(...), 'X')`
+  (`ui-react/lib/lazy-screen.js`) memoized at the call site. A screen mounts on the render it is first
+  active or when the boot route names it, and stays mounted, hidden, afterwards. Never gate a lazy
+  screen on anything but the slot's own first-visit state.
+- The loading fallback is `panel-<id>-loading` (never `panel-<id>`), with the screen's own shape: a
+  `BoardPanel` by default (viewport-fill from the first paint), a plain `.panel` through
+  `<ScreenSlot board={false}>` for a non-board screen (Releases). A new lazy screen sets `board` to match
+  its root. A failed chunk shows `screen-error-<id>` with Reload via `ChunkBoundary`.
+- An opener of a lazy overlay calls `load()` first and opens when it settles (the Control+K / `?`
+  listener, `openBot`, `openClaude`), so the first press is never lost and React's 300 ms fallback
+  throttle never shows. The review row of a bot still opens the eager `ClaudePlaceholderDialog`.
+- `test/bundle-budget.test.mjs` builds in memory (never `dist/`) and holds initial JS to 640 KiB raw and
+  200 KiB gzip -9; a new eager import of a lazy module fails it. `vite.config.js` is pinned by
+  `ui-build-contract.test.mjs`.
+- **Service feed.** `useServiceEvents` stores `keepIfEqual(previous, next)` (`ui/keep-if-equal.js`, shared
+  with `useClaudeTickets`) on the whole snapshot JSON and must stay so: every output line changes
+  `lineCount` and `lastLineAt`, and `ServiceCard` refreshes its log whenever the snapshot list changes
+  identity, so a projection (status only, say) freezes live logs. Every screen in `App.jsx` is `memo`,
+  `AppTabs` and `BotBar` are memoized in `AppShell.jsx`, and `services` goes to `ServicesPanel` only: a
+  new prop that changes on every feed tick, passed to anything else, defeats the memo.
+
+## Keyboard layer: facts not to break
+
+- `ui/shortcuts.js` is the pure resolver (`resolveShortcut`, `isBlocked`, `isEditableTarget`,
+  `SHORTCUT_TABS`); `useGlobalShortcuts` (one document keydown, bound once, in `AppShell`) only feeds it.
+  Guards live in `isBlocked` (`dialog[open]`, `defaultPrevented`, a target inside `[data-control="true"]`,
+  `[role="menu"]` or `[role="listbox"]`). The hook prevents Ctrl/Cmd+K in every state, after computing
+  `blocked`. New dialogs need no registration.
+- The palette is a native modal `<dialog>` rendered by `BotBar` (beside the strip, never inside it) from
+  `ShortcutsContext`, so BotBar takes no props (a bot-bar test pins that). Palette and help use
+  `useModalDialog` and `useBackdropClose`; entries and filter are in `ui/command-palette.js`.
+  `command-palette.css` is `.command-palette*` only, tokens only, with a reduced-motion block, pinned by
+  `test/command-palette-contract.test.mjs`.
+- **Hash contract.** `hashFor` and `QUERY_ROUTES` in `App.jsx` (releases, chat, my-tickets): `my-tickets`
+  keeps its query only when `ticketFromQuery` (`ui/ticket-link.js`) accepts it. `App` holds
+  `ticketRequest` (boot and hashchange, My Tickets route only); `MyTicketsPanel` opens the row once data
+  is in, says `my-tickets-ticket-missing` only from a current answer (else the neutral
+  `my-tickets-ticket-checking`), then calls `onTicketHandled` (replaceState to `#/my-tickets`). Assigned
+  tickets only; Include Done is never switched on.
+- Route cues (`useRouteChange` in `AppShell`): title, the `route-announcement` region and heading focus
+  only when focus was lost (`navigation.spec.js` depends on "only when lost"). None of this adds a request
+  or poll; the palette's Refresh runs the board's own guarded load.
+
+## Integration health: facts not to break
+
+- `backend/upstream.mjs` is the one fetch seam for Jira and GitHub (`jira.mjs`, `github.mjs`,
+  `github-api.mjs`, `team-velocity.mjs`, `releases.mjs`); a source test forbids a bare `fetch(`.
+  `upstreamError(name, res, message)` keeps the caller's message byte-identical. Slack feeds the same
+  record from `slack.mjs` and keeps its own `fetchImpl`, timeout and cool-down; the side-branch `.catch`
+  on its send promise is deliberate (an extra await tick reorders concurrent Slack reads).
+- `GET /api/health` makes no upstream call and sits before the setup gate; never add a call there.
+  `useUpstreamHealth` owns no timer (one read on activation and on `refreshKey`), `/api/health` appears
+  once in `api.js`, and `UpstreamNote` is mounted in the `notes` slot of My Tickets, Pull Requests and Slack.
+- The `[http]` line carries no message on `/api/claude/chat` and `/api/slack/` routes, no query and no
+  body; a status below 500, a `SyntaxError` and a cool-down answer log nothing or no message. Any new
+  field goes through `scrubMessage` or is a fixed value. `installProcessHandlers` runs from `start()` only.
+  Tests that provoke a 5xx print `[http]` lines; pass `integrations.log` a capture function. README
+  "Integration health" has the contract.
+
+## Service lifecycle: facts not to break
+
+- `backend/manager.mjs` takes no new imports and `config.mjs` exports nothing new for it:
+  `test/manager.test.mjs` copies only `manager.mjs` and `port.mjs` beside a stub config.
+- `Manager.stopAll` deliberately bypasses `withSettingsLock` (shutdown is terminal) and sets `closing` on
+  every service, so `#start` returns false on entry and after `freePort` and a start in flight at shutdown
+  cannot spawn a detached process; `shutdownServer` falls back to per-id `manager.stop` for a manager
+  without `stopAll`. `ServiceProcess.restart()` returns false (no second process) when `stopAndWait` fails,
+  which `Manager.restartUnlocked` maps to `service did not stop`.
+- SIGKILL is only sent while the group leader is alive: a grandchild that outlives a leader that exited on
+  SIGTERM is deliberately left (no `kill(-pid)` after the leader is reaped, so no recycled-pid hazard).
+- The output throttle is leading+trailing 250 ms, shared by persist and `onUpdate`; the trailing timer is
+  unref'd, flushed on exit and `stop`, cancelled by `clearLogs`.
+- DevTools registry: module-local `withRegistryLock`; operations inside it call only the `...Unlocked`
+  helpers, the `settle` exit callback stays synchronous and lock-free, and `findFreePort` skips ports held
+  by `running` records (registry tests use `holdPorts: false` for concurrent launches).

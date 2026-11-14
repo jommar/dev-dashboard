@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import { jiraConfig, authorization, storyPointsOf } from './jira.mjs';
 import { captureConfiguration } from './settings.mjs';
+import { upstreamFetch, upstreamError } from './upstream.mjs';
 import { esc } from '../ui/dom.js';
 
 export const TEAM_VELOCITY_MAX_ISSUES = 5000;
@@ -37,14 +38,15 @@ async function searchJql(cfg, jql, max) {
     url.searchParams.set('fields', fields);
     url.searchParams.set('maxResults', '100');
     if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
-    const res = await fetch(url, {
+    const res = await upstreamFetch('jira', url, {
       redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
       headers: {
         Accept: 'application/json',
         Authorization: authorization(cfg.email, cfg.token),
       },
     });
-    if (!res.ok) throw new Error(`jira search failed: ${res.status}`);
+    if (!res.ok) throw upstreamError('jira', res, `jira search failed: ${res.status}`);
     const data = await res.json();
     issues.push(...(data.issues || []));
     if (issues.length >= max || data.isLast || !data.nextPageToken) break;

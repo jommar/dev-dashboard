@@ -35,6 +35,7 @@ function ConfirmRestart({ id, running, label, onConfirm, onCancel }) {
       dialog.removeEventListener('cancel', cancel);
       if (dialog.open) dialog.close();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only dialog wiring; onCancel is an inline closure that must not re-open the dialog
   }, []);
   return (
     <dialog

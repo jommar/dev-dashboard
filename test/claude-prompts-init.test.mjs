@@ -1,4 +1,4 @@
-// claude-prompts-init.test.mjs — the starter prompt files: `npm run claude:prompts` writes the ten
+// claude-prompts-init.test.mjs — the starter prompt files: `npm run claude:prompts` writes the eleven
 // built-in messages (placeholders intact) into the prompts folder, never over a file that is there.
 // Every test runs in a temp folder; the dashboard's real `prompts` folder is only ever looked at.
 import test from 'node:test';
@@ -12,6 +12,7 @@ import {
   ANSWERS_IMPLEMENT_TEMPLATE,
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
+  CONTINUE_TEMPLATE,
   REREVIEW_TEMPLATE,
   REVIEW_TEMPLATE,
   SPEC_REVIEW_TEMPLATE,
@@ -45,6 +46,7 @@ const STARTERS = [
   ['answers.md', ANSWERS_TEMPLATE],
   ['answers-implement.md', ANSWERS_IMPLEMENT_TEMPLATE],
   ['approve.md', APPROVE_TEMPLATE],
+  ['continue.md', CONTINUE_TEMPLATE],
   ['rereview.md', REREVIEW_TEMPLATE],
   ['groom.md', GROOM_TEMPLATE],
   ['review.md', REVIEW_TEMPLATE],
@@ -79,7 +81,7 @@ const snapshot = (dir) =>
       ]),
   );
 
-test('scenario 130: it creates the prompts folder and writes the ten built-in texts, placeholders intact', async (t) => {
+test('scenario 130: it creates the prompts folder and writes the eleven built-in texts, placeholders intact', async (t) => {
   const dir = path.join(tempRoot(t), 'nested', 'prompts');
 
   const result = await initPrompts({ dir, fs });
@@ -93,6 +95,7 @@ test('scenario 130: it creates the prompts folder and writes the ten built-in te
     'answers-implement.md',
     'answers.md',
     'approve.md',
+    'continue.md',
     'e2e.md',
     'groom.md',
     'implement.md',
@@ -138,6 +141,7 @@ test('scenario 131: a file that is already there is kept as it is, and only the 
       ['answers.md', 'kept'],
       ['answers-implement.md', 'wrote'],
       ['approve.md', 'wrote'],
+      ['continue.md', 'wrote'],
       ['rereview.md', 'wrote'],
       ['groom.md', 'wrote'],
       ['review.md', 'wrote'],

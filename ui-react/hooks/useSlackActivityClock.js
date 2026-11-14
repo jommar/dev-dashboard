@@ -16,6 +16,7 @@ export function useSlackActivityClock(snapshot, active, openThread) {
       snapshot?._requestStartedWallAt,
     );
     return currentTime();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- active and tick are triggers to read the clock again, not values read
   }, [snapshot, active, tick, currentTime]);
 
   useEffect(() => {

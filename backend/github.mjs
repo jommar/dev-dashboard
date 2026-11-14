@@ -9,6 +9,7 @@
 // required because the search API has no `author:@me`; it also means the fetch
 // never has to be told whose PRs to show.
 import { captureConfiguration } from './settings.mjs';
+import { upstreamFetch, upstreamError } from './upstream.mjs';
 import { postGraphql, pullRequestQuery } from './github-api.mjs';
 
 function headers(tokenStr) {
@@ -20,12 +21,12 @@ function headers(tokenStr) {
 }
 
 async function getLogin(tokenStr, config) {
-  const res = await fetch(`${config.api}/user`, {
+  const res = await upstreamFetch('github', `${config.api}/user`, {
     headers: headers(tokenStr),
     redirect: 'error',
     signal: AbortSignal.timeout(15_000),
   });
-  if (!res.ok) throw new Error(`github /user failed: ${res.status}`);
+  if (!res.ok) throw upstreamError('github', res, `github /user failed: ${res.status}`);
   const data = await res.json();
   return data.login;
 }
@@ -139,13 +140,13 @@ export async function fetchOpenPRs({ mine = true, snapshot } = {}) {
     `${GITHUB.api}/search/issues?q=${encodeURIComponent(query)}` +
     `&sort=updated&order=desc&per_page=${GITHUB.maxResults}`;
 
-  const res = await fetch(url, {
+  const res = await upstreamFetch('github', url, {
     headers: headers(tokenStr),
     redirect: 'error',
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
-    throw new Error(`github search failed: ${res.status}`);
+    throw upstreamError('github', res, `github search failed: ${res.status}`);
   }
   const data = await res.json();
   const prs = (data.items || []).map(mapItem).filter(Boolean);
@@ -221,12 +222,12 @@ export async function fetchAllOpenPRs({ snapshot } = {}) {
     url.searchParams.set('page', '1');
     try {
       while (url) {
-        const res = await fetch(url, {
+        const res = await upstreamFetch('github', url, {
           headers: headers(token),
           redirect: 'error',
           signal: AbortSignal.timeout(15_000),
         });
-        if (!res.ok) throw new Error('GitHub discovery failed.');
+        if (!res.ok) throw upstreamError('github', res, 'GitHub discovery failed.');
         const items = await res.json();
         if (!Array.isArray(items)) throw new Error('Invalid GitHub discovery page.');
         const page = JSON.stringify(items.map((item) => item?.number));
@@ -282,12 +283,13 @@ export async function fetchPrBase(repoFull, number, { snapshot } = {}) {
   if (!tokenStr) {
     throw new Error('no GH_TOKEN (or GITHUB_TOKEN) in environment — will not prompt');
   }
-  const res = await fetch(`${GITHUB.api}/repos/${repoFull}/pulls/${number}`, {
+  const res = await upstreamFetch('github', `${GITHUB.api}/repos/${repoFull}/pulls/${number}`, {
     headers: headers(tokenStr),
     redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
-    throw new Error(`github pull fetch failed: ${res.status}`);
+    throw upstreamError('github', res, `github pull fetch failed: ${res.status}`);
   }
   const data = await res.json();
   return data.base?.ref ?? null;

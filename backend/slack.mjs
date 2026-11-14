@@ -20,6 +20,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn as spawnDefault } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { withoutSecrets } from './config.mjs';
+import { classifyError, upstreamHealth } from './upstream.mjs';
 import { readTokenFile, stageTokenFile } from './credentials.mjs';
 import { createSlackBoard, eligibleRoot } from './slack-board.mjs';
 import {
@@ -119,7 +121,7 @@ export function createSlackIntegration({
   function send(method, params, credentials) {
     const url = new URL(`${API_URL}/${method}`);
     for (const [key, value] of Object.entries(params || {})) url.searchParams.set(key, value);
-    return fetchImpl(url.toString(), {
+    const pending = fetchImpl(url.toString(), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${credentials.token}`,
@@ -128,6 +130,17 @@ export function createSlackIntegration({
       redirect: 'error',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    // A side branch: the caller still awaits `pending` itself, so no await ticks are added.
+    pending?.catch?.((error) => upstreamHealth.recordFailure('slack', classifyError(error)));
+    return pending;
+  }
+
+  // What an answer says about Slack's health: a 200 can still carry a rate limit or a rejected session.
+  function recordAnswer(res, payload) {
+    if (payload?.error === 'ratelimited') upstreamHealth.recordResponse('slack', 429, res.headers);
+    else if (REJECTED_SESSION_ERRORS.has(payload?.error))
+      upstreamHealth.recordResponse('slack', 401, res.headers);
+    else upstreamHealth.recordResponse('slack', res.status, res.headers);
   }
 
   async function call(method, params, credentials) {
@@ -135,6 +148,7 @@ export function createSlackIntegration({
     const gen = generation;
     const res = await send(method, params, credentials);
     const payload = await res.json().catch(() => null);
+    recordAnswer(res, payload);
     if (res.status === 429 || payload?.error === 'ratelimited') {
       const seconds = retryAfterOf(res).retryAfterSeconds || 60;
       if (isCurrent(gen))
@@ -423,6 +437,7 @@ export function createSlackIntegration({
       return { ok: false, reason: 'unavailable' };
     }
     const payload = await res.json().catch(() => null);
+    recordAnswer(res, payload);
     if (res.status === 429 || payload?.error === 'ratelimited')
       return { ok: false, reason: 'rate_limited', ...retryAfterOf(res) };
     if (REJECTED_SESSION_ERRORS.has(payload?.error))
@@ -530,7 +545,7 @@ export function createSlackIntegration({
         {
           detached: true,
           stdio: ['ignore', log, log],
-          env: { ...process.env, SLACK_PROFILE_DIR: paths.profile },
+          env: { ...withoutSecrets(process.env), SLACK_PROFILE_DIR: paths.profile },
         },
       );
       child = spawned;

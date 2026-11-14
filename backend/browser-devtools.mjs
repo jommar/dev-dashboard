@@ -13,8 +13,9 @@
 import fsDefault from 'node:fs';
 import netDefault from 'node:net';
 import path from 'node:path';
-import { spawn as spawnDefault } from 'node:child_process';
+import { execFile, spawn as spawnDefault } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { withoutSecrets } from './config.mjs';
 import { writeFileAtomic } from './credentials.mjs';
 import { DEFAULT_DEVTOOLS_URL } from '../ui/devtools-defaults.js';
 
@@ -99,10 +100,25 @@ export function createBrowserDevtools({
   // the record outlives the process that spawned it.
   const ps =
     run ||
-    (async () =>
-      (await import('node:child_process')).execFileSync('ps', ['-eo', 'pid=,args='], {
-        encoding: 'utf8',
+    (() =>
+      new Promise((resolve, reject) => {
+        execFile(
+          'ps',
+          ['-eo', 'pid=,args='],
+          { timeout: 5000, encoding: 'utf8' },
+          (error, stdout) => (error ? reject(error) : resolve(stdout)),
+        );
       }));
+
+  // Every registry mutation runs one at a time, so a read-modify-write never starts from a
+  // snapshot another operation is about to replace. A rejected operation releases the lock.
+  // Operations inside the lock call only the `...Unlocked` helpers, never the public methods.
+  let chain = Promise.resolve();
+  function withRegistryLock(operation) {
+    const result = chain.then(operation);
+    chain = result.catch(() => {});
+    return result;
+  }
 
   function readState() {
     try {
@@ -115,6 +131,15 @@ export function createBrowserDevtools({
 
   function writeState(browsers) {
     writeFileAtomic(stateFile, JSON.stringify({ version: VERSION, browsers }, null, 2) + '\n', fs);
+  }
+
+  // Replace (or add) one record in the current file, not in a snapshot read before an await.
+  function upsert(record) {
+    const current = readState();
+    const at = current.findIndex((entry) => entry.id === record.id);
+    if (at < 0) current.push(record);
+    else current[at] = record;
+    writeState(current);
   }
 
   function resolveBinary() {
@@ -142,13 +167,21 @@ export function createBrowserDevtools({
     });
   }
 
+  // A browser binds its debug port well after spawn, so a port a running record holds is taken even
+  // while a probe still finds it free. The registry lock makes this read safe: the previous launch's
+  // record is saved before the next one probes.
   async function findFreePort() {
+    const used = new Set(
+      readState()
+        .filter((entry) => entry.status === 'running')
+        .map((entry) => entry.port),
+    );
     for (let port = PORT_FIRST; port <= PORT_LAST; port += 1)
-      if (await probePort(port)) return port;
+      if (!used.has(port) && (await probePort(port))) return port;
     throw fail('NO_FREE_PORT', `No free debug port in ${PORT_FIRST}-${PORT_LAST}.`, 409);
   }
 
-  async function start(browsers, record) {
+  async function start(record) {
     const binary = resolveBinary();
     const port = await findFreePort();
     const profileDir = record.profileDir;
@@ -167,7 +200,7 @@ export function createBrowserDevtools({
           '--no-default-browser-check',
           record.url,
         ],
-        { detached: true, stdio: ['ignore', log, log] },
+        { detached: true, stdio: ['ignore', log, log], env: withoutSecrets(env) },
       );
     } catch (error) {
       throw fail('LAUNCH_FAILED', error?.message || 'Could not start the browser.', 502);
@@ -195,8 +228,7 @@ export function createBrowserDevtools({
     record.pid = child.pid;
     record.startedAt = now().toISOString();
     record.status = 'running';
-    if (!browsers.some((entry) => entry.id === record.id)) browsers.push(record);
-    writeState(browsers);
+    upsert(record);
     return record;
   }
 
@@ -230,7 +262,7 @@ export function createBrowserDevtools({
 
   // Adopt browsers that outlived the dashboard: a nodemon restart must not leave
   // a window running that nothing can stop.
-  async function reconcile() {
+  async function reconcileUnlocked() {
     if (reconciled) return;
     reconciled = true;
     const browsers = readState();
@@ -287,14 +319,13 @@ export function createBrowserDevtools({
   }
 
   async function list() {
-    await reconcile();
+    if (!reconciled) await withRegistryLock(reconcileUnlocked);
     return readState().sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
   }
 
-  async function launch({ label, url, headed } = {}) {
+  async function launchUnlocked({ label, url, headed } = {}) {
     const showWindow = normalizeHeaded(headed);
-    await reconcile();
-    const browsers = readState();
+    await reconcileUnlocked();
     const id = randomId();
     const record = {
       id,
@@ -307,22 +338,22 @@ export function createBrowserDevtools({
       status: 'stopped',
       ...(showWindow && { headed: true }),
     };
-    await start(browsers, record);
+    await start(record);
     return record;
   }
 
-  async function startById(id) {
-    await reconcile();
+  async function startUnlocked(id) {
+    await reconcileUnlocked();
     const browsers = readState();
     const record = browsers.find((entry) => entry.id === id);
     if (!record) throw fail('UNKNOWN_BROWSER', 'Unknown browser.', 404);
     if (record.status === 'running') return record;
-    await start(browsers, record);
+    await start(record);
     return record;
   }
 
-  async function stop(id) {
-    await reconcile();
+  async function stopUnlocked(id) {
+    await reconcileUnlocked();
     const browsers = readState();
     const record = browsers.find((entry) => entry.id === id);
     if (!record) throw fail('UNKNOWN_BROWSER', 'Unknown browser.', 404);
@@ -362,18 +393,18 @@ export function createBrowserDevtools({
     children.delete(id);
     record.status = 'stopped';
     record.pid = null;
-    writeState(browsers);
+    upsert(record);
     stopped(id);
     return record;
   }
 
   // Remove is the only path that deletes a profile: Stop keeps it so Start stays
   // signed in, but a row nobody wants should not leave a profile behind.
-  async function remove(id) {
-    await reconcile();
+  async function removeUnlocked(id) {
+    await reconcileUnlocked();
     const record = readState().find((entry) => entry.id === id);
     if (!record) throw fail('UNKNOWN_BROWSER', 'Unknown browser.', 404);
-    if (record.status === 'running' && record.pid) await stop(id);
+    if (record.status === 'running' && record.pid) await stopUnlocked(id);
     fs.rmSync(path.dirname(record.profileDir), { recursive: true, force: true });
     writeState(readState().filter((entry) => entry.id !== id));
     return { id };
@@ -384,5 +415,12 @@ export function createBrowserDevtools({
     return () => stopListeners.delete(listener);
   }
 
-  return { list, launch, start: startById, stop, remove, onStopped };
+  return {
+    list,
+    launch: (options) => withRegistryLock(() => launchUnlocked(options)),
+    start: (id) => withRegistryLock(() => startUnlocked(id)),
+    stop: (id) => withRegistryLock(() => stopUnlocked(id)),
+    remove: (id) => withRegistryLock(() => removeUnlocked(id)),
+    onStopped,
+  };
 }

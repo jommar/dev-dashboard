@@ -19,20 +19,30 @@
 // editor, still in this one dialog: the footer then holds Back (the same button, so it keeps focus)
 // and Close, and everything this component holds (answer drafts, copy status, the last send result)
 // is there when Back returns.
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { ClaudePromptsEditor } from './ClaudePromptsEditor.jsx';
-import { ArtifactViewer } from './ArtifactViewer.jsx';
-import { E2eCheckDialog } from './E2eCheckDialog.jsx';
+import { UseInServices } from './UseInServices.jsx';
+import { LazyDialog } from './ScreenSlot.jsx';
+import { lazyScreen } from '../lib/lazy-screen.js';
 import {
   BUTTON_CLASS,
   DismissButton,
   SessionChip,
   StatePill,
   StatusMark,
+  VerdictChip,
   workflowSteps,
 } from './ClaudeSteps.jsx';
 import { copyText } from '../../ui/dom.js';
+import { useClaudeUsage } from '../hooks/useClaudeUsage.js';
+import { tokensLabel } from '../../ui/format-tokens.js';
+
+// Two on-demand dialogs load when first opened (the viewer drags in the markdown renderer, the E2E
+// check the DevTools viewer), so neither is in the first-paint bundle. LazyDialog shows nothing while
+// a chunk loads (the dialog opens once it arrives) and a modal with Reload if it cannot.
+const ArtifactViewer = lazyScreen(() => import('./ArtifactViewer.jsx'), 'ArtifactViewer');
+const E2eCheckDialog = lazyScreen(() => import('./E2eCheckDialog.jsx'), 'E2eCheckDialog');
 
 const INVESTIGATE = 'investigate-and-plan';
 const IMPLEMENT = 'implement-plan';
@@ -60,6 +70,7 @@ const REASON_TEXT = {
   resume_failed: 'The Claude session could not be resumed.',
   answers_not_sent:
     'All questions are answered, but they have not been sent to the session. Press Save answers to send them.',
+  not_failed: 'Continue is only for a session that ended without finishing.',
   plan_not_done: 'Claude has not marked the plan done. Check the session before implementing.',
   not_approved: 'Approve the plan first.',
   already_approved: 'The plan is approved.',
@@ -72,6 +83,13 @@ const REASON_TEXT = {
     "A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.",
 };
 
+// The note under the workflow strip for a groom that is not ready (keys are the closed enum;
+// a ready or unknown value has no note).
+const GROOM_WARNING = Object.freeze({
+  NEEDS_INFO: 'Groom found open decisions.',
+  BLOCKED: 'Groom found this ticket blocked.',
+});
+
 // What a save says about routing the answers to the session, by the server's `send` outcome.
 const SKIPPED_TEXT = {
   unchanged: 'Saved. The answers had not changed, so nothing was sent.',
@@ -83,6 +101,12 @@ function approveText({ send }) {
   if (send?.status === 'sent') return 'Approval sent. Claude is checking the plan.';
   const why = REASON_TEXT[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
   return `Approval not sent: ${why}. Press Approve plan to retry.`;
+}
+
+function continueText({ send }) {
+  if (send?.status === 'sent') return 'Continue sent. Claude is picking up where it stopped.';
+  const why = REASON_TEXT[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
+  return `Continue not sent: ${why}. Press Continue to retry.`;
 }
 
 function sendText({ send, ticket }) {
@@ -145,9 +169,17 @@ export function ClaudeDialog({
   launch,
   answer,
   approve,
+  continueSession,
+  sessionIds,
 }) {
   const entry = listed ?? NOT_STARTED;
   const { blocks, questions, goTo } = entry;
+  // The tokens this ticket's sessions have used, asked for once when the dialog opens (it is mounted
+  // only while open) and carrying every phase's session id; nothing while there is no session.
+  const { total: usageTotal } = useClaudeUsage({
+    sessions: [...new Set(Object.values(sessionIds ?? {}))],
+    active: true,
+  });
   const dialogRef = useRef(null);
   // The panel passes fresh callbacks on every render; a ref keeps the Esc listener from being
   // torn down and rebuilt on each poll.
@@ -165,12 +197,15 @@ export function ClaudeDialog({
   const [drafts, setDrafts] = useState({});
   const [sendResult, setSendResult] = useState('');
   const [approveResult, setApproveResult] = useState('');
+  const [continueResult, setContinueResult] = useState('');
   const [copy, setCopy] = useState(null);
   const [editingPrompts, setEditingPrompts] = useState(false);
   // The Markdown viewer opened over this dialog: `{ name }` is the file to open first (or null).
   const [viewing, setViewing] = useState(null);
   // The e2e check's two-step dialog, opened over this one.
   const [checking, setChecking] = useState(false);
+  const closeChecking = useCallback(() => setChecking(false), []);
+  const closeViewer = useCallback(() => setViewing(null), []);
 
   // Open once, trap focus (the browser does that for a modal) and give focus back to the ticket's
   // icon, which the key fully determines (a click does not focus a button in every browser).
@@ -205,6 +240,7 @@ export function ClaudeDialog({
     blocks.approve,
     blocks.groom,
     blocks.e2e,
+    blocks.continue,
   ]);
 
   // A send's message is about the session that was working on it: once the ticket stops working it
@@ -215,6 +251,7 @@ export function ClaudeDialog({
     if (lastState.current === 'working' && entry.state !== 'working') {
       setSendResult('');
       setApproveResult('');
+      setContinueResult('');
     }
     lastState.current = entry.state;
   }, [entry.state]);
@@ -259,6 +296,13 @@ export function ClaudeDialog({
     setApproveResult('');
     const result = await run(() => approve(ticketKey));
     if (result.ok) setApproveResult(approveText(result));
+  };
+
+  // Messages the failed workflow session to carry on; the card follows the next poll.
+  const continueRun = async () => {
+    setContinueResult('');
+    const result = await run(() => continueSession(ticketKey));
+    if (result.ok) setContinueResult(continueText(result));
   };
 
   // The e2e dialog's Start: a refusal comes back as the sentence to show, whether to start over and
@@ -316,7 +360,7 @@ export function ClaudeDialog({
       !held &&
       !reasons.some((reason) => !reason.quiet && reason.text === resendText));
   const answered = questions.filter(({ answer: saved }) => saved?.trim()).length;
-  const liveText = Boolean(approveResult) || Boolean(copied);
+  const liveText = Boolean(approveResult) || Boolean(continueResult) || Boolean(copied);
 
   return (
     <>
@@ -337,6 +381,11 @@ export function ClaudeDialog({
           <h3 className="claude-dialog-title" id={titleId} data-testid="claude-dialog-title">
             <span className="claude-dialog-key">{ticketKey}</span> {summary}
           </h3>
+          {usageTotal?.total > 0 && (
+            <span className="claude-dialog-usage" data-testid="claude-usage-total">
+              {tokensLabel(usageTotal)}
+            </span>
+          )}
           <StatePill entry={listed} data-testid="claude-dialog-state" />
         </header>
 
@@ -418,6 +467,43 @@ export function ClaudeDialog({
                 ))}
               </ul>
 
+              {/* A finished implement run's worktree can be run from the Services tab. */}
+              {entry.phase === IMPLEMENT && entry.state === 'done' && (
+                <UseInServices ticketKey={ticketKey} />
+              )}
+
+              {/* A failed workflow session: message it to finish, rather than start over. The key is
+                there only for a failed one. */}
+              {Object.hasOwn(blocks, 'continue') && (
+                <div className="claude-continue">
+                  <Button
+                    className="subtle claude-groom-run"
+                    data-testid="claude-action-continue"
+                    disabled={busy || Boolean(blocks.continue)}
+                    aria-describedby={`${hintId}-continue`}
+                    onClick={continueRun}
+                  >
+                    Continue
+                  </Button>
+                  <span
+                    id={`${hintId}-continue`}
+                    className="claude-action-hint"
+                    data-testid="claude-action-hint-continue"
+                  >
+                    {REASON_TEXT[blocks.continue] ??
+                      'Asks the same session to finish what is missing. Your answers are kept.'}
+                  </span>
+                </div>
+              )}
+
+              {/* A groom that is not ready, before any plan exists: a note, never a gate. */}
+              {!entry.flags?.[INVESTIGATE] &&
+                Object.hasOwn(GROOM_WARNING, entry.groom?.verdict) && (
+                  <p className="claude-note" data-testid="claude-groom-warning">
+                    {`${GROOM_WARNING[entry.groom.verdict]} You can still start Investigate and plan.`}
+                  </p>
+                )}
+
               {/* The live regions are always rendered, so a screen reader hears their text change
                 rather than appear; with no text they take no room. */}
               <div className={`claude-live${liveText ? ' has-text' : ''}`}>
@@ -430,6 +516,16 @@ export function ClaudeDialog({
                     {approveResult}
                   </p>
                   {approveResult && <DismissButton onClick={() => setApproveResult('')} />}
+                </div>
+                <div className="claude-flash">
+                  <p
+                    className="claude-note claude-send-result"
+                    role="status"
+                    data-testid="claude-continue-result"
+                  >
+                    {continueResult}
+                  </p>
+                  {continueResult && <DismissButton onClick={() => setContinueResult('')} />}
                 </div>
                 <div className="claude-goto" role="status">
                   {copied?.copied && (
@@ -496,6 +592,9 @@ export function ClaudeDialog({
                     View groom notes
                   </button>
                 )}
+                {entry.groom?.state === 'done' && (
+                  <VerdictChip side="groom" label="Readiness" verdict={entry.groom.verdict} />
+                )}
               </section>
 
               {/* The e2e check is another independent action: a new browser to sign in to, then a session. */}
@@ -529,6 +628,9 @@ export function ClaudeDialog({
                   >
                     View e2e result
                   </button>
+                )}
+                {entry.e2e?.state === 'done' && (
+                  <VerdictChip side="e2e" label="Verdict" verdict={entry.e2e.verdict} />
                 )}
               </section>
 
@@ -704,14 +806,14 @@ export function ClaudeDialog({
         </footer>
       </dialog>
       {checking && (
-        <E2eCheckDialog ticketKey={ticketKey} start={startE2e} onClose={() => setChecking(false)} />
+        <LazyDialog label="The E2E check" onClose={closeChecking}>
+          <E2eCheckDialog ticketKey={ticketKey} start={startE2e} onClose={closeChecking} />
+        </LazyDialog>
       )}
       {viewing && (
-        <ArtifactViewer
-          ticketKey={ticketKey}
-          initialName={viewing.name}
-          onClose={() => setViewing(null)}
-        />
+        <LazyDialog label="The artifact viewer" onClose={closeViewer}>
+          <ArtifactViewer ticketKey={ticketKey} initialName={viewing.name} onClose={closeViewer} />
+        </LazyDialog>
       )}
     </>
   );

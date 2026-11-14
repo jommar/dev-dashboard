@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+- The implement prompt and the implement answers message now treat the approved plan, checklist and
+  spec as the single source of truth and no longer tell the session to apply `questions[].answer` from
+  the status file; the answers message applies only answers to implement questions
+  (`"phase": "implement-plan"`). The blocker protocol and `{STATUS_FILE}` are unchanged. Existing
+  overrides are not upgraded: a custom `implement.md` and `answers-implement.md` must have their
+  answers paragraph replaced by hand, or be reset in the Prompts editor.
+- The implement session now commits its changes in the worktree, on that worktree's own branch, and
+  still never pushes or opens a pull request (built-in `implement` and `answers-implement`; it used to
+  leave the changes uncommitted). A custom prompt file keeps its own wording; edit or reset it to match.
+  See [Custom prompts](README.md#custom-prompts).
+- Added token visibility: `GET /api/claude/usage` (per-session token tallies from transcripts and
+  subagent transcripts, incremental, on request only), tokens on each Sessions drawer row and in the
+  Claude dialog header, and "Session cost so far" (idle only) with the token tally in the Chat head.
+  See [Claude usage](README.md#claude-usage).
+- Added an opt-in "Needs you" desktop notification and `(N)` tab-title count for sessions that are
+  waiting or failed while the dashboard is hidden (Sessions drawer **Notify me**, off by default). The
+  bot bar's tickets poll now also continues while the tab is hidden, but only while this is on and
+  permitted.
+- Added session verdict chips (e2e `Verdict:`, groom `Readiness:`, with bubble text, live-region text
+  and a soft note before a plan), **Continue** for a failed session (`POST /api/claude/continue`, the
+  new built-in `continue` prompt, so the prompt list is now eleven templates) and **Use in Services**
+  in the Claude dialog (`GET /api/repos/checkout-matches`). The built-in groom prompt now asks for a
+  `Readiness:` first line; a custom `groom.md` is not upgraded. See
+  [Continue a failed session](README.md#continue-a-failed-session).
+- Added the command palette (Ctrl+K), `g` then a letter tab chords, a shortcuts help (`?`),
+  `#/my-tickets?ticket=KEY` deep links and per-screen titles with a screen announcement. See
+  [Keyboard shortcuts and ticket links](README.md#keyboard-shortcuts-and-ticket-links).
+- Performance: the first-paint bundle drops from 831 KiB (252 KiB gzip) to about 621 KiB (197 KiB
+  gzip): Chat, Releases, DevTools, Mascots, the artifact viewer, the E2E check, the command palette,
+  the shortcuts help and the ticket Claude dialog load on first use, and a failed chunk shows a Reload
+  state in place. Identical service snapshots no longer re-render the app, and the refresh countdown
+  re-renders only its own label and pauses while the page is hidden or its screen is not shown.
+- Services stop with `SIGTERM` then `SIGKILL`; restart waits and reports `service did not stop`;
+  shutdown waits for services (8 s cap) outside the settings lock; an unwritable logs directory no
+  longer crashes the dashboard; output persistence and updates are throttled. The DevTools browser
+  registry serialises launch, start, stop, remove and the first reconcile. The CLI's in-process
+  `start`, `stop` and `restart` now exit 1 on a failure instead of printing success.
+- Added `GET /api/health` and a classification (`auth`, `rate_limit`, `upstream`, `timeout`,
+  `network`) of Jira, GitHub and Slack failures; rate limits now pause calls for the retry time, and
+  the boards show a note. Added one scrubbed `[http]`, `[server]` and `[process]` log line per
+  unexpected failure; an uncaught exception now stops the services and exits 1. See
+  [Integration health](README.md#integration-health).
+- Added GitHub Actions CI (a gate job plus a non-blocking Playwright job), `npm run check`, React hooks
+  lint rules for `ui-react`, and `lint` now fails on any warning; `team-velocity.html`, `.video-deck/`
+  and `.playwright/` are ignored by Prettier. `@mui/material`, `@playwright/test`, `globals`,
+  `prettier`, `react` and `vite` moved to their current minor/patch releases.
 - Questions now record the workflow phase that asked them, and each saved answer is sent back to that
   phase's session: planning questions to the Investigate and plan session as before, and a question the
   implement session asked to that implement session with the new `answers-implement` message, which
@@ -13,8 +59,8 @@
   no longer blocks Implement plan with `questions_unanswered`; `unanswered` stays the card's global count
   and `unsent` is true while either phase has a pending change. Each question row shows a muted
   `Investigate and plan` or `Implement plan` label. The prompt registry, editor and
-  `npm run claude:prompts` now list ten templates in the order investigate, implement, answers,
-  answers-implement, approve, rereview, groom, review, spec-review, e2e; existing overrides are not
+  `npm run claude:prompts` now list eleven templates in the order investigate, implement, answers,
+  answers-implement, approve, continue, rereview, groom, review, spec-review, e2e; existing overrides are not
   upgraded, so a custom `investigate.md`, `implement.md` or `answers.md` must add the `phase` tag
   instruction by hand.
 - A launched session the Claude CLI no longer lists (removed with `claude rm` or pruned, its conversation

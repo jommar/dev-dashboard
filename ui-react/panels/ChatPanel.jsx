@@ -4,8 +4,10 @@ import { ChatLog } from '../components/ChatTranscript.jsx';
 import { Button } from '../components/Primitives.jsx';
 import { useChatSession } from '../hooks/useChatSession.js';
 import { notifyClaudeTicketsChanged, useClaudeTickets } from '../hooks/useClaudeTickets.js';
+import { useClaudeUsage } from '../hooks/useClaudeUsage.js';
 import { BOT_STATE_WORDS } from '../../ui/bot-bar.js';
-import { chatHref } from '../../ui/chat-stream.js';
+import { chatHref, costLabel } from '../../ui/chat-stream.js';
+import { tokensLabel } from '../../ui/format-tokens.js';
 import { timeAgo } from '../../ui/dom.js';
 
 const ANNOUNCEMENTS = {
@@ -142,6 +144,13 @@ function ChatConversation({ active, session, focusOnMount }) {
   const lastUser = view?.items.findLast(({ kind }) => kind === 'user');
   const retryable = !working && ['stopped', 'failed'].includes(view?.turn?.outcome) && lastUser;
   const note = view && !working ? turnNote(view.turn) : '';
+  // Shown only while idle: the CLI's cost is the session's total so far, stale once a turn starts. The
+  // token tally is asked for when a chat opens and again each time a turn ends, never on a timer.
+  const cost = view && !working ? costLabel(view.turn?.costUsd) : '';
+  const { total: usage } = useClaudeUsage({
+    sessions: view ? [view.session] : [],
+    active: active && Boolean(view) && !working,
+  });
   // How many controls float over the field: Send, then Stop, Retry and Refresh when they show. The field
   // keeps room on its right for them (chat.css).
   const controls =
@@ -196,6 +205,16 @@ function ChatConversation({ active, session, focusOnMount }) {
         {view && (
           <span className="chat-state" data-testid="chat-state" data-state={turnPhase(view)}>
             {stateLabel(view)}
+          </span>
+        )}
+        {cost && (
+          <span className="chat-meta" data-testid="chat-cost">
+            {cost}
+          </span>
+        )}
+        {usage?.total > 0 && (
+          <span className="chat-meta" data-testid="chat-usage">
+            {tokensLabel(usage)}
           </span>
         )}
       </div>

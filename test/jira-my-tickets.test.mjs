@@ -277,7 +277,7 @@ for (const { name, tail = [], isLast, nextPageToken, truncated } of [
         'Content-Type': 'application/json',
         Authorization: 'Basic bWVAZXhhbXBsZS5jb206dG9r',
       });
-      assert.equal(Object.hasOwn(init, 'signal'), false);
+      assert.ok(init.signal instanceof AbortSignal, 'a stalled Jira cannot hang the request');
       assert.ok(calls < pages.length, 'must not probe beyond the accepted cap');
       return { ok: true, json: async () => pages[calls++] };
     });

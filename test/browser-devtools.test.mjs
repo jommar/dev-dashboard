@@ -2,18 +2,21 @@
 // Every collaborator that could touch the machine is injected: nothing here spawns a
 // process, binds a real port or signals a real pid.
 import test from 'node:test';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createBrowserDevtools, DEFAULT_DEVTOOLS_URL } from '../backend/browser-devtools.mjs';
+import { SECRET_ENV_NAMES } from '../backend/config.mjs';
 
 const NOW = new Date('2026-11-11T09:12:31.004Z');
 // Headless is the default: a visible window steals the desktop focus while agents drive the browser.
 // `headed: true` opts into a real window.
 const HEADLESS = '--headless=new';
 
-function harness({ taken = [], ps = '', env } = {}) {
+function harness({ taken = [], ps = '', env, extraEnv = {}, holdPorts = false, onKill } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devtools-'));
   const bin = path.join(home, 'bin');
   fs.mkdirSync(bin);
@@ -35,7 +38,7 @@ function harness({ taken = [], ps = '', env } = {}) {
   const devtools = createBrowserDevtools({
     home,
     fs,
-    env: env ?? { PATH: bin },
+    env: { ...(env ?? { PATH: bin }), ...extraEnv },
     net: {
       createServer() {
         const handlers = {};
@@ -60,7 +63,7 @@ function harness({ taken = [], ps = '', env } = {}) {
         };
       },
     },
-    spawn(binary, args) {
+    spawn(binary, args, options) {
       const child = {
         pid: 4000 + spawns.length + 1,
         exits: [],
@@ -69,11 +72,14 @@ function harness({ taken = [], ps = '', env } = {}) {
         },
         unref() {},
       };
-      spawns.push({ binary, args, child });
+      spawns.push({ binary, args, child, options });
+      // A real browser keeps its debug port bound; a fake one only does when asked to.
+      if (holdPorts) reserved.add(Number(/--remote-debugging-port=(\d+)/.exec(args.join(' '))[1]));
       return child;
     },
     kill(pid, signal) {
       signals.push({ pid, signal });
+      onKill?.(pid, signal);
     },
     run: async () => psOutput,
     now: () => NOW,
@@ -88,6 +94,7 @@ function harness({ taken = [], ps = '', env } = {}) {
     setPs(value) {
       psOutput = value;
     },
+    ps: () => psOutput,
   };
 }
 
@@ -323,6 +330,15 @@ const headlessFlags = (args) => args.filter((arg) => arg.startsWith('--headless'
 const savedBrowsers = (h) =>
   JSON.parse(fs.readFileSync(path.join(h.root, 'instances.json'), 'utf8')).browsers;
 
+test("the browser is started without the dashboard's credentials, and keeps the rest of the environment", async () => {
+  const secrets = Object.fromEntries(SECRET_ENV_NAMES.map((name) => [name, 'synthetic-secret']));
+  const h = harness({ extraEnv: { DISPLAY: ':0', ...secrets } });
+  await h.devtools.launch({});
+  const { env } = h.spawns[0].options;
+  for (const name of SECRET_ENV_NAMES) assert.equal(name in env, false, `${name} is not passed on`);
+  assert.equal(env.DISPLAY, ':0');
+});
+
 test('launches headless by default, beside the debugging port and the profile, URL still last', async () => {
   const h = harness({ taken: [9300] });
   // The e2e dialog's launch goes through the same call, with a label and a URL.
@@ -458,4 +474,83 @@ test('a headless browser is still found, adopted, stopped and relaunched by its 
   h.setPs('');
   const restarted = await h.devtools.start(browser.id);
   assert.equal(restarted.status, 'running');
+});
+
+// Registry lock: every mutation runs alone, so no record is lost and no port is shared.
+
+const runningLine = (browser) =>
+  `  ${browser.pid} /bin/brave-browser --remote-debugging-port=${browser.port} --user-data-dir=${browser.profileDir}`;
+
+test('concurrent launches both survive on different ports', async () => {
+  // A real browser binds its debug port well after spawn, so the second launch cannot rely on the probe.
+  const h = harness({ holdPorts: false });
+  const [a, b] = await Promise.all([h.devtools.launch({}), h.devtools.launch({})]);
+  assert.notEqual(a.port, b.port);
+  const saved = savedBrowsers(h);
+  assert.deepEqual(saved.map((entry) => entry.id).sort(), [a.id, b.id].sort());
+  assert.equal(new Set(saved.map((entry) => entry.port)).size, 2);
+});
+
+test('overlapping registry operations keep every record with its own status', async () => {
+  const h = harness({ holdPorts: true });
+  const a = await h.devtools.launch({});
+  const b = await h.devtools.launch({});
+  h.setPs(runningLine(b));
+  await h.devtools.stop(a.id);
+  h.setPs(runningLine(b));
+  const [c, started, stoppedB] = await Promise.all([
+    h.devtools.launch({}),
+    h.devtools.start(a.id),
+    h.devtools.stop(b.id),
+  ]);
+  const status = Object.fromEntries(savedBrowsers(h).map((entry) => [entry.id, entry.status]));
+  assert.deepEqual(status, { [a.id]: 'running', [b.id]: 'stopped', [c.id]: 'running' });
+  assert.equal(started.status, 'running');
+  assert.equal(stoppedB.status, 'stopped');
+});
+
+test('remove of a running browser does not deadlock and unblocks the queue', async () => {
+  const h = harness({ onKill: () => h.setPs('') });
+  const a = await h.devtools.launch({});
+  const b = await h.devtools.launch({});
+  h.setPs(runningLine(a));
+  const removed = h.devtools.remove(a.id);
+  const queued = h.devtools.stop(b.id);
+  assert.deepEqual(await removed, { id: a.id });
+  assert.equal((await queued).status, 'stopped');
+  assert.equal(fs.existsSync(path.dirname(a.profileDir)), false);
+  assert.deepEqual(
+    savedBrowsers(h).map((entry) => entry.id),
+    [b.id],
+  );
+});
+
+test('a rejected operation releases the lock', async () => {
+  const h = harness({ taken: Array.from({ length: 100 }, (_, n) => 9300 + n) });
+  await assert.rejects(h.devtools.launch({}), { code: 'NO_FREE_PORT' });
+  await assert.rejects(h.devtools.stop('b-missing'), { code: 'UNKNOWN_BROWSER' });
+  assert.deepEqual(await h.devtools.list(), []);
+});
+
+test('ps runner is async and bounded', async (t) => {
+  const calls = [];
+  t.mock.method(childProcess, 'execFile', (command, args, options, callback) => {
+    calls.push({ command, args, options });
+    setImmediate(() => callback(null, '  4242 /bin/other\n'));
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devtools-ps-'));
+  const devtools = createBrowserDevtools({ home, env: { PATH: '' } });
+  const pending = devtools.list();
+  assert.equal(calls.length, 0, 'the caller is not blocked: nothing ran synchronously');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ['-eo', 'pid=,args=']);
+  assert.equal(calls[0].command, 'ps');
+  assert.equal(calls[0].options.timeout, 5000);
+  assert.deepEqual(await pending, []);
 });

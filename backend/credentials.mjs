@@ -81,6 +81,25 @@ export function writeFileAtomic(file, contents, fs = fsDefault) {
   }
 }
 
+// At most `limit` of the entries `names` in `dir`, the most recently modified first when there are
+// more than `limit` (so a cap drops the oldest, never an arbitrary readdir order). An entry that
+// cannot be stat'ed counts as oldest. Up to `limit` entries nothing is stat'ed and the order is kept.
+export function newestEntries(dir, names, limit, fs = fsDefault) {
+  if (names.length <= limit) return names;
+  const mtime = (name) => {
+    try {
+      return fs.statSync(path.join(dir, name)).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  return names
+    .map((name) => ({ name, at: mtime(name) }))
+    .sort((a, b) => b.at - a.at)
+    .slice(0, limit)
+    .map(({ name }) => name);
+}
+
 export function createCredentialStore({ paths, fs = fsDefault }) {
   function read(file) {
     return readTokenFile(file, fs);

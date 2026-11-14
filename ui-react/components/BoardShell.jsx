@@ -2,8 +2,9 @@
 // one-row toolbar (title, sub line, counts, controls), an optional switch, notes, and a body
 // that fills the viewport with a board of columns. What the cards are, and what the columns
 // mean, stay with each screen; presentation is ui-react/styles/board.css.
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
+import { registerBoardRefresh } from '../lib/board-refresh.js';
 import { Button, Card, DashboardTooltip, LoadingState } from './Primitives.jsx';
 
 // The panel <section>. `board-panel` is what opts the page into the one-viewport fill layout.
@@ -88,19 +89,63 @@ export function BoardSection({
 
 // The Refresh button and the countdown beside it, for a board screen that polls with
 // useActivePolling: pass the hook's `load`, so a click restarts the countdown and goes through the
-// hook's in-flight guard. Home and PRs keep their own pair: their countdown is `.pr-next` (body
-// font, --fs-sm), this one is `.board-next` (mono, --fs-xs), so adopting it there would change how
-// those two screens look.
+// hook's in-flight guard, and the hook's `countdown` descriptor as `countdown`. Home and PRs keep
+// their own pair: their countdown is `.pr-next` (body font, --fs-sm), this one is `.board-next`
+// (mono, --fs-xs), so adopting it there would change how those two screens look.
 export function RefreshControl({ name, loading, countdown, onRefresh }) {
+  // The command palette's Refresh entry runs this same guarded load, found by the screen's name.
+  useEffect(() => registerBoardRefresh(name, onRefresh), [name, onRefresh]);
   return (
     <>
       <Button data-testid={`${name}-refresh`} disabled={loading} onClick={() => onRefresh()}>
         Refresh
       </Button>
-      <span className="board-next" data-testid={`${name}-next`}>
-        {countdown}
-      </span>
+      <BoardCountdown name={name} countdown={countdown} />
     </>
+  );
+}
+
+const COUNTDOWN_TICK_MS = 1000;
+
+// The label beside Refresh and the only 1 s clock a board has, so only this span re-renders per
+// second, never the panel around it. It ticks only while its screen is active, as the polling does.
+// It reads `refresh in Ns`, `refreshing…` once due, and `refresh paused (Ns)` while the page is
+// hidden; the clock stops while hidden (the label then holds the value it had when the page was
+// hidden) and restarts, with a fresh reading, on visible.
+// `countdown` is `{ lastLoadedAt, interval, loaded, active }` from useActivePolling.
+function BoardCountdown({ name, countdown: { lastLoadedAt, interval, loaded, active } }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!active) return undefined;
+    let timer = null;
+    const tick = () => setNow(Date.now());
+    const sync = () => {
+      clearInterval(timer);
+      timer = null;
+      tick();
+      if (!document.hidden) timer = setInterval(tick, COUNTDOWN_TICK_MS);
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, [active]);
+  // `now` can lag a just-finished load by up to a tick, so the elapsed time never goes negative.
+  const remaining = Math.max(0, interval - Math.max(0, now - lastLoadedAt));
+  const text =
+    !loaded || !lastLoadedAt
+      ? ''
+      : document.hidden
+        ? `refresh paused (${Math.ceil(remaining / 1000)}s)`
+        : remaining
+          ? `refresh in ${Math.ceil(remaining / 1000)}s`
+          : 'refreshing…';
+  return (
+    <span className="board-next" data-testid={`${name}-next`}>
+      {text}
+    </span>
   );
 }
 

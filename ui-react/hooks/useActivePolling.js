@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+// Polls `load` while `active`, once at activation and again each `interval` while the page is
+// visible, never two at once. `countdown` is a descriptor, `{ lastLoadedAt, interval, loaded,
+// active }`, not text: RefreshControl hands it to BoardCountdown, which owns the 1 s clock and the words. The
+// clock lives there so that only a label re-renders per second, never the panel; the tick kept here
+// holds no state and exists only to start a poll that has come due.
 export function useActivePolling({ active, interval, load, loaded }) {
   const [lastLoadedAt, setLastLoadedAt] = useState(0);
-  const [now, setNow] = useState(Date.now());
   const inFlight = useRef(false);
   const loadRef = useRef(load);
   const loadedRef = useRef(loaded);
@@ -24,31 +28,20 @@ export function useActivePolling({ active, interval, load, loaded }) {
     if (!active) return undefined;
     if (!loadedRef.current || Date.now() - lastLoadedRef.current >= interval)
       loadOnce({ silent: loadedRef.current });
-    const tick = () => {
-      setNow(Date.now());
+    const pollIfDue = () => {
       if (!document.hidden && Date.now() - lastLoadedRef.current >= interval)
         loadOnce({ silent: true });
     };
-    const timer = setInterval(tick, 1000);
-    const visibility = () => {
-      setNow(Date.now());
-      if (!document.hidden && Date.now() - lastLoadedRef.current >= interval)
-        loadOnce({ silent: true });
-    };
-    document.addEventListener('visibilitychange', visibility);
+    const timer = setInterval(pollIfDue, 1000);
+    document.addEventListener('visibilitychange', pollIfDue);
     return () => {
       clearInterval(timer);
-      document.removeEventListener('visibilitychange', visibility);
+      document.removeEventListener('visibilitychange', pollIfDue);
     };
   }, [active, interval, loadOnce]);
-  const remaining = Math.max(0, interval - (now - lastLoadedAt));
-  const countdown =
-    !loaded || !lastLoadedAt
-      ? ''
-      : document.hidden
-        ? `refresh paused (${Math.ceil(remaining / 1000)}s)`
-        : remaining
-          ? `refresh in ${Math.ceil(remaining / 1000)}s`
-          : 'refreshing…';
+  const countdown = useMemo(
+    () => ({ lastLoadedAt, interval, loaded, active }),
+    [lastLoadedAt, interval, loaded, active],
+  );
   return { load: loadOnce, countdown };
 }

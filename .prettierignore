@@ -7,3 +7,6 @@ playwright-report/
 .playwright-mcp/
 .orchestrator/
 .claude/
+team-velocity.html
+.video-deck/
+.playwright/

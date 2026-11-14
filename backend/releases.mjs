@@ -3,6 +3,7 @@
 // summary/detail endpoints. GitHub is queried only to resolve linked PR authors;
 // "merged" is still Jira's copy of GitHub's state and can lag a fresh merge.
 import { jiraConfig, authorization } from './jira.mjs';
+import { upstreamFetch, upstreamError } from './upstream.mjs';
 import { collectCappedJiraIssues } from './jira-search.mjs';
 import { fetchPrOwners } from './github.mjs';
 import {
@@ -58,12 +59,12 @@ function readCachedPullRequests(cfg, issueId) {
 }
 
 async function jiraGet(cfg, url, label) {
-  const res = await fetch(url, {
+  const res = await upstreamFetch('jira', url, {
     redirect: 'error',
     headers: { Accept: 'application/json', Authorization: authorization(cfg.email, cfg.token) },
     signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error(`jira ${label} failed: ${res.status}`);
+  if (!res.ok) throw upstreamError('jira', res, `jira ${label} failed: ${res.status}`);
   return res.json();
 }
 

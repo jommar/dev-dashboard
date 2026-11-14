@@ -39,6 +39,7 @@ import {
   runningBrowser,
   SECOND_TEXT,
   seedPlanned,
+  sentRecord,
   sessionUuid,
   sleep,
   statusFile,
@@ -1326,4 +1327,46 @@ test('orphans: while a chat turn holds the session its card reads working and of
   const idle = (await f.http.bare('GET', TICKETS)).json();
   assert.equal(idle.tickets[KEY].state, 'done');
   assert.deepEqual(idle.tickets[KEY].goTo.investigate, RESUME_OF(ORPHAN_ID));
+});
+
+// ---- continue ----
+
+const CONTINUE = '/api/claude/continue';
+
+test('continue: route', async (t) => {
+  const f = await claudeHttpFixture(t);
+  const questions = [question('q1', 'Portage-backend')];
+  f.seed(KEY, {
+    status: statusFile({ questions }),
+    launch: {
+      [INVESTIGATE]: launchRecord({
+        answered: answeredMap(questions),
+        sent: sentRecord(questions),
+      }),
+    },
+  });
+  f.cli.setListing([listed({ id: EARLIER_ID })]);
+  const before = f.files();
+
+  const res = await f.http.json('POST', CONTINUE, { key: KEY });
+
+  assert.equal(res.status, 200);
+  const reply = res.json();
+  assert.deepEqual(Object.keys(reply).sort(), ['key', 'ok', 'send', 'ticket']);
+  assert.deepEqual(reply.send, { status: 'sent' });
+  assert.equal(f.cli.resumes().length, 1, 'one resume of the failed session');
+  assert.deepEqual(f.files(), before, 'no state file is written');
+
+  // A refusal is the usual envelope; a bad key is invalid; a ticket not started is refused.
+  f.cli.setListing([workingEntry({ id: EARLIER_ID })]);
+  const busy = await f.http.json('POST', CONTINUE, { key: KEY });
+  assert.equal(busy.status, 409);
+  assert.equal(busy.json().code, 'CLAUDE_REFUSED');
+  assert.deepEqual(busy.json().errors, ['session_running']);
+  const none = await f.http.json('POST', CONTINUE, { key: SECOND_KEY });
+  assert.equal(none.status, 409);
+  assert.deepEqual(none.json().errors, ['not_failed']);
+  const invalid = await f.http.json('POST', CONTINUE, { key: 'not a key' });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.json().code, 'INVALID_TICKET');
 });

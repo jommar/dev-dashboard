@@ -54,7 +54,7 @@ async function endpoint(t, { manager, listWorktrees }) {
     });
     return { status, json: JSON.parse(text) };
   };
-  return { fixture, request };
+  return { fixture, request, origin };
 }
 
 // A manager that records the checkout calls the routes make and answers the group lookup.
@@ -198,4 +198,135 @@ test('checkout 6: a pick persists for a new Manager and picking main removes it'
   assert.equal(back.json.checkoutLabel, null);
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).checkouts[main], undefined);
   assert.equal(createCheckoutStore({ home }).get(main), undefined);
+});
+
+// ---- GET /api/repos/checkout-matches?key= : which worktree of each repo belongs to a ticket ----
+
+const SNAPSHOTS = [
+  { id: 'be', dir: 'Portage-backend' },
+  { id: 'queue', dir: 'Portage-backend' },
+  { id: 'fe', dir: 'Portage-frontend' },
+];
+const MAINS = {
+  'Portage-backend': '/r/Portage-backend',
+  'Portage-frontend': '/r/Portage-frontend',
+};
+
+// A manager that lists the three services and answers each group lookup; it records every switch.
+function groupedManager() {
+  const calls = [];
+  return {
+    calls,
+    list: () => SNAPSHOTS,
+    applySettings() {},
+    withSettingsLock: (operation) => operation(),
+    checkoutGroup: (dir) =>
+      MAINS[dir]
+        ? { main: MAINS[dir], ids: SNAPSHOTS.filter((s) => s.dir === dir).map((s) => s.id) }
+        : null,
+    switchCheckoutUnlocked: async (...args) => {
+      calls.push(args);
+      return { checkout: args[1], checkoutLabel: 'x', restarted: [] };
+    },
+  };
+}
+
+// Each repo's listing by its main checkout; an Error value makes that repo's listing fail.
+function perRepoListing(byMain) {
+  const calls = [];
+  const listWorktrees = async (main) => {
+    calls.push(main);
+    const listing = byMain[main];
+    if (listing instanceof Error) throw listing;
+    return listing;
+  };
+  return { calls, listWorktrees };
+}
+
+const listingOf = (main, ...labels) => [
+  { path: main, label: 'master', isMain: true },
+  ...labels.map((label) => ({ path: `/r/.wt/${label}`, label, isMain: false })),
+];
+
+test('checkout-matches: reports each repo, one match, none, and switches nothing', async (t) => {
+  const manager = groupedManager();
+  const listing = perRepoListing({
+    [MAINS['Portage-backend']]: listingOf(MAINS['Portage-backend'], 'tap-14-x', 'tap-9-y'),
+    [MAINS['Portage-frontend']]: listingOf(MAINS['Portage-frontend'], 'tap-9-y'),
+  });
+  const { request } = await endpoint(t, { manager, listWorktrees: listing.listWorktrees });
+
+  const response = await request('/api/repos/checkout-matches?key=TAP-14');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.json, {
+    key: 'TAP-14',
+    repos: [
+      {
+        dir: 'Portage-backend',
+        ids: ['be', 'queue'],
+        status: 'match',
+        path: '/r/.wt/tap-14-x',
+        label: 'tap-14-x',
+      },
+      { dir: 'Portage-frontend', ids: ['fe'], status: 'none' },
+    ],
+  });
+  assert.deepEqual(listing.calls.sort(), Object.values(MAINS).sort(), 'one listing per repo');
+  assert.deepEqual(manager.calls, [], 'no checkout changed');
+});
+
+test('checkout-matches: an ambiguous repo names its candidates and chooses no path', async (t) => {
+  const manager = groupedManager();
+  const listing = perRepoListing({
+    [MAINS['Portage-backend']]: listingOf(MAINS['Portage-backend'], 'tap-14-b', 'tap-14-a'),
+    [MAINS['Portage-frontend']]: listingOf(MAINS['Portage-frontend']),
+  });
+  const { request } = await endpoint(t, { manager, listWorktrees: listing.listWorktrees });
+
+  const { json } = await request('/api/repos/checkout-matches?key=TAP-14');
+
+  assert.deepEqual(json.repos[0], {
+    dir: 'Portage-backend',
+    ids: ['be', 'queue'],
+    status: 'ambiguous',
+    candidates: ['tap-14-a', 'tap-14-b'],
+  });
+});
+
+test('checkout-matches rejects: a bad key is 400, cross-site is 403, one failing repo is unavailable', async (t) => {
+  const manager = groupedManager();
+  const listing = perRepoListing({
+    [MAINS['Portage-backend']]: unavailable(),
+    [MAINS['Portage-frontend']]: listingOf(MAINS['Portage-frontend'], 'tap-14-fe'),
+  });
+  const { request, origin } = await endpoint(t, { manager, listWorktrees: listing.listWorktrees });
+
+  for (const query of ['', '?key=x', '?key=tap-14', '?key=TAP-14%2F..', '?key=TAP-14&key=x']) {
+    const bad = await request(`/api/repos/checkout-matches${query}`);
+    assert.equal(bad.status, 400, query);
+    assert.equal(bad.json.code, 'INVALID_TICKET', query);
+  }
+  assert.equal(listing.calls.length, 0, 'git never ran for a bad key');
+
+  for (const site of ['cross-site', 'same-site']) {
+    const { status } = await requestRaw(origin, '/api/repos/checkout-matches?key=TAP-14', {
+      headers: { 'sec-fetch-site': site },
+    });
+    assert.equal(status, 403, site);
+  }
+  assert.equal(listing.calls.length, 0, 'git never ran for a cross-site request');
+
+  const response = await request('/api/repos/checkout-matches?key=TAP-14');
+  assert.equal(response.status, 200, 'one failing repo does not fail the answer');
+  assert.deepEqual(response.json.repos, [
+    { dir: 'Portage-backend', ids: ['be', 'queue'], status: 'unavailable' },
+    {
+      dir: 'Portage-frontend',
+      ids: ['fe'],
+      status: 'match',
+      path: '/r/.wt/tap-14-fe',
+      label: 'tap-14-fe',
+    },
+  ]);
 });

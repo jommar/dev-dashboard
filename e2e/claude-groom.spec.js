@@ -247,3 +247,53 @@ test('scenario 62: the card icon follows grooming only for a ticket with no work
   await expect(iconOf(page, 'TAP-9006')).toHaveAttribute('data-state', 'none');
   await expect(iconOf(page, 'TAP-9006')).not.toHaveAttribute('aria-label', grooming);
 });
+
+test('verdict chip: groom readiness beside the notes link, only for a known verdict', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('none', null, { groom: { ...GROOM.done, verdict: 'NEEDS_INFO' } }),
+    'TAP-9002': claudeEntry('none', null, { groom: GROOM.done }),
+    'TAP-9003': claudeEntry('none', null, { groom: { ...GROOM.done, verdict: 'READY' } }),
+  });
+  let dialog = await openDialog(page);
+  const chip = dialog.getByTestId('claude-verdict-groom');
+  await expect(chip).toHaveText('Readiness: Needs info');
+  await expect(chip).toHaveAttribute('data-tone', 'caution');
+  await closeDialog(page);
+  dialog = await openDialog(page, 'TAP-9002');
+  await expect(dialog.getByTestId('claude-view-groom')).toBeVisible();
+  await expect(dialog.getByTestId('claude-verdict-groom')).toHaveCount(0);
+  await closeDialog(page);
+  dialog = await openDialog(page, 'TAP-9003');
+  await expect(dialog.getByTestId('claude-verdict-groom')).toHaveText('Readiness: Ready');
+  await expect(dialog.getByTestId('claude-verdict-groom')).toHaveAttribute('data-tone', 'good');
+});
+
+test('verdict note: a groom that needs info says so before a plan, and never blocks Investigate', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('none', null, { groom: { ...GROOM.done, verdict: 'NEEDS_INFO' } }),
+    'TAP-9002': claudeEntry('done', 'plan_ready', {
+      flags: PLAN_DONE,
+      groom: { ...GROOM.done, verdict: 'NEEDS_INFO' },
+    }),
+    'TAP-9003': claudeEntry('none', null, { groom: { ...GROOM.done, verdict: 'READY' } }),
+  });
+  let dialog = await openDialog(page);
+  await expect(dialog.getByTestId('claude-groom-warning')).toContainText('open decisions');
+  const investigate = dialog.getByTestId('claude-action-investigate');
+  await expect(investigate).toBeEnabled();
+  await investigate.click();
+  await expect.poll(() => bodiesTo(dashboard, '/api/claude/launch').length).toBe(1);
+  await closeDialog(page);
+  // With a plan present, or a ready groom, there is no note.
+  for (const key of ['TAP-9002', 'TAP-9003']) {
+    dialog = await openDialog(page, key);
+    await expect(dialog.getByTestId('claude-groom-warning')).toHaveCount(0);
+    await closeDialog(page);
+  }
+});

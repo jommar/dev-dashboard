@@ -293,6 +293,42 @@ test('rereviewClaude posts only the ticket key and passes the send outcome throu
   assert.deepEqual(result.send, send);
 });
 
+test('continueClaude posts only the ticket key and passes the send outcome through', async (t) => {
+  const calls = [];
+  const send = { status: 'failed', reason: 'resume_failed' };
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse({ ok: true, key: 'TAP-1234', ticket: { state: 'working' }, send });
+  });
+
+  const result = await api.continueClaude('TAP-1234');
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], '/api/claude/continue');
+  assert.equal(calls[0][1].method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { key: 'TAP-1234' });
+  assert.deepEqual(result.send, send);
+});
+
+test('getCheckoutMatches asks the matches route for one ticket key, encoded', async (t) => {
+  const calls = [];
+  const payload = {
+    key: 'TAP-1',
+    repos: [{ dir: 'Portage-backend', ids: ['be'], status: 'none' }],
+  };
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse(payload);
+  });
+
+  assert.deepEqual(await api.getCheckoutMatches('TAP-1'), payload);
+  await api.getCheckoutMatches('A B&c');
+
+  assert.equal(calls[0][0], '/api/repos/checkout-matches?key=TAP-1');
+  assert.equal(calls[1][0], '/api/repos/checkout-matches?key=A%20B%26c');
+  assert.equal(calls[0][1]?.method ?? 'GET', 'GET');
+});
+
 const deferred = () => {
   let resolve;
   const promise = new Promise((done) => {

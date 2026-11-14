@@ -1100,3 +1100,19 @@ test('the session list says when each session was last active, and flags a worki
   await expect(page.getByTestId('sessions-drawer').locator('[aria-live]')).toHaveCount(0);
   await expect(page.getByTestId('bot-bar-live').locator('> *')).toHaveCount(0);
 });
+
+test('verdict: an e2e bubble and its live-region message carry the verdict', async ({
+  page,
+  dashboard,
+}) => {
+  await page.clock.install();
+  const e2e = (state, extra = {}) =>
+    claudeEntry('none', null, { e2e: { state, reason: 'x', ...extra } });
+  seed(dashboard, { sessions: { 'BOT-1': e2e('working') }, sprint: ['BOT-1'] });
+  await page.goto('/#/home');
+  await expect(bots(page)).toHaveCount(1);
+  dashboard.data.claude.tickets['BOT-1'] = e2e('done', { verdict: 'FAIL' });
+  await page.clock.runFor(POLL);
+  await expect(callout(page, 'BOT-1-e2e')).toHaveText('BOT-1 · Done ✓ · Fail');
+  await expect(live(page)).toHaveText(['BOT-1 e2e: done, verdict fail']);
+});

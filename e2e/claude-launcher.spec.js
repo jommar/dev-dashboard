@@ -1429,3 +1429,49 @@ test('scenario 57: a send message can be dismissed, and clears once the ticket s
   await expect(dialog.getByTestId('claude-dialog-state')).toHaveText('plan ready');
   await expect(result).toHaveText('');
 });
+
+test('continue: a failed session offers Continue, posts only the key and shows the result', async ({
+  page,
+  dashboard,
+}) => {
+  const answered = [claudeQuestion('q1', Q1, 'Portage-backend')];
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('failed', 'ended_without_flag', {
+      goTo: sessions(RESUME),
+      questions: answered,
+    }),
+    // The session is gone from the CLI listing: Continue is shown off, with its reason.
+    'TAP-9002': claudeEntry('failed', 'session_missing', { questions: answered }),
+    // Working, done and never started: no Continue control at all.
+    'TAP-9003': claudeEntry('working', 'running', { goTo: sessions(ATTACH) }),
+    'TAP-9004': claudeEntry('done', 'plan_ready', { flags: PLAN_DONE, goTo: sessions(RESUME) }),
+  });
+
+  let dialog = await openDialog(page);
+  const button = dialog.getByTestId('claude-action-continue');
+  await expect(button).toBeEnabled();
+  await button.click();
+  await expect(dialog.getByTestId('claude-continue-result')).toHaveText(
+    'Continue sent. Claude is picking up where it stopped.',
+  );
+  expect(bodiesTo(dashboard, '/api/claude/continue')).toEqual([{ key: KEY }]);
+  expect(bodiesTo(dashboard, '/api/claude/launch')).toEqual([]);
+  // The next poll shows the session working, and Continue is gone with the failure.
+  await expect(dialog.getByTestId('claude-dialog-state')).toHaveText('working');
+  await expect(dialog.getByTestId('claude-action-continue')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
+
+  dialog = await openDialog(page, 'TAP-9002');
+  await expect(dialog.getByTestId('claude-action-continue')).toBeDisabled();
+  await expect(dialog.getByTestId('claude-action-hint-continue')).toHaveText(
+    'The Claude session could not be found.',
+  );
+  await page.keyboard.press('Escape');
+  for (const key of ['TAP-9003', 'TAP-9004']) {
+    dialog = await openDialog(page, key);
+    await expect(dialog.getByTestId('claude-action-continue')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+  }
+  expect(bodiesTo(dashboard, '/api/claude/continue')).toHaveLength(1);
+});

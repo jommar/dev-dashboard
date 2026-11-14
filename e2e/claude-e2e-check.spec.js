@@ -518,3 +518,34 @@ test('e2e check: the card icon follows the e2e session only when nothing else st
   await expect(iconOf(page, 'TAP-9004')).toHaveAttribute('data-state', 'failed');
   await expect(iconOf(page, 'TAP-9004')).not.toHaveAttribute('aria-label', /e2e/i);
 });
+
+test('e2e check: verdict chip beside the result link, only for a known verdict', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, {
+    [KEY]: claudeEntry('none', null, {
+      e2e: { ...E2E.done, verdict: 'FAIL' },
+      goTo: sessions(E2E_RESUME),
+    }),
+    'TAP-9002': claudeEntry('none', null, { e2e: E2E.done, goTo: sessions(E2E_RESUME) }),
+    'TAP-9003': claudeEntry('none', null, {
+      e2e: { ...E2E.done, verdict: '<b>x' },
+      goTo: sessions(E2E_RESUME),
+    }),
+  });
+  let dialog = await openDialog(page);
+  const chip = dialog.getByTestId('claude-verdict-e2e');
+  await expect(chip).toHaveText('Verdict: Fail');
+  await expect(chip).toHaveAttribute('data-tone', 'bad');
+  await expect(dialog.getByTestId('claude-view-e2e')).toBeVisible();
+  // Advisory only: nothing about the check is disabled by it.
+  await expect(dialog.getByTestId('claude-action-e2e')).toBeEnabled();
+  await page.keyboard.press('Escape');
+  for (const key of ['TAP-9002', 'TAP-9003']) {
+    dialog = await openDialog(page, key);
+    await expect(dialog.getByTestId('claude-view-e2e')).toBeVisible();
+    await expect(dialog.getByTestId('claude-verdict-e2e')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+  }
+});

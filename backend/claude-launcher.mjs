@@ -16,10 +16,11 @@ import fsDefault from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DASHBOARD_DIR } from './config.mjs';
-import { writeFileAtomic } from './credentials.mjs';
+import { newestEntries, writeFileAtomic } from './credentials.mjs';
 import { settleSession } from './claude-sessions.mjs';
 import { defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
 import { createPromptStore, PROMPT_TEMPLATES } from './claude-prompts.mjs';
+import { createClaudeArtifacts } from './claude-artifacts.mjs';
 import { BROWSER_ID, PORT_FIRST, PORT_LAST } from './browser-devtools.mjs';
 import {
   ANSWER_MAX_LENGTH,
@@ -33,6 +34,8 @@ import {
   answerHash,
   answersToSend,
   approveBlock,
+  continueBlock,
+  currentRecord,
   deriveEntry,
   implementBlock,
   implementStatus,
@@ -293,11 +296,11 @@ export function createClaudeLauncher({
 
   function ticketKeys() {
     try {
-      return fs
+      const keys = fs
         .readdirSync(stateDir, { withFileTypes: true })
         .filter((dirent) => dirent.isDirectory() && isTicketKey(dirent.name))
-        .map((dirent) => dirent.name)
-        .slice(0, MAX_TICKETS);
+        .map((dirent) => dirent.name);
+      return newestEntries(stateDir, keys, MAX_TICKETS, fs);
     } catch (error) {
       if (error.code === 'ENOENT') return [];
       throw error;
@@ -307,18 +310,37 @@ export function createClaudeLauncher({
   // An absent status.json reads as an empty one; an unreadable one stays null.
   const statusOf = ({ value }) => (value === undefined ? {} : value);
 
+  const artifacts = createClaudeArtifacts({ home, fs });
+  const VERDICT_FILE = { [GROOM]: 'groom.md', [E2E]: 'e2e.md' };
+  const SIDE_FIELD = { [GROOM]: 'groom', [E2E]: 'e2e' };
+
+  // A done groom or e2e side's one-line outcome, added to its `{ state, reason }` as `verdict` when
+  // its report starts with one (the file is read only then, so a poll costs nothing for the rest).
+  function withVerdicts(key, entry) {
+    for (const side of [GROOM, E2E]) {
+      const field = SIDE_FIELD[side];
+      if (entry[field]?.state !== 'done') continue;
+      const verdict = artifacts.verdict(key, VERDICT_FILE[side]);
+      if (verdict) entry = { ...entry, [field]: { ...entry[field], verdict } };
+    }
+    return entry;
+  }
+
   // The card's entry, from the files as they are now and a listing.
   function ticketEntry(key, entries) {
     const status = statusOf(readObject(statusPath(key)));
-    return deriveEntry({
-      status,
-      launch: readObject(launchPath(key)).value ?? null,
-      entries,
-      now: now(),
-      planPresent: status?.[INVESTIGATE] === true && planExists(key),
-      recovered,
-      held: claudeSessions.isHeld,
-    });
+    return withVerdicts(
+      key,
+      deriveEntry({
+        status,
+        launch: readObject(launchPath(key)).value ?? null,
+        entries,
+        now: now(),
+        planPresent: status?.[INVESTIGATE] === true && planExists(key),
+        recovered,
+        held: claudeSessions.isHeld,
+      }),
+    );
   }
 
   // One launch or answer at a time per ticket, so their reads and writes never interleave.
@@ -505,6 +527,32 @@ export function createClaudeLauncher({
   async function rereview({ key }) {
     if (!isTicketKey(key)) throw invalid('INVALID_TICKET', 'Invalid ticket.');
     return withTicketLock(key, () => rereviewLocked(key));
+  }
+
+  // Asks the failed workflow session to carry on, in the same session that still holds its context.
+  // `continueBlock` allows only a `failed` session that the fresh listing still shows. Nothing is
+  // written before or after the send (no status.json or launch.json), so a failure leaves every
+  // file as it was and the effect shows as `working` on the next listing.
+  async function continueLocked(key) {
+    const entries = await freshListing();
+    const launched = readObject(launchPath(key));
+    const record = currentRecord(launched.value);
+    const session = record ? resolveSession(entries, record) : null;
+    const reason = continueBlock({ state: ticketEntry(key, entries).state, session });
+    if (reason) throw refused(reason);
+
+    const template = promptTemplate('continue');
+    const result = template
+      ? await deliverToSession(key, record, fillTemplate(template, promptValues(key)))
+      : sendFailed('prompt_unreadable');
+    const listing =
+      result.status === 'sent' ? await claudeSessions.entries({ fresh: true }) : entries;
+    return { ok: true, key, send: result, ticket: ticketEntry(key, listing) };
+  }
+
+  async function continueSession({ key }) {
+    if (!isTicketKey(key)) throw invalid('INVALID_TICKET', 'Invalid ticket.');
+    return withTicketLock(key, () => continueLocked(key));
   }
 
   // The body's [id, text] pairs: a plain object of at most 20 entries, each a question id and a
@@ -889,5 +937,5 @@ export function createClaudeLauncher({
     };
   }
 
-  return { list, launch, answer, approve, rereview, launchedName };
+  return { list, launch, answer, approve, continueSession, rereview, launchedName };
 }

@@ -24,7 +24,7 @@ import path from 'node:path';
 import { spawn as spawnDefault } from 'node:child_process';
 import { fail as tooMany } from './browser-devtools.mjs';
 import { withoutSecrets } from './config.mjs';
-import { writeFileAtomic } from './credentials.mjs';
+import { newestEntries, writeFileAtomic } from './credentials.mjs';
 import { defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
 import { historyItems, liveMessages } from './claude-chat-items.mjs';
 import {
@@ -135,8 +135,7 @@ export function createClaudeChat({
     } catch {
       return [];
     }
-    return names
-      .slice(0, MAX_RECORDS)
+    return newestEntries(recordsDir, names, MAX_RECORDS, fs)
       .map((name) => name.slice(0, -'.json'.length))
       .filter(isSessionId)
       .map(readRecord)

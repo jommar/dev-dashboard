@@ -6,6 +6,7 @@
 // `lastActive` reads only file modification times (stat, never content). Only the times it returns,
 // keyed by session id, leave this module; no name, path or cwd does. `transcriptFile` is the one
 // other call that looks at a transcript, and it too only stats: it gives the chat the path to read.
+// `transcriptFiles` is the same for the usage tally: names and directory listings, never content.
 //
 // Everything runs as a fixed argument array with no shell. The listing carries session names and
 // working directories; neither is logged, stored or sent beyond the picker's name. The CLI's output
@@ -641,6 +642,15 @@ export function createClaudeSessions({
     return newest;
   }
 
+  // The transcript files that make up a session's usage: its newest transcript copy, then the
+  // transcripts of its subagents beside that copy. Several copies of one session are not summed (they
+  // are the same conversation). Names and directory listings only; empty for a session with none.
+  async function transcriptFiles(sessionId) {
+    const main = await transcriptFile(sessionId);
+    if (!main) return [];
+    return [main, ...(await subagentPaths(path.dirname(main), sessionId))];
+  }
+
   // Starts a background session named `name` that runs `prompt` from `cwd`, with access to `addDir`
   // when one is given, the built-in `tools` only when given, none of `disallowedTools` when given, and
   // only the MCP servers in the `mcpConfig` file when given (`--strict-mcp-config`).
@@ -678,6 +688,7 @@ export function createClaudeSessions({
     beginTurn,
     isHeld,
     transcriptFile,
+    transcriptFiles,
     recoverSessionIds,
   };
 }

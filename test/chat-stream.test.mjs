@@ -4,7 +4,7 @@
 // The source is a fake: nothing here touches a network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chatReducer, createChatStream } from '../ui/chat-stream.js';
+import { chatReducer, costLabel, createChatStream } from '../ui/chat-stream.js';
 
 const SESSION = '3f2b8c1a-5d4e-4f60-9a7b-1c2d3e4f5a6b';
 const USER = { id: 'u1', kind: 'user', text: 'hello' };
@@ -190,4 +190,14 @@ test('scenario 21: closing closes the source once and silences the stream', () =
   assert.equal(source.closes, 1);
   source.say('item', { item: ANSWER });
   assert.equal(heard.length, 1, 'nothing after close');
+});
+
+test('cost label: dollars to the cent, "under $0.01" below a cent, nothing for a non-cost', () => {
+  assert.equal(costLabel(0.4213), 'Session cost so far $0.42');
+  assert.equal(costLabel(12), 'Session cost so far $12.00');
+  assert.equal(costLabel(0.01), 'Session cost so far $0.01');
+  assert.equal(costLabel(0.004), 'Session cost so far under $0.01');
+  assert.equal(costLabel(0), 'Session cost so far under $0.01');
+  for (const bad of [null, undefined, NaN, Infinity, -0.5, '0.42', {}])
+    assert.equal(costLabel(bad), '');
 });

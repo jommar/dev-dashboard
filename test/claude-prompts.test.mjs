@@ -15,6 +15,7 @@ import {
   ANSWERS_IMPLEMENT_TEMPLATE,
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
+  CONTINUE_TEMPLATE,
   BAD_PROMPT_FILES,
   E2E_TEMPLATE,
   GROOM_TEMPLATE,
@@ -69,7 +70,7 @@ test('scenario 140: with no files and no folder every prompt is the built-in tex
   assert.deepEqual(
     list,
     NAMES.map((name) => entry(name, 'default')),
-    'ten entries, in this order, each with its label, placeholders and the built-in text',
+    'eleven entries, in this order, each with its label, placeholders and the built-in text',
   );
   assert.equal(fs.existsSync(p.promptsDir), false, 'listing creates no folder');
   assert.deepEqual(fsChanges(p.recorder), [], 'and changes nothing');
@@ -95,6 +96,7 @@ test('scenario 140: a file that is usable is custom with its trimmed text, place
     entry('answers', 'custom', 'only {CHANGE}'),
     entry('answers-implement', 'default'),
     entry('approve', 'default'),
+    entry('continue', 'default'),
     entry('rereview', 'default'),
     entry('groom', 'default'),
     entry('review', 'default'),
@@ -123,7 +125,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
     assert.deepEqual(
       list,
       NAMES.map((name) => entry(name, 'unusable')),
-      'every one of the ten',
+      'every one of the eleven',
     );
     for (const name of NAMES)
       assert.deepEqual(await p.store.read(name), entry(name, 'unusable'), `read ${name}`);
@@ -140,6 +142,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
         ['answers', 'custom'],
         ['answers-implement', 'unusable'],
         ['approve', 'unusable'],
+        ['continue', 'unusable'],
         ['rereview', 'unusable'],
         ['groom', 'unusable'],
         ['review', 'unusable'],
@@ -247,7 +250,7 @@ const BAD_NAMES = [
   7,
 ];
 
-test('scenario 143: only the ten names are known, anything else is refused before any file is looked at', async (t) => {
+test('scenario 143: only the eleven names are known, anything else is refused before any file is looked at', async (t) => {
   const p = await promptStore(t);
   // Where `../investigate` would land if a name were put into a path.
   const sentinel = path.join(p.root, 'investigate.md');
@@ -286,6 +289,7 @@ test('scenario 144: write keeps the trimmed text and one newline, and answers wi
     'answers-implement.md',
     'answers.md',
     'approve.md',
+    'continue.md',
     'e2e.md',
     'groom.md',
     'implement.md',
@@ -559,6 +563,7 @@ test('scenario 150: a file that contains a NUL byte is unusable, shown with the 
     entry('answers', 'custom', 'a fine text'),
     entry('answers-implement', 'default'),
     entry('approve', 'default'),
+    entry('continue', 'default'),
     entry('rereview', 'default'),
     entry('groom', 'default'),
     entry('review', 'default'),
@@ -671,7 +676,7 @@ for (const [name, placeholders] of [
 
 // ---- the registered names and the groom prompt ----
 
-test('scenario 200: the ten registered prompt names retain their order', async () => {
+test('scenario 200: the eleven registered prompt names retain their order', async () => {
   const { PROMPT_NAMES: names, PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
 
   assert.deepEqual(names, NAMES);
@@ -680,7 +685,7 @@ test('scenario 200: the ten registered prompt names retain their order', async (
   assert.equal(PROMPT_TEMPLATES.groom, GROOM_TEMPLATE, 'the built-in text, word for word');
 });
 
-test('scenario 200: the ten built-ins are the fixture texts, so the registry and wording agree', async () => {
+test('scenario 200: the eleven built-ins are the fixture texts, so the registry and wording agree', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
 
   assert.deepEqual(PROMPT_TEMPLATES, {
@@ -689,6 +694,7 @@ test('scenario 200: the ten built-ins are the fixture texts, so the registry and
     answers: ANSWERS_TEMPLATE,
     'answers-implement': ANSWERS_IMPLEMENT_TEMPLATE,
     approve: APPROVE_TEMPLATE,
+    continue: CONTINUE_TEMPLATE,
     rereview: REREVIEW_TEMPLATE,
     groom: GROOM_TEMPLATE,
     review: REVIEW_TEMPLATE,
@@ -709,7 +715,7 @@ test('scenario 200: the groom entry has its label and only {KEY} and {SLUG} as p
     text: GROOM_TEMPLATE,
     placeholders: ['{KEY}', '{SLUG}'],
   });
-  assert.deepEqual((await p.store.list())[6], groom, 'the groom entry keeps its position');
+  assert.deepEqual((await p.store.list())[7], groom, 'the groom entry keeps its position');
   assert.ok(!groom.text.includes('{STATUS_FILE}'), 'the built-in text has no status file');
   assert.ok(groom.text.includes('`groom-ticket` skill'), 'it runs the groom-ticket skill');
   assert.ok(groom.text.includes('.orchestrator/{SLUG}/groom.md'), 'and names its deliverable');
@@ -801,6 +807,49 @@ test('the implement prompt tags an appended blocker implement-plan and preserves
   assert.match(text, /never change an answered question's id, text, answer or phase/i);
 });
 
+test('the implement prompt commits locally in its worktree and never pushes or opens a pull request', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  const text = PROMPT_TEMPLATES.implement;
+
+  assert.match(text, /Commit the changes in the worktree on its own branch/);
+  assert.match(text, /Never push or open a pull request/);
+  assert.match(text, /write a short report in `\.orchestrator\/\{SLUG\}\/`/);
+  assert.doesNotMatch(text, /Do not commit/i);
+  assert.doesNotMatch(text, /step 4|finalize/i, 'the built-in runs no docs finalize step');
+  assert.match(text, /"phase": "implement-plan"/, 'the blocker paragraph is still there');
+  assert.match(text, /Finish: your very last action/, 'the Finish paragraph is still there');
+});
+
+test('no-commit rule: the planning, groom and approve prompts still create no branch, commit, push or pull request', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  for (const name of ['investigate', 'answers', 'approve', 'groom']) {
+    assert.match(
+      PROMPT_TEMPLATES[name].replace(/\s+/g, ' '),
+      /branch, commit, push or pull request/,
+      `${name} keeps its no-commit rule`,
+    );
+  }
+});
+
+test('the implement prompt takes its decisions from the plan documents and never from the saved answers', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  const text = PROMPT_TEMPLATES.implement;
+
+  for (const doc of ['02-plan.md', '02-checklist.md', '02-spec.md']) {
+    assert.ok(text.includes(doc), `names ${doc}`);
+  }
+  assert.match(text, /\.orchestrator\/\{SLUG\}\//);
+  assert.match(text, /single source of truth/);
+  assert.match(
+    text,
+    /Do not take decisions from the `answer` fields in `\{STATUS_FILE\}`/,
+    'the saved answers are not a source of decisions',
+  );
+  assert.doesNotMatch(text, /questions\[\]\.answer/);
+  assert.doesNotMatch(text, /holds the user's answers/);
+  assert.doesNotMatch(text, /apply them/i);
+});
+
 test('the implement answers message continues implementation and never returns to the approval gate', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
   const text = PROMPT_TEMPLATES['answers-implement'];
@@ -818,14 +867,26 @@ test('the implement answers message continues implementation and never returns t
   );
   assert.doesNotMatch(text, /preserve every existing question's phase/i);
   assert.match(text, /Never change an answered question's id, text, answer or phase/i);
-  assert.match(text, /Do not commit, push or open a pull request/i);
-  assert.match(
-    text,
-    /leave the changes in the worktree with a short report in `\.orchestrator\/\{SLUG\}\/`/,
-  );
+  assert.match(text, /commit the changes there on its own branch/i);
+  assert.match(text, /never push or open a pull request/i);
+  assert.match(text, /write a short report in `\.orchestrator\/\{SLUG\}\/`/);
   assert.doesNotMatch(text, /change no file outside/, 'the implement session edits code');
   assert.match(text, /change only `"implement-plan": false` to `"implement-plan": true`/);
   assert.doesNotMatch(text, /investigate-and-plan/, 'it sets only implement-plan');
+});
+
+test('the implement answers message applies only implement-plan answers', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  const text = PROMPT_TEMPLATES['answers-implement'];
+
+  assert.match(text, /\{QUESTION_IDS\}/);
+  assert.match(text, /every other question whose `phase` is "implement-plan"/);
+  for (const doc of ['02-plan.md', '02-checklist.md', '02-spec.md']) {
+    assert.ok(text.includes(doc), `names ${doc}`);
+  }
+  assert.match(text, /source of truth for every other decision/);
+  assert.doesNotMatch(text, /Apply ALL current user decisions/i);
+  assert.doesNotMatch(text, /questions\[\]\.answer/);
 });
 
 test('override: the implement answers message is listed, editable and resettable like the others', async (t) => {
@@ -857,4 +918,30 @@ test('answer continuation repeats reassessment and gates completion on current q
   assert.match(text, /reset it to false if it was true/, 'a new question reopens completion');
   assert.match(text, /no unanswered questions remain AND[^\n]+reflect the latest decisions/);
   assert.match(text, /Re-read the file immediately before each targeted edit/);
+});
+
+test('verdict: groom prompt', async () => {
+  const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
+  const groom = PROMPT_TEMPLATES.groom;
+  const deliverable = groom.split('\n\n').find((paragraph) => paragraph.startsWith('Deliverable:'));
+  assert.ok(
+    deliverable.includes(
+      'Its first line is `Readiness: READY`, `Readiness: NEEDS_INFO` or `Readiness: BLOCKED`',
+    ),
+    'groom.md starts with the readiness line',
+  );
+  // Its read-only and no-write rules, and its two placeholders, are kept.
+  assert.ok(groom.includes("The skill's read-only rule holds for this whole session"));
+  assert.ok(groom.includes('no Jira write and no Slack post'));
+  assert.ok(!groom.includes('{STATUS_FILE}'));
+  assert.deepEqual(
+    groom.match(/\{[A-Z_]+\}/g).filter((v, i, all) => all.indexOf(v) === i),
+    ['{KEY}', '{SLUG}'],
+  );
+  // The e2e prompt already asks for its line and is unchanged.
+  assert.ok(
+    PROMPT_TEMPLATES.e2e.includes(
+      'Its first line is `Verdict: PASS`, `Verdict: FAIL`, `Verdict: PARTIAL` or `Verdict: BLOCKED: <short reason>`',
+    ),
+  );
 });

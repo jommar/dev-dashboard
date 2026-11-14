@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, DashboardTooltip } from '../components/Primitives.jsx';
 import { SlackWatchCard } from '../components/SlackWatchCard.jsx';
+import { UpstreamNote } from '../components/UpstreamNote.jsx';
 import {
   Board,
   BoardColumn,
@@ -476,7 +477,16 @@ export function SlackPanel({ active }) {
             />
           )
         }
-        notes={coverageNote && <BoardNote testId="slack-coverage">{coverageNote}</BoardNote>}
+        notes={
+          <>
+            <UpstreamNote
+              integrations={['slack']}
+              active={active && connected}
+              refreshKey={countdown.lastLoadedAt}
+            />
+            {coverageNote && <BoardNote testId="slack-coverage">{coverageNote}</BoardNote>}
+          </>
+        }
       >
         {renderBody()}
         {connected && (

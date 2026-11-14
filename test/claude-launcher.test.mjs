@@ -10,6 +10,7 @@ import {
   ANSWERS_IMPLEMENT_TEMPLATE,
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
+  CONTINUE_TEMPLATE,
   REREVIEW_TEMPLATE,
   BAD_PROMPT_FILES,
   BROWSER_ID,
@@ -1219,6 +1220,42 @@ test('scenario 41: 600 ticket folders are listed as 500', async (t) => {
     fs.mkdirSync(path.join(env.stateDir, `TAP-${number}`), { recursive: true });
   const { tickets } = await env.launcher.list();
   assert.equal(Object.keys(tickets).length, 500);
+});
+
+test('scenario 41: over 500 ticket folders the newest are kept, whatever order the folder is read in', async (t) => {
+  const { createClaudeLauncher } = await import('../backend/claude-launcher.mjs');
+  const env = await launcherEnvironment(t);
+  const total = 501;
+  for (let number = 1; number <= total; number++) {
+    const dir = path.join(env.stateDir, `TAP-${number}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.utimesSync(dir, number, number); // a higher number is newer
+  }
+  // A folder read oldest first: a cap taken from the front of that order drops the newest.
+  const oldestFirst = new Proxy(fs, {
+    get: (target, property) =>
+      property === 'readdirSync'
+        ? (dir, options) =>
+            target
+              .readdirSync(dir, options)
+              .sort(
+                (a, b) =>
+                  target.statSync(path.join(dir, a.name)).mtimeMs -
+                  target.statSync(path.join(dir, b.name)).mtimeMs,
+              )
+        : target[property],
+  });
+  const launcher = createClaudeLauncher({
+    claudeSessions: env.sessions,
+    stateDir: env.stateDir,
+    home: env.home,
+    fs: oldestFirst,
+    promptsDir: env.promptsDir,
+  });
+  const { tickets } = await launcher.list();
+  assert.equal(Object.keys(tickets).length, 500);
+  assert.ok(tickets[`TAP-${total}`], 'the newest ticket keeps its card');
+  assert.equal(tickets['TAP-1'], undefined, 'the oldest is the one dropped');
 });
 
 // ---- the human gate: only an answer the dashboard saved counts as answered ----
@@ -3017,7 +3054,7 @@ test('scenario 121: with no answers file the message sent is the built-in text, 
   );
 });
 
-test('scenario 121: the built-in templates are exported as the ten texts, placeholders in them', async () => {
+test('scenario 121: the built-in templates are exported as the eleven texts, placeholders in them', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
   assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
   assert.deepEqual(PROMPT_TEMPLATES, {
@@ -3026,6 +3063,7 @@ test('scenario 121: the built-in templates are exported as the ten texts, placeh
     answers: ANSWERS_TEMPLATE,
     'answers-implement': ANSWERS_IMPLEMENT_TEMPLATE,
     approve: APPROVE_TEMPLATE,
+    continue: CONTINUE_TEMPLATE,
     rereview: REREVIEW_TEMPLATE,
     groom: GROOM_TEMPLATE,
     review: REVIEW_TEMPLATE,

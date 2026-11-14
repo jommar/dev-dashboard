@@ -31,9 +31,10 @@ test('uat-promote ticket fetch throws when unconfigured, maps issues when it is'
     process.env.JIRA_BASE_URL = 'https://example.atlassian.net';
     process.env.JIRA_EMAIL = 'me@example.com';
     process.env.JIRA_TOKEN = 'tok';
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init) => {
       const u = decodeURIComponent(String(url)).replace(/\+/g, ' ');
       assert.match(u, /status = "Promote to UAT"/);
+      assert.ok(init.signal instanceof AbortSignal, 'a stalled Jira cannot hang the request');
       return {
         ok: true,
         json: async () => ({
@@ -325,8 +326,9 @@ test('uat-promote fetchPrBase resolves the PR base ref, rejects without a token'
     await assert.rejects(() => github.fetchPrBase('org/repo', 9), /no GH_TOKEN/);
 
     process.env.GH_TOKEN = 'gh-tok';
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init) => {
       assert.match(String(url), /\/repos\/org\/repo\/pulls\/9$/);
+      assert.ok(init.signal instanceof AbortSignal, 'a stalled GitHub cannot hang the request');
       return { ok: true, json: async () => ({ base: { ref: 'ops/development' } }) };
     };
     const base = await github.fetchPrBase('org/repo', 9);

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createSlackIntegration, slackPaths } from '../backend/slack.mjs';
+import { SECRET_ENV_NAMES } from '../backend/config.mjs';
 import { parseSlackLink } from '../backend/slack-link.mjs';
 
 function setup(t, { fetchImpl, spawnImpl, now } = {}) {
@@ -106,6 +107,30 @@ test('connect launches the sign-in helper once and reports progress', async (t) 
   assert.equal(spawned.length, 1, 'a second click reuses the running window');
   spawned[0].emit('exit', 0);
   assert.equal((await integration.status()).connecting, false);
+});
+
+test('connect starts the sign-in helper without the dashboard credentials', async (t) => {
+  const saved = Object.fromEntries(SECRET_ENV_NAMES.map((name) => [name, process.env[name]]));
+  t.after(() => {
+    for (const [name, value] of Object.entries(saved))
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+  });
+  for (const name of SECRET_ENV_NAMES) process.env[name] = 'synthetic-secret';
+  const options = [];
+  const { integration, paths } = setup(t, {
+    spawnImpl: (command, args, spawnOptions) => {
+      options.push(spawnOptions);
+      const child = new EventEmitter();
+      child.unref = () => {};
+      return child;
+    },
+  });
+  integration.connect();
+  const { env } = options[0];
+  for (const name of SECRET_ENV_NAMES) assert.equal(name in env, false, `${name} is not passed on`);
+  assert.equal(env.SLACK_PROFILE_DIR, paths.profile);
+  assert.equal(env.PATH, process.env.PATH, 'the rest of the environment is kept');
 });
 
 test('disconnect removes the stored session', async (t) => {

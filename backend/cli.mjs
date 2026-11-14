@@ -311,9 +311,13 @@ async function main() {
         console.log(`${command} ${id} (via dashboard)`);
       } else {
         const m = fallback;
-        if (command === 'restart') await m.restart(id);
-        else if (command === 'stop') await m.stop(id);
-        else await m.start(id);
+        const result =
+          command === 'restart'
+            ? await m.restart(id)
+            : command === 'stop'
+              ? await m.stop(id)
+              : await m.start(id);
+        if (result?.ok === false) throw new Error(result.error || `${command} ${id} failed`);
         console.log(`${command} ${id} (in-process)`);
       }
     }
