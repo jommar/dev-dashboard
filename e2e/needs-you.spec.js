@@ -240,6 +240,60 @@ test('Notify me shows On, Off and Blocked as a visible label and keeps its name'
   await expect(page.getByRole('button', { name: 'Notify me', exact: true })).toBeVisible();
 });
 
+test('Notify me has a tooltip on hover and keyboard focus that explains it', async ({
+  page,
+  dashboard,
+}) => {
+  await stubBrowser(page, { permission: 'default', answer: 'granted', hidden: false, on: false });
+  seed(dashboard, { 'TAP-1': WORKING });
+  await page.goto('/#/home');
+  await page.getByTestId('sessions-tab').click();
+  const toggle = page.getByTestId('sessions-notify');
+  const tip = page.getByRole('tooltip');
+  const OFF =
+    /^Get a desktop notification, and a \(N\) count in the tab title, when a session needs you/;
+  // The accessible name is unchanged and no native title can show a second tooltip.
+  await expect(page.getByRole('button', { name: 'Notify me', exact: true })).toBeVisible();
+  await expect(toggle).not.toHaveAttribute('title', /.*/);
+  await toggle.hover();
+  await expect(tip).toHaveText(OFF);
+  await expect(tip).toContainText('Your browser will ask for permission.');
+  // Described by the popup while open, never named by it.
+  await expect(toggle).toHaveAccessibleName('Notify me');
+  await expect(toggle).toHaveAccessibleDescription(OFF);
+  await expect(toggle).not.toHaveAttribute('title', /.*/);
+  await page.mouse.move(0, 0);
+  await expect(tip).toHaveCount(0);
+  // Keyboard focus shows it (a key press first, so the focus counts as keyboard), blur closes it.
+  await page.keyboard.press('Shift');
+  await toggle.focus();
+  await expect(tip).toHaveText(OFF);
+  await toggle.blur();
+  await expect(tip).toHaveCount(0);
+  // On.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.move(0, 0);
+  await toggle.hover();
+  await expect(tip).toHaveText(/^On: you get a desktop notification when a session needs you/);
+  await expect(tip).toContainText('Click to turn off.');
+  await expect(toggle).toHaveAccessibleName('Notify me');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.move(0, 0);
+  // Blocked: the tooltip and the existing note both describe the button.
+  await page.evaluate(() => window.__setPermission('denied'));
+  await expect(page.getByTestId('sessions-notify-note')).toContainText('blocked in the browser');
+  await toggle.hover();
+  await expect(tip).toHaveText(
+    'Notifications are blocked in your browser settings. Allow them for this site, then turn this on again.',
+  );
+  await expect(toggle).toHaveAccessibleName('Notify me');
+  await expect(toggle).toHaveAccessibleDescription(
+    /blocked in your browser settings.*blocked in the browser/,
+  );
+  await expect(toggle).not.toHaveAttribute('title', /.*/);
+});
+
 test('a browser without notifications has no toggle', async ({ page, dashboard }) => {
   await page.addInitScript(() => {
     delete window.Notification;

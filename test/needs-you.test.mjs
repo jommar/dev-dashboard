@@ -7,6 +7,7 @@ import {
   needsYouCount,
   notificationsFor,
   notifyStateLabel,
+  notifyTooltip,
   composeTitle,
   readPreference,
   setShownCount,
@@ -192,4 +193,34 @@ test('notifyStateLabel: On, Blocked and Off', () => {
   // Denied wins, whether or not the stored choice is still on (a revoked permission).
   assert.equal(notifyStateLabel({ on: true, permission: 'denied', active: false }), 'Blocked');
   assert.equal(notifyStateLabel({ on: false, permission: 'denied', active: false }), 'Blocked');
+});
+
+// The Notify me button's hover and focus help: one sentence per state, in one place.
+test('notifyTooltip: Off, On, Blocked and unsupported wording', () => {
+  const off = notifyTooltip({ supported: true, on: false, permission: 'default', active: false });
+  assert.match(off, /^Get a desktop notification, and a \(N\) count in the tab title,/);
+  assert.match(off, /waiting or failed/);
+  assert.match(off, /tab is hidden/);
+  assert.match(off, /Your browser will ask for permission\.$/);
+  // A stored choice that is not yet permitted is still Off: the click asks again.
+  assert.equal(
+    notifyTooltip({ supported: true, on: true, permission: 'default', active: false }),
+    off,
+  );
+  const on = notifyTooltip({ supported: true, on: true, permission: 'granted', active: true });
+  assert.match(on, /^On: you get a desktop notification/);
+  assert.match(on, /Click to turn off\.$/);
+  const blocked = notifyTooltip({ supported: true, on: true, permission: 'denied', active: false });
+  assert.match(blocked, /^Notifications are blocked in your browser settings\./);
+  assert.match(blocked, /turn this on again\.$/);
+  // Denied wins whatever the stored choice, as the label does.
+  assert.equal(
+    notifyTooltip({ supported: true, on: false, permission: 'denied', active: false }),
+    blocked,
+  );
+  assert.equal(
+    notifyTooltip({ supported: false, on: false, permission: 'unsupported', active: false }),
+    'This browser does not support desktop notifications.',
+  );
+  assert.equal(new Set([off, on, blocked]).size, 3);
 });

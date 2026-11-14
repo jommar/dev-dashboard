@@ -52,6 +52,18 @@ export function notificationsFor(ready, { enabled, permission, hidden } = {}) {
 export const notifyStateLabel = ({ permission, active }) =>
   permission === 'denied' ? 'Blocked' : active ? 'On' : 'Off';
 
+// What the Notify me button's tooltip says, one sentence per state (Blocked wins, as in the label).
+// An unsupported browser gets no button today; its sentence is here so the wording lives in one place.
+export const notifyTooltip = ({ supported = true, permission, active }) => {
+  if (!supported) return 'This browser does not support desktop notifications.';
+  if (permission === 'denied') {
+    return 'Notifications are blocked in your browser settings. Allow them for this site, then turn this on again.';
+  }
+  return active
+    ? 'On: you get a desktop notification when a session needs you (waiting or failed) while this tab is hidden. Click to turn off.'
+    : 'Get a desktop notification, and a (N) count in the tab title, when a session needs you (waiting or failed) while this tab is hidden. Your browser will ask for permission.';
+};
+
 // The choice is per viewer, off until the user turns it on, and the page works without storage.
 const PREFERENCE_KEY = 'dev-dashboard.needs-you.notify';
 export function readPreference(storage) {

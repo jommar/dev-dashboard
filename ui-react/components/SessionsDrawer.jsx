@@ -30,7 +30,7 @@ import {
 import { chatHref } from '../../ui/chat-stream.js';
 import { rowUsageLabel } from '../../ui/session-usage.js';
 import { copyText } from '../../ui/dom.js';
-import { notifyStateLabel } from '../../ui/needs-you.js';
+import { notifyStateLabel, notifyTooltip } from '../../ui/needs-you.js';
 import { PHASES, phaseWords } from '../../ui/session-phases.js';
 
 const MARK = { working: 'running', waiting: 'attention', done: 'done', failed: 'failed' };
@@ -206,24 +206,30 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
 // colour alone; the name stays "Notify me" and aria-pressed carries the state for assistive tech.
 function NotifyToggle({ notify, noteId }) {
   const label = notifyStateLabel(notify);
+  const tipId = useId();
+  // The tooltip describes the button while open (describeChild), never names it. The button's own
+  // aria-describedby would replace the tooltip's, so the popup's id is listed with the note's.
+  const describedBy = notifyBlocked(notify) ? `${tipId} ${noteId}` : tipId;
   return (
-    <Button
-      className="subtle sessions-notify"
-      data-testid="sessions-notify"
-      aria-pressed={notify.active}
-      aria-describedby={notifyBlocked(notify) ? noteId : undefined}
-      onClick={() => (notify.active ? notify.disable() : notify.enable())}
-    >
-      Notify me
-      <span
-        className="sessions-notify-state"
-        data-testid="sessions-notify-state"
-        data-state={label.toLowerCase()}
-        aria-hidden="true"
+    <DashboardTooltip title={notifyTooltip(notify)} describeChild id={tipId} placement="bottom">
+      <Button
+        className="subtle sessions-notify"
+        data-testid="sessions-notify"
+        aria-pressed={notify.active}
+        aria-describedby={describedBy}
+        onClick={() => (notify.active ? notify.disable() : notify.enable())}
       >
-        {label}
-      </span>
-    </Button>
+        Notify me
+        <span
+          className="sessions-notify-state"
+          data-testid="sessions-notify-state"
+          data-state={label.toLowerCase()}
+          aria-hidden="true"
+        >
+          {label}
+        </span>
+      </Button>
+    </DashboardTooltip>
   );
 }
 const notifyBlocked = (notify) => Boolean(notify?.supported) && notify.permission === 'denied';
