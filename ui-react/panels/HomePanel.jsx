@@ -280,7 +280,12 @@ export function HomePanel({ active }) {
                 ))}
               </select>
             </label>
-            <Button data-testid="home-refresh" disabled={loading} onClick={generate}>
+            <Button
+              className={data ? undefined : 'primary'}
+              data-testid="home-refresh"
+              disabled={loading}
+              onClick={generate}
+            >
               {data ? 'Refresh' : 'Generate velocity'}
             </Button>
           </>

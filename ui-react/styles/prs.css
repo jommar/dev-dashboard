@@ -86,7 +86,7 @@
   --jira-status-color: var(--muted);
 }
 .ticket-card[data-jira-status-kind='active'] {
-  --jira-status-color: var(--accent);
+  --jira-status-color: var(--status-active);
 }
 .ticket-card[data-jira-status-kind='done'] {
   --jira-status-color: var(--green);
@@ -130,7 +130,10 @@
   overflow-wrap: anywhere;
 }
 .jira-link {
-  color: var(--accent);
+  color: var(--strong);
+}
+.jira-link:hover {
+  text-decoration: underline;
 }
 .pr-count {
   color: var(--muted);
@@ -318,7 +321,7 @@
     var(--shadow);
 }
 .review-ticket-key {
-  color: var(--accent);
+  color: var(--strong);
   font-family: var(--mono);
   font-size: var(--fs-sm);
   font-weight: 600;
@@ -347,7 +350,7 @@
   color: var(--amber);
 }
 .review-ticket-assignee-name {
-  color: var(--accent);
+  color: var(--strong);
 }
 .review-ticket-prs {
   display: flex;
@@ -390,9 +393,11 @@
   line-height: 1.4;
   text-decoration: none;
 }
-.review-ticket-pr-link:hover,
-.review-ticket-key:hover {
+.review-ticket-pr-link:hover {
   color: var(--accent);
+  text-decoration: underline;
+}
+.review-ticket-key:hover {
   text-decoration: underline;
 }
 .review-ticket-pr-name {

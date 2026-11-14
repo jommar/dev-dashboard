@@ -39,10 +39,6 @@
 #panel-services .btn {
   font-size: var(--fs-sm);
 }
-#panel-services .btn.start:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--border-strong);
-}
 #panel-services .btn.stop:not(:disabled),
 #panel-services .btn.restart:not(:disabled) {
   color: var(--text);
@@ -173,7 +169,7 @@
   white-space: nowrap;
 }
 .service-port {
-  color: var(--accent);
+  color: var(--text);
   font-family: var(--mono);
   text-decoration: none;
 }

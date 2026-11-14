@@ -1,8 +1,10 @@
 // BotBar.jsx — the strip of mascots along the bottom of every screen: one bot per Claude session
 // (investigate, implement, review, groom or e2e check; BOT_PHASES in ui/bot-bar.js says which), each in the
 // state of that session. A bot is a button: it opens the same Claude dialog the My Tickets card and
-// the PR card open. The strip is an overlay (position: fixed, see bot-bar.css) and takes no room, so
-// no screen's height or its viewport-fill layout changes.
+// the PR card open. The strip is an overlay (position: fixed, see bot-bar.css) and takes no room; the
+// page keeps a gutter for it instead (shell.css), so a board gives up that height and stays one viewport
+// tall. A done or failed zone that holds more bots than its width keeps legible shows the best ones and
+// stacks the rest in a +N pill that opens the session list (collapseZones in ui/bot-bar.js).
 //
 // It polls GET /api/claude/tickets itself, on every screen, through its own `useClaudeTickets`
 // (every CLAUDE_POLL_MS while the page is visible, or hidden too while the user's "Notify me" opt-in is
@@ -27,7 +29,7 @@
 //
 // A bot is memoized on plain values, so a poll that finds nothing new, or a re-render of the app,
 // never restarts its walk, and a state change replays its own pose (the hop, the shake) once.
-import { memo, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useContext, useEffect, useId, useMemo, useState } from 'react';
 import { useActiveSprintKeys } from '../hooks/useActiveSprintKeys.js';
 import { useBotCallouts } from '../hooks/useBotCallouts.js';
 import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
@@ -51,6 +53,7 @@ import {
   NO_MEMORY,
   calloutText,
   botPose,
+  collapseZones,
   botsFromChats,
   botsFromTickets,
   dismissBot,
@@ -64,6 +67,7 @@ import {
   sessionGroups,
   walks,
   withSessions,
+  zoneCapacity,
   ZONES_MIN_WIDTH_PX,
   zoneSpots,
   roamFor,
@@ -84,6 +88,54 @@ function useNarrow() {
     return () => list.removeEventListener('change', change);
   }, [query]);
   return narrow;
+}
+
+// The bar is as wide as the window. A resize only matters when it changes how many bots a zone keeps, so
+// the width is replaced only then and a drag across the window does not re-render every bot.
+const capacitiesAt = (width) =>
+  width < ZONES_MIN_WIDTH_PX
+    ? `all ${zoneCapacity('all', width)}`
+    : `${zoneCapacity('left', width)} ${zoneCapacity('right', width)}`;
+function useBarWidth() {
+  const [width, setWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const change = () =>
+      setWidth((previous) =>
+        capacitiesAt(previous) === capacitiesAt(window.innerWidth) ? previous : window.innerWidth,
+      );
+    change();
+    window.addEventListener('resize', change);
+    return () => window.removeEventListener('resize', change);
+  }, []);
+  return width;
+}
+
+// The pill that stands for the bots of a crowded zone (`zone` is a key of collapseZones' `overflow`):
+// `+N`, in the zone's edge margin. It opens and closes the session list, which holds every one of them.
+const PILL_ZONES = {
+  left: { name: 'done', words: 'done ' },
+  right: { name: 'failed', words: 'failed ' },
+  all: { name: 'all', words: '' },
+};
+function OverflowPill({ zone, count, expanded, controls, onToggle }) {
+  const { name, words } = PILL_ZONES[zone];
+  const label = `${count} more ${words}sessions, open the session list`;
+  return (
+    <DashboardTooltip title={label} placement="top">
+      <button
+        type="button"
+        className="bot-bar-more"
+        data-zone={name}
+        data-testid={`bot-bar-more-${name}`}
+        aria-label={label}
+        aria-expanded={expanded}
+        aria-controls={controls}
+        onClick={onToggle}
+      >
+        +{count}
+      </button>
+    </DashboardTooltip>
+  );
 }
 
 const isFinished = (state) => state === 'done' || state === 'failed';
@@ -229,6 +281,8 @@ export function BotBar() {
   const [clock, setClock] = useState(0);
   const [open, setOpen] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerId = useId();
+  const toggleDrawer = useCallback(() => setDrawerOpen((was) => !was), []);
   // The drawer lists every session of the sprint's bots, past the bar's time to live and dismissals,
   // each with the time it was last active (the same response's `lastActive`).
   const groups = useMemo(
@@ -256,14 +310,7 @@ export function BotBar() {
   // Where bots stand (a failed bot, or any bot under reduced motion): spread among the bots of the same
   // zone, or among all of them when the screen is narrow and the zones have collapsed.
   const narrow = useNarrow();
-  const spots = useMemo(() => zoneSpots(visible, narrow), [visible, narrow]);
-  // The most recently done bot is in front of the other done ones.
-  const layers = useMemo(() => {
-    const done = visible
-      .filter(({ state }) => state === 'done')
-      .sort((a, b) => (memory.seenDoneAt.get(a.key) ?? 0) - (memory.seenDoneAt.get(b.key) ?? 0));
-    return new Map(done.map(({ key }, index) => [key, index + 1]));
-  }, [visible, memory]);
+  const barWidth = useBarWidth();
   // A chat bot or row goes to the Chat screen; every other session opens its dialog.
   const openBot = useCallback(
     (ticket, phase) => {
@@ -283,12 +330,34 @@ export function BotBar() {
   // A notification for a session that needs the user, and the `(N)` in the tab title, from the same
   // changes that get bubbles; a click on the notification opens that session as a bot would.
   const onReady = useNeedsYouAlerts({ active: notify.active, bots: visible, onOpen: openBot });
-  const { callouts, announcements, attend } = useBotCallouts(
+  const { callouts, announcements, attend, retain } = useBotCallouts(
     claude.byTicket,
     claude.loaded,
     visible,
     onReady,
   );
+
+  // What the bar draws: the bots a crowded done or failed zone has room for; the rest are in a pill.
+  // Everything else (alerts, callouts, the live region, the drawer) keeps the full list.
+  const { shown, overflow } = useMemo(
+    () => collapseZones(visible, { barWidth, seenDoneAt: memory.seenDoneAt, callouts }),
+    [visible, barWidth, memory, callouts],
+  );
+  // A bot stacked in a pill draws no bubble, so it holds no callout slot either: when the bubbles change,
+  // those of the bots not drawn are dropped. (`shown` is read as of the same render as the bubbles, which
+  // is why this runs on `callouts` alone.)
+  useEffect(() => {
+    retain(new Set(shown.map(({ key }) => key)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shown is read with the callouts it was ranked by, not as a trigger
+  }, [callouts, retain]);
+  const spots = useMemo(() => zoneSpots(shown, narrow), [shown, narrow]);
+  // The most recently done bot is in front of the other done ones.
+  const layers = useMemo(() => {
+    const done = shown
+      .filter(({ state }) => state === 'done')
+      .sort((a, b) => (memory.seenDoneAt.get(a.key) ?? 0) - (memory.seenDoneAt.get(b.key) ?? 0));
+    return new Map(done.map(({ key }, index) => [key, index + 1]));
+  }, [shown, memory]);
 
   const dismiss = useCallback(
     (key, state) => setMemory((previous) => dismissBot(previous, { key, state })),
@@ -329,7 +398,7 @@ export function BotBar() {
           aria-label={say('{name} sessions', harness)}
           data-testid="bot-bar"
         >
-          {visible.map((bot) => (
+          {shown.map((bot) => (
             <Bot
               key={bot.key}
               botKey={bot.key}
@@ -349,6 +418,19 @@ export function BotBar() {
               onDismiss={dismiss}
             />
           ))}
+          {Object.entries(overflow).map(
+            ([zone, count]) =>
+              count > 0 && (
+                <OverflowPill
+                  key={zone}
+                  zone={zone}
+                  count={count}
+                  expanded={drawerOpen}
+                  controls={drawerId}
+                  onToggle={toggleDrawer}
+                />
+              ),
+          )}
         </div>
       )}
       {/* The session list, from every screen: a tab on the right edge and the drawer it opens. */}
@@ -358,6 +440,7 @@ export function BotBar() {
         onToggle={setDrawerOpen}
         onOpenSession={openBot}
         notify={notify}
+        drawerId={drawerId}
       />
       {/* Beside the strip, never inside it: a dialog inherits the strip's pointer-events: none. */}
       {shortcuts?.palette && (

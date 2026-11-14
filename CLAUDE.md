@@ -69,9 +69,14 @@ whole app feels consistent regardless of which container a given screen width la
   fixed-width columns (Jira statuses, Slack time groups, PR review lanes) that scrolls sideways inside itself; they
   are not card lists, so they have no `columns:` container and none of the breakpoints above. Each
   column's card list (`.board-column-body`) scrolls vertically on its own, with the column header
-  outside it so the header stays in view. Columns are 280px wide; at 599px and below they are 82vw
+  outside it so the header stays in view. Columns are 280px wide (`.board-column`, under
+  `grid-auto-columns: max-content`); at 599px and below they are 82vw
   with `scroll-snap-type: x mandatory`, so the next column peeks in and snaps (`proximity` above
-  that). How a board fills the viewport, and how a screen adopts it, is under "UI layout: the
+  that). An **empty** column beside a populated one is a 44px rail (`data-empty="true"` from `BoardColumn`: count 0 and
+  no children; heading, count and `role="group"` name kept, list `display: none`); a track whose columns
+  are all empty keeps full columns, so every rail rule sits under `:has(> .board-column:not([data-empty='true']))`
+  (repeated because the sheet uses no CSS nesting). A rail snaps to `end`, not `none`: with `x mandatory` a
+  non-snap rail leaves the last lanes unreachable on a phone. How a board fills the viewport, and how a screen adopts it, is under "UI layout: the
   shared board" below.
 - `services.css`'s `.grid` (Services tab) sets explicit `grid-template-columns` per breakpoint — a
   real multi-column grid, appropriate because service cards are roughly uniform height, not a
@@ -116,9 +121,11 @@ screens' polling and shared board contracts below remain unchanged.
 `position: fixed`, transparent strip of mascots along the bottom of every screen, one per Claude
 session of any kind (investigate, implement, review, groom or e2e check, or a standalone Chat, the one
 kind that is not a ticket's; see below). It is an overlay: `pointer-events: none` on the strip and `auto` on the
-bots, z-index under the tooltip and dialogs, no change to any screen's height or the viewport-fill
-rule; keep it that way, and never put a dialog inside the strip (it would inherit the
-`pointer-events: none`). Which sessions get a bot is the single `SESSIONS` table in
+bots, z-index under the tooltip and dialogs, and it never scrolls the page. The room it needs is reserved by the
+page, not the strip: `--bot-bar-gutter` (`tokens.css`, from `--bot-bar-size` and `--bot-poster-*`, 104px) is the
+height of `#root:has(.bot-bar) > .panels::after` in `shell.css`, the last flex item of `.panels`, so a board gives
+up that height, the viewport-fill rule below still holds and no bar means no gutter. Keep it that way, and never put
+a dialog inside the strip (it would inherit the `pointer-events: none`). Which sessions get a bot is the single `SESSIONS` table in
 `ui/bot-bar.js` (every row does; `BOT_PHASES` is derived from it, so a new kind of session is one new row there, never a second list) (`investigate`, `implement`, `review`, `groom`, `e2e`: every session an entry carries, in draw order; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`; every phase but `review` opens `ClaudeDialog`), with the state mapping, the done time to live, the hold rule and the pure helpers; `none` and
 `unknown` get no bot. A ticket session's bot also needs its ticket in an active Jira sprint: the pure filter
 `inActiveSprint` is applied to the sessions with the keys `useActiveSprintKeys` gets from
@@ -159,9 +166,19 @@ done zone's): done on the left 20%, working and waiting in the centre 60%, faile
 left and right at least 200px, the centre the remainder, the bar's ends keeping their edge margin. The
 CSS (`--bot-zl`, `--bot-zr`, `--bot-zs`, `--bot-zroom`, per `data-state`) and `walkStretch` /
 `zoneBounds` do the same math; change both together. A state change is a jump, never a slide
-(transitions are capped at 200ms), with lane and phase from the new zone's range. A crowded zone
-overlaps, never widens or shrinks bots, and the hovered or focused bot is raised so its dismiss button
-is reachable. Under 600px (`ZONES_MIN_WIDTH_PX`; the CSS media query and `useNarrow` agree) the zones
+(transitions are capped at 200ms), with lane and phase from the new zone's range. A crowded working or
+waiting zone overlaps, never widens or shrinks bots, and the hovered or focused bot is raised so its dismiss
+button is reachable. A crowded **done or failed** zone stacks instead: `collapseZones` in `ui/bot-bar.js` keeps
+`zoneCapacity` bots (`max(1, floor(zoneRoom / POSTER_WIDTH_PX) + 1)`, `zoneRoom` split out of `walkStretch`;
+`POSTER_WIDTH_PX` equals `--bot-poster-w`; under 600px the single zone's capacity is for `all`) and the rest become
+one `+N` pill per zone (`OverflowPill`, `bot-bar-more-<done|failed|all>`, `PILL_ZONES` maps its key to a name once)
+in the edge margin. The pill is a toggle for the Sessions drawer (`aria-expanded`, `aria-controls` = the drawer's
+`useId()` that `BotBar` passes as the required `drawerId` prop), never a second list. Which bots stay: callout
+carriers first, then newest seen-done (done) or key order (failed). Collapse runs on `visible`, after TTL, hold
+and dismissal, and only `spots`, the layers and the rendered strip read `shown`: `groups`, alerts, the live region,
+the Needs-you notifier and callout detection keep the full list. The one exception is callouts held in state: `useBotCallouts`
+returns `retain(keys)`, and `BotBar` calls it with the drawn keys so a stacked bot holds no bubble slot (a
+hidden bot can never be hovered to end a waiting or failed bubble). Under 600px (`ZONES_MIN_WIDTH_PX`; the CSS media query and `useNarrow` agree) the zones
 collapse to the whole width with a 40px margin. No zone is drawn. Reduced motion stands everyone still
 at a spread-out place inside their own zone. Hover detail is the app's own `DashboardTooltip`
 (keyboard focus works), never a native `title`, `data-tooltip` or SVG `<title>`. A state change between
@@ -203,7 +220,7 @@ poster is decorative: `aria-hidden`, no `<title>`, `<desc>` or native `title`, `
 bot stays the only target). It is a sibling of `.bot-bar-face` inside the lane, never inside the
 mirrored face, so it is never mirrored; it sways only while the bot walks (`walks(state)`) and only
 under `prefers-reduced-motion: no-preference`. The callout and the hover popup (`POSTER_RISE_PX`) stand
-above it; `--bot-poster-*` in `bot-bar.css` and `POSTER_RISE_PX` change together.
+above it; `--bot-poster-*` in `tokens.css` and `POSTER_RISE_PX` change together (`bot-bar.css` declares none).
 
 Its styles are in `ui-react/styles/bot-bar.css` (tokens only,
 `bot-bar-*` names, transform-only keyframes, a reduced-motion block). It never calls
@@ -239,6 +256,33 @@ the drawer, because it is non-modal and would cover the conversation it just ope
 `GET /api/claude/tickets` re-read at once on a `claude-tickets-changed` window event
 (`notifyClaudeTicketsChanged` in `useClaudeTickets.js`, fired by the Chat screen after a send and when a
 chat's phase changes), so the bar, the drawer and the chat list follow a turn without waiting for the 15 s poll.
+
+## UI colour, text and buttons: facts not to break
+
+`ui-react/styles/tokens.css` is the only stylesheet that writes a colour (`mascots.css` and `posters.css` art
+excepted); `styles.css` keeps alias lines only (`--panel-2`, `--fg*`, `--ok`, `--bad`, `--warn`). `theme.js` and
+`index.html` (`theme-color`) hold literals equal to the tokens, because MUI needs parseable colours; change a token,
+change them (`test/ui-refresh-palette.test.mjs` holds all three, and every text pair at 4.5:1 and every edge or
+focus ring at 3:1; `--red` is lifted to `#fc7a8d` to clear 4.5:1 under its 12% hover tint).
+
+- Roles: cyan (`--accent`, `--accent-fill` for a primary fill) means interactive or selected, never decoration.
+  Lavender (`--support`) means Claude only: the Sessions tab and drawer, the Chat tab and screen, the Claude
+  launcher including its dialog primary fill (`.claude-dialog .btn.primary`, specificity 0,4,0, keeps `:disabled`
+  on the base look). Ticket keys (`.jira-link`, `.review-ticket-key`, `.my-tickets-card-key`) are `--strong` and
+  underline on hover. Jira status kind `active` is `--status-active`; My Tickets cards also carry a decorative 2px
+  top bar (`.my-tickets-card::before`, `--jira-status-color`; the column title says the status, so never colour alone).
+  `--phase-implement` is teal, not lavender.
+- Approved card tint is 13% green over `--panel2` (8% is no longer green-dominant on the bluer surface);
+  `test/ui-react-contract.test.mjs` pins it, and `--muted` on it is 4.56:1.
+- Readable text is at least `--fs-xs` (12px); the guards scan every sheet but `posters.css`, `settings.css` and
+  `releases.css`. Poster art stays as drawn.
+- Buttons are neutral by default: `.btn.MuiButton-outlined` (and native `.btn`) sits before `.btn.primary`,
+  `.btn.subtle` and `.btn.danger` in `base.css`, all equal specificity so order decides; keep that order. Primary and
+  `danger` are call-site classes (`className="primary"` on Home Generate velocity before data, DevTools Launch, Chat
+  Send, Slack Connect, Services Start all; `danger` on Slack Disconnect, DevTools Remove, watch Remove), not a
+  default and not derived from the label. `.btn.subtle:hover` is transparent so chromeless buttons never take the
+  neutral hover tint. The rules are global, so Settings and Releases buttons are neutral too.
+- `.shell-location` ("Local workspace") is hidden from 700px to 1499px (shown again when the header wraps below 700px) so the header stays one row at the 12px footer pill.
 
 ## DevTools: a wall of live tiles
 
@@ -306,7 +350,10 @@ contract, so a refactor never renames them):
   board's `role="region"` keeps its own name). Only the selected tab is a Tab stop; ArrowLeft,
   ArrowRight, Home and End move focus and select. A tab may carry `count`, and `tone: 'warn'` with a
   `hint` (spoken and shown on hover, so the tone is never colour alone).
-- `BoardNote` (amber toolbar note) and `BoardState` (loading, empty, error or warning body).
+- `BoardNote` (an amber one-line chip, `role="status"`, exact text always in the DOM and clamped by CSS; a
+  24px text-less toggle, `board-note-toggle`, named "Show full note" / "Collapse note", appears only while the text
+  overflows, measured on the text span; `defaultOpen` starts it expanded, used only by `my-tickets-slack-coverage`
+  because that note carries a link) and `BoardState` (loading, empty, error or warning body).
 - `Board` and `BoardColumn` — `.board-frame` > `.board-track` and its columns. `Board` owns scroll
   preservation (`usePreservedInteraction`), so a screen never wires it again. Optional `BoardColumn.hint`
   gives a heading existing `DashboardTooltip` help on hover/keyboard focus; only hinted headings gain
@@ -675,8 +722,11 @@ Claude dialog, the command palette and the shortcuts help are lazy overlays too
   `my-tickets-ticket-checking`), then calls `onTicketHandled` (replaceState to `#/my-tickets`). Assigned
   tickets only; Include Done is never switched on.
 - Route cues (`useRouteChange` in `AppShell`): title, the `route-announcement` region and heading focus
-  only when focus was lost (`navigation.spec.js` depends on "only when lost"). None of this adds a request
-  or poll; the palette's Refresh runs the board's own guarded load.
+  only when focus was lost (`navigation.spec.js` depends on "only when lost"). The heading's ring shows only after
+  a keydown: `useLastInput` (capture `keydown` / `pointerdown`, bound once) lets `useRouteChange` stamp
+  `data-focus-source="keyboard"` or `"other"` before `focus()`, and `base.css` drops the outline for
+  `[data-focus-source='other']:focus` (`e2e/route-focus.spec.js` and `navigation.spec.js` depend on both rules).
+  None of this adds a request or poll; the palette's Refresh runs the board's own guarded load.
 
 ## Integration health: facts not to break
 

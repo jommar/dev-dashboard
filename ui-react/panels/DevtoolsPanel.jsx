@@ -174,7 +174,12 @@ export function DevtoolsPanel({ active }) {
         />
       </label>
       <ShowWindowToggle checked={headed} onChange={setHeaded} />
-      <Button type="submit" data-testid="devtools-launch" disabled={busy === 'launch'}>
+      <Button
+        type="submit"
+        className="primary"
+        data-testid="devtools-launch"
+        disabled={busy === 'launch'}
+      >
         Launch
       </Button>
     </form>

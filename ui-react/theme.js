@@ -3,13 +3,13 @@ import { createTheme } from '@mui/material/styles';
 export const dashboardTheme = createTheme({
   palette: {
     mode: 'dark',
-    background: { default: '#111113', paper: '#1c1d20' },
+    background: { default: '#0a0b0d', paper: '#181b20' },
     primary: { main: '#67e8f9' },
     success: { main: '#34d399' },
-    error: { main: '#fb7185' },
+    error: { main: '#fc7a8d' },
     warning: { main: '#fbbf24' },
-    text: { primary: '#edeef0', secondary: '#949aa3' },
-    divider: '#2e3035',
+    text: { primary: '#f1f2f4', secondary: '#a1a8b2' },
+    divider: '#363c46',
   },
   typography: {
     fontFamily: '"Inter Tight", system-ui, -apple-system, "Segoe UI", sans-serif',

@@ -284,7 +284,12 @@ function ChatConversation({ active, session, focusOnMount }) {
             }}
           />
           <div className="chat-actions">
-            <Button type="submit" data-testid="chat-send" disabled={blocked || !text.trim()}>
+            <Button
+              type="submit"
+              className="primary"
+              data-testid="chat-send"
+              disabled={blocked || !text.trim()}
+            >
               Send
             </Button>
             {live && (

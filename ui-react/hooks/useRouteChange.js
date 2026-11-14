@@ -12,6 +12,27 @@ const focusLost = () => {
   return !held || held === document.body || !held.isConnected || Boolean(held.closest('[hidden]'));
 };
 
+// What the last input was, from a capture listener bound once. A route heading focused after a key
+// shows its focus ring; one focused with no input or after a pointer does not (base.css).
+const useLastInput = () => {
+  const last = useRef('none');
+  useEffect(() => {
+    const onKey = () => {
+      last.current = 'keyboard';
+    };
+    const onPointer = () => {
+      last.current = 'pointer';
+    };
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('pointerdown', onPointer, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('pointerdown', onPointer, true);
+    };
+  }, []);
+  return last;
+};
+
 // The cues for a screen change, for a screen reader and the keyboard: sets the document title to
 // `<label> · EZAT Dev Dashboard` (with the needs-you count in front while that shows); after the first render returns the label for a polite live region (empty
 // on first load, so nothing is announced then); and, only when focus was lost, moves focus to the new
@@ -21,6 +42,7 @@ export function useRouteChange({ active, tabs }) {
   const label = tabs.find(({ id }) => id === active)?.label ?? '';
   const [announcement, setAnnouncement] = useState('');
   const first = useRef(true);
+  const lastInput = useLastInput();
 
   useEffect(() => {
     document.title = composeTitle(label ? `${label} · ${TITLE_SUFFIX}` : TITLE_SUFFIX);
@@ -39,11 +61,12 @@ export function useRouteChange({ active, tabs }) {
         return;
       }
       heading.setAttribute('tabindex', '-1');
+      heading.dataset.focusSource = lastInput.current === 'keyboard' ? 'keyboard' : 'other';
       heading.focus({ preventScroll: true });
     };
     frame = requestAnimationFrame(focusHeading);
     return () => cancelAnimationFrame(frame);
-  }, [active, label]);
+  }, [active, label, lastInput]);
 
   return announcement;
 }

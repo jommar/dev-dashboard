@@ -2,7 +2,7 @@
 // one-row toolbar (title, sub line, counts, controls), an optional switch, notes, and a body
 // that fills the viewport with a board of columns. What the cards are, and what the columns
 // mean, stay with each screen; presentation is ui-react/styles/board.css.
-import { useEffect, useRef, useState } from 'react';
+import { Children, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
 import { registerBoardRefresh } from '../lib/board-refresh.js';
 import { Button, Card, DashboardTooltip, LoadingState } from './Primitives.jsx';
@@ -197,11 +197,46 @@ export function BoardTabs({ name, label, tabs, value, onChange }) {
   );
 }
 
-// An amber line in the toolbar: a stale or partial result the screen should not hide.
-export function BoardNote({ testId, children }) {
+// An amber chip in the toolbar: a stale or partial result the screen should not hide. The text is
+// one line; when it does not fit (or the note is open) a toggle with no text shows the whole of it.
+// `defaultOpen` starts it expanded, for a note that carries a link.
+export function BoardNote({ testId, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [overflows, setOverflows] = useState(false);
+  const textRef = useRef(null);
+  const textId = useId();
+  const toggle = () => setOpen((value) => !value);
+  // Only a collapsed note is measured: an open one wraps, so it never overflows.
+  useLayoutEffect(() => {
+    const text = textRef.current;
+    if (open) return undefined;
+    const measure = () => setOverflows(text.scrollWidth > text.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(text);
+    return () => observer.disconnect();
+  }, [open, children]);
   return (
-    <p className="board-note" role="status" data-testid={testId}>
-      {children}
+    <p
+      className="board-note"
+      role="status"
+      data-testid={testId}
+      data-open={open ? 'true' : 'false'}
+    >
+      <span className="board-note-glyph" aria-hidden="true" />
+      <span className="board-note-text" id={textId} ref={textRef}>
+        {children}
+      </span>
+      {(overflows || open) && (
+        <button
+          type="button"
+          className="board-note-toggle"
+          aria-label={open ? 'Collapse note' : 'Show full note'}
+          aria-expanded={open}
+          aria-controls={textId}
+          onClick={toggle}
+        />
+      )}
     </p>
   );
 }
@@ -250,10 +285,14 @@ export function BoardColumn({ id, label, count, testIdPrefix, kind, hint, childr
       {label}
     </h3>
   );
+  // Count 0 and nothing to list: a rail beside a populated column (board.css). A lane that holds
+  // only a Load more item has children, so it is not empty.
+  const empty = Number(count) === 0 && Children.toArray(children).length === 0;
   return (
     <section
       className="board-column"
       role="group"
+      data-empty={empty ? 'true' : undefined}
       data-jira-status-kind={kind}
       data-testid={`${testIdPrefix}${id}`}
       aria-labelledby={titleId}

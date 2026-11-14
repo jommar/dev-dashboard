@@ -39,6 +39,28 @@ function row(text, created, activity, extra = {}) {
   });
 }
 
+// One thread in each of Today, Yesterday, Past week and Past month, so a board whose Last 3 hours
+// column holds the crowd still has five populated columns (an empty column is a slim rail).
+function otherGroupThreads() {
+  const quiet = { replyCount: 0 };
+  return [
+    row('Earlier today filler', NOON - 8 * HOUR, NOON - 8 * HOUR, quiet),
+    row('Yesterday filler', NOON - 2 * DAY, Date.parse('2026-03-08T14:00:00Z'), quiet),
+    row(
+      'Past week filler',
+      Date.parse('2026-03-02T05:00:00Z'),
+      Date.parse('2026-03-02T05:00:00Z'),
+      quiet,
+    ),
+    row(
+      'Past month filler',
+      Date.parse('2026-03-01T05:00:00Z'),
+      Date.parse('2026-03-01T05:00:00Z'),
+      quiet,
+    ),
+  ];
+}
+
 function threadRead(thread) {
   return slackThreadRead(thread, {
     channel: { id: CHANNEL, name: 'example_channel' },
@@ -671,7 +693,7 @@ test('board interaction: focus scroll mobile survives a card moving while its di
   const threads = Array.from({ length: 26 }, (_, index) =>
     row(`Other conversation ${index}`, NOON - 2 * HOUR - index * 1000, NOON - index * 60_000),
   );
-  seed(dashboard, NOON, [...threads, moving]);
+  seed(dashboard, NOON, [...threads, moving, ...otherGroupThreads()]);
   await openSlack(page);
   const board = boardOf(page);
   const body = groupOf(page, 'Last 3 hours').getByRole('list');
@@ -799,7 +821,7 @@ for (const [width, height] of [
     const threads = Array.from({ length: 26 }, (_, index) =>
       row(`Scrollable thread ${index}`, NOON - 2 * HOUR - index * 1000, NOON - index * 60_000),
     );
-    seed(dashboard, NOON, threads);
+    seed(dashboard, NOON, [...threads, ...otherGroupThreads()]);
     await openSlack(page);
     const board = boardOf(page);
     await expect(board).toBeVisible();

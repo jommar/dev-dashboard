@@ -484,7 +484,7 @@ button.sprint-legend-note:hover {
   --jira-status-color: var(--muted);
 }
 .action-ticket-meta .pill[data-jira-status-kind='active'] {
-  --jira-status-color: var(--accent);
+  --jira-status-color: var(--status-active);
 }
 .action-ticket-meta .pill[data-jira-status-kind='done'] {
   --jira-status-color: var(--green);
@@ -543,7 +543,7 @@ button.sprint-legend-note:hover {
 }
 .home-block-actions .action-reason {
   margin-top: 20px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.07em;
 }
 .home-block-velocity .velocity-chart {

@@ -494,11 +494,17 @@ export function zoneBounds(zone, barWidth) {
   }[zone];
 }
 
-export function walkStretch(roam, state, barWidth, { edge = 88, size = 56 } = {}) {
+// The room, in pixels, a bot of this state's left edge has along a bar `barWidth` wide: its zone less
+// the edge margin at the bar's own ends and one bot at the zone's far end.
+export function zoneRoom(state, barWidth, { edge = 88, size = 56 } = {}) {
   const zone = zoneBounds(zoneOf(state, barWidth < ZONES_MIN_WIDTH_PX), barWidth);
   const start = zone.start === 0 ? edge : zone.start;
   const end = zone.end === barWidth ? barWidth - edge : zone.end;
-  const room = Math.max(0, end - start - size);
+  return { start, room: Math.max(0, end - start - size), zone };
+}
+
+export function walkStretch(roam, state, barWidth, { edge = 88, size = 56 } = {}) {
+  const { start, room, zone } = zoneRoom(state, barWidth, { edge, size });
   const done = state === 'done';
   const min = start + ((done ? roam.zoneFrom : roam.from) / 100) * room;
   return { min, max: min + ((done ? roam.zoneRange : roam.range) / 100) * room, room, zone };
@@ -516,6 +522,49 @@ export function botPose(state, roam) {
 // overlaps the bot's head (--bot-poster-h and --bot-poster-overlap in ui-react/styles/bot-bar.css; change
 // them together). The hover popup stands this much higher so it never covers the poster.
 export const POSTER_RISE_PX = 40;
+// How wide a poster is, in px (--bot-poster-w in ui-react/styles/tokens.css; keep equal), and the edge
+// margin under ZONES_MIN_WIDTH_PX (the media query in bot-bar.css).
+export const POSTER_WIDTH_PX = 84;
+export const NARROW_EDGE_PX = 40;
+
+// How many bots a zone ('left' done, 'right' failed, or 'all' under ZONES_MIN_WIDTH_PX) shows before the
+// rest stack in a +N pill: one more than the posters that fit side by side in the zone's walking room,
+// and never fewer than one.
+export function zoneCapacity(zone, barWidth) {
+  const state = zone === 'right' ? 'failed' : 'done';
+  const edge = barWidth < ZONES_MIN_WIDTH_PX ? NARROW_EDGE_PX : 88;
+  const { room } = zoneRoom(state, barWidth, { edge });
+  return Math.max(1, Math.floor(room / POSTER_WIDTH_PX) + 1);
+}
+
+// Splits the bots the bar would draw into `shown` (in the order they came) and, per zone, how many are
+// stacked in a pill (`overflow`: counts). Working and waiting bots never collapse and take their slots
+// first; a zone's free slots are what its capacity leaves, and the done and failed bots compete for
+// them: a bot carrying a callout first, then a failed one before a done one (only when one zone holds
+// both), done by the newest seen done (`seenDoneAt`, key to ms), failed by key.
+export function collapseZones(bots, { barWidth, seenDoneAt, callouts }) {
+  const narrow = barWidth < ZONES_MIN_WIDTH_PX;
+  const called = new Set(callouts.map(({ key }) => key));
+  const hidden = new Set();
+  const overflow = { left: 0, right: 0, all: 0 };
+  for (const zone of narrow ? ['all'] : ['left', 'right']) {
+    const members = bots.filter(({ state }) => zoneOf(state, narrow) === zone);
+    const kept = members.filter(({ state }) => walks(state) && state !== 'done').length;
+    const free = Math.max(0, zoneCapacity(zone, barWidth) - kept);
+    const queue = members
+      .filter(({ state }) => state === 'done' || state === 'failed')
+      .sort(
+        (a, b) =>
+          Number(called.has(b.key)) - Number(called.has(a.key)) ||
+          Number(b.state === 'failed') - Number(a.state === 'failed') ||
+          (a.state === 'done' ? (seenDoneAt.get(b.key) ?? 0) - (seenDoneAt.get(a.key) ?? 0) : 0) ||
+          (a.key < b.key ? -1 : 1),
+      );
+    for (const { key } of queue.slice(free)) hidden.add(key);
+    overflow[zone] = Math.max(0, queue.length - free);
+  }
+  return { shown: bots.filter(({ key }) => !hidden.has(key)), overflow };
+}
 
 // The custom properties ui-react/styles/bot-bar.css reads to place and move one bot's lane: where it
 // walks and how long (`roam`, from roamFor, as percentages of the room its zone gives it), and where

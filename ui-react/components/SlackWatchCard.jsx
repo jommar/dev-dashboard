@@ -304,6 +304,7 @@ export const SlackWatchCard = memo(function SlackWatchCard({ active, hidden = fa
                       </td>
                       <td>
                         <Button
+                          className="danger"
                           data-testid={`slack-watch-remove-${entry.key}`}
                           disabled={disabled}
                           onClick={async () => settle(await api.removeSlackWatchLink(entry.link))}

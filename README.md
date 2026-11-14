@@ -890,7 +890,7 @@ threads show in neither chip, the login is probably wrong and they are counted
 under other bots.
 
 **Green card** — a card turns green when it has at least one open PR and every PR
-line reads `approved`: an 8 % green tint, a green hairline and a seal (a check in
+line reads `approved`: a 13 % green tint, a green hairline and a seal (a check in
 a circle) after the key, named `All PRs approved` for assistive tech and in its
 tooltip. The card carries `data-all-approved="true"`. A PR whose review is
 unknown is not approved, and a PR that reads `changes requested` never is, so a
@@ -1013,8 +1013,10 @@ filter leaves one column and a column with no matching ticket disappears. Below
 **Filters** button beside Search (it says `N active` while any is set).
 The board scrolls sideways inside itself and the page never does: columns are
 280px wide, or 82% of the viewport below 600px so the next column peeks in and
-snaps into place. Each column scrolls down on its own with its header in view,
-and the board fills the rest of the viewport under the toolbar. The board's
+snaps into place. A column with no tickets beside a column that has some folds into a
+44px rail (its count and name stay, turned sideways, the empty list is hidden); when every
+column is empty they all keep their full width. Each column scrolls down on its own with
+its header in view, and the board fills the rest of the viewport under the toolbar. The board's
 sideways position and each column's scroll position survive a refresh, and the
 board is keyboard-focusable (arrow keys scroll it). The Slack tab's board is the
 same frame, so all of this holds there too (see [UI layout](#ui-layout)).
@@ -2429,9 +2431,10 @@ Chat head, the Claude dialog header and the Sessions drawer's rows ask for it (s
 A strip of small animated mascots runs along the bottom of every screen once setup is complete (the
 Settings-only setup mode has none): one **bot per Claude session** (investigate, implement,
 review, groom or e2e check, or a standalone [Chat](#chat)), so you can see at a glance which ones are working and which need you. It is an overlay
-(`position: fixed`, transparent, and it ignores the pointer except on the bots), so it takes no room,
-never scrolls the page and leaves every screen's height and viewport fill unchanged. It is hidden
-while there is no session to show.
+(`position: fixed`, transparent, and it ignores the pointer except on the bots), so it never scrolls the
+page. While at least one bot shows, the page keeps a 104px gutter at the bottom (`--bot-bar-gutter`) so
+the last card or board column ends above the posters: a board gives up that height and stays one viewport
+tall. With no session to show the bar is hidden and so is the gutter.
 
 - **Which sessions.** Every Claude session of each ticket (investigate, implement, review, groom and the
   [E2E check](#e2e-check)), **of tickets in an active Jira sprint only**. The sessions live in one
@@ -2473,9 +2476,14 @@ while there is no session to show.
   the new zone's range, so it never ends up outside it; a bot that turns done still hops and gets its
   callout there. Working and idle bots share the centre without piling onto one spot: each has its own
   lane from its session key, and their motions stay distinct (a patrol with steady feet, a slow wander
-  with pauses). A crowded zone is never widened and bots are never shrunk: they overlap, spaced by
+  with pauses). A crowded centre zone is never widened and bots are never shrunk: they overlap, spaced by
   their hash, and the bot you point at or focus comes to the front so its dismiss button stays
-  reachable in every zone. **Under 600px wide the zones collapse** (a CSS media query at
+  reachable. The done and failed zones do not overlap: each shows as many bots as fit (two per side at
+  1440px, one at 1024px) and the rest become a **+N** pill in the zone's edge margin (`N more done
+sessions, open the session list`; under 600px one pill for the single zone). The pill toggles the
+  Sessions drawer, which lists every session; the bots kept on the bar are the ones with a callout, then
+  the newest done or, for failed, by key, and dismissing one brings the next up. Callouts, the live
+  region and notifications still cover the hidden bots. **Under 600px wide the zones collapse** (a CSS media query at
   `ZONES_MIN_WIDTH_PX`, with `useNarrow` mirroring it for the resting spots): every state has the whole
   width between a 40px margin on each side. With reduced motion every bot stands still at a spread-out
   place inside its own zone.
@@ -2592,7 +2600,8 @@ while there is no session to show.
   current answer. A value that is not a key is ignored and dropped.
 - **Screen changes.** Changing screen sets `document.title` to `<Screen> · EZAT Dev Dashboard`,
   announces the screen in a polite sr-only region, and moves focus to the screen's heading only when
-  focus was lost (on the page, removed or in a hidden screen).
+  focus was lost (on the page, removed or in a hidden screen); the heading's focus ring shows only when
+  the last input was the keyboard, so a click or a bare hash change leaves it unringed.
 - No request, poll or Home velocity fetch is added by any of this; Refresh in the palette runs the
   board's own guarded load.
 
@@ -2860,7 +2869,8 @@ first. The three-hour group takes precedence across midnight; the other groups
 use local calendar days: Past week covers days 2–7 ago and Past month days 8–30
 ago. Threads whose activity time cannot be verified (or lies in the future) are
 not shown: the tab counts and the need-a-reply count leave them out, and the
-amber note in the toolbar says how many were left out. A thread is flagged
+amber note chip in the toolbar says how many were left out (a note too long for one line gets a
+button to expand it). A thread is flagged
 **Needs reply** when its verified newest message is by another person; reply
 status can also be unknown. Each view remembers its own column scroll positions
 while you switch between them.
@@ -3542,6 +3552,16 @@ while the page is hidden or its screen is not shown.
 status used to choose Settings-only or ready-mode boot, and the active harness (`harness`), which the
 UI turns into its wording through `ui/harness.js` and `HarnessContext`; absent or invalid means Claude
 Code (see [Harnesses](#harnesses)).
+
+**Colour, text and buttons.** Every colour is a token in
+[`ui-react/styles/tokens.css`](ui-react/styles/tokens.css) (the one place a stylesheet writes one; `theme.js`
+and `index.html` repeat the values for MUI and the browser chrome). Cyan means interactive or selected,
+lavender means Claude (Sessions, Chat, the Claude dialog), ticket keys are bright neutral, and a ticket's
+Jira status kind has its own colour (a top bar on each My Tickets card). Text pairs meet 4.5:1, edges and
+focus rings 3:1, and readable text is never under 12px. Buttons are neutral by default; **primary** (filled
+cyan, lavender inside the Claude dialog) and **danger** (red) are set per call site: Generate velocity before
+data, Launch, Send, Connect Slack and Start all are primary; Disconnect and the Remove buttons are danger.
+The rules are global, so Settings and Releases buttons are neutral as well.
 
 The DOM is labelled with `data-testid` throughout for Playwright and agent use —
 treat those names as a contract and don't rename them.

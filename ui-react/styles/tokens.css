@@ -2,25 +2,29 @@
    Every other stylesheet reads from here; nothing hard-codes a colour. */
 :root {
   color-scheme: dark;
-  --bg: #111113;
-  --panel: #1c1d20;
-  --panel2: #232427;
-  --border: #2e3035;
-  --border-strong: #4a4e55;
-  --text: #c3c7cd;
-  --strong: #edeef0;
-  --muted: #949aa3;
+  --bg: #0a0b0d;
+  --panel: #181b20;
+  --panel2: #262b33;
+  --border: #363c46;
+  --border-strong: #6f7681;
+  --text: #c9cdd4;
+  --strong: #f1f2f4;
+  --muted: #a1a8b2;
   --accent: #67e8f9;
+  --accent-hover: #a5f3fc;
   --accent-fill: #22d3ee;
-  --support: #b3a9f0;
+  --support: #b8aef6;
   --green: #34d399;
-  --red: #fb7185;
+  --red: #fc7a8d;
   --amber: #fbbf24;
+  --status-active: #60a5fa;
+  --track: var(--border);
+  --grid: rgba(148, 163, 184, 0.05);
 
   /* Session phase colours (Sessions drawer; the table is ui/session-phases.js). Kept apart from the
      state colours above (green done, red failed, amber waiting) so a phase never reads as a state. */
   --phase-investigate: #60a5fa;
-  --phase-implement: var(--support);
+  --phase-implement: #2dd4bf;
   --phase-review: #f472b6;
   --phase-groom: #fb923c;
   --phase-e2e: var(--accent);
@@ -46,10 +50,23 @@
   --fs-xl: 16px;
   --fs-2xl: 24px;
 
-  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'Inter Tight', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-text: 'Inter Tight', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Martian Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --sans: var(--font-text);
+  --mono: var(--font-mono);
+
+  /* The bot bar's geometry, on :root so page layout can reserve its room. */
+  --bot-bar-size: 56px;
+  --bot-poster-w: 84px;
+  --bot-poster-h: 50px;
+  --bot-poster-overlap: 10px;
+  --bot-bar-gutter: calc(
+    var(--bot-bar-size) + var(--s1) + var(--bot-poster-h) - var(--bot-poster-overlap) + var(--s1) +
+      env(safe-area-inset-bottom, 0px)
+  );
   --shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(255, 255, 255, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 2px 8px -2px rgba(0, 0, 0, 0.5);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }

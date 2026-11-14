@@ -218,8 +218,9 @@ test('PR review board retains exactly four fixed-width columns at wide viewports
   await page.goto('/#/prs');
   await expect(page.getByTestId('prs-ticket-DEMO-1')).toBeVisible();
   await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(4);
-  for (const lane of ['to-review', 'reviewing', 'reviewed'])
+  for (const lane of ['to-review', 'reviewing'])
     expect((await page.getByTestId(`prs-column-${lane}`).boundingBox()).width).toBe(280);
+  expect((await page.getByTestId('prs-column-reviewed').boundingBox()).width).toBe(44);
 });
 
 test('review columns share a top edge and scroll-snap across breakpoints @regression', async ({
@@ -236,8 +237,9 @@ test('review columns share a top edge and scroll-snap across breakpoints @regres
         page.getByTestId(`prs-column-${lane}`).boundingBox(),
       ),
     );
-    for (const box of boxes) {
-      expect(box.width).toBeCloseTo(width <= 599 ? width * 0.82 : 280, 0);
+    for (const [index, box] of boxes.entries()) {
+      const expected = index === 2 ? 44 : width <= 599 ? width * 0.82 : 280;
+      expect(box.width).toBeCloseTo(expected, 0);
       expect(box.y).toBe(boxes[0].y);
     }
     expect(boxes[1].x).toBeGreaterThan(boxes[0].x + boxes[0].width);

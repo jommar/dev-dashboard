@@ -298,7 +298,7 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
               </BoardNote>
             )}
             {(incomplete || slackSnapshot?.continuation) && (
-              <BoardNote testId="my-tickets-slack-coverage">
+              <BoardNote testId="my-tickets-slack-coverage" defaultOpen>
                 Slack thread results may be incomplete.{' '}
                 <a href="#/slack">View Slack and load more</a>.
                 {staleReplyWarning ? ` ${staleReplyWarning}` : ''}

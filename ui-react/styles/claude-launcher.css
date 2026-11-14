@@ -29,11 +29,11 @@
 }
 .claude-icon:focus-visible {
   background: var(--panel);
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--support);
   outline-offset: 2px;
 }
 .claude-icon[data-state='working'] {
-  color: var(--accent);
+  color: var(--support);
 }
 .claude-icon[data-state='waiting'] {
   color: var(--amber);
@@ -139,9 +139,9 @@
   white-space: nowrap;
 }
 .claude-dialog-state[data-tone='working'] {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--support) 45%, var(--border));
+  background: color-mix(in srgb, var(--support) 10%, transparent);
+  color: var(--support);
 }
 .claude-dialog-state[data-tone='attention'] {
   border-color: color-mix(in srgb, var(--amber) 45%, var(--border));
@@ -230,7 +230,7 @@
 }
 .claude-step[data-status='ready']::before,
 .claude-step[data-status='running']::before {
-  background: var(--accent);
+  background: var(--support);
 }
 .claude-step[data-status='attention']::before {
   background: var(--amber);
@@ -240,7 +240,7 @@
 }
 .claude-step[data-status='ready'],
 .claude-step[data-status='running'] {
-  color: var(--accent);
+  color: var(--support);
 }
 .claude-step[data-status='attention'] {
   color: var(--amber);
@@ -285,7 +285,7 @@
 .claude-step > .btn.subtle:not(.claude-chip):hover,
 .claude-review-action > .btn.subtle:hover,
 .btn.subtle.claude-resend:hover {
-  border-color: var(--accent);
+  border-color: var(--support);
 }
 .claude-step > .btn.subtle:not(.claude-chip):disabled,
 .claude-review-action > .btn.subtle:disabled,
@@ -301,7 +301,7 @@
   font-size: var(--fs-xs);
 }
 .btn.subtle.claude-chip:hover {
-  color: var(--accent);
+  color: var(--support);
 }
 .claude-chip svg {
   flex: none;
@@ -395,7 +395,7 @@
   color: var(--text);
 }
 .claude-groom .btn.subtle.claude-groom-run:hover {
-  border-color: var(--accent);
+  border-color: var(--support);
 }
 .claude-action-hint {
   color: var(--muted);
@@ -607,7 +607,7 @@
   resize: none;
 }
 .claude-question-input:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--support);
   outline-offset: 1px;
 }
 .claude-question-input:disabled {
@@ -670,7 +670,7 @@
   resize: none;
 }
 .claude-prompt-input:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--support);
   outline-offset: 1px;
 }
 .claude-prompt-placeholders {
@@ -750,7 +750,7 @@
   font: inherit;
 }
 .claude-e2e-input:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--support);
   outline-offset: 1px;
 }
 .claude-e2e-port {
@@ -818,4 +818,14 @@
 }
 .claude-use-in-services .claude-note:empty {
   margin-top: calc(var(--s1) * -1);
+}
+
+/* Inside the Claude dialog the primary fill is the Claude colour. */
+.claude-dialog .btn.primary:not(:disabled) {
+  border-color: var(--support);
+  background: var(--support);
+}
+.claude-dialog .btn.primary:not(:disabled):hover {
+  border-color: var(--support);
+  background: color-mix(in srgb, var(--support) 82%, var(--strong));
 }

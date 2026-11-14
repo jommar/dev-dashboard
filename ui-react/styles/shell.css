@@ -56,7 +56,7 @@
   display: block;
   margin-top: 3px;
   color: var(--muted);
-  font: 11px/1.2 var(--sans);
+  font: var(--fs-xs)/1.2 var(--sans);
   letter-spacing: 0;
 }
 .shell-foot {
@@ -69,7 +69,7 @@
   background: color-mix(in srgb, var(--bg) 55%, transparent);
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--muted);
-  font: 10px/1.3 var(--mono);
+  font: var(--fs-xs)/1.3 var(--mono);
   white-space: nowrap;
 }
 #connection-status {
@@ -110,6 +110,9 @@
     gap: 20px;
     padding-inline: 24px;
   }
+}
+/* The footer pill at its 12px size leaves the tabs no room to stay on one row below 1500px. */
+@media (max-width: 1499px) {
   .shell-location {
     display: none;
   }
@@ -130,4 +133,14 @@
     order: 2;
     flex-basis: 100%;
   }
+}
+
+/* While the bot bar is drawn the page keeps room for its strip and the posters above it, so the last
+   card ends above them. On a board screen the spacer is the last flex item and the board gives up the
+   height; elsewhere it is room after the last element. With no bot there is no spacer. */
+#root:has(.bot-bar) > .panels::after {
+  content: '';
+  display: block;
+  flex: 0 0 auto;
+  height: var(--bot-bar-gutter);
 }

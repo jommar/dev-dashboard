@@ -47,6 +47,11 @@
   color: var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
 }
+.tab[data-tab='chat'].active {
+  background: color-mix(in srgb, var(--support) 11%, var(--panel));
+  color: var(--support);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--support) 24%, transparent);
+}
 .nav-primary .tab.active::after {
   content: '';
   position: absolute;
@@ -56,6 +61,9 @@
   height: 2px;
   border-radius: 1px;
   background: var(--accent);
+}
+.nav-primary .tab[data-tab='chat'].active::after {
+  background: var(--support);
 }
 .nav-tools {
   position: relative;
