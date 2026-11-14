@@ -24,6 +24,7 @@ import { withoutSecrets } from './config.mjs';
 import { classifyError, upstreamHealth } from './upstream.mjs';
 import { readTokenFile, stageTokenFile } from './credentials.mjs';
 import { createSlackBoard, eligibleRoot } from './slack-board.mjs';
+import { createSlackFeed, mentionUnread } from './slack-feed.mjs';
 import {
   buildThreadMessages,
   compareSlackTs,
@@ -245,6 +246,15 @@ export function createSlackIntegration({
     isCurrent,
     generation: () => generation,
   });
+  const feed = createSlackFeed({
+    call,
+    session,
+    verify,
+    users,
+    now,
+    isCurrent,
+    generation: () => generation,
+  });
 
   function clearCaches() {
     generation += 1;
@@ -255,6 +265,7 @@ export function createSlackIntegration({
     channelCache = null;
     threadCache.clear();
     board.clear();
+    feed.clear();
     rateLimits.clear();
   }
 
@@ -516,6 +527,7 @@ export function createSlackIntegration({
           unread: entry.has_unreads === true,
         },
         mentionsTotal: Number(payload.activity_v2?.at_user) || 0,
+        activityMentions: mentionUnread(payload.activity_v2),
         updatedAt: new Date(now()).toISOString(),
       };
       if (!isCurrent(gen)) return { available: false };
@@ -591,6 +603,7 @@ export function createSlackIntegration({
     thread,
     lastInThread,
     pending,
+    feed: feed.feed,
     connect,
     disconnect,
     writeSession,

@@ -7,3 +7,7 @@ export const CLAUDE_POLL_MS = 15_000;
 export const DEVTOOLS_POLL_MS = 15_000;
 // Sprint membership changes rarely; the bot bar asks which of its tickets are in an active sprint this often.
 export const SPRINT_POLL_MS = 5 * 60_000;
+// While Slack is unavailable the pending poll backs off to this, so a disconnected Slack costs almost nothing.
+export const SLACK_IDLE_POLL_MS = 5 * 60_000;
+export const pendingDelay = (pending) =>
+  pending?.available || pending?.failed ? SLACK_POLL_MS : SLACK_IDLE_POLL_MS;

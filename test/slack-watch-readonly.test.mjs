@@ -23,6 +23,7 @@ const NEW_MODULES = [
   'backend/harness/claude-code/sessions.mjs',
   'backend/slack-watcher.mjs',
   'backend/slack-board.mjs',
+  'backend/slack-feed.mjs',
 ];
 const SLACK_MODULE = 'backend/slack.mjs';
 // Method names Slack's web API offers for changing something, as a literal or a URL path segment.

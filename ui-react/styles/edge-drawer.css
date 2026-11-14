@@ -1,0 +1,118 @@
+/* The frame of a right-edge drawer: a tab on the edge and the drawer it opens (EdgeDrawer.jsx). Each
+   drawer's sheet adds its colour role (lavender for Sessions, cyan for Slack); nothing here is a role.
+   Both are fixed overlays, so no screen's height, scroll or viewport fill changes. Above the bar (20) and
+   under the tooltip and every dialog (top layer). The drawer is not modal: the app stays usable beside it. */
+[data-edge-tab] {
+  position: fixed;
+  right: 0;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s2);
+  border: 1px solid var(--border-strong);
+  border-right: 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  writing-mode: vertical-rl;
+  cursor: pointer;
+  transition:
+    color 120ms linear,
+    border-color 120ms linear,
+    background-color 120ms linear;
+}
+/* Two tabs share the edge: the upper one ends at the midline, the lower one starts there. */
+[data-edge-tab='upper'] {
+  bottom: calc(50% + var(--s1));
+}
+[data-edge-tab='lower'] {
+  top: calc(50% + var(--s1));
+}
+/* A drawer that needs you is a word as well as the count's amber: the label and the group say it. */
+[data-edge-tab][data-attention='true'] [data-edge-count] {
+  background: var(--amber);
+  color: var(--bg);
+}
+[data-edge-count] {
+  min-width: 20px;
+  padding: 2px 0;
+  border-radius: var(--radius-pill);
+  background: var(--panel2);
+  color: var(--strong);
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  text-align: center;
+  writing-mode: horizontal-tb;
+}
+
+[data-edge-drawer] {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100vw);
+  border-left: 1px solid var(--border-strong);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+/* A display rule on the same element would defeat the hidden attribute. */
+[data-edge-drawer][hidden] {
+  display: none;
+}
+[data-edge-head] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+}
+[data-edge-actions] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s2);
+}
+[data-edge-head] h2 {
+  margin: 0;
+  color: var(--strong);
+  font-size: var(--fs-lg);
+}
+
+/* Narrow screens: both tabs are one fixed length, the lower one at the spot the single tab always had
+   (above the bot bar) and the upper one just above it. */
+@media (max-width: 599px) {
+  [data-edge-tab] {
+    height: var(--edge-tab-length);
+    justify-content: center;
+  }
+  [data-edge-tab='lower'] {
+    top: auto;
+    bottom: calc(var(--bot-bar-size, 56px) + var(--s6));
+  }
+  [data-edge-tab='upper'] {
+    bottom: calc(var(--bot-bar-size, 56px) + var(--s6) + var(--edge-tab-length) + var(--s1));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-edge-tab] {
+    transition: none;
+  }
+}
+
+@media print {
+  [data-edge-tab],
+  [data-edge-drawer] {
+    display: none;
+  }
+}

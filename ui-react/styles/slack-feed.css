@@ -1,0 +1,126 @@
+/* The Slack activity drawer (SlackDrawer.jsx, SlackFeedPanel.jsx): the cyan role of its edge tab (lavender
+   is Claude only) and the rows of its body. The frame itself is edge-drawer.css. */
+.slack-feed-tab:hover,
+.slack-feed-tab[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.slack-feed-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.slack-feed {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--s2);
+  min-height: 0;
+  padding: var(--s2) var(--s3) var(--s3);
+}
+.slack-feed-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.slack-feed-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.slack-feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.slack-feed-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+  transition:
+    border-color 120ms linear,
+    background-color 120ms linear;
+}
+.slack-feed-row:hover {
+  border-color: var(--accent);
+}
+.slack-feed-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.slack-feed-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.slack-feed-channel {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slack-feed-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slack-feed-when {
+  margin-left: auto;
+  flex: none;
+}
+.slack-feed-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.slack-feed-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+.slack-feed-meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slack-feed-empty,
+.slack-feed-load-failed {
+  margin: var(--s3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slack-feed-row {
+    transition: none;
+  }
+}
+
+.slack-feed .btn[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: wait;
+}

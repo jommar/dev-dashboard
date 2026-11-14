@@ -3,7 +3,8 @@ import { lazyScreen } from './lazy-screen.js';
 
 // The overlays opened on demand are not in the first-paint bundle: the command palette (Control+K),
 // the shortcuts help (?) and the ticket's Claude dialog (a click on a bot or a My Tickets row; its
-// code holds the prompts editor and UseInServices too).
+// code holds the prompts editor and UseInServices too) and the bodies of the two edge drawers (their edge
+// tabs load them before they open).
 //
 // Each is a `[load, Overlay]` pair. The opener calls `load()` first and opens when it settles, also
 // when it failed: `Overlay` then renders the loaded component directly, with no Suspense. A bare
@@ -29,4 +30,12 @@ export const [loadShortcutsHelp, ShortcutsHelp] = lazyOverlay(
 export const [loadClaudeDialog, ClaudeDialog] = lazyOverlay(
   () => import('../components/ClaudeDialog.jsx'),
   'ClaudeDialog',
+);
+export const [loadSlackFeedPanel, SlackFeedPanel] = lazyOverlay(
+  () => import('../components/SlackFeedPanel.jsx'),
+  'SlackFeedPanel',
+);
+export const [loadSessionsBody, SessionsBody] = lazyOverlay(
+  () => import('../components/SessionsBody.jsx'),
+  'SessionsBody',
 );

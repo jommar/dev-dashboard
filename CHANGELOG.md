@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added the Slack activity drawer: a second edge tab under Sessions opens Mentions, Threads and Reactions
+  from your recent Slack activity (rows are plain links to the message in Slack, read on open and on
+  Refresh only), and the tab shows your unread mentions count. New `GET /api/slack/feed`, and
+  `GET /api/slack/pending` gains `activityMentions`. Both drawers now share one edge-drawer frame, the
+  Sessions tab moves to the upper edge slot and its list loads lazily, and only one drawer is open at a
+  time. See [Bot bar](README.md#bot-bar) and [HTTP](README.md#http).
 - UI refresh: the page keeps a bottom gutter for the bot bar while a bot shows, and a crowded done or
   failed zone shows what fits plus a **+N** pill that toggles the Sessions drawer. Empty board columns
   beside a populated one fold into 44px rails, and long board notes are a one-line chip that expands.

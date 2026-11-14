@@ -226,7 +226,26 @@ Its styles are in `ui-react/styles/bot-bar.css` (tokens only,
 `bot-bar-*` names, transform-only keyframes, a reduced-motion block). It never calls
 `/api/team-velocity`, so the Home velocity rule above is unaffected.
 
-**The session list drawer.** `SessionsDrawer.jsx` (mounted by `BotBar`, so on every screen once ready) is
+**The edge drawer frame (Sessions and Slack).** `ui-react/components/EdgeDrawer.jsx` (eager) is the one frame of
+both right-edge drawers: a fixed tab plus a non-modal `<aside>`. Classes, test ids and names come from its `name` prop
+(`sessions`, `slack-feed`: `${name}-tab`, `-tab-count`, `-drawer`, `-head`, `-head-actions`, `-close`), the shared CSS
+hooks are the `data-edge-*` attributes (`edge-drawer.css`), the drawer's content is `children` and is mounted only while
+open, and the caller keeps `tabRef` (required) so its own controls can refocus the tab. On open, Close takes focus; Escape
+and Close shut it and refocus the tab, unless the event is `defaultPrevented` or a `dialog[open]` exists. The frame has
+no tooltip, native `title` or live region. `BotBar` holds `activeDrawer` (`'sessions' | 'slack-feed' | null`, never a
+boolean) and `setDrawer(name, open)`: opening sets the name, closing clears it only when that drawer is the open one,
+so a late close from one never shuts the other, and `openBot` clears it for a chat. One drawer is open at a time; an
+open drawer (520px, full height, z-index 30) covers both tabs, as the Sessions drawer always covered its own, so the
+other drawer is reached by closing this one first. The `+N` pill and the Sessions tab go through `setSessionsOpen`, which
+loads `SessionsBody` (below) before opening, also when the load fails. Tab slots are `data-edge-tab`: Sessions is
+`upper` (bottom edge at the midline) and Slack `lower` (top edge at the midline), each `--s1` off it, so the Sessions
+tab is no longer vertically centred; under 600px both are `--edge-tab-length` (128px, `tokens.css`) tall, Slack at the
+spot the single tab used to have (above the bot bar), Sessions one tab length and `--s1` above it. A new edge drawer is a
+new `EdgeDrawer` caller with its own slot and sheet, never a copy of the frame.
+
+**The session list drawer.** `SessionsDrawer.jsx` (mounted by `BotBar`, so on every screen once ready; it renders
+through `EdgeDrawer` and keeps the search, the clock, the usage read and every other piece of state, so the search survives
+close and reopen) is
 a right-edge tab plus a non-modal fixed drawer listing the same sessions as the bar, from the bar's own
 data: `sessionGroups(bots, byTicket, lastActive)` in `ui/bot-bar.js` over the sprint-filtered `bots`, deliberately
 NOT the TTL/dismissal-filtered `visible`, so a faded or dismissed session stays reachable. Rows open the
@@ -239,7 +258,10 @@ never on a timer, never from the bar or the tickets poll). It
 mounts rows only while open (so tests counting `BOT-n` buttons are unaffected; row button names are
 `Open <KEY> <phase> session`, never the bot's `<KEY> <phase>: <state>`; a chat row's name is its title:
 `Open <title> Chat session`; a row's phase is an icon, coloured per phase from the one `PHASES` table in `ui/session-phases.js` (words, `NavIcon` name, `--phase-*` token in `tokens.css`; a new or restyled phase is a row there, never a second list) (`sessions-phase-<key>`, `NavIcon`, `aria-hidden`, not a tab stop, the words from `phaseOf` in its app tooltip) in a column of its own right after the state mark and before the key or title, and the detail after the title is just the state and reason, a chat's `working`/`done`; the search still matches the phase words; the header's **New chat** link, `#/chat` as on the Chat screen, is there with or without rows and closes the drawer, focus back on the tab), and its styles live in
-`ui-react/styles/sessions-drawer.css` because `bot-bar.css` selectors must all start `.bot-bar`. A row's
+`ui-react/styles/sessions-drawer.css` (the lavender role and every row, group and search rule; the frame is `edge-drawer.css`)
+because `bot-bar.css` selectors must all start `.bot-bar`. The groups and rows are `SessionsBody.jsx`, a lazy overlay
+(`loadSessionsBody`); `SessionsDrawer` hands it rows already dressed (`dressed`: `mark`, `words`, `detail`, `copyWord`,
+`meta`) so it imports none of the modules the eager code shares with other lazy chunks (see "Lazy screens"). A row's
 time is a `.sessions-row-when` span after its button, linked by the button's `aria-describedby` so the
 name stays as above, with no live region. `isQuiet` (`QUIET_WORKING_MS`) marks a working row whose time
 is five minutes old, and the open drawer re-reads the clock (`ACTIVITY_CLOCK_MS`) only while it is open.
@@ -257,6 +279,73 @@ the drawer, because it is non-modal and would cover the conversation it just ope
 (`notifyClaudeTicketsChanged` in `useClaudeTickets.js`, fired by the Chat screen after a send and when a
 chat's phase changes), so the bar, the drawer and the chat list follow a turn without waiting for the 15 s poll.
 
+## Slack activity drawer: facts not to break
+
+The second edge drawer (`SlackDrawer.jsx`, eager: tab, count and frame only; `SlackFeedPanel.jsx`, lazy: the body) lists
+what Slack's Activity pane shows. It is read-only and never marks anything read, so the tab's count falls only when the
+mentions are read in Slack.
+
+- **Opening and the body.** The tab calls `loadSlackFeedPanel()` and opens when it settles, success or failure; the
+  body sits in `ChunkBoundary`, whose failure line is `slack-feed-load-failed`. The panel reads `getSlackFeed()` on mount
+  and on its Refresh button (`slack-feed-refresh`, `aria-disabled` while a read is out, so focus stays; one read at a time,
+  an answer after unmount dropped, a failed refresh keeps the rows already shown), **never on a timer**, and unmounts on
+  close, so every open starts on **Mentions**. Tabs (`FEED_TABS` in `ui/slack-feed.js`, one `BoardTabs`, test ids
+  `slack-feed-view-<id>`): Mentions, Threads, Reactions; a tab's count is its unread rows (`tabCounts`, with
+  `hint: 'unread'` so it is spoken), never its row count. Not `BoardSection` (it adds a heading and status region).
+  Rows are plain `a[href][target=_blank][rel="noopener noreferrer"]` links (`slack-feed-row-<id>`) to the message in
+  Slack, because `thread()` serves one channel and only verified roots and cannot open an arbitrary message; never route
+  a row to the thread dialog. An unhydrated row reads "Unknown conversation" and "Message not loaded".
+- **Disconnected and unavailable are calm.** `reason: 'disconnected'` shows `slack-feed-disconnected` with a link
+  (`slack-feed-connect-link`) to `#/slack` that closes the drawer and refocuses the tab; the drawer never connects (the
+  Slack tab owns sign-in) and shows no Connect button. `unavailable` shows `slack-feed-unavailable` with Refresh.
+  `getSlackFeed` resolves `{ available: false, reason: 'unavailable' }` on any failure.
+- **`GET /api/slack/feed`** (`slack.feed()`, `createSlackFeed` in `backend/slack-feed.mjs`) takes no query, answers 200
+  and never throws: `{ available: true, updatedAt, partial[], mentions[], threads[], reactions[] }` or
+  `{ available: false, reason: 'disconnected' | 'unavailable' }`; no stored session means `disconnected` with no Slack
+  call, every other failure (a feed `ok:false`, a thrown call, a session change mid-read) is `unavailable`. `partial`
+  holds `budget`, `rate_limited`, `unreadable`. A cross-site or same-site `Sec-Fetch-Site` is answered `403`
+  `INVALID_ORIGIN` directly in the route, as the chat stream does (a thrown one would read `OPERATION_FAILED`), because a
+  read spends up to about 35 Slack calls. `/api/slack/` keeps its `[http]` line message-free. Rows carry names and text,
+  never user, channel or user-group ids: an unmapped `<@U..>` becomes `@someone`, an unlabelled `<#C..>` `#channel` and a `<!subteam^S..>` its label or `@group` (`plainText`,
+  before the shared `cleanText`, which the Slack board keeps untouched); an id with no known name is `''`.
+- **Calls and caches.** One `activity.feed` page (`types=at_user,at_channel,keyword,thread_v2,message_reaction`,
+  `limit=30`), then hydration in tab order (mentions, threads, reactions), newest first, pool of 5: at most 24
+  `conversations.replies` (`HYDRATE_BUDGET`, one per distinct message, never `conversations.history`) and 10
+  `conversations.info` (`INFO_BUDGET`) per request, plus the shared `auth.test` and `users.list`. A row the budget does
+  not reach is `hydrated: false` with `partial: ['budget']`; a thrown `rate_limited` stops every further call of the
+  request; a per-call failure leaves that row unhydrated (`unreadable`) and never fails the page. Message reads (key
+  `<channel>:<ts>`, thread rows `thread:<channel>:<latest_ts>` so a reaction cannot hand a thread a parent-less entry) and
+  channel infos are cached 10 minutes, 200 entries each, oldest out; a read Slack would not give is remembered 60 s
+  (`MISS_TTL_MS`, a negative cache written only for an `ok:false` or unusable payload, never for a throw or rate limit)
+  so an unreadable row costs no call per open. Concurrent calls share one in-flight promise; there is no page cache.
+  `clearCaches()` calls `feed.clear()` (all three maps), and every await re-checks `isCurrent(gen)`, so an account
+  switch returns `unavailable` and a stale read writes no cache.
+- **Method literals and read-only.** `activity.feed`, `conversations.replies` and `conversations.info` of the feed live
+  only in `slack-feed.mjs`, which is in `NEW_MODULES` of `test/slack-watch-readonly.test.mjs`; no `activity.mark*` or any
+  write method. Every call goes through `call()`, so rate limits and upstream health are the integration's.
+- **Split and dedupe.** `at_user`, `at_channel` and `keyword` items are **Mentions** (one row per `<channel>:<ts>`, unread
+  if any collapsed item is), `thread_v2` is **Threads**, `message_reaction` is **Reactions**; other types and items with no key
+  or no message ids are dropped. A thread row whose newest reply (`latest_ts`) is already a mention row is dropped, so a
+  mention shows once, under Mentions; reaction rows are separate events and are never dropped for a mention.
+- **The count.** The tab's number is `activityMentions` from `pending()` (`mentionUnread`: `at_user + at_channel +
+keyword` from the `client.counts` call it already makes; only positive finite numbers count), mentions only, `99+`
+  above 99, amber `attention`, shown only while `pending.available`; `channel` and `mentionsTotal` keep their meaning
+  and the Slack tab's badge number is unchanged. Whether it equals Slack's own Activity badge is not verified.
+- **One shared pending store.** `useSlackPending` is a module-level store (`useSyncExternalStore`): one timer, readers
+  counted, the first reader starts it and the last stops it, so the Slack tab's badge and the drawer tab make one
+  `/api/slack/pending` request per interval. The next tick is `pendingDelay(pending)` in `ui/polling.js`: `SLACK_POLL_MS`
+  (60 s) when `available` **or `failed`**, `SLACK_IDLE_POLL_MS` (5 min) only when the server itself answered
+  `available: false`; `getSlackPending` turns a rejected fetch or non-OK status into `{ available: false, failed: true }`
+  (client-side only, so a flaky network is retried in a minute, not five). A tick while `document.hidden` asks for
+  nothing; `slack-session-changed` reads at once. The next tick is armed when a tick fires (`tick()` = `schedule()` then
+  `read()`) and again by each answer, every read asks, and only the newest read's answer counts (`latest`): not an
+  in-flight guard, because a guard would drop the session-change read and a hung request would stall the poll, and the
+  "shared pending poll" e2e depends on the arm-first order. Do not add a guard.
+- **Style roles.** The tab is cyan `--accent` (`slack-feed.css`: hover, expanded and focus ring), never lavender
+  (Claude only); both new sheets use tokens only, text at least `--fs-xs`, 120 ms named transitions and a
+  reduced-motion block, and `slack-feed.css` selectors all start `.slack-feed`. The frame sheet is `edge-drawer.css`,
+  imported before `slack-feed.css` and `sessions-drawer.css` in `styles.css`.
+
 ## UI colour, text and buttons: facts not to break
 
 `ui-react/styles/tokens.css` is the only stylesheet that writes a colour (`mascots.css` and `posters.css` art
@@ -266,6 +355,7 @@ change them (`test/ui-refresh-palette.test.mjs` holds all three, and every text 
 focus ring at 3:1; `--red` is lifted to `#fc7a8d` to clear 4.5:1 under its 12% hover tint).
 
 - Roles: cyan (`--accent`, `--accent-fill` for a primary fill) means interactive or selected, never decoration.
+  The Slack activity edge tab is cyan, not lavender (it is not Claude).
   Lavender (`--support`) means Claude only: the Sessions tab and drawer, the Chat tab and screen, the Claude
   launcher including its dialog primary fill (`.claude-dialog .btn.primary`, specificity 0,4,0, keeps `:disabled`
   on the base look). Ticket keys (`.jira-link`, `.review-ticket-key`, `.my-tickets-card-key`) are `--strong` and
@@ -678,7 +768,8 @@ chat facet) and `ui/chat-stream.js` (the client reducer).
 
 Chat, Releases, DevTools and Mascots load their code on first visit; Home, My Tickets, Slack, Pull
 Requests, Services, Settings (the only screen in setup-only mode) and the bot bar are eager. The ticket
-Claude dialog, the command palette and the shortcuts help are lazy overlays too
+Claude dialog, the command palette, the shortcuts help and the two edge-drawer bodies (`SlackFeedPanel`, opened by
+the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
 (`ui-react/lib/lazy-overlays.js`, a `[load, Overlay]` pair each), and `ArtifactViewer` and
 `E2eCheckDialog` are lazy inside `ClaudeDialog` through `LazyDialog`. README "UI layout" has the numbers.
 
@@ -695,7 +786,14 @@ Claude dialog, the command palette and the shortcuts help are lazy overlays too
   throttle never shows. The review row of a bot still opens the eager `ClaudePlaceholderDialog`.
 - `test/bundle-budget.test.mjs` builds in memory (never `dist/`) and holds initial JS to 640 KiB raw and
   200 KiB gzip -9; a new eager import of a lazy module fails it. `vite.config.js` is pinned by
-  `ui-build-contract.test.mjs`.
+  `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
+- **The first-paint gzip and all-JS margins are thin.** With the Slack tab the entry chunk is 627 KiB raw and 204,199 B
+  gzip against 204,800 (about 600 B spare), and all JS is 901,108 B against `MAX_TOTAL_RAW`, 880 KiB (901,120 B), so
+  about 12 B spare: one more byte of lazy code, or a new eager import, can fail the budget test with no apparent cause.
+  `SessionsBody` stays lazy only because `SessionsDrawer` passes it dressed rows: rolldown makes any module that the
+  entry and two or more lazy chunks share its own initial chunk, which cost more than the move saved. A new import in
+  `SessionsBody.jsx` (pinned by a source test in `test/edge-drawer.test.mjs`) of a module an eager file and another lazy
+  chunk already use brings that split back; re-measure the chunks before adding one.
 - **Service feed.** `useServiceEvents` stores `keepIfEqual(previous, next)` (`ui/keep-if-equal.js`, shared
   with `useClaudeTickets`) on the whole snapshot JSON and must stay so: every output line changes
   `lineCount` and `lastLineAt`, and `ServiceCard` refreshes its log whenever the snapshot list changes

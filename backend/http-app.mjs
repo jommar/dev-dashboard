@@ -591,6 +591,16 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         json(res, 200, await slack.pending());
         return;
       }
+      if (req.method === 'GET' && pathname === '/api/slack/feed') {
+        // The read spends up to ~35 Slack calls, so a cross-site page cannot trigger it (answered here,
+        // as the chat stream does, because a thrown INVALID_ORIGIN reads OPERATION_FAILED).
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site'])) {
+          json(res, 403, { code: 'INVALID_ORIGIN', error: 'INVALID ORIGIN', errors: [] });
+          return;
+        }
+        json(res, 200, await slack.feed());
+        return;
+      }
       // Opened from a ticket's Slack glyph; a missing `ts` is answered locally
       // rather than by asking Slack to look up nothing.
       if (req.method === 'GET' && pathname === '/api/slack/thread') {

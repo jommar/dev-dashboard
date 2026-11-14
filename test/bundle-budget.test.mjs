@@ -36,6 +36,10 @@ const LAZY_MODULES = [
   'components/ClaudeDialog.jsx',
   'components/ClaudePromptsEditor.jsx',
   'components/UseInServices.jsx',
+  // The Slack activity drawer's list: its edge tab is eager and tiny, the list loads before it opens.
+  'components/SlackFeedPanel.jsx',
+  // The Sessions drawer's list, loaded before the drawer opens.
+  'components/SessionsBody.jsx',
 ];
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
@@ -105,7 +109,8 @@ test('heavy screens, dialogs and the markdown stack are outside the initial clos
       module.endsWith('Viewer.jsx') ||
       module.endsWith('Dialog.jsx') ||
       module.endsWith('Palette.jsx') ||
-      module.endsWith('Help.jsx')
+      module.endsWith('Help.jsx') ||
+      module === 'components/SlackFeedPanel.jsx'
     )
       assert.ok(owner.isDynamicEntry, `${module} loads through a dynamic import`);
   }

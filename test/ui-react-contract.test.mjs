@@ -45,6 +45,7 @@ test('the shared API boundary retains every existing endpoint and payload operat
     '/api/slack/threads',
     '/api/slack/thread?ts=',
     '/api/slack/pending',
+    '/api/slack/feed',
     '/api/events',
   ]) {
     assert.ok(api.includes(route), `API route ${route} is represented`);

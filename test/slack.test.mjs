@@ -648,6 +648,47 @@ test('pending reports the channel unread mentions and workspace mentions', async
   assert.ok(slack.calls.includes('client.counts'));
 });
 
+function pendingWithActivity(t, activityV2) {
+  const slack = fakeSlack();
+  const { paths, integration } = setup(t, {
+    fetchImpl: async (url) => {
+      const method = String(url).split('/api/')[1].split('?')[0];
+      if (method !== 'client.counts') return slack.fetchImpl(url);
+      slack.calls.push(method);
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          channels: [{ id: 'C1', mention_count: 2, has_unreads: true }],
+          activity_v2: activityV2,
+        }),
+      );
+    },
+  });
+  writeSession(paths);
+  return integration;
+}
+
+test('pending reports activityMentions from mention types only', async (t) => {
+  const integration = pendingWithActivity(t, {
+    at_user: 2,
+    at_channel: 1,
+    keyword: 1,
+    thread_v2: 7,
+    message_reaction: 4,
+  });
+
+  const result = await integration.pending();
+
+  assert.equal(result.activityMentions, 4);
+  assert.equal(result.mentionsTotal, 2, 'mentionsTotal keeps meaning at_user');
+  assert.equal(result.channel.mentions, 2);
+});
+
+test('pending counts a non-number activityMentions type as zero', async (t) => {
+  const integration = pendingWithActivity(t, { at_user: 3, at_channel: 'x', keyword: null });
+  assert.equal((await integration.pending()).activityMentions, 3);
+});
+
 test('pending is cached between calls', async (t) => {
   const slack = fakeSlack();
   const { paths, integration } = setup(t, { fetchImpl: slack.fetchImpl });

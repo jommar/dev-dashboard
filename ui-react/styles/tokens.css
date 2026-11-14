@@ -58,6 +58,7 @@
 
   /* The bot bar's geometry, on :root so page layout can reserve its room. */
   --bot-bar-size: 56px;
+  --edge-tab-length: 128px;
   --bot-poster-w: 84px;
   --bot-poster-h: 50px;
   --bot-poster-overlap: 10px;

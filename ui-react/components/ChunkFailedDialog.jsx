@@ -2,7 +2,7 @@
 // that outlived a deploy). It is a modal <dialog> of its own: the dialog it was to open over (the
 // Claude dialog) is itself a modal, so everything outside it is inert, and a plain alert next to it
 // would show behind it with a Reload nobody can click. Shown last, a modal takes the top layer in
-// front. Escape and Close call `onClose`, so the owner unmounts it; keep `onClose` stable, a new
+// front. Escape and Close call `onClose` with no argument, so the owner unmounts it; keep `onClose` stable, a new
 // function each render reopens the dialog.
 import { useId } from 'react';
 import { Button } from './Primitives.jsx';
@@ -35,7 +35,7 @@ export function ChunkFailedDialog({ label, onClose }) {
         <Button className="primary" onClick={() => location.reload()}>
           Reload
         </Button>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={() => onClose()}>Close</Button>
       </footer>
     </dialog>
   );

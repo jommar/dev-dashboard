@@ -984,6 +984,8 @@ for (const width of [1200, 390]) {
     await page.setViewportSize({ width, height: 700 });
     await page.goto('/#/services');
     await page.getByTestId('sessions-tab').click();
+    // The click leaves the mouse where the tab was, which is over a row once the drawer opens.
+    await page.mouse.move(0, 0);
     const tip = page.getByRole('tooltip');
     const chatOff = (key) => page.getByTestId(`sessions-chat-off-${key}`);
     const copyOff = (key) => page.getByTestId(`sessions-copy-off-${key}`);

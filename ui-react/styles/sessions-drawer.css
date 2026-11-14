@@ -1,32 +1,5 @@
-/* The session list: an edge tab and the drawer it opens (SessionsDrawer.jsx). Both are fixed overlays,
-   so no screen's height, scroll or viewport fill changes. Above the bar (20) and under the tooltip and
-   every dialog (top layer). The drawer is not modal: the app stays usable beside it. */
-.sessions-tab {
-  position: fixed;
-  top: 50%;
-  right: 0;
-  z-index: 21;
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  padding: var(--s3) var(--s2);
-  border: 1px solid var(--border-strong);
-  border-right: 0;
-  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  writing-mode: vertical-rl;
-  cursor: pointer;
-  transform: translateY(-50%);
-  transition:
-    color 120ms linear,
-    border-color 120ms linear,
-    background-color 120ms linear;
-}
+/* The session list (SessionsDrawer.jsx): the lavender role of its edge tab and the rows of its drawer. The
+   frame itself (tab, drawer, header, slots, narrow and print rules) is edge-drawer.css. */
 .sessions-tab:hover,
 .sessions-tab[aria-expanded='true'] {
   border-color: var(--support);
@@ -36,60 +9,7 @@
   outline: 2px solid var(--support);
   outline-offset: -2px;
 }
-/* A session that needs you is a word as well as the count's amber: the label and the group say it. */
-.sessions-tab[data-attention='true'] .sessions-tab-count {
-  background: var(--amber);
-  color: var(--bg);
-}
-.sessions-tab-count {
-  min-width: 20px;
-  padding: 2px 0;
-  border-radius: var(--radius-pill);
-  background: var(--panel2);
-  color: var(--strong);
-  font-size: var(--fs-xs);
-  line-height: 1.2;
-  text-align: center;
-  writing-mode: horizontal-tb;
-}
 
-.sessions-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  width: min(520px, 100vw);
-  border-left: 1px solid var(--border-strong);
-  background: var(--panel);
-  box-shadow: var(--shadow);
-}
-/* A display rule on the same element would defeat the hidden attribute. */
-.sessions-drawer[hidden] {
-  display: none;
-}
-.sessions-head {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s3);
-  padding: var(--s2) var(--s3);
-  border-bottom: 1px solid var(--border);
-}
-.sessions-head-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--s2);
-}
-.sessions-head h2 {
-  margin: 0;
-  color: var(--strong);
-  font-size: var(--fs-lg);
-}
 .sessions-search {
   flex: none;
   padding: var(--s2) var(--s3);
@@ -355,19 +275,4 @@
 .sessions-row-slot-off:focus-visible {
   outline: 2px solid var(--support);
   outline-offset: 2px;
-}
-
-@media (max-width: 599px) {
-  .sessions-tab {
-    top: auto;
-    bottom: calc(var(--bot-bar-size, 56px) + var(--s6));
-    transform: none;
-  }
-}
-
-@media print {
-  .sessions-tab,
-  .sessions-drawer {
-    display: none;
-  }
 }

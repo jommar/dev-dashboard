@@ -13,33 +13,24 @@
 // the drawer is open, so nothing here is on the page, or in its accessibility tree, while it is shut.
 // Each row also shows the tokens its session used (useSessionsUsage: read when the drawer opens, never polled),
 // and the header's "Notify me" switch turns on the desktop notification for sessions that need you.
-// Escape closes it and puts focus back on the tab.
+// Escape closes it and puts focus back on the tab. The list itself (groups, rows) is SessionsBody, a lazy
+// overlay BotBar loads before the drawer opens; this file keeps the tab, the search and every piece of state.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useSessionsUsage } from '../hooks/useSessionsUsage.js';
 import { useHarness } from '../lib/harness-context.js';
+import { SessionsBody } from '../lib/lazy-overlays.js';
 import { Button, DashboardTooltip } from './Primitives.jsx';
+import { EdgeDrawer } from './EdgeDrawer.jsx';
 import { StatusMark } from './ClaudeSteps.jsx';
-import { NavIcon } from './NavIcon.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
-import { RelativeTime } from './slack-watch/RelativeTime.jsx';
-import {
-  BOT_STATE_WORDS,
-  QUIET_WORKING_MS,
-  filterSessionGroups,
-  isQuiet,
-} from '../../ui/bot-bar.js';
-import { chatHref } from '../../ui/chat-stream.js';
-import { rowUsageLabel } from '../../ui/session-usage.js';
+import { LazyDialog } from './ScreenSlot.jsx';
+import { BOT_STATE_WORDS, filterSessionGroups, isQuiet } from '../../ui/bot-bar.js';
 import { copyText } from '../../ui/dom.js';
 import { say } from '../../ui/harness.js';
 import { notifyStateLabel, notifyTooltip } from '../../ui/needs-you.js';
-import { PHASES, phaseWords } from '../../ui/session-phases.js';
+import { PHASES, phaseWords as phaseOf } from '../../ui/session-phases.js';
 
 const MARK = { working: 'running', waiting: 'attention', done: 'done', failed: 'failed' };
-// The words of a phase (`phaseOf`) are the tooltip of its icon in a row, the row button's name and what the
-// search matches; a phase not in PHASES shows its words instead of an icon.
-const phaseOf = phaseWords;
-const hasPhaseIcon = (phase) => phase in PHASES;
 function stateText({ state, reason, phase }) {
   // A chat has no reason to give: it is working, done or failed.
   if (phase === 'chat') return BOT_STATE_WORDS[state];
@@ -48,9 +39,9 @@ function stateText({ state, reason, phase }) {
     ? reasonPhrase
     : `${BOT_STATE_WORDS[state]} · ${reasonPhrase}`;
 }
-// What the search matches: all of the above, the copy button's word and `quiet` for a quiet working
-// session. The time itself is not searched.
 const copyWord = (goTo) => (goTo.kind === 'attach' ? 'Copy attach' : 'Copy resume');
+// What the search matches: the title or ticket, the phase words, the state text, the copy button's word
+// and `quiet` for a quiet working session. The time itself is not searched.
 const searchText = (row, now) =>
   [
     row.title ?? row.ticket,
@@ -59,147 +50,26 @@ const searchText = (row, now) =>
     row.goTo ? copyWord(row.goTo) : '',
     isQuiet(row, now) ? 'quiet' : '',
   ].join(' ');
-// How long "Copied" (or "Copy failed") shows on a row's copy button: in its tooltip, its glyph and, as
-// the chat's copy buttons do, its name, so a screen reader hears the outcome.
-const OUTCOME_KINDS = { Copied: 'copied', 'Copy failed': 'failed' };
+// A row with what the lazy list shows of it, so the list imports none of the shared modules these come
+// from. The words of a phase are the tooltip of its icon, the row button's name and what the search
+// matches; a phase not in PHASES has no `meta` (icon and colour) and shows its words in the detail instead.
+const dressed = (row) => {
+  const meta = PHASES[row.phase];
+  const words = phaseOf(row.phase);
+  const state = stateText(row);
+  return {
+    ...row,
+    meta,
+    words,
+    mark: <StatusMark status={MARK[row.state]} />,
+    detail: meta ? state : `${words} · ${state}`,
+    copyWord: row.goTo && copyWord(row.goTo),
+  };
+};
+// How long "Copied" (or "Copy failed") shows on a row's copy button.
 const COPIED_MS = 2000;
 // How often the open drawer reads the clock again, so "9m ago" and the quiet flag age on screen.
 const ACTIVITY_CLOCK_MS = 30_000;
-// The popup on a row's time: when the session was last written to and, for a quiet one, for how long.
-const activityTitle = (iso, quiet) =>
-  `Last active ${new Date(iso).toLocaleString()}${
-    quiet ? ` · working but quiet for ${QUIET_WORKING_MS / 60_000}+ min` : ''
-  }`;
-
-// Why a row has no Copy command, in words: a working chat has no command yet.
-const copyReason = ({ phase, state }) =>
-  phase === 'chat' && state === 'working'
-    ? 'Working: no resume command yet'
-    : 'No resume command available';
-
-// A slot with nothing to offer: dimmed and aria-disabled, but still focusable so its tooltip, and its
-// name, say why. It is not a link or a button element and does nothing when activated.
-function SlotOff({ slot, icon, testId, label, reason }) {
-  return (
-    <DashboardTooltip title={reason} placement="left">
-      <span
-        role="button"
-        tabIndex={0}
-        aria-disabled="true"
-        className="sessions-row-slot-off"
-        data-slot={slot}
-        data-testid={testId}
-        aria-label={`${label}, unavailable: ${reason}`}
-      >
-        <NavIcon name={icon} />
-      </span>
-    </DashboardTooltip>
-  );
-}
-
-function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
-  const { key, ticket, phase, state, goTo, lastActiveAt, session } = row;
-  const phaseWords = phaseOf(phase);
-  // A standalone chat has no ticket; its title is what names it.
-  const name = row.title ?? ticket;
-  const whenId = useId();
-  const usageId = useId();
-  const quiet = isQuiet(row, now);
-  const tokens = rowUsageLabel(usage);
-  const described = [tokens && usageId, lastActiveAt && whenId].filter(Boolean).join(' ');
-  return (
-    <li className="sessions-row" data-testid={`sessions-row-${key}`} data-state={state}>
-      <button
-        type="button"
-        className="sessions-row-open"
-        data-testid={`sessions-open-${key}`}
-        aria-label={`Open ${name} ${phaseWords} session`}
-        aria-describedby={described || undefined}
-        aria-haspopup={phase === 'chat' ? undefined : 'dialog'}
-        onClick={() => onOpen(ticket, phase)}
-      >
-        <span className="sessions-row-mark" data-state={state}>
-          <StatusMark status={MARK[state]} />
-        </span>
-        {hasPhaseIcon(phase) && (
-          <DashboardTooltip title={phaseWords} placement="top">
-            <span
-              className="sessions-row-phase"
-              data-testid={`sessions-phase-${key}`}
-              data-phase={phase}
-              style={{ color: `var(${PHASES[phase].color})` }}
-            >
-              <NavIcon name={PHASES[phase].icon} />
-            </span>
-          </DashboardTooltip>
-        )}
-        <span className="sessions-row-ticket">{name}</span>
-        <span className="sessions-row-detail">
-          {hasPhaseIcon(phase) ? stateText(row) : `${phaseWords} · ${stateText(row)}`}
-        </span>
-      </button>
-      {tokens && (
-        <span id={usageId} className="sessions-row-usage" data-testid={`sessions-usage-${key}`}>
-          {tokens}
-        </span>
-      )}
-      {lastActiveAt && (
-        <span
-          id={whenId}
-          className="sessions-row-when"
-          data-testid={`sessions-when-${key}`}
-          data-quiet={quiet ? 'true' : undefined}
-        >
-          {quiet && <span className="sr-only">quiet, </span>}
-          <span className="sr-only">active </span>
-          <RelativeTime iso={lastActiveAt} now={now} title={activityTitle(lastActiveAt, quiet)} />
-        </span>
-      )}
-      {session ? (
-        <DashboardTooltip title="Chat" placement="left">
-          <a
-            className="sessions-row-chat"
-            href={chatHref(session)}
-            onClick={onClose}
-            data-testid={`sessions-chat-${key}`}
-            aria-label={`Chat with ${name} ${phaseWords} session`}
-          >
-            <NavIcon name="chat" />
-          </a>
-        </DashboardTooltip>
-      ) : (
-        <SlotOff
-          slot="chat"
-          icon="chat"
-          testId={`sessions-chat-off-${key}`}
-          label={`Chat with ${name} ${phaseWords} session`}
-          reason="No session to chat with"
-        />
-      )}
-      {goTo ? (
-        <DashboardTooltip title={outcome ?? copyWord(goTo)} placement="left">
-          <Button
-            className="subtle sessions-row-copy"
-            data-testid={`sessions-copy-${key}`}
-            data-outcome={outcome ? OUTCOME_KINDS[outcome] : undefined}
-            aria-label={outcome ?? `Copy command to continue ${name} ${phaseWords} session`}
-            onClick={() => onCopy(key, goTo.command)}
-          >
-            <NavIcon name={outcome === 'Copied' ? 'check' : 'copy'} />
-          </Button>
-        </DashboardTooltip>
-      ) : (
-        <SlotOff
-          slot="copy"
-          icon="copy"
-          testId={`sessions-copy-off-${key}`}
-          label={`Copy command to continue ${name} ${phaseWords} session`}
-          reason={copyReason(row)}
-        />
-      )}
-    </li>
-  );
-}
 
 // The header's "Notify me" switch: an opt-in desktop notification (and tab-title count) when a session
 // needs you while this page is hidden. Pressing it is the user gesture that asks the browser for
@@ -240,9 +110,8 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify, 
   const harness = useHarness();
   const count = groups.reduce((total, { rows }) => total + rows.length, 0);
   const waiting = groups.find(({ state }) => state === 'waiting')?.rows.length ?? 0;
-  const titleId = useId();
+  const notifyNoteId = useId();
   const tab = useRef(null);
-  const closeButton = useRef(null);
   // The row whose copy button is showing its outcome: { key, outcome }.
   const [copied, setCopied] = useState(null);
   const [query, setQuery] = useState('');
@@ -261,20 +130,6 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify, 
     const timer = setInterval(() => setNow(Date.now()), ACTIVITY_CLOCK_MS);
     return () => clearInterval(timer);
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    closeButton.current?.focus();
-    const onKey = (event) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      // A modal dialog over the drawer takes Escape for itself.
-      if (document.querySelector('dialog[open]')) return;
-      onToggle(false);
-      tab.current?.focus();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onToggle]);
 
   useEffect(() => {
     if (!copied) return undefined;
@@ -299,124 +154,67 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify, 
   };
 
   return (
-    <>
-      <button
-        ref={tab}
-        type="button"
-        className="sessions-tab"
-        data-testid="sessions-tab"
-        data-attention={waiting > 0 ? 'true' : undefined}
-        aria-expanded={open}
-        aria-controls={drawerId}
-        aria-label={say(
-          `{name} sessions, ${count}${waiting ? `, ${waiting} need you` : ''}`,
-          harness,
-        )}
-        onClick={() => onToggle(!open)}
-      >
-        <span aria-hidden="true">Sessions</span>
-        <span className="sessions-tab-count" aria-hidden="true">
-          {count}
-        </span>
-      </button>
-      <aside
-        id={drawerId}
-        className="sessions-drawer"
-        data-testid="sessions-drawer"
-        aria-labelledby={titleId}
-        hidden={!open}
-      >
-        {open && (
-          <>
-            <header className="sessions-head">
-              <h2 id={titleId}>{say('{name} sessions', harness)}</h2>
-              <div className="sessions-head-actions">
-                {notify?.supported && <NotifyToggle notify={notify} noteId={`${titleId}-notify`} />}
-                <Button
-                  href="#/chat"
-                  className="subtle"
-                  data-testid="sessions-new-chat"
-                  onClick={close}
-                >
-                  New chat
-                </Button>
-                <Button
-                  ref={closeButton}
-                  className="subtle"
-                  data-testid="sessions-close"
-                  aria-label="Close session list"
-                  onClick={close}
-                >
-                  Close
-                </Button>
-              </div>
-            </header>
-            {notifyBlocked(notify) && (
-              <p
-                id={`${titleId}-notify`}
-                className="sessions-notify-note"
-                data-testid="sessions-notify-note"
-              >
-                Notifications are blocked in the browser settings.
-              </p>
-            )}
-            {count > 0 && (
-              <div className="sessions-search">
-                <input
-                  type="search"
-                  data-testid="sessions-search"
-                  aria-label="Search sessions"
-                  placeholder="Search sessions"
-                  autoComplete="off"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    // Escape clears a search first; only an empty box lets it close the drawer.
-                    if (event.key === 'Escape' && query) {
-                      event.preventDefault();
-                      setQuery('');
-                    }
-                  }}
-                />
-              </div>
-            )}
-            <div className="sessions-body" data-testid="sessions-body">
-              {count === 0 ? (
-                <p className="sessions-empty" data-testid="sessions-empty">
-                  {say('No {name} sessions for tickets in an active sprint.', harness)}
-                </p>
-              ) : shown.length === 0 ? (
-                <p className="sessions-empty" data-testid="sessions-no-match">
-                  No sessions match your search.
-                </p>
-              ) : (
-                shown.map(({ state, title, rows }) => (
-                  <section key={state} className="sessions-group" data-testid={`sessions-${state}`}>
-                    <h3>
-                      {title}
-                      <span className="sessions-group-count">{rows.length}</span>
-                    </h3>
-                    <ul>
-                      {rows.map((row) => (
-                        <Row
-                          key={row.key}
-                          row={row}
-                          now={now}
-                          outcome={copied?.key === row.key ? copied.outcome : null}
-                          usage={row.session ? usage[row.session] : undefined}
-                          onOpen={openRow}
-                          onCopy={copy}
-                          onClose={close}
-                        />
-                      ))}
-                    </ul>
-                  </section>
-                ))
-              )}
-            </div>
-          </>
-        )}
-      </aside>
-    </>
+    <EdgeDrawer
+      name="sessions"
+      id={drawerId}
+      open={open}
+      onToggle={onToggle}
+      tabRef={tab}
+      slot="upper"
+      label="Sessions"
+      count={count}
+      attention={waiting > 0}
+      tabLabel={say(`{name} sessions, ${count}${waiting ? `, ${waiting} need you` : ''}`, harness)}
+      title={say('{name} sessions', harness)}
+      closeLabel="Close session list"
+      actions={
+        <>
+          {notify?.supported && <NotifyToggle notify={notify} noteId={notifyNoteId} />}
+          <Button href="#/chat" className="subtle" data-testid="sessions-new-chat" onClick={close}>
+            New chat
+          </Button>
+        </>
+      }
+    >
+      {notifyBlocked(notify) && (
+        <p id={notifyNoteId} className="sessions-notify-note" data-testid="sessions-notify-note">
+          Notifications are blocked in the browser settings.
+        </p>
+      )}
+      {count > 0 && (
+        <div className="sessions-search">
+          <input
+            type="search"
+            data-testid="sessions-search"
+            aria-label="Search sessions"
+            placeholder="Search sessions"
+            autoComplete="off"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              // Escape clears a search first; only an empty box lets it close the drawer.
+              if (event.key === 'Escape' && query) {
+                event.preventDefault();
+                setQuery('');
+              }
+            }}
+          />
+        </div>
+      )}
+      <LazyDialog label="The session list" onClose={onToggle}>
+        <SessionsBody
+          empty={say('No {name} sessions for tickets in an active sprint.', harness)}
+          count={count}
+          shown={shown}
+          dress={dressed}
+          now={now}
+          copied={copied}
+          usage={usage}
+          onOpen={openRow}
+          onCopy={copy}
+          onClose={close}
+        />
+      </LazyDialog>
+    </EdgeDrawer>
   );
 }

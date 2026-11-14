@@ -37,8 +37,14 @@ import { useNeedsYouAlerts, useNotifyPreference } from '../hooks/useNeedsYou.js'
 import { BotPoster } from './BotPoster.jsx';
 import { ClaudePlaceholderDialog } from './ClaudePlaceholderDialog.jsx';
 import { LazyDialog } from './ScreenSlot.jsx';
-import { ClaudeDialog, CommandPalette, loadClaudeDialog } from '../lib/lazy-overlays.js';
+import {
+  ClaudeDialog,
+  CommandPalette,
+  loadClaudeDialog,
+  loadSessionsBody,
+} from '../lib/lazy-overlays.js';
 import { SessionsDrawer } from './SessionsDrawer.jsx';
+import { SlackDrawer } from './SlackDrawer.jsx';
 import { claudePhrase } from './ClaudeIcon.jsx';
 import { DashboardTooltip } from './Primitives.jsx';
 import { mascotFor } from '../lib/mascot-for.js';
@@ -280,9 +286,25 @@ export function BotBar() {
   // Bumped when a done bot starts to fade or is due to leave, the only change with no new data.
   const [clock, setClock] = useState(0);
   const [open, setOpen] = useState(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // The one edge drawer that is open: 'sessions' | 'slack-feed' | null. Opening one shuts the other, and a
+  // drawer closes only itself, so a late close from one never shuts the drawer that replaced it.
+  const [activeDrawer, setActiveDrawer] = useState(null);
+  const setDrawer = useCallback(
+    (name, open) => setActiveDrawer((was) => (open ? name : was === name ? null : was)),
+    [],
+  );
   const drawerId = useId();
-  const toggleDrawer = useCallback(() => setDrawerOpen((was) => !was), []);
+  // The list's code loads before the drawer opens (also when the load fails: the drawer says so).
+  const setSessionsOpen = useCallback(
+    (open) => {
+      const apply = () => setDrawer('sessions', open);
+      if (open) loadSessionsBody().then(apply, apply);
+      else apply();
+    },
+    [setDrawer],
+  );
+  const slackDrawerId = useId();
+  const setSlackOpen = useCallback((open) => setDrawer('slack-feed', open), [setDrawer]);
   // The drawer lists every session of the sprint's bots, past the bar's time to live and dismissals,
   // each with the time it was last active (the same response's `lastActive`).
   const groups = useMemo(
@@ -317,7 +339,7 @@ export function BotBar() {
       const chat = phase === 'chat' && chatBots.find((bot) => bot.ticket === ticket);
       if (chat) {
         location.hash = chatHref(chat.session);
-        setDrawerOpen(false);
+        setActiveDrawer(null);
       } else if (phase === 'review') setOpen({ ticket, phase });
       else {
         // Load the dialog's code first, then open it (also when the load fails: Reload alert).
@@ -425,9 +447,9 @@ export function BotBar() {
                   key={zone}
                   zone={zone}
                   count={count}
-                  expanded={drawerOpen}
+                  expanded={activeDrawer === 'sessions'}
                   controls={drawerId}
-                  onToggle={toggleDrawer}
+                  onToggle={() => setSessionsOpen(activeDrawer !== 'sessions')}
                 />
               ),
           )}
@@ -436,11 +458,17 @@ export function BotBar() {
       {/* The session list, from every screen: a tab on the right edge and the drawer it opens. */}
       <SessionsDrawer
         groups={groups}
-        open={drawerOpen}
-        onToggle={setDrawerOpen}
+        open={activeDrawer === 'sessions'}
+        onToggle={setSessionsOpen}
         onOpenSession={openBot}
         notify={notify}
         drawerId={drawerId}
+      />
+      {/* The Slack activity list: the second edge tab, one drawer open at a time with the session list. */}
+      <SlackDrawer
+        open={activeDrawer === 'slack-feed'}
+        onToggle={setSlackOpen}
+        drawerId={slackDrawerId}
       />
       {/* Beside the strip, never inside it: a dialog inherits the strip's pointer-events: none. */}
       {shortcuts?.palette && (

@@ -200,15 +200,22 @@ export async function getSlackThread(ts) {
   }
 }
 
+// `failed`: the fetch itself failed (retried at the normal pace), not the server's `available: false`.
 export async function getSlackPending() {
   try {
     const res = await fetch('/api/slack/pending');
-    if (!res.ok) return { available: false };
-    return await res.json();
+    if (res.ok) return await res.json();
   } catch {
-    return { available: false };
+    // A rejected fetch gets the same answer as a failed status.
   }
+  return { available: false, failed: true };
 }
+
+// The Slack activity drawer's rows. Also resolves on failure, as a calm unavailable answer.
+export const getSlackFeed = () =>
+  fetch('/api/slack/feed')
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error('feed'))))
+    .catch(() => ({ available: false, reason: 'unavailable' }));
 
 export async function connectSlack() {
   try {

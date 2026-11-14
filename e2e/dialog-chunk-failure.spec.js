@@ -80,3 +80,17 @@ test('Escape closes the failure alert first, not the Claude dialog under it', as
   await expect(page.getByTestId('dialog-error')).toHaveCount(0);
   await expect(claude).toBeVisible();
 });
+
+test('Close on a failed SessionsBody chunk closes the alert and the Sessions drawer', async ({
+  page,
+}) => {
+  await page.route('**/assets/SessionsBody*', (route) => route.abort());
+  await page.goto('/');
+  await page.getByTestId('sessions-tab').click();
+  const alert = page.getByTestId('dialog-error');
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText('The session list could not load');
+  await alert.getByRole('button', { name: 'Close' }).click();
+  await expect(alert).toHaveCount(0);
+  await expect(page.getByTestId('sessions-drawer')).toBeHidden();
+});
