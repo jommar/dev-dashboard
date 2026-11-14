@@ -79,9 +79,9 @@ test('draft tickets retain amber cues, wrapping sprints, working diff and draft-
         page.getByTestId(`prs-column-${lane}`).boundingBox(),
       ),
     );
-    for (const box of boxes) {
+    for (const [index, box] of boxes.entries()) {
       expect(box.width, `column width at ${width}`).toBeCloseTo(
-        width <= 599 ? width * 0.82 : 280,
+        index > 0 ? 44 : width <= 599 ? width * 0.82 : 280,
         0,
       );
       expect(box.y).toBe(boxes[0].y);

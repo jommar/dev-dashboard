@@ -33,7 +33,7 @@ h2 {
 }
 .eyebrow,
 .section-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -77,6 +77,10 @@ input {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 4px;
+}
+/* The route heading takes focus from script; useRouteChange marks it unless a key moved the screen. */
+[data-focus-source='other']:focus {
+  outline: none;
 }
 .skip-link {
   position: fixed;
@@ -177,8 +181,8 @@ input {
   padding: 5px var(--s3);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  border: 1px solid var(--border);
-  background: var(--panel2);
+  border: 1px solid var(--border-strong);
+  background: transparent;
   color: var(--text);
   transition:
     border-color 120ms ease,
@@ -188,10 +192,17 @@ input {
 }
 .btn:hover {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, var(--panel2));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
-.btn.start {
-  color: var(--accent);
+/* MUI's outlined class (cyan) outranks .btn; this beats it and sits before the variants below. */
+.btn.MuiButton-outlined {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background-color: transparent;
+}
+.btn.MuiButton-outlined:hover {
+  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .btn.stop,
 .btn.restart {
@@ -219,6 +230,19 @@ input {
   background: var(--panel2);
   color: var(--text);
 }
+.btn.danger {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 60%, var(--border-strong));
+}
+.btn.danger:hover {
+  border-color: var(--red);
+  background-color: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.btn.danger:disabled {
+  border-color: var(--border);
+  background: var(--panel2);
+  color: var(--text);
+}
 .btn.subtle {
   background: transparent;
   padding: 2px var(--s2);
@@ -226,6 +250,7 @@ input {
   border: none;
 }
 .btn.subtle:hover {
+  background-color: transparent;
   color: var(--text);
 }
 .work-filters {

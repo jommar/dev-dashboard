@@ -216,7 +216,23 @@ test('the watcher keeps polling while the Started view is selected', async ({
 
 test('a Started to Watch to Started round trip returns the board to the column it was on', async ({
   page,
+  dashboard,
 }) => {
+  // Threads from older days so more than one column is populated: an empty column is a slim rail
+  // and no snap point, so a board with one populated column has nowhere to scroll to.
+  const [base] = dashboard.data.slack.threads.started;
+  for (const days of [2, 5, 10]) {
+    const at = Date.now() - days * 86_400_000;
+    const ts = `${Math.floor(at / 1000)}.000100`;
+    dashboard.data.slack.threads.started.push({
+      ...base,
+      ts,
+      watchKey: base.watchKey.replace(base.ts, ts),
+      replyCount: 0,
+      needsReply: false,
+      activityAt: new Date(Math.floor(at / 1000) * 1000 + 1000).toISOString(),
+    });
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#/slack');
   const board = boardOf(page);

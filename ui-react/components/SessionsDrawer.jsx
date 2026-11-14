@@ -236,7 +236,7 @@ function NotifyToggle({ notify, noteId }) {
 }
 const notifyBlocked = (notify) => Boolean(notify?.supported) && notify.permission === 'denied';
 
-export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify }) {
+export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify, drawerId }) {
   const harness = useHarness();
   const count = groups.reduce((total, { rows }) => total + rows.length, 0);
   const waiting = groups.find(({ state }) => state === 'waiting')?.rows.length ?? 0;
@@ -307,7 +307,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify }
         data-testid="sessions-tab"
         data-attention={waiting > 0 ? 'true' : undefined}
         aria-expanded={open}
-        aria-controls={`${titleId}-drawer`}
+        aria-controls={drawerId}
         aria-label={say(
           `{name} sessions, ${count}${waiting ? `, ${waiting} need you` : ''}`,
           harness,
@@ -320,7 +320,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify }
         </span>
       </button>
       <aside
-        id={`${titleId}-drawer`}
+        id={drawerId}
         className="sessions-drawer"
         data-testid="sessions-drawer"
         aria-labelledby={titleId}

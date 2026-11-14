@@ -423,11 +423,17 @@ export function SlackPanel({ active }) {
           status && (
             <>
               {connected ? (
-                <Button data-testid="slack-disconnect" disabled={pending} onClick={disconnect}>
+                <Button
+                  className="danger"
+                  data-testid="slack-disconnect"
+                  disabled={pending}
+                  onClick={disconnect}
+                >
                   Disconnect
                 </Button>
               ) : (
                 <Button
+                  className="primary"
                   data-testid="slack-connect"
                   disabled={pending || connecting}
                   onClick={connect}

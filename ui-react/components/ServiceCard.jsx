@@ -10,7 +10,7 @@ export function ServiceControlButtons({ disabled, onAction }) {
   return ['start', 'stop', 'restart'].map((action) => (
     <Button
       key={action}
-      className={action}
+      className={action === 'start' ? 'start primary' : action}
       disabled={disabled}
       data-testid={`${action}-all`}
       onClick={() => onAction(action)}

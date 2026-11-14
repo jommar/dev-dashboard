@@ -749,8 +749,11 @@ for (const width of [1200, 390]) {
     dashboard.data.claude.chats = [chatEntry(SESSION, 'working', 1000, 'Busy chat')];
     await page.goto(`/#/chat?session=${SESSION}`);
     await chatSay(page, SESSION, 'hello', hello({ state: 'working', live: true, items: [USER] }));
-    const bots = page.locator('[data-testid^="bot-bar-bot-"], [data-testid^="bot-bar-poster-"]');
-    await expect(bots).toHaveCount(10);
+    // 390px: the one zone keeps four of the five bots and stacks the other in a +N pill.
+    const bots = page.locator(
+      '[data-testid^="bot-bar-bot-"], [data-testid^="bot-bar-poster-"], [data-testid^="bot-bar-more-"]',
+    );
+    await expect(bots).toHaveCount(width === 390 ? 9 : 10);
 
     const check = async (control) => {
       const box = await control.boundingBox();

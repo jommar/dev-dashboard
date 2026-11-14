@@ -158,6 +158,7 @@ function DevtoolsTileView({ browser, active, busy, onAction }) {
           </Button>
         )}
         <Button
+          className="danger"
           data-testid={`devtools-remove-${id}`}
           aria-label={`Remove ${name}`}
           disabled={disabled}

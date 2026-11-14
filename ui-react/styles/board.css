@@ -183,10 +183,85 @@
     min-width: 0;
   }
 }
+/* A note is an amber chip: glyph, one line of text, and a toggle when the text does not fit. */
 .board-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  box-sizing: border-box;
+  align-self: flex-start;
+  max-width: 100%;
   margin: 0;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--amber) 12%, var(--panel));
   color: var(--amber);
   font-size: var(--fs-sm);
+  line-height: 20px;
+}
+/* The warning mark is drawn by CSS, so the note's text is exactly the note. */
+.board-note-glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.board-note-glyph::before {
+  content: '!';
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 1;
+}
+.board-note-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-note[data-open='true'] .board-note-text {
+  overflow: visible;
+  white-space: normal;
+}
+.board-note-toggle {
+  position: relative;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin: -2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.board-note-toggle::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+.board-note[data-open='true'] .board-note-toggle::before {
+  top: 10px;
+  transform: rotate(225deg);
+}
+.board-note-toggle:hover {
+  background: color-mix(in srgb, var(--amber) 18%, transparent);
+}
+.board-note-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* What the body shows instead of a board (BoardState): a quiet, centred well, muted when empty,
@@ -366,7 +441,7 @@
 .board-track {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 280px;
+  grid-auto-columns: max-content;
   grid-template-rows: minmax(0, 1fr);
   flex: 1 1 0;
   min-height: 320px;
@@ -385,7 +460,6 @@
 }
 @media (max-width: 599px) {
   .board-track {
-    grid-auto-columns: 82vw;
     gap: var(--s2);
     padding: 0 var(--s2) var(--s2);
     scroll-snap-type: x mandatory;
@@ -394,6 +468,9 @@
   .board-pane {
     padding: 0 var(--s2) var(--s2);
   }
+  .board-track > .board-column {
+    width: 82vw;
+  }
 }
 
 /* A column is a recessed well; its cards sit one level up. The status colour is a
@@ -401,6 +478,7 @@
 .board-column {
   display: flex;
   flex-direction: column;
+  width: 280px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -442,6 +520,38 @@
   font-variant-numeric: tabular-nums;
   line-height: 18px;
   text-align: center;
+}
+/* An empty column beside a populated one is a 44px rail: the count on top, the name written
+   down the side, the list hidden. The heading stays in the page for assistive technology and
+   keeps its tooltip. A rail snaps to the end, never to the start: under the phone's mandatory
+   snap it must be a snap point, or the track could not rest where the last rail is on screen.
+   The `:has()` prefix is repeated on each rule because the sheet uses no CSS nesting. A board whose columns are all empty keeps full columns (nothing to give the
+   room to), and no width transition runs. */
+.board-track:has(> .board-column:not([data-empty='true'])) > .board-column[data-empty='true'] {
+  width: 44px;
+  scroll-snap-align: end;
+}
+.board-track:has(> .board-column:not([data-empty='true']))
+  > .board-column[data-empty='true']
+  .board-column-head {
+  flex-direction: column;
+  align-items: center;
+}
+.board-track:has(> .board-column:not([data-empty='true']))
+  > .board-column[data-empty='true']
+  .board-column-count {
+  order: -1;
+  margin-left: 0;
+}
+.board-track:has(> .board-column:not([data-empty='true']))
+  > .board-column[data-empty='true']
+  .board-column-title {
+  writing-mode: vertical-rl;
+}
+.board-track:has(> .board-column:not([data-empty='true']))
+  > .board-column[data-empty='true']
+  .board-column-body {
+  display: none;
 }
 .board-column-body {
   display: flex;

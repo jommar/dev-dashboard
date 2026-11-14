@@ -1241,3 +1241,264 @@ test('verdict: callout text', () => {
       `TAP-1 e2e: ${BOT_STATE_WORDS[to]}`,
     );
 });
+
+// -- the gutter, the zone capacity and the +N pill ---------------------------------------------------
+
+const readUi = (file) => readFileSync(new URL(`../ui-react/${file}`, import.meta.url), 'utf8');
+const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+// The rules of a sheet as [selector, body] pairs (a rule inside an @media block is a pair of its own).
+const rulesOf = (css) =>
+  [...stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, selector, body]) => [
+    selector.trim(),
+    body,
+  ]);
+
+test('zoneCapacity: a side zone shows as many bots as its width keeps legible', () => {
+  assert.equal(typeof bar.zoneCapacity, 'function', 'zoneCapacity is exported');
+  assert.equal(bar.POSTER_WIDTH_PX, 84, 'keeps equal to --bot-poster-w');
+  assert.equal(bar.NARROW_EDGE_PX, 40);
+  for (const [width, capacity] of [
+    [1440, 2],
+    [1600, 3],
+    [1024, 1],
+    [600, 1],
+  ]) {
+    assert.equal(bar.zoneCapacity('left', width), capacity, `left at ${width}`);
+    assert.equal(bar.zoneCapacity('right', width), capacity, `right at ${width}`);
+  }
+  // Under 600px the single zone has the whole width between 40px margins.
+  assert.equal(bar.zoneCapacity('all', 390), 4);
+  assert.equal(bar.zoneCapacity('all', 480), 5);
+  // Never less than one bot, however small the room.
+  assert.equal(bar.zoneCapacity('all', 320), 3);
+  assert.ok(bar.zoneCapacity('all', 100) >= 1);
+});
+
+const BOT = (ticket, phase, state) => ({ key: botKey(ticket, phase), ticket, phase, state });
+const keysOf = (bots) => bots.map(({ key }) => key);
+const countOf = (value) => (Array.isArray(value) ? value.length : Number(value ?? 0));
+
+test('collapseZones: working and waiting never collapse; the newest done and the first failed stay', () => {
+  assert.equal(typeof bar.collapseZones, 'function', 'collapseZones is exported');
+  const done = ['T-1', 'T-2', 'T-3', 'T-4', 'T-5'].map((t) => BOT(t, 'implement', 'done'));
+  const failed = ['T-c', 'T-a', 'T-b'].map((t) => BOT(t, 'review', 'failed'));
+  const working = ['T-w1', 'T-w2'].map((t) => BOT(t, 'investigate', 'working'));
+  const waiting = [BOT('T-i1', 'groom', 'waiting')];
+  const input = [done[0], failed[0], working[0], done[1], done[2], waiting[0], failed[1]];
+  input.push(done[3], working[1], failed[2], done[4]);
+  // T-3 was seen done last, T-2 before it, then T-1, T-5, T-4.
+  const seenDoneAt = new Map(
+    ['T-4', 'T-5', 'T-1', 'T-2', 'T-3'].map((t, i) => [botKey(t, 'implement'), 1000 + i]),
+  );
+  const { shown, overflow } = bar.collapseZones(input, {
+    barWidth: 1440,
+    seenDoneAt,
+    callouts: [],
+  });
+  const shownKeys = new Set(keysOf(shown));
+  assert.deepEqual(
+    [...shownKeys].sort(),
+    [
+      ...keysOf(working),
+      ...keysOf(waiting),
+      botKey('T-3', 'implement'),
+      botKey('T-2', 'implement'),
+      botKey('T-a', 'review'),
+      botKey('T-b', 'review'),
+    ].sort(),
+  );
+  assert.equal(countOf(overflow.left), 3, 'three done bots do not fit');
+  assert.equal(countOf(overflow.right), 1, 'one failed bot does not fit');
+  assert.equal(countOf(overflow.all), 0);
+  // The shown bots keep the order they came in.
+  assert.deepEqual(
+    keysOf(shown),
+    keysOf(input).filter((key) => shownKeys.has(key)),
+  );
+});
+
+test('collapseZones: a bot with a callout is shown before a newer one without', () => {
+  const done = ['T-1', 'T-2', 'T-3', 'T-4'].map((t) => BOT(t, 'implement', 'done'));
+  const seenDoneAt = new Map(done.map(({ key }, i) => [key, 1000 + i]));
+  const withCallout = bar.collapseZones(done, {
+    barWidth: 1440,
+    seenDoneAt,
+    callouts: [{ key: done[0].key }],
+  });
+  assert.deepEqual(keysOf(withCallout.shown).sort(), [done[0].key, done[3].key].sort());
+  assert.equal(countOf(withCallout.overflow.left), 2);
+  const failed = ['T-a', 'T-b', 'T-c'].map((t) => BOT(t, 'review', 'failed'));
+  const failedCallout = bar.collapseZones(failed, {
+    barWidth: 1440,
+    seenDoneAt: new Map(),
+    callouts: [{ key: failed[2].key }],
+  });
+  assert.deepEqual(keysOf(failedCallout.shown).sort(), [failed[0].key, failed[2].key].sort());
+  assert.equal(countOf(failedCallout.overflow.right), 1);
+});
+
+test('collapseZones: when everything fits nothing collapses and shown is the input', () => {
+  const input = [
+    BOT('T-1', 'implement', 'done'),
+    BOT('T-2', 'review', 'failed'),
+    BOT('T-3', 'investigate', 'working'),
+    BOT('T-4', 'groom', 'waiting'),
+  ];
+  const { shown, overflow } = bar.collapseZones(input, {
+    barWidth: 1440,
+    seenDoneAt: new Map(),
+    callouts: [],
+  });
+  assert.deepEqual(shown, input);
+  assert.equal(countOf(overflow.left) + countOf(overflow.right) + countOf(overflow.all), 0);
+});
+
+test('collapseZones: under 600px one zone holds all, failed before done, working never collapse', () => {
+  const done = ['T-1', 'T-2', 'T-3'].map((t) => BOT(t, 'implement', 'done'));
+  const failed = ['T-a', 'T-b', 'T-c'].map((t) => BOT(t, 'review', 'failed'));
+  const working = [BOT('T-w', 'investigate', 'working')];
+  const input = [...done, ...failed, ...working];
+  const seenDoneAt = new Map(done.map(({ key }, i) => [key, 1000 + i]));
+  // 390px holds four: the working bot, then the three failed ones before any done one.
+  const narrow = bar.collapseZones(input, { barWidth: 390, seenDoneAt, callouts: [] });
+  assert.deepEqual(keysOf(narrow.shown).sort(), [...keysOf(failed), ...keysOf(working)].sort());
+  assert.equal(countOf(narrow.overflow.all), 3);
+  assert.equal(countOf(narrow.overflow.left) + countOf(narrow.overflow.right), 0);
+  // Working bots take their slots first; a full zone of them leaves nothing for the rest.
+  const busy = ['a', 'b', 'c', 'd', 'e'].map((t) => BOT(`T-${t}`, 'investigate', 'working'));
+  const crowded = bar.collapseZones([...busy, done[0], failed[0]], {
+    barWidth: 390,
+    seenDoneAt,
+    callouts: [],
+  });
+  assert.deepEqual(keysOf(crowded.shown), keysOf(busy), 'all five working bots, nothing else');
+  assert.equal(countOf(crowded.overflow.all), 2);
+});
+
+test('the bar hands everything but the render the full list (full list)', () => {
+  const src = readUi('components/BotBar.jsx');
+  const has = (pattern, message) => assert.ok(pattern.test(src), message);
+  has(/sessionGroups\(bots, claude\.byTicket, claude\.lastActive\)/, 'the drawer reads bots');
+  has(/collapseZones\(\s*visible\b/, 'the split is made from the visible list');
+  has(/zoneSpots\(\s*shown\b/, 'resting spots come from the shown bots');
+  const layers = src.match(
+    /const layers = useMemo\(\(\) => \{[\s\S]*?\n {2}\}, \[[^\]]*\]\);/,
+  )?.[0];
+  assert.ok(layers, 'layers is still a memo');
+  assert.ok(/\bshown\b/.test(layers), 'layers read the shown bots');
+  assert.ok(!/\bvisible\b/.test(layers), 'layers do not read the full list');
+  has(/bots: visible/, 'needs-you alerts read the full visible list');
+  has(
+    /useBotCallouts\(\s*claude\.byTicket,\s*claude\.loaded,\s*visible,/,
+    'callouts and the live region read the full visible list',
+  );
+  has(/\bshown\.map\(/, 'the strip renders the shown bots');
+  assert.ok(!/\bvisible\.map\(/.test(src), 'the strip no longer renders the full list');
+});
+
+test('gutter: --bot-bar-gutter is the bar, the poster rise and two gaps, from root tokens', () => {
+  const tokens = readUi('styles/tokens.css');
+  const root = [...stripComments(tokens).matchAll(/:root\s*\{([^}]*)\}/g)]
+    .map((m) => m[1])
+    .join('\n');
+  const declared = new Map(
+    [...root.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]),
+  );
+  for (const [name, value] of [
+    ['--bot-bar-size', '56px'],
+    ['--bot-poster-w', '84px'],
+    ['--bot-poster-h', '50px'],
+    ['--bot-poster-overlap', '10px'],
+  ])
+    assert.equal(declared.get(name), value, `${name} is a root token`);
+  const gutter = declared.get('--bot-bar-gutter');
+  assert.ok(gutter, '--bot-bar-gutter is a root token');
+  assert.match(gutter, /env\(safe-area-inset-bottom/);
+  const resolve = (text) => {
+    let out = text.replace(/env\([^)]*\)/g, '0');
+    for (let i = 0; i < 5; i += 1)
+      out = out.replace(/var\((--[\w-]+)\)/g, (_, name) => declared.get(name) ?? 'NaN');
+    out = out.replace(/calc\(/g, '(').replace(/(\d+(?:\.\d+)?)px/g, '$1');
+    assert.match(out, /^[\d\s+\-*/().]+$/, `${text} resolves to arithmetic`);
+    return Function(`return (${out})`)();
+  };
+  const s1 = resolve('var(--s1)');
+  assert.equal(resolve(gutter), 56 + bar.POSTER_RISE_PX + 2 * s1);
+  assert.equal(bar.POSTER_RISE_PX, resolve('var(--bot-poster-h) - var(--bot-poster-overlap)'));
+  // The bar's own sheet reads the root geometry; it no longer declares it.
+  const sheet = stripComments(readUi('styles/bot-bar.css'));
+  assert.doesNotMatch(sheet, /--bot-bar-size\s*:/);
+  assert.doesNotMatch(sheet, /--bot-poster-(?:w|h|overlap)\s*:/);
+  // The page keeps the room while the bar is drawn, one rule, and the chat hack is gone.
+  assert.match(
+    readUi('styles/shell.css'),
+    /#root:has\(\.bot-bar\)\s*>\s*\.panels::after\s*\{[^}]*height:\s*var\(--bot-bar-gutter\)/,
+  );
+  assert.doesNotMatch(readUi('styles/chat.css'), /padding-bottom:\s*104px/);
+});
+
+test('pill: the +N pill sheet keeps the bar contracts and sits in the edge margin', () => {
+  const css = readUi('styles/bot-bar.css');
+  const pills = rulesOf(css).filter(([selector]) => /\.bot-bar-more/.test(selector));
+  assert.ok(pills.length > 0, 'bot-bar.css styles .bot-bar-more');
+  for (const [selector, body] of pills) {
+    assert.match(selector, /^\.bot-bar\b/, `${selector} stays bot-bar scoped`);
+    assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b/i, 'colours come from tokens');
+    for (const [, value] of body.matchAll(/transition(?:-duration|-property)?\s*:\s*([^;]+)/g)) {
+      for (const [, amount, unit] of value.matchAll(/(\d*\.?\d+)\s*(ms|s)\b/g))
+        assert.ok((unit === 's' ? amount * 1000 : Number(amount)) <= 200, `${value} <= 200ms`);
+      assert.doesNotMatch(value, /\ball\b/);
+    }
+  }
+  const all = pills.map(([, body]) => body).join('\n');
+  assert.match(all, /pointer-events:\s*auto/, 'the strip is click-through, the pill is not');
+  assert.match(all, /z-index:\s*\d/);
+  assert.match(all, /bottom:\s*calc\(var\(--s1\)\s*\+\s*env\(safe-area-inset-bottom/);
+  const side = (zone) =>
+    pills.find(([selector]) => /\[data-zone=['"]?(\w+)['"]?\]/.exec(selector)?.[1] === zone);
+  const edge = (selector, property) =>
+    pills.some(
+      ([s, body]) => s.includes(selector) && new RegExp(`${property}:\\s*var\\(--s2\\)`).test(body),
+    );
+  assert.ok(
+    edge('done', 'left') || edge('bot-bar-more', 'left'),
+    'the done pill sits at left: var(--s2)',
+  );
+  assert.ok(
+    edge('failed', 'right') || edge('bot-bar-more', 'right'),
+    'the failed pill sits at right: var(--s2)',
+  );
+  for (const [zone, token] of [
+    ['done', '--green'],
+    ['failed', '--red'],
+    ['all', '--muted'],
+  ]) {
+    const rule = side(zone);
+    assert.ok(rule, `a rule for the ${zone} pill`);
+    assert.match(rule[1], new RegExp(`var\\(${token}\\)`), `${zone} edge is ${token}`);
+  }
+  const widths = (text) => [...text.matchAll(/max-width:\s*(\d+)px/g)].map((m) => Number(m[1]));
+  assert.ok(widths(all).length > 0 && widths(all).every((w) => w <= 72), 'at most 72px wide');
+  const narrow =
+    stripComments(css).match(/@media\s*\(max-width:\s*599px\)\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+  const narrowPill = rulesOf(narrow)
+    .filter(([selector]) => /\.bot-bar-more/.test(selector))
+    .map(([, body]) => body)
+    .join('\n');
+  assert.ok(
+    widths(narrowPill).some((w) => w <= 32),
+    'at most 32px wide under 600px',
+  );
+  // The pill adds nothing to the keyframes.
+  assert.doesNotMatch(css.match(/@keyframes[\s\S]*/)?.[0] ?? '', /bot-bar-more/);
+});
+
+test('no readable text under 12px (shell.css)', () => {
+  const css = stripComments(readUi('styles/shell.css'));
+  const small = [];
+  for (const [, value] of css.matchAll(/(?<![\w-])font(?:-size)?\s*:\s*([^;}]+)/g)) {
+    const px = value.match(/(?:^|\s)(\d*\.?\d+)px/);
+    if (px && Number(px[1]) < 12) small.push(value.trim());
+  }
+  assert.deepEqual(small, [], 'every font size is 12px or more (var(--fs-xs) is 12px)');
+});

@@ -51,13 +51,13 @@
     box-shadow 120ms var(--ease-out);
 }
 .chat-list-item:hover {
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 1px var(--support);
 }
 .chat-list-item[aria-current='page'] {
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 var(--support);
 }
 .chat-list-item:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--support);
   outline-offset: 2px;
 }
 .chat-list-title {
@@ -117,7 +117,7 @@
   content: '';
 }
 .chat-state[data-state='working'] {
-  color: var(--accent);
+  color: var(--support);
 }
 .chat-state[data-state='completed'] {
   color: var(--ok);
@@ -172,7 +172,7 @@
   scrollbar-color: var(--border-strong) transparent;
 }
 .chat-log:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--support);
   outline-offset: 2px;
 }
 .chat-message {
@@ -243,7 +243,7 @@
   font-size: var(--fs-xs);
 }
 .chat-tool summary:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--support);
   outline-offset: 2px;
 }
 .chat-tool-name {
@@ -253,7 +253,7 @@
   color: var(--fg-muted);
 }
 .chat-tool[data-status='running'] .chat-tool-status {
-  color: var(--accent);
+  color: var(--support);
 }
 .chat-tool[data-status='done'] .chat-tool-status {
   color: var(--ok);
@@ -350,7 +350,7 @@
   resize: vertical;
 }
 .chat-composer textarea:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--support);
   outline-offset: 2px;
 }
 .chat-composer textarea[aria-disabled='true'] {
@@ -368,17 +368,12 @@
   gap: var(--s2);
 }
 /* Opaque, so a draft scrolled under the controls does not show through them. */
-.chat-actions .btn:not(:hover) {
+.chat-actions .btn:not(.primary, :hover) {
   background: var(--panel);
 }
 
 /* Under 760px the chats stack above the conversation and keep to a short band. */
 @media (max-width: 759px) {
-  /* The bot bar's strip and the posters above it lie over the bottom of every screen; keep the composer
-     clear of them. */
-  .chat-pane {
-    padding-bottom: 104px;
-  }
   .chat {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);

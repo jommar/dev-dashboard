@@ -164,8 +164,8 @@
   color: var(--accent);
 }
 .slack-avatar-tone-2 {
-  background: color-mix(in srgb, var(--support) 20%, var(--panel2));
-  color: var(--support);
+  background: color-mix(in srgb, var(--amber) 18%, var(--panel2));
+  color: var(--amber);
 }
 .slack-avatar-tone-3 {
   background: color-mix(in srgb, var(--green) 16%, var(--panel2));
@@ -221,7 +221,7 @@
   padding: 0 3px;
 }
 .slack-message-channel {
-  color: var(--support);
+  color: var(--strong);
 }
 .slack-message-empty {
   color: var(--muted);

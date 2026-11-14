@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures.js';
-import { claudeEntry, settingsData } from './data.js';
+import { claudeEntry, settingsData, ticketBoardData } from './data.js';
 import { roamFor, walkStretch } from '../ui/bot-bar.js';
 
 // The bot bar: one mascot per Claude session (investigate, implement, review, groom, e2e) of a ticket
@@ -534,6 +534,9 @@ test('at most three callouts show at once, and a session that starts working get
   dashboard,
 }) => {
   await page.clock.install();
+  // Wide enough that the failed zone keeps all five bots (zoneCapacity): at 1440px it keeps two, so
+  // three bubbles are unreachable there (the next test is that case).
+  await page.setViewportSize({ width: 2560, height: 900 });
   const keys = ['BOT-1', 'BOT-2', 'BOT-3', 'BOT-4', 'BOT-5'];
   const sessions = Object.fromEntries(keys.map((key) => [key, WORKING_IMPLEMENT]));
   seed(dashboard, { sessions, sprint: [...keys, 'BOT-9'] });
@@ -553,6 +556,39 @@ test('at most three callouts show at once, and a session that starts working get
   await page.clock.runFor(POLL);
   await expect(callout(page, 'BOT-9-implement')).toHaveText('BOT-9 · Working on it…');
   await expect(page.locator('[data-testid^="bot-bar-callout-"]')).toHaveCount(3);
+});
+
+test('a bot stacked in the +N pill takes no callout slot', async ({ page, dashboard }) => {
+  await page.clock.install();
+  const keys = ['BOT-1', 'BOT-2', 'BOT-3', 'BOT-4', 'BOT-5'];
+  const sessions = Object.fromEntries(keys.map((key) => [key, WORKING_IMPLEMENT]));
+  seed(dashboard, { sessions, sprint: [...keys, 'BOT-9'] });
+  await page.goto('/#/home');
+  await expect(bots(page)).toHaveCount(5);
+  for (const key of keys)
+    dashboard.data.claude.tickets[key] = claudeEntry('failed', 'ended_without_flag', {
+      phase: 'implement-plan',
+    });
+  await page.clock.runFor(POLL);
+  // 1440px: the failed zone keeps two bots, the callout-carrying ones, and stacks three in the pill.
+  await expect(bots(page)).toHaveCount(2);
+  await expect(page.getByTestId('bot-bar-more-failed')).toHaveText('+3');
+  await expect(page.locator('[data-testid^="bot-bar-callout-"]')).toHaveCount(2);
+  const shownIds = async () =>
+    (await bots(page).evaluateAll((all) => all.map((el) => el.dataset.testid))).sort();
+  const before = await shownIds();
+  for (const id of before)
+    await expect(page.getByTestId(id.replace('-bot-', '-callout-'))).toBeVisible();
+  // The stacked bots hold no slot: a session that starts working still gets its bubble, three in all.
+  dashboard.data.claude.tickets['BOT-9'] = WORKING_IMPLEMENT;
+  await page.clock.runFor(POLL);
+  await expect(callout(page, 'BOT-9-implement')).toHaveText('BOT-9 · Working on it…');
+  await expect(page.locator('[data-testid^="bot-bar-callout-"]')).toHaveCount(3);
+  // ...and the two failed bots on the bar are still the same two, bubbles and all.
+  await expect(bots(page)).toHaveCount(3);
+  expect((await shownIds()).filter((id) => id.includes('implement'))).toEqual(
+    expect.arrayContaining(before),
+  );
 });
 
 // The zones (1440px wide): done on the left 20 % (0-288), working and idle in the centre 60 %
@@ -707,37 +743,6 @@ test('under 600px wide the zones collapse and every state has the whole width', 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-});
-
-test('many bots in one zone overlap, and the one you point at comes to the front with its x reachable', async ({
-  page,
-  dashboard,
-}) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const keys = Array.from({ length: 8 }, (_, i) => `BOT-${20 + i}`);
-  const sessions = Object.fromEntries(
-    keys.flatMap((key, i) => [[key, i < 4 ? review('done', 'finished') : review('failed', 'x')]]),
-  );
-  seed(dashboard, { sessions, sprint: keys });
-  await page.goto('/#/home');
-  await expect(bots(page)).toHaveCount(8);
-  const zoneOf = (i) => (i < 4 ? 'left' : 'right');
-  for (const [i, key] of keys.entries()) {
-    const box = await page.getByTestId(`bot-bar-bot-${key}-review`).boundingBox();
-    inZone({ left: box.x, right: box.x + box.width }, zoneOf(i));
-  }
-  // Pointing at a bot raises it above its neighbours, so its dismiss button takes the click.
-  for (const key of ['BOT-23', 'BOT-27']) {
-    await page.getByTestId(`bot-bar-bot-${key}-review`).hover();
-    const box = await page.getByTestId(`bot-bar-dismiss-${key}-review`).boundingBox();
-    const top = await page.evaluate(
-      ({ x, y }) => document.elementFromPoint(x, y)?.closest('[data-testid]')?.dataset.testid,
-      { x: box.x + box.width / 2, y: box.y + box.height / 2 },
-    );
-    expect(top).toBe(`bot-bar-dismiss-${key}-review`);
-  }
-  await page.getByTestId('bot-bar-dismiss-BOT-27-review').click();
-  await expect(bots(page)).toHaveCount(7);
 });
 
 // ---- posters ------------------------------------------------------------------------------------
@@ -923,11 +928,16 @@ test('the focused bot comes to the front with its poster, and no poster covers a
     sprint: keys,
   });
   await page.goto('/#/home');
-  await expect(bots(page)).toHaveCount(6);
+  // 1440px: the done zone keeps two bots and stacks the other four in a pill.
+  await expect(bots(page)).toHaveCount(2);
+  await expect(page.getByTestId('bot-bar-more-done')).toHaveText('+4');
+  const shownKeys = [];
+  for (const bot of await bots(page).all())
+    shownKeys.push((await bot.getAttribute('data-testid')).replace(/^bot-bar-bot-|-review$/g, ''));
   const lane = (key) =>
     page.getByTestId(`bot-bar-poster-${key}-review`).locator('xpath=ancestor::*[@data-state]');
   // A focused bot is raised, and its poster rides in its lane.
-  for (const key of keys) {
+  for (const key of shownKeys) {
     await page.getByTestId(`bot-bar-bot-${key}-review`).focus();
     expect(await lane(key).evaluate((el) => getComputedStyle(el).zIndex)).toBe('100');
   }
@@ -935,7 +945,7 @@ test('the focused bot comes to the front with its poster, and no poster covers a
   const xs = await page
     .locator('.bot-bar-dismiss')
     .evaluateAll((all) => all.map((el) => el.getBoundingClientRect().top));
-  expect(xs).toHaveLength(6);
+  expect(xs).toHaveLength(2);
   for (const board of await posters(page).evaluateAll((all) =>
     all.map((el) => {
       const box = el.getBoundingClientRect();
@@ -1115,4 +1125,94 @@ test('verdict: an e2e bubble and its live-region message carry the verdict', asy
   await page.clock.runFor(POLL);
   await expect(callout(page, 'BOT-1-e2e')).toHaveText('BOT-1 · Done ✓ · Fail');
   await expect(live(page)).toHaveText(['BOT-1 e2e: done, verdict fail']);
+});
+
+// ---- the gutter and the +N pill ------------------------------------------------------------------
+// The page keeps room for the bar while it is drawn (bot-bar-gutter), and a side zone that holds more
+// bots than its width keeps legible stacks the rest in a +N pill that opens the session list.
+
+const BOARD = 'my-tickets-board';
+const boardBottom = async (page) => {
+  const box = await page.getByTestId(BOARD).boundingBox();
+  return box.y + box.height;
+};
+
+test('the board ends above the bots and their posters', async ({ page, dashboard }) => {
+  seed(dashboard);
+  ticketBoardData(dashboard.data);
+  await page.goto('/#/my-tickets');
+  await expect(page.getByTestId(BOARD)).toBeVisible();
+  await expect(bots(page)).toHaveCount(4);
+  const bar = await page.getByTestId('bot-bar').boundingBox();
+  // The posters rise 40px over the strip; the last card must end above them.
+  expect(await boardBottom(page)).toBeLessThanOrEqual(bar.y - 40);
+  // The room comes out of the board, not out of the page: nothing scrolls.
+  expect(
+    await page.evaluate(() => document.scrollingElement.scrollHeight <= window.innerHeight),
+  ).toBe(true);
+});
+
+test('without bots the page keeps no gutter', async ({ page, dashboard }) => {
+  seed(dashboard, { sessions: { 'BOT-5': SESSIONS['BOT-5'] }, sprint: ['BOT-5'] });
+  ticketBoardData(dashboard.data);
+  await page.goto('/#/my-tickets');
+  await expect(page.getByTestId(BOARD)).toBeVisible();
+  await expect
+    .poll(() => dashboard.requests.some(({ path }) => path.includes('surface=bot-bar')))
+    .toBe(true);
+  await expect(page.getByTestId('bot-bar')).toHaveCount(0);
+  const viewport = page.viewportSize();
+  expect(viewport.height - (await boardBottom(page))).toBeLessThanOrEqual(64);
+});
+
+test('a crowded side zone stacks the rest in a +N pill that opens the session list', async ({
+  page,
+  dashboard,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const keys = Array.from({ length: 8 }, (_, i) => `BOT-${20 + i}`);
+  const sessions = Object.fromEntries(
+    keys.map((key, i) => [key, i < 4 ? review('done', 'finished') : review('failed', 'x')]),
+  );
+  seed(dashboard, { sessions, sprint: keys });
+  await page.goto('/#/home');
+  const shown = (state) =>
+    page.getByTestId('bot-bar').locator(`[data-testid^="bot-bar-bot-"][data-state="${state}"]`);
+  // 1440px: each side zone keeps two bots and says how many it stacked.
+  await expect(shown('done')).toHaveCount(2);
+  await expect(shown('failed')).toHaveCount(2);
+  const done = page.getByTestId('bot-bar-more-done');
+  const failed = page.getByTestId('bot-bar-more-failed');
+  await expect(done).toHaveText('+2');
+  await expect(failed).toHaveText('+2');
+  await expect(done).toHaveAccessibleName('2 more done sessions, open the session list');
+  await expect(failed).toHaveAccessibleName('2 more failed sessions, open the session list');
+  // The pill is no bot: the bot selectors never count it.
+  await expect(bots(page)).toHaveCount(4);
+  await expect(done).toHaveAttribute('aria-expanded', 'false');
+  // It opens the session list, which holds all eight.
+  await done.click();
+  await expect(done).toHaveAttribute('aria-expanded', 'true');
+  const drawer = page.getByTestId('sessions-drawer');
+  await expect(drawer).toBeVisible();
+  // Pressed again it closes the list, as the tab does.
+  await done.click();
+  await expect(done).toHaveAttribute('aria-expanded', 'false');
+  await expect(drawer).toBeHidden();
+  await done.click();
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toHaveAttribute('id', (await done.getAttribute('aria-controls')) ?? 'none');
+  for (const key of keys)
+    await expect(page.getByTestId(`sessions-row-${key}:review`)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  // Dismissing a shown bot brings the next one up: two stay shown and the pill counts one less.
+  await page
+    .getByRole('button', { name: /^Dismiss BOT-\d+ review: done/ })
+    .first()
+    .click();
+  await expect(shown('done')).toHaveCount(2);
+  await expect(done).toHaveText('+1');
+  await expect(shown('failed')).toHaveCount(2);
+  await expect(failed).toHaveText('+2');
 });

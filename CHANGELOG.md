@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- UI refresh: the page keeps a bottom gutter for the bot bar while a bot shows, and a crowded done or
+  failed zone shows what fits plus a **+N** pill that toggles the Sessions drawer. Empty board columns
+  beside a populated one fold into 44px rails, and long board notes are a one-line chip that expands.
+  Buttons are neutral by default with filled primary and red danger set per call site (global, so Settings
+  and Releases buttons change too), the route heading's focus ring shows only after keyboard input, and the
+  palette has a wider surface ladder with cyan for interactive, lavender for Claude and a colour per Jira
+  status kind. Readable text is 12px or larger, and the approved-card tint is 13%. The "Local workspace"
+  pill in the header is now hidden from 700px to 1499px wide (it was shown from 1400px). See [Bot bar](README.md#bot-bar)
+  and [UI layout](README.md#ui-layout).
 - Added a harness adapter seam: every Claude Code CLI call, command and tool limit now sits behind one
   adapter in `backend/harness/` (Claude Code is the only one and the default, and behaves as before).
   `GET /api/config` gains `harness`, and a new 409 `harness_unsupported` reason covers an action the

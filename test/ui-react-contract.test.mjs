@@ -57,9 +57,9 @@ test('shared visual tokens preserve the Cold Room surface and compact type contr
   const css = read('styles.css');
   const tokens = read('styles/tokens.css');
   for (const token of [
-    '--bg: #111113',
-    '--panel: #1c1d20',
-    '--panel2: #232427',
+    '--bg: #0a0b0d',
+    '--panel: #181b20',
+    '--panel2: #262b33',
     '--accent: #67e8f9',
     '--font-text:',
     '--font-mono:',
@@ -1040,8 +1040,8 @@ test('the green card, the comment chips and the attached chip take their colours
 
   const approved = rulesFor(css, 'data-all-approved');
   assert.ok(approved, 'a rule styles the all-approved card');
-  // 8 % green over the card surface keeps --muted at 4.5:1 or better; 10 % does not.
-  assert.match(approved, /color-mix\(in srgb,\s*var\(--green\)\s+8%,\s*var\(--panel2\)\)/);
+  // 13 % green over the card surface stays green-dominant and keeps --muted at 4.5:1 or better.
+  assert.match(approved, /color-mix\(in srgb,\s*var\(--green\)\s+13%,\s*var\(--panel2\)\)/);
   assert.match(
     approved,
     /var\(--green\)[^;]*inset|inset[^;]*var\(--green\)/,

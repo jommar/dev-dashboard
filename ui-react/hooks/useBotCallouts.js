@@ -19,7 +19,9 @@ import {
 //
 // Returns `callouts` (the bubbles to draw, `{ key, ticket, state, leaving }`), `announcements` (one
 // `{ id, text }` per change of the latest batch, for the one polite live region) and `attend(key)`,
-// which starts a waiting or failed bubble on its way out once its bot is hovered, focused or clicked.
+// which starts a waiting or failed bubble on its way out once its bot is hovered, focused or clicked, and
+// `retain(keys)`, which drops the bubbles of every bot not in `keys` (the bar tells it which bots it draws,
+// so a bot stacked in the +N pill holds no one of the MAX_CALLOUTS slots).
 // `onReady(ready)`, when given, is told the same batch of changes that gets bubbles (once per batch, in the
 // same effect), so the opt-in desktop notification shares the first-load and sprint-filter rules.
 export function useBotCallouts(byTicket, loaded, bots, onReady) {
@@ -86,5 +88,14 @@ export function useBotCallouts(byTicket, loaded, bots, onReady) {
     (key) => setCallouts((previous) => attendCallout(previous, key, Date.now())),
     [],
   );
-  return { callouts: live, announcements, attend };
+  const retain = useCallback(
+    (keys) =>
+      setCallouts((previous) =>
+        previous.every(({ key }) => keys.has(key))
+          ? previous
+          : previous.filter(({ key }) => keys.has(key)),
+      ),
+    [],
+  );
+  return { callouts: live, announcements, attend, retain };
 }

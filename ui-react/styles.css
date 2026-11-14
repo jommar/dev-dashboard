@@ -26,49 +26,21 @@
 @import './styles/mascots-page.css';
 
 :root {
-  --bg: #111113;
-  --panel: #1c1d20;
-  --panel-2: #232427;
-  --panel2: var(--panel-2);
-  --border: #2e3035;
-  --border-strong: #4a4e55;
-  --fg: #c3c7cd;
-  --text: var(--fg);
-  --fg-strong: #edeef0;
-  --strong: var(--fg-strong);
-  --fg-muted: #949aa3;
-  --muted: var(--fg-muted);
-  --accent: #67e8f9;
-  --accent-hover: #a5f3fc;
-  --accent-fill: #22d3ee;
-  --support: #b3a9f0;
-  --ok: #34d399;
-  --green: var(--ok);
-  --bad: #fb7185;
-  --red: var(--bad);
-  --warn: #fbbf24;
-  --amber: var(--warn);
-  --track: #2e3035;
-  --grid: rgba(148, 163, 184, 0.05);
-  --font-display: 'Inter Tight', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-text: 'Inter Tight', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'Martian Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  --sans: var(--font-text);
-  --mono: var(--font-mono);
-  --shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 2px 8px -2px rgba(0, 0, 0, 0.5);
-  --radius: 10px;
-  --radius-sm: 6px;
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --panel-2: var(--panel2);
+  --fg: var(--text);
+  --fg-strong: var(--strong);
+  --fg-muted: var(--muted);
+  --ok: var(--green);
+  --bad: var(--red);
+  --warn: var(--amber);
 }
 
 body {
-  /* A faint cyan wash from the top edge gives the flat dark page some depth. */
+  /* A faint neutral wash from the top edge gives the flat dark page some depth. */
   background:
     radial-gradient(
       1100px 360px at 50% -140px,
-      color-mix(in srgb, var(--accent) 8%, transparent),
+      color-mix(in srgb, var(--strong) 3%, transparent),
       transparent
     ),
     var(--bg);
