@@ -2,11 +2,10 @@
 // each, and how a row names its conversation. Only the lazy panel imports this file.
 
 // Mentions first and the default; Threads (replies that do not mention you) and Reactions follow.
-export const FEED_TABS = [
-  { id: 'mentions', label: 'Mentions', testId: 'slack-feed-view-mentions' },
-  { id: 'threads', label: 'Threads', testId: 'slack-feed-view-threads' },
-  { id: 'reactions', label: 'Reactions', testId: 'slack-feed-view-reactions' },
-];
+export const FEED_TABS = ['Mentions', 'Threads', 'Reactions'].map((label) => {
+  const id = label.toLowerCase();
+  return { id, label, testId: `slack-feed-view-${id}` };
+});
 
 // Unread rows per tab (never the number of rows), from an available feed reply.
 export const tabCounts = (feed) =>

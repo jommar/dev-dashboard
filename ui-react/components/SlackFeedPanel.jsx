@@ -12,6 +12,8 @@ import { Button } from './Primitives.jsx';
 
 const NAME = 'slack-feed';
 
+const Frame = ({ children }) => <div className="slack-feed">{children}</div>;
+
 function FeedRow({ row }) {
   const { reaction, replies } = row;
   return (
@@ -87,13 +89,13 @@ export function SlackFeedPanel({ tabRef, onClose }) {
 
   if (!feed)
     return (
-      <div className="slack-feed">
+      <Frame>
         <BoardState kind="loading" testId="slack-feed-loading" label="Loading Slack activity…" />
-      </div>
+      </Frame>
     );
   if (!feed.available)
     return (
-      <div className="slack-feed">
+      <Frame>
         {feed.reason === 'disconnected' ? (
           <BoardState testId="slack-feed-disconnected">
             <p>
@@ -109,7 +111,7 @@ export function SlackFeedPanel({ tabRef, onClose }) {
             {refresh}
           </BoardState>
         )}
-      </div>
+      </Frame>
     );
 
   const counts = tabCounts(feed);
@@ -119,7 +121,7 @@ export function SlackFeedPanel({ tabRef, onClose }) {
   }));
   const rows = feed[view] ?? [];
   return (
-    <div className="slack-feed">
+    <Frame>
       <div className="slack-feed-toolbar">
         <BoardTabs
           name={NAME}
@@ -154,6 +156,6 @@ export function SlackFeedPanel({ tabRef, onClose }) {
           </p>
         )}
       </div>
-    </div>
+    </Frame>
   );
 }

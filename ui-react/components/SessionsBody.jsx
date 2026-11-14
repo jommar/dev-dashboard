@@ -44,13 +44,17 @@ function SlotOff({ slot, icon, testId, label, reason }) {
 }
 
 function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
-  const { key, ticket, phase, state, goTo, lastActiveAt, session } = row;
-  const { mark, words: phaseWords, detail, copyWord, meta } = row;
+  const { key, ticket, phase, state, goTo, lastActiveAt, session, mark, detail, copyWord, meta } =
+    row;
+  const phaseWords = row.words;
   // A standalone chat has no ticket; its title is what names it.
   const name = row.title ?? ticket;
   const what = `${name} ${phaseWords} session`;
+  const chatLabel = `Chat with ${what}`;
+  const copyLabel = `Copy command to continue ${what}`;
   const whenId = useId();
   const usageId = useId();
+  const ok = outcome === 'Copied';
   const quiet = isQuiet(row, now);
   const tokens = rowUsageLabel(usage);
   const described = [tokens && usageId, lastActiveAt && whenId].filter(Boolean).join(' ');
@@ -93,10 +97,9 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
           id={whenId}
           className="sessions-row-when"
           data-testid={`sessions-when-${key}`}
-          data-quiet={quiet ? 'true' : undefined}
+          data-quiet={quiet || undefined}
         >
-          {quiet && <span className="sr-only">quiet, </span>}
-          <span className="sr-only">active </span>
+          <span className="sr-only">{quiet ? 'quiet, active ' : 'active '}</span>
           <RelativeTime iso={lastActiveAt} now={now} title={activityTitle(lastActiveAt, quiet)} />
         </span>
       )}
@@ -107,7 +110,7 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
             href={chatHref(session)}
             onClick={onClose}
             data-testid={`sessions-chat-${key}`}
-            aria-label={`Chat with ${what}`}
+            aria-label={chatLabel}
           >
             <NavIcon name="chat" />
           </a>
@@ -117,7 +120,7 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
           slot="chat"
           icon="chat"
           testId={`sessions-chat-off-${key}`}
-          label={`Chat with ${what}`}
+          label={chatLabel}
           reason="No session to chat with"
         />
       )}
@@ -126,11 +129,11 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
           <Button
             className="subtle sessions-row-copy"
             data-testid={`sessions-copy-${key}`}
-            data-outcome={outcome && (outcome === 'Copied' ? 'copied' : 'failed')}
-            aria-label={outcome ?? `Copy command to continue ${what}`}
+            data-outcome={outcome && (ok ? 'copied' : 'failed')}
+            aria-label={outcome ?? copyLabel}
             onClick={() => onCopy(key, goTo.command)}
           >
-            <NavIcon name={outcome === 'Copied' ? 'check' : 'copy'} />
+            <NavIcon name={ok ? 'check' : 'copy'} />
           </Button>
         </DashboardTooltip>
       ) : (
@@ -138,7 +141,7 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
           slot="copy"
           icon="copy"
           testId={`sessions-copy-off-${key}`}
-          label={`Copy command to continue ${what}`}
+          label={copyLabel}
           reason={copyReason(row)}
         />
       )}
@@ -149,27 +152,13 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
 // `shown` is the filtered groups and `count` every session; `dress` (SessionsDrawer's) adds to a row the `mark`,
 // `words`, `detail`, `copyWord` and `meta` (the phase's icon and colour) it shows and `empty` is the line for no
 // sessions. `copied` is { key, outcome } of the row whose copy button shows its outcome.
-export function SessionsBody({
-  empty,
-  count,
-  shown,
-  dress,
-  now,
-  copied,
-  usage,
-  onOpen,
-  onCopy,
-  onClose,
-}) {
+// The rest (`onOpen`, `onCopy`, `onClose`) goes to each row.
+export function SessionsBody({ empty, count, shown, dress, now, copied, usage, ...handlers }) {
   return (
     <div className="sessions-body" data-testid="sessions-body">
-      {count === 0 ? (
-        <p className="sessions-empty" data-testid="sessions-empty">
-          {empty}
-        </p>
-      ) : shown.length === 0 ? (
-        <p className="sessions-empty" data-testid="sessions-no-match">
-          No sessions match your search.
+      {shown.length === 0 ? (
+        <p className="sessions-empty" data-testid={count ? 'sessions-no-match' : 'sessions-empty'}>
+          {count ? 'No sessions match your search.' : empty}
         </p>
       ) : (
         shown.map(({ state, title, rows }) => (
@@ -186,9 +175,7 @@ export function SessionsBody({
                   now={now}
                   outcome={copied?.key === row.key ? copied.outcome : null}
                   usage={row.session ? usage[row.session] : undefined}
-                  onOpen={onOpen}
-                  onCopy={onCopy}
-                  onClose={onClose}
+                  {...handlers}
                 />
               ))}
             </ul>

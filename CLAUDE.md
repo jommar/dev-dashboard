@@ -337,10 +337,24 @@ keyword` from the `client.counts` call it already makes; only positive finite nu
   (60 s) when `available` **or `failed`**, `SLACK_IDLE_POLL_MS` (5 min) only when the server itself answered
   `available: false`; `getSlackPending` turns a rejected fetch or non-OK status into `{ available: false, failed: true }`
   (client-side only, so a flaky network is retried in a minute, not five). A tick while `document.hidden` asks for
-  nothing; `slack-session-changed` reads at once. The next tick is armed when a tick fires (`tick()` = `schedule()` then
-  `read()`) and again by each answer, every read asks, and only the newest read's answer counts (`latest`): not an
+  nothing; `slack-session-changed` reads at once, and so does the page going from hidden to visible: a `visibilitychange`
+  listener (`readIfVisible`, which reads only while `document.hidden` is false) owned by the store like the session
+  listener, added with the first reader and removed with the last, so the count is fresh on return instead of waiting for
+  the next tick (the return read re-arms the one timer, so the cadence stays a request a minute; no second timer, and no
+  other screen gains a fetch). The next tick is armed when a tick fires (the timer callback calls `schedule()` then
+  `readIfVisible()`) and again by each answer, every read asks, and only the newest read's answer counts (`latest`): not an
   in-flight guard, because a guard would drop the session-change read and a hung request would stall the poll, and the
   "shared pending poll" e2e depends on the arm-first order. Do not add a guard.
+- **The border countdown.** The Slack edge tab's left border is the countdown to the next read, synced to the store's
+  real timer, never a free-running loop. Each `schedule()` publishes a new snapshot `{ pending, ms, cycle }` (`useSlackPending()`
+  returns it whole; `ms` is that arm's `pendingDelay`, `cycle` the `setTimeout` id, so it changes exactly when the timer is
+  re-armed: the tick, an answer landing, the return-from-hidden read, a session-change read). `SlackDrawer` passes it as
+  `sweep` (only while `pending.available`: absent before the first answer and while unavailable, disconnected or failed)
+  and `EdgeDrawer` renders a keyed, `aria-hidden` `.slack-feed-tab-sweep` span, so a new cycle remounts it and a CSS
+  animation of `--sweep-ms` restarts. CSS only (`slack-feed.css`: transform-only `scaleY(0)` to `scaleY(1)` from the top,
+  `linear`, clipped to the tab's rounded corners by the wrapper, `--accent`; `display: none` under reduced motion). It
+  keeps running while the page is hidden, like the timer, and adds no timer, subscription or per-second render. The
+  Sessions tab and the Slack board's badge have none. Do not drive it from script or add text, a tooltip or a name.
 - **Style roles.** The tab is cyan `--accent` (`slack-feed.css`: hover, expanded and focus ring), never lavender
   (Claude only); both new sheets use tokens only, text at least `--fs-xs`, 120 ms named transitions and a
   reduced-motion block, and `slack-feed.css` selectors all start `.slack-feed`. The frame sheet is `edge-drawer.css`,

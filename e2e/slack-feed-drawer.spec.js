@@ -240,6 +240,37 @@ test('shared pending poll: one request per interval for the badge and the tab, n
   expect(slack.pendingReads, 'a hidden page asks for nothing').toBe(before);
 });
 
+test('returning to a hidden tab reads the count at once and the one-a-minute cadence resumes', async ({
+  page,
+}) => {
+  await controlVisibility(page);
+  await page.clock.install();
+  const slack = await mockSlack(page, { pending: pendingWith(2) });
+  await page.goto('/#/home');
+  await expect(tab(page)).toHaveAttribute('aria-label', 'Slack activity, 2 unread mentions');
+  await expect.poll(() => slack.pendingReads).toBe(1);
+
+  await page.evaluate(() => window.__setHidden(true));
+  await page.clock.runFor(30_000);
+  expect(slack.pendingReads, 'hiding the page asks for nothing').toBe(1);
+
+  slack.pending = pendingWith(7);
+  await page.evaluate(() => window.__setHidden(false));
+  await expect.poll(() => slack.pendingReads, 'the return reads at once').toBe(2);
+  await expect(tab(page)).toHaveAttribute('aria-label', 'Slack activity, 7 unread mentions');
+
+  // The return read re-armed the timer from its answer: the next one is a minute later, not sooner.
+  await page.clock.runFor(59_000);
+  expect(slack.pendingReads, 'no second timer beside the return read').toBe(2);
+  slack.pending = pendingWith(8);
+  await page.clock.runFor(2_000);
+  await expect.poll(() => slack.pendingReads).toBe(3);
+  // The new count is on screen once that answer has landed and re-armed the timer.
+  await expect(tab(page)).toHaveAttribute('aria-label', 'Slack activity, 8 unread mentions');
+  await page.clock.runFor(60_000);
+  await expect.poll(() => slack.pendingReads).toBe(4);
+});
+
 test('backoff: while Slack is unavailable the poll waits five minutes, a session change asks at once', async ({
   page,
 }) => {

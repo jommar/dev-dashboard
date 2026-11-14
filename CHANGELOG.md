@@ -8,6 +8,8 @@
   `GET /api/slack/pending` gains `activityMentions`. Both drawers now share one edge-drawer frame, the
   Sessions tab moves to the upper edge slot and its list loads lazily, and only one drawer is open at a
   time. See [Bot bar](README.md#bot-bar) and [HTTP](README.md#http).
+- The Slack activity tab's border now counts down to the next unread-count read (a thin line fills top to bottom over
+  each poll cycle, hidden under reduced motion), and the count reads at once when the tab becomes visible again.
 - UI refresh: the page keeps a bottom gutter for the bot bar while a bot shows, and a crowded done or
   failed zone shows what fits plus a **+N** pill that toggles the Sessions drawer. Empty board columns
   beside a populated one fold into 44px rails, and long board notes are a one-line chip that expands.

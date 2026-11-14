@@ -10,6 +10,34 @@
   outline-offset: -2px;
 }
 
+/* The tab's border timer (EdgeDrawer `sweep`): a line down the outer edge that fills top to bottom over one
+   poll cycle (`--sweep-ms`, set from the store's delay) and starts again when the store re-arms its timer.
+   The wrapper is the tab's border box with its rounded corners, so the line is clipped to them. Decorative. */
+.slack-feed-tab-sweep {
+  position: absolute;
+  inset: -1px 0 -1px -1px;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.slack-feed-tab-sweep::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: var(--accent);
+  transform-origin: top;
+  animation: slack-feed-sweep calc(var(--sweep-ms, 60000) * 1ms) linear;
+}
+@keyframes slack-feed-sweep {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
 .slack-feed {
   display: flex;
   flex: 1 1 auto;
@@ -115,6 +143,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .slack-feed-tab-sweep {
+    display: none;
+  }
   .slack-feed-row {
     transition: none;
   }

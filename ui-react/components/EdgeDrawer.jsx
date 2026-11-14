@@ -4,6 +4,7 @@
 // attributes (styles/edge-drawer.css), so a drawer's own sheet only adds its colour role. The drawer's
 // content is `children` and is mounted only while it is open. Closing from here (Close, Escape) puts the
 // focus back on the tab, which the caller owns through `tabRef` so its own controls can do the same.
+// `sweep` (the pending store's { cycle, ms }) adds a decorative border timer: a new cycle remounts it, so a CSS animation of `ms` restarts.
 // There is no tooltip, native title or live region in the frame.
 import { useCallback, useEffect, useId, useRef } from 'react';
 import { Button } from './Primitives.jsx';
@@ -18,6 +19,7 @@ export function EdgeDrawer({
   count,
   attention,
   tabLabel,
+  sweep,
   title,
   closeLabel,
   slot,
@@ -64,6 +66,14 @@ export function EdgeDrawer({
           <span className={`${name}-tab-count`} data-edge-count aria-hidden="true">
             {count}
           </span>
+        )}
+        {sweep && (
+          <span
+            key={sweep.cycle}
+            className={`${name}-tab-sweep`}
+            style={{ '--sweep-ms': sweep.ms }}
+            aria-hidden="true"
+          />
         )}
       </button>
       <aside

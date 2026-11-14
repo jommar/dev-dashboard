@@ -203,6 +203,20 @@ test('React panels own structural rendering and compose shared React components'
   assert.match(read('components/DiffViewer.jsx'), /openDiffViewer/);
 });
 
+test('the shared Slack pending store reads at once when the tab becomes visible, owned like the session listener', () => {
+  const hook = read('hooks/useSlackPending.js');
+  // Added with the first reader and removed with the last, beside the session-change listener.
+  assert.match(hook, /document\.addEventListener\('visibilitychange', \w+\)/);
+  assert.match(hook, /document\.removeEventListener\('visibilitychange', \w+\)/);
+  // Only a return to a visible page asks; a hide asks for nothing.
+  assert.match(hook, /readIfVisible = \(\) => document\.hidden \|\| read\(\)/);
+  assert.match(hook, /addEventListener\('visibilitychange', readIfVisible\)/);
+  assert.match(hook, /removeEventListener\('visibilitychange', readIfVisible\)/);
+  // No second timer and no in-flight guard: one setTimeout, newest answer wins.
+  assert.equal((hook.match(/setTimeout\(/g) ?? []).length, 1);
+  assert.match(hook, /mine !== latest/);
+});
+
 test('the Slack tab carries a pending-count badge and chases an enriched thread snapshot', () => {
   assert.ok(
     fs.existsSync(path.join(root, 'components', 'SlackTabBadge.jsx')),

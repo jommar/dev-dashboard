@@ -10,7 +10,8 @@ import { ChunkBoundary } from './ScreenSlot.jsx';
 
 export function SlackDrawer({ open, onToggle, drawerId }) {
   const tab = useRef(null);
-  const { pending } = useSlackPending();
+  const state = useSlackPending();
+  const { pending } = state;
   const unread = Number(pending?.available && pending.activityMentions) || 0;
 
   // Load the body's code first, then open (also when the load fails: the body says so).
@@ -34,6 +35,7 @@ export function SlackDrawer({ open, onToggle, drawerId }) {
       label="Slack"
       count={unread > 99 ? '99+' : unread || undefined}
       attention={unread > 0}
+      sweep={pending?.available && state}
       tabLabel={`Slack activity${unread ? `, ${unread} unread mention${unread > 1 ? 's' : ''}` : ''}`}
       title="Slack activity"
       closeLabel="Close Slack activity"
@@ -45,7 +47,7 @@ export function SlackDrawer({ open, onToggle, drawerId }) {
           </p>
         }
       >
-        <Suspense fallback={null}>
+        <Suspense>
           <SlackFeedPanel tabRef={tab} onClose={onToggle} />
         </Suspense>
       </ChunkBoundary>

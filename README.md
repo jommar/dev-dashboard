@@ -2568,7 +2568,7 @@ sessions, open the session list`; under 600px one pill for the single zone). The
   reacted; an unread row has a dot. A row is a link: it opens the message in Slack in a new browser tab. The tab
   shows the number of **unread mentions** (`99+` above 99, amber), never thread or reaction activity, and hides it
   while Slack is disconnected or the count is zero; it is read from the same once-a-minute pending poll the Slack
-  tab's badge uses (see [Slack](#what-it-shows)), so it adds no request of its own. The drawer is **read-only**:
+  tab's badge uses, which also reads at once when you return to the tab (see [Slack](#what-it-shows)), so it adds no request of its own. A thin cyan line down the tab's outer border is the countdown to the next read: it fills from top to bottom over one poll cycle and starts again whenever the poll re-arms (it keeps running while the page is hidden), and it shows only while Slack is connected and counted. It is decorative and still under reduced motion. The drawer is **read-only**:
   opening it or clicking a row marks nothing read, so the number falls only when you read the mentions in Slack
   itself. The list is read when the drawer opens and when you press **Refresh**, never on a timer; when some rows
   could not be fully loaded a note says so and Refresh tries again. While Slack is not connected the drawer says
@@ -2926,9 +2926,10 @@ defensively and cached for a minute — and it is hidden when Slack is
 disconnected or when there is nothing unread. The browser reads it with
 `GET /api/slack/pending` once a minute (every five minutes while Slack answers
 unavailable; a request that failed outright is retried in a minute), not at all
-while the page is hidden, and reads again at once when you connect or
-disconnect. The Slack tab's badge and the [Slack activity drawer](#bot-bar)'s
-tab share that one poll, so they cost one request per interval together.
+while the page is hidden, and reads again at once when you return to the tab or
+connect or disconnect. The Slack tab's badge and the [Slack activity drawer](#bot-bar)'s
+tab share that one poll, so they cost one request per interval together. The drawer tab's border draws the
+countdown to that poll's next read (see [Bot bar](#bot-bar)).
 
 The shaping rules (mrkdwn to text, epoch to ISO, "who spoke last") are pure and
 live in [`backend/slack-model.mjs`](backend/slack-model.mjs); listing discovery and
@@ -3294,7 +3295,7 @@ refuses a cross-site caller because one request can spend about 35 Slack calls. 
 for the same newest message collapse to the Mentions row. The module is
 [`backend/slack-feed.mjs`](backend/slack-feed.mjs). The unread count's rules (mentions only, a minute while
 available or after a failed fetch, five minutes after Slack answers unavailable, nothing while the page is
-hidden) are under [What it shows](#what-it-shows). Not verified: that the count equals the number on Slack's
+hidden, one read at once when you return to the tab) are under [What it shows](#what-it-shows). Not verified: that the count equals the number on Slack's
 Activity badge, how `@channel` and keyword items look (they are read with the mention shape), and the link of a
 message outside any thread in a browser.
 
