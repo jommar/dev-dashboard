@@ -2,7 +2,7 @@
 // one-row toolbar (title, sub line, counts, controls), an optional switch, notes, and a body
 // that fills the viewport with a board of columns. What the cards are, and what the columns
 // mean, stay with each screen; presentation is ui-react/styles/board.css.
-import { Children, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { Children, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
 import { registerBoardRefresh } from '../lib/board-refresh.js';
 import { Button, Card, DashboardTooltip, LoadingState } from './Primitives.jsx';
@@ -96,18 +96,17 @@ export function RefreshControl({ name, loading, countdown, onRefresh }) {
   // The command palette's Refresh entry runs this same guarded load, found by the screen's name.
   useEffect(() => registerBoardRefresh(name, onRefresh), [name, onRefresh]);
   return (
-    <>
+    <span className="board-refresh">
       <Button data-testid={`${name}-refresh`} disabled={loading} onClick={() => onRefresh()}>
         Refresh
       </Button>
       <BoardCountdown name={name} countdown={countdown} />
-    </>
+    </span>
   );
 }
 
-const COUNTDOWN_TICK_MS = 1000;
-
-// The label beside Refresh and the only 1 s clock a board has, so only this span re-renders per
+// The readout over Refresh (words kept for assistive tech and tests, drawn transparent; what is seen is the
+// line along the button's bottom edge) and the only 1 s clock a board has, so only this span re-renders per
 // second, never the panel around it. It ticks only while its screen is active, as the polling does.
 // It reads `refresh in Ns`, `refreshing…` once due, and `refresh paused (Ns)` while the page is
 // hidden; the clock stops while hidden (the label then holds the value it had when the page was
@@ -123,7 +122,7 @@ function BoardCountdown({ name, countdown: { lastLoadedAt, interval, loaded, act
       clearInterval(timer);
       timer = null;
       tick();
-      if (!document.hidden) timer = setInterval(tick, COUNTDOWN_TICK_MS);
+      if (!document.hidden) timer = setInterval(tick, 1000); // the 1 s clock
     };
     sync();
     document.addEventListener('visibilitychange', sync);
@@ -132,18 +131,29 @@ function BoardCountdown({ name, countdown: { lastLoadedAt, interval, loaded, act
       document.removeEventListener('visibilitychange', sync);
     };
   }, [active]);
+  // The line along the button is the countdown. It restarts, at the elapsed time read once, on a load, when the
+  // page hides or shows (the key) and when the screen is shown again (the memo), never per tick.
+  const hidden = document.hidden;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- hidden and active only trigger the read
+  const ago = useMemo(() => Date.now() - lastLoadedAt, [lastLoadedAt, hidden, active]);
   // `now` can lag a just-finished load by up to a tick, so the elapsed time never goes negative.
   const remaining = Math.max(0, interval - Math.max(0, now - lastLoadedAt));
   const text =
     !loaded || !lastLoadedAt
       ? ''
-      : document.hidden
+      : hidden
         ? `refresh paused (${Math.ceil(remaining / 1000)}s)`
         : remaining
           ? `refresh in ${Math.ceil(remaining / 1000)}s`
           : 'refreshing…';
   return (
-    <span className="board-next" data-testid={`${name}-next`}>
+    <span
+      key={hidden + lastLoadedAt}
+      className="board-next"
+      data-testid={`${name}-next`}
+      data-hold={hidden}
+      style={{ '--cd-ms': interval, '--cd-ago': -ago }}
+    >
       {text}
     </span>
   );

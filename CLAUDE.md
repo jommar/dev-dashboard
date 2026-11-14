@@ -435,12 +435,23 @@ contract, so a refactor never renames them):
 - `BoardSection` — one `Card.board-section`: `.board-toolbar` (title, a `sub` line, `meta` status
   text, `controls`, then the `filters` row and the `notes` slot) over `.board-body`. With
   `activeTab` the body is the panel of a `BoardTabs` row (below).
-- `RefreshControl` (Refresh button and `refresh in N s` countdown) takes the `load` and the
+- `RefreshControl` (Refresh button and its countdown) takes the `load` and the
   `countdown` that `useActivePolling` returns, so a click restarts the countdown and goes through the
   hook's in-flight guard. `countdown` is a descriptor `{ lastLoadedAt, interval, loaded, active }`, not
   text: `RefreshControl` renders `BoardCountdown` (private to `BoardShell.jsx`), the only 1 s clock a
   board has, so only its span re-renders per second, never the panel; it ticks only while its screen is
-  `active` and the page is visible, and holds `refresh paused (Ns)` while hidden. Pass `countdown`
+  `active` and the page is visible, and holds `refresh paused (Ns)` while hidden. The words are no
+  longer seen: the `.board-next` readout (text, test id and class unchanged, so tests and assistive tech
+  still read it) lies `color: transparent` over the Refresh button's border box (`.board-refresh`
+  wraps the pair), and its `::before` is the countdown, a 2px `--accent` line along the button's bottom
+  edge that fills left to right (`board-sweep`, transform-only, linear) over `--cd-ms` (the descriptor's
+  `interval`), starting `--cd-ago` (elapsed ms, negative) in. It is CSS only and draws only while the
+  readout has words (`:not(:empty)`), so it follows the readout's rules: loaded and `active`. The span is
+  keyed by `hidden + lastLoadedAt`, so a load or the page hiding or showing restarts it, and `data-hold`
+  pauses it while hidden; `--cd-ago` is read once per cycle in a `useMemo` (also keyed on `active`, so a
+  screen shown again resumes at the true position), never per tick, which would shift a running
+  animation. Hidden under reduced motion. Do not `sr-only` the readout (it would clip the line) or
+  give a screen its own copy of the rule. Pass `countdown`
   straight through, never read it as a string. All four board screens (My Tickets, Slack, Pull
   Requests, DevTools) do this. `RefreshControl` also registers its guarded `onRefresh` under its
   `name` (`ui-react/lib/board-refresh.js`) for the command palette; Home has no entry (its velocity

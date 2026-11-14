@@ -2856,7 +2856,8 @@ same board frame ([UI layout](#ui-layout)). Its toolbar carries the title, an
 account line (`Checking…`, `Connected as @user · team`, `Waiting for sign-in…`
 or `Not connected`), a counts line, **Disconnect** (**Connect Slack** while not
 connected), **Load more eligible threads** when more can be loaded, and
-**Refresh** with a **refresh in N s** countdown. The counts line says how many
+**Refresh**, whose bottom edge is the countdown (a thin cyan line that fills over the poll cycle, see
+[UI layout](#ui-layout)). The counts line says how many
 loaded threads need a reply and when the list was updated, and says so while
 replies are still being checked or some reply states are unknown. While Slack is
 checking, not connected or waiting for sign-in, the card shows only the toolbar
@@ -2898,8 +2899,8 @@ A click opens the conversation in the same in-app dialog My Tickets uses, with
 and may be truncated; an open dialog closes when the thread passes the cutoff.
 
 While Slack is connected and the tab is open, the list reloads every 60 seconds
-(not while the page is hidden), counted down beside **Refresh**. **Refresh**
-reloads it at once and restarts the countdown (My Tickets' **Refresh** does the
+(not while the page is hidden), counted down by the line along **Refresh**'s bottom edge. **Refresh**
+reloads it at once and restarts the countdown line (My Tickets' **Refresh** does the
 same); coming back to the tab reloads the list only when it is older than 60
 seconds.
 
@@ -3589,8 +3590,12 @@ outlived a deploy) shows a **Reload** state in place and the other tabs keep wor
 lazy overlay loads it first and opens when it settles, so the first press or click is never lost.
 `test/bundle-budget.test.mjs` builds in memory and holds the initial JS to 640 KiB raw and 200 KiB
 gzip, so a new eager import of a lazy module fails it. Identical service snapshots no longer re-render
-the app (`ui/keep-if-equal.js`), and the refresh countdown re-renders only its own label and pauses
-while the page is hidden or its screen is not shown.
+the app (`ui/keep-if-equal.js`), and the refresh countdown re-renders only its own readout and pauses
+while the page is hidden or its screen is not shown. On My Tickets, Slack, Pull Requests and DevTools the
+countdown is seen as a thin cyan line along the bottom edge of **Refresh**, filling left to right over the
+screen's poll interval, restarting at each load and holding while the page is hidden; there are no visible
+words. The `refresh in N s` readout is still in the page, drawn transparent over the button for assistive
+tech. The line is decorative and is not drawn under reduced motion.
 
 `GET /api/config` supplies the tail line count, derived Jira browse URL and setup
 status used to choose Settings-only or ready-mode boot, and the active harness (`harness`), which the

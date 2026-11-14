@@ -61,9 +61,9 @@ export function EdgeDrawer({
         aria-label={tabLabel}
         onClick={() => onToggle(!open)}
       >
-        <span aria-hidden="true">{label}</span>
+        <span aria-hidden>{label}</span>
         {count !== undefined && (
-          <span className={`${name}-tab-count`} data-edge-count aria-hidden="true">
+          <span className={`${name}-tab-count`} data-edge-count aria-hidden>
             {count}
           </span>
         )}
@@ -72,7 +72,7 @@ export function EdgeDrawer({
             key={sweep.cycle}
             className={`${name}-tab-sweep`}
             style={{ '--sweep-ms': sweep.ms }}
-            aria-hidden="true"
+            aria-hidden
           />
         )}
       </button>

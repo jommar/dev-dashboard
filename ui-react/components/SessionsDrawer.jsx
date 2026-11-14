@@ -96,7 +96,7 @@ function NotifyToggle({ notify, noteId }) {
           className="sessions-notify-state"
           data-testid="sessions-notify-state"
           data-state={label.toLowerCase()}
-          aria-hidden="true"
+          aria-hidden
         >
           {label}
         </span>

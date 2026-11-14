@@ -70,12 +70,44 @@
   font-weight: 400;
   white-space: nowrap;
 }
+/* Refresh and its countdown. The readout (.board-next, words kept for assistive tech) lies transparent
+   over the button's border box, so its rounded corners clip the line it draws: a 2px line along the
+   bottom edge that fills left to right over the poll interval (--cd-ms), starts at the elapsed time
+   (--cd-ago, negative ms) and holds while the page is hidden. Only a readout with words draws it. */
+.board-refresh {
+  position: relative;
+  display: inline-flex;
+}
 .board-next {
-  color: var(--muted);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  color: transparent;
   font-family: var(--mono);
   font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
+  pointer-events: none;
   white-space: nowrap;
+}
+.board-next:not(:empty)::before {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  animation: board-sweep calc(var(--cd-ms, 60000) * 1ms) linear calc(var(--cd-ago, 0) * 1ms);
+}
+.board-next[data-hold='true']::before {
+  animation-play-state: paused;
+}
+@keyframes board-sweep {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
 }
 .board-toolbar .work-filters {
   align-items: center;
@@ -664,5 +696,8 @@
   .board-card,
   .board-tab {
     transition: none;
+  }
+  .board-next::before {
+    display: none;
   }
 }

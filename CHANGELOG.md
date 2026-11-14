@@ -10,6 +10,9 @@
   time. See [Bot bar](README.md#bot-bar) and [HTTP](README.md#http).
 - The Slack activity tab's border now counts down to the next unread-count read (a thin line fills top to bottom over
   each poll cycle, hidden under reduced motion), and the count reads at once when the tab becomes visible again.
+- The board screens' (My Tickets, Slack, Pull Requests, DevTools) `refresh in N s` words are replaced by a thin
+  cyan line along the bottom edge of **Refresh** that fills over the poll cycle (the readout stays in the page,
+  visually hidden, for assistive tech; hidden under reduced motion).
 - UI refresh: the page keeps a bottom gutter for the bot bar while a bot shows, and a crowded done or
   failed zone shows what fits plus a **+N** pill that toggles the Sessions drawer. Empty board columns
   beside a populated one fold into 44px rails, and long board notes are a one-line chip that expands.

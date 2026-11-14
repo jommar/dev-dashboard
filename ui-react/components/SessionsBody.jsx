@@ -25,19 +25,19 @@ const copyReason = ({ phase, state }) =>
 
 // A slot with nothing to offer: dimmed and aria-disabled, but still focusable so its tooltip, and its
 // name, say why. It is not a link or a button element and does nothing when activated.
-function SlotOff({ slot, icon, testId, label, reason }) {
+function SlotOff({ slot, testId, label, reason }) {
   return (
     <DashboardTooltip title={reason} placement="left">
       <span
         role="button"
         tabIndex={0}
-        aria-disabled="true"
+        aria-disabled
         className="sessions-row-slot-off"
         data-slot={slot}
         data-testid={testId}
         aria-label={`${label}, unavailable: ${reason}`}
       >
-        <NavIcon name={icon} />
+        <NavIcon name={slot} />
       </span>
     </DashboardTooltip>
   );
@@ -118,7 +118,6 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
       ) : (
         <SlotOff
           slot="chat"
-          icon="chat"
           testId={`sessions-chat-off-${key}`}
           label={chatLabel}
           reason="No session to chat with"
@@ -139,7 +138,6 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
       ) : (
         <SlotOff
           slot="copy"
-          icon="copy"
           testId={`sessions-copy-off-${key}`}
           label={copyLabel}
           reason={copyReason(row)}

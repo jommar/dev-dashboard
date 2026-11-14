@@ -27,7 +27,7 @@ function FeedRow({ row }) {
         rel="noopener noreferrer"
       >
         <span className="slack-feed-row-head">
-          {row.unread && <span className="slack-feed-dot" aria-hidden="true" />}
+          {row.unread && <span className="slack-feed-dot" aria-hidden />}
           {row.unread && <span className="sr-only">Unread</span>}
           <span className="slack-feed-channel">{channelLabel(row.channel)}</span>
           {row.author && <span className="slack-feed-author">{row.author}</span>}
