@@ -238,6 +238,34 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The Notify me button's state as a word in a small pill after its name (On, Off, Blocked), so the state
+   is never colour alone; the pill is aria-hidden, the button's name and aria-pressed stay as they are. */
+.btn.subtle.sessions-notify {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.btn.subtle.sessions-notify[aria-pressed='true'] {
+  border-color: var(--green);
+}
+.sessions-notify-state {
+  padding: 0 var(--s2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.5;
+}
+.sessions-notify-state[data-state='on'] {
+  border-color: var(--green);
+  background: var(--green);
+  color: var(--bg);
+}
+.sessions-notify-state[data-state='blocked'] {
+  border-color: var(--amber);
+  color: var(--amber);
+}
 /* The drawer's own reason for a "Notify me" that cannot be on: the browser has blocked notifications. */
 .sessions-notify-note {
   flex: none;

@@ -6,6 +6,7 @@ import {
   NOTIFY_STATES,
   needsYouCount,
   notificationsFor,
+  notifyStateLabel,
   composeTitle,
   readPreference,
   setShownCount,
@@ -179,4 +180,16 @@ test('needs-you: composeTitle puts the shown count in front of whatever screen t
     setShownCount(0);
   }
   assert.equal(composeTitle('Slack'), 'Slack');
+});
+
+// The Sessions drawer's Notify me button shows its state as a visible word, not by colour alone: On
+// when the choice is on and the browser allows it, Blocked when the browser has said no, else Off.
+test('notifyStateLabel: On, Blocked and Off', () => {
+  assert.equal(notifyStateLabel({ on: true, permission: 'granted', active: true }), 'On');
+  assert.equal(notifyStateLabel({ on: false, permission: 'granted', active: false }), 'Off');
+  assert.equal(notifyStateLabel({ on: false, permission: 'default', active: false }), 'Off');
+  assert.equal(notifyStateLabel({ on: true, permission: 'default', active: false }), 'Off');
+  // Denied wins, whether or not the stored choice is still on (a revoked permission).
+  assert.equal(notifyStateLabel({ on: true, permission: 'denied', active: false }), 'Blocked');
+  assert.equal(notifyStateLabel({ on: false, permission: 'denied', active: false }), 'Blocked');
 });

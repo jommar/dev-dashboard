@@ -47,6 +47,11 @@ export function notificationsFor(ready, { enabled, permission, hidden } = {}) {
     }));
 }
 
+// The word the Notify me button shows beside its name: Blocked when the browser has refused (whatever
+// the stored choice), On when the choice is on and permitted, else Off. Same test as the drawer's note.
+export const notifyStateLabel = ({ permission, active }) =>
+  permission === 'denied' ? 'Blocked' : active ? 'On' : 'Off';
+
 // The choice is per viewer, off until the user turns it on, and the page works without storage.
 const PREFERENCE_KEY = 'dev-dashboard.needs-you.notify';
 export function readPreference(storage) {

@@ -30,6 +30,7 @@ import {
 import { chatHref } from '../../ui/chat-stream.js';
 import { rowUsageLabel } from '../../ui/session-usage.js';
 import { copyText } from '../../ui/dom.js';
+import { notifyStateLabel } from '../../ui/needs-you.js';
 import { PHASES, phaseWords } from '../../ui/session-phases.js';
 
 const MARK = { working: 'running', waiting: 'attention', done: 'done', failed: 'failed' };
@@ -201,7 +202,10 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onClose }) {
 // The header's "Notify me" switch: an opt-in desktop notification (and tab-title count) when a session
 // needs you while this page is hidden. Pressing it is the user gesture that asks the browser for
 // permission; a refusal leaves it off and the drawer says why (`notifyBlocked`, below the header).
+// The state shows as a visible word too (`sessions-notify-state`, aria-hidden), so it never rests on
+// colour alone; the name stays "Notify me" and aria-pressed carries the state for assistive tech.
 function NotifyToggle({ notify, noteId }) {
+  const label = notifyStateLabel(notify);
   return (
     <Button
       className="subtle sessions-notify"
@@ -211,6 +215,14 @@ function NotifyToggle({ notify, noteId }) {
       onClick={() => (notify.active ? notify.disable() : notify.enable())}
     >
       Notify me
+      <span
+        className="sessions-notify-state"
+        data-testid="sessions-notify-state"
+        data-state={label.toLowerCase()}
+        aria-hidden="true"
+      >
+        {label}
+      </span>
     </Button>
   );
 }

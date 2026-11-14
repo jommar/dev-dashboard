@@ -208,6 +208,38 @@ test('enabling when the browser says no stays off and says it is blocked', async
   await expect(page.getByTestId('sessions-notify-note')).toContainText('blocked in the browser');
 });
 
+test('Notify me shows On, Off and Blocked as a visible label and keeps its name', async ({
+  page,
+  dashboard,
+}) => {
+  await stubBrowser(page, { permission: 'default', answer: 'granted', hidden: false, on: false });
+  seed(dashboard, { 'TAP-1': WORKING });
+  await page.goto('/#/home');
+  await page.getByTestId('sessions-tab').click();
+  const toggle = page.getByTestId('sessions-notify');
+  const state = page.getByTestId('sessions-notify-state');
+  // The label is visible text, hidden from assistive tech: the name and aria-pressed carry the state.
+  await expect(state).toHaveText('Off');
+  await expect(state).toHaveAttribute('aria-hidden', 'true');
+  await expect(page.getByRole('button', { name: 'Notify me', exact: true })).toBeVisible();
+  await toggle.click();
+  await expect(state).toHaveText('On');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Notify me', exact: true })).toBeVisible();
+  // The browser's choice is revoked while the page is open: Blocked, with the note.
+  await page.evaluate(() => window.__setPermission('denied'));
+  await expect(state).toHaveText('Blocked');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId('sessions-notify-note')).toContainText('blocked in the browser');
+  await page.evaluate(() => window.__setPermission('granted'));
+  await expect(state).toHaveText('On');
+  // Turned off: Off again.
+  await toggle.click();
+  await expect(state).toHaveText('Off');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Notify me', exact: true })).toBeVisible();
+});
+
 test('a browser without notifications has no toggle', async ({ page, dashboard }) => {
   await page.addInitScript(() => {
     delete window.Notification;

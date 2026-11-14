@@ -2514,7 +2514,8 @@ while there is no session to show.
   never chat text, a title or a reason, and chat bots and `done` never notify), and a `(N) ` prefix on
   the tab title while hidden (N is the visible ticket bots waiting or failed). The choice is kept in
   `localStorage` (`dev-dashboard.needs-you.notify`), the browser permission is asked for only from
-  that click, and a blocked permission is shown in the drawer. While it is on and permitted the bar
+  that click, and a blocked permission is shown in the drawer. The button shows its state as a
+  visible label (On, Off or Blocked) while keeping its name and `aria-pressed`. While it is on and permitted the bar
   also keeps polling while the tab is hidden (every 15 s; the browser may throttle background tabs, so
   a notification can arrive late).
 - **The bar polls.** It reads `GET /api/claude/tickets` itself, on every screen, every 15 seconds

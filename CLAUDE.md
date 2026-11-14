@@ -175,7 +175,8 @@ optional closed-enum `verdict` (done e2e or groom only, see "E2E ticket check" b
 (`notificationsFor`, `needsYouCount`, `composeTitle`, `readPreference`/`writePreference`, key
 `dev-dashboard.needs-you.notify`); browser side in `ui-react/hooks/useNeedsYou.js`. The Sessions
 drawer's **Notify me** button (`sessions-notify`, `aria-pressed`) is the only place permission is
-requested, from its click. The notifier is fed by `useBotCallouts`'s `onReady` batch (the same
+requested, from its click; it shows On / Off / Blocked as a visible `aria-hidden` label
+(`sessions-notify-state`, `notifyStateLabel`) while its name stays `Notify me`. The notifier is fed by `useBotCallouts`'s `onReady` batch (the same
 batch that gets bubbles, so the first poll is never news and the sprint filter applies) and
 notifies only when the opt-in is on, permission is `granted` and `document.hidden`, only for a
 change to `waiting` or `failed` of a ticket session whose ticket matches the key pattern; the body is

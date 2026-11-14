@@ -20,6 +20,8 @@
   waiting or failed while the dashboard is hidden (Sessions drawer **Notify me**, off by default). The
   bot bar's tickets poll now also continues while the tab is hidden, but only while this is on and
   permitted.
+- The Sessions drawer's **Notify me** button now shows whether it is On, Off or Blocked as a visible
+  label (its name and `aria-pressed` are unchanged).
 - Added session verdict chips (e2e `Verdict:`, groom `Readiness:`, with bubble text, live-region text
   and a soft note before a plan), **Continue** for a failed session (`POST /api/claude/continue`, the
   new built-in `continue` prompt, so the prompt list is now eleven templates) and **Use in Services**
