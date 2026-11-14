@@ -140,6 +140,12 @@ test('double-size layout and keyboard focus remain usable with reduced motion @r
   expect(
     await page.getByTestId('tab-services').evaluate((el) => getComputedStyle(el).outlineStyle),
   ).toBe('solid');
+  // The focused tab's tooltip opens after a short delay; under the CSS zoom used here its popper is
+  // placed past the right edge. Let it open and dismiss it, so the check below measures the layout
+  // and does not depend on how fast the machine is.
+  await expect(page.getByRole('tooltip')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('tooltip')).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await mkdir(screenshots, { recursive: true });
   await page.screenshot({
