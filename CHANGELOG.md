@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added a harness adapter seam: every Claude Code CLI call, command and tool limit now sits behind one
+  adapter in `backend/harness/` (Claude Code is the only one and the default, and behaves as before).
+  `GET /api/config` gains `harness`, and a new 409 `harness_unsupported` reason covers an action the
+  harness cannot do. See [Harnesses](README.md#harnesses) and
+  [Adding a harness](backend/harness/README.md#adding-a-harness).
+- The prompts stay one set for every harness: `{SKILL}` and `{ASK_TOOL}` are new placeholders filled from
+  the adapter's `prompt` data. Claude Code's rendered prompts are byte-identical and existing
+  `prompts/*.md` overrides keep working. See [Custom prompts](prompts/README.md).
 - The implement prompt and the implement answers message now treat the approved plan, checklist and
   spec as the single source of truth and no longer tell the session to apply `questions[].answer` from
   the status file; the answers message applies only answers to implement questions

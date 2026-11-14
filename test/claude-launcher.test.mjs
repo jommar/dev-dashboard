@@ -69,6 +69,7 @@ import {
   statusFile,
   throughGap,
   until,
+  withHarnessTokens,
   workingEntry,
 } from './claude-launcher-fixture.mjs';
 import { captureConsole } from './slack-watch-fixture.mjs';
@@ -3058,17 +3059,17 @@ test('scenario 121: the built-in templates are exported as the eleven texts, pla
   const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
   assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
   assert.deepEqual(PROMPT_TEMPLATES, {
-    investigate: INVESTIGATE_TEMPLATE,
-    implement: IMPLEMENT_TEMPLATE,
-    answers: ANSWERS_TEMPLATE,
-    'answers-implement': ANSWERS_IMPLEMENT_TEMPLATE,
-    approve: APPROVE_TEMPLATE,
-    continue: CONTINUE_TEMPLATE,
-    rereview: REREVIEW_TEMPLATE,
-    groom: GROOM_TEMPLATE,
-    review: REVIEW_TEMPLATE,
-    'spec-review': SPEC_REVIEW_TEMPLATE,
-    e2e: E2E_TEMPLATE,
+    investigate: withHarnessTokens(INVESTIGATE_TEMPLATE),
+    implement: withHarnessTokens(IMPLEMENT_TEMPLATE),
+    answers: withHarnessTokens(ANSWERS_TEMPLATE),
+    'answers-implement': withHarnessTokens(ANSWERS_IMPLEMENT_TEMPLATE),
+    approve: withHarnessTokens(APPROVE_TEMPLATE),
+    continue: withHarnessTokens(CONTINUE_TEMPLATE),
+    rereview: withHarnessTokens(REREVIEW_TEMPLATE),
+    groom: withHarnessTokens(GROOM_TEMPLATE),
+    review: withHarnessTokens(REVIEW_TEMPLATE),
+    'spec-review': withHarnessTokens(SPEC_REVIEW_TEMPLATE),
+    e2e: withHarnessTokens(E2E_TEMPLATE),
   });
 });
 

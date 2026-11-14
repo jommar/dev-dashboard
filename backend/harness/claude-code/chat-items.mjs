@@ -1,4 +1,4 @@
-// claude-chat-items.mjs — what the chat shows of a Claude session, as pure functions: one stdout line
+// chat-items.mjs — what the chat shows of a Claude session, as pure functions: one stdout line
 // of a turn's process becomes the events the browser gets (`liveMessages`), and a session's
 // transcript becomes the items of its history (`historyItems`). Both build the same items (a user
 // message, an assistant text, a tool call with its result), so a reply looks the same live and

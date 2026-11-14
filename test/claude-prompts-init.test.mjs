@@ -37,21 +37,22 @@ import {
   routingEnvironment,
   seedPlanned,
   statusFile,
+  withHarnessTokens,
 } from './claude-launcher-fixture.mjs';
 
 // The starter files, in the order they are reported.
 const STARTERS = [
-  ['investigate.md', INVESTIGATE_TEMPLATE],
-  ['implement.md', IMPLEMENT_TEMPLATE],
-  ['answers.md', ANSWERS_TEMPLATE],
-  ['answers-implement.md', ANSWERS_IMPLEMENT_TEMPLATE],
-  ['approve.md', APPROVE_TEMPLATE],
-  ['continue.md', CONTINUE_TEMPLATE],
-  ['rereview.md', REREVIEW_TEMPLATE],
-  ['groom.md', GROOM_TEMPLATE],
-  ['review.md', REVIEW_TEMPLATE],
-  ['spec-review.md', SPEC_REVIEW_TEMPLATE],
-  ['e2e.md', E2E_TEMPLATE],
+  ['investigate.md', withHarnessTokens(INVESTIGATE_TEMPLATE)],
+  ['implement.md', withHarnessTokens(IMPLEMENT_TEMPLATE)],
+  ['answers.md', withHarnessTokens(ANSWERS_TEMPLATE)],
+  ['answers-implement.md', withHarnessTokens(ANSWERS_IMPLEMENT_TEMPLATE)],
+  ['approve.md', withHarnessTokens(APPROVE_TEMPLATE)],
+  ['continue.md', withHarnessTokens(CONTINUE_TEMPLATE)],
+  ['rereview.md', withHarnessTokens(REREVIEW_TEMPLATE)],
+  ['groom.md', withHarnessTokens(GROOM_TEMPLATE)],
+  ['review.md', withHarnessTokens(REVIEW_TEMPLATE)],
+  ['spec-review.md', withHarnessTokens(SPEC_REVIEW_TEMPLATE)],
+  ['e2e.md', withHarnessTokens(E2E_TEMPLATE)],
 ];
 
 function tempRoot(t) {
@@ -152,7 +153,7 @@ test('scenario 131: a file that is already there is kept as it is, and only the 
   const after = snapshot(dir);
   assert.deepEqual(after['investigate.md'], before['investigate.md'], 'bytes and time unchanged');
   assert.deepEqual(after['answers.md'], before['answers.md'], 'even an empty file is not replaced');
-  assert.equal(after['implement.md'].text.trim(), IMPLEMENT_TEMPLATE);
+  assert.equal(after['implement.md'].text.trim(), withHarnessTokens(IMPLEMENT_TEMPLATE));
 });
 
 test('scenario 131: a second run changes nothing and reports every file as kept', async (t) => {

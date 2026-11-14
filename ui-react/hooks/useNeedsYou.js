@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useHarness } from '../lib/harness-context.js';
+import { say } from '../../ui/harness.js';
 import {
   needsYouCount,
   notificationsFor,
@@ -12,7 +14,7 @@ import {
 // The browser side of the opt-in "Needs you" notification (the rules are in ui/needs-you.js). It is
 // per viewer, off until the user turns it on from the Sessions drawer, and never asks for permission
 // except from that click.
-const NOTIFICATION_TITLE = 'Claude session';
+const NOTIFICATION_TITLE = '{name} session';
 
 // The page's storage and Notification, or nothing: both can be missing or throw (private window,
 // blocked site data, an old browser), and the page works without them.
@@ -84,8 +86,9 @@ function useHidden() {
 // poll is never news). Clicking a notification focuses the window and calls `onOpen(ticket, phase)`.
 export function useNeedsYouAlerts({ active, bots, onOpen }) {
   const hidden = useHidden();
-  const latest = useRef({ active, onOpen });
-  latest.current = { active, onOpen };
+  const harness = useHarness();
+  const latest = useRef({ active, onOpen, harness });
+  latest.current = { active, onOpen, harness };
   const count = needsYouCount(bots);
 
   useEffect(() => {
@@ -109,7 +112,7 @@ export function useNeedsYouAlerts({ active, bots, onOpen }) {
     });
     for (const { ticket, phase, body, tag } of items) {
       try {
-        const note = new Notify(NOTIFICATION_TITLE, { body, tag });
+        const note = new Notify(say(NOTIFICATION_TITLE, latest.current.harness), { body, tag });
         note.onclick = () => {
           window.focus();
           note.close();

@@ -340,7 +340,7 @@ test('scenario 3: an unknown session is refused session_not_found, and an unread
 });
 
 test('scenario 3: with the real sessions module, the chat does not take its own mark for work elsewhere', async (t) => {
-  const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+  const { createClaudeSessions } = await import('../backend/harness/claude-code/sessions.mjs');
   const exec = createFakeExec();
   exec.setListing([
     listingEntry({ sessionId: UUID_2, cwd: '/work/ticket-session', state: 'done' }),

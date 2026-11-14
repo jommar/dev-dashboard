@@ -16,6 +16,7 @@
 // Escape closes it and puts focus back on the tab.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useSessionsUsage } from '../hooks/useSessionsUsage.js';
+import { useHarness } from '../lib/harness-context.js';
 import { Button, DashboardTooltip } from './Primitives.jsx';
 import { StatusMark } from './ClaudeSteps.jsx';
 import { NavIcon } from './NavIcon.jsx';
@@ -30,6 +31,7 @@ import {
 import { chatHref } from '../../ui/chat-stream.js';
 import { rowUsageLabel } from '../../ui/session-usage.js';
 import { copyText } from '../../ui/dom.js';
+import { say } from '../../ui/harness.js';
 import { notifyStateLabel, notifyTooltip } from '../../ui/needs-you.js';
 import { PHASES, phaseWords } from '../../ui/session-phases.js';
 
@@ -235,6 +237,7 @@ function NotifyToggle({ notify, noteId }) {
 const notifyBlocked = (notify) => Boolean(notify?.supported) && notify.permission === 'denied';
 
 export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify }) {
+  const harness = useHarness();
   const count = groups.reduce((total, { rows }) => total + rows.length, 0);
   const waiting = groups.find(({ state }) => state === 'waiting')?.rows.length ?? 0;
   const titleId = useId();
@@ -305,7 +308,10 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify }
         data-attention={waiting > 0 ? 'true' : undefined}
         aria-expanded={open}
         aria-controls={`${titleId}-drawer`}
-        aria-label={`Claude sessions, ${count}${waiting ? `, ${waiting} need you` : ''}`}
+        aria-label={say(
+          `{name} sessions, ${count}${waiting ? `, ${waiting} need you` : ''}`,
+          harness,
+        )}
         onClick={() => onToggle(!open)}
       >
         <span aria-hidden="true">Sessions</span>
@@ -323,7 +329,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify }
         {open && (
           <>
             <header className="sessions-head">
-              <h2 id={titleId}>Claude sessions</h2>
+              <h2 id={titleId}>{say('{name} sessions', harness)}</h2>
               <div className="sessions-head-actions">
                 {notify?.supported && <NotifyToggle notify={notify} noteId={`${titleId}-notify`} />}
                 <Button
@@ -377,7 +383,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify }
             <div className="sessions-body" data-testid="sessions-body">
               {count === 0 ? (
                 <p className="sessions-empty" data-testid="sessions-empty">
-                  No Claude sessions for tickets in an active sprint.
+                  {say('No {name} sessions for tickets in an active sprint.', harness)}
                 </p>
               ) : shown.length === 0 ? (
                 <p className="sessions-empty" data-testid="sessions-no-match">

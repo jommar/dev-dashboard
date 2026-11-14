@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getClaudeUsage } from '../lib/api.js';
+import { useHarness } from '../lib/harness-context.js';
+import { can } from '../../ui/harness.js';
 import { sumUsage } from '../../ui/format-tokens.js';
 
 // The token tally of `sessions` (session UUIDs, at most 8): `{ usage, total }`. `usage` is the usage
@@ -10,8 +12,9 @@ import { sumUsage } from '../../ui/format-tokens.js';
 export function useClaudeUsage({ sessions, active }) {
   const [usage, setUsage] = useState(null);
   const ids = sessions.join(',');
+  const usable = can(useHarness(), 'usage');
   useEffect(() => {
-    if (!active || !ids) return undefined;
+    if (!active || !usable || !ids) return undefined;
     let current = true;
     getClaudeUsage(ids.split(',')).then((result) => {
       if (current && result.ok) setUsage(result.sessions);
@@ -19,7 +22,7 @@ export function useClaudeUsage({ sessions, active }) {
     return () => {
       current = false;
     };
-  }, [active, ids]);
+  }, [active, usable, ids]);
   const answered = ids ? ids.split(',').filter((id) => usage?.[id]) : [];
   return { usage, total: answered.length ? sumUsage(answered.map((id) => usage[id])) : null };
 }

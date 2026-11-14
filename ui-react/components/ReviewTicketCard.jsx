@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import { slug } from '../../ui/dom.js';
+import { useHarness } from '../lib/harness-context.js';
+import { say } from '../../ui/harness.js';
 import { hasCompletePrCoverage, queueReviewState } from '../../ui/review-board.js';
 import { reviewText } from '../../ui/ticket-board.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
@@ -15,6 +17,7 @@ export function ReviewTicketCard({
   onOpenThread,
   onOpenClaude,
 }) {
+  const harness = useHarness();
   const cardRef = useRef(null);
   const prs = ticket.prs || [];
   const discoveryComplete = hasCompletePrCoverage(prCoverage);
@@ -66,7 +69,7 @@ export function ReviewTicketCard({
         onOpenThread={onOpenThread}
         claudeProps={{
           testId: `prs-claude-icon-${ticket.key}`,
-          label: `Claude code review for ${ticket.key}`,
+          label: say(`{name} code review for ${ticket.key}`, harness),
           tooltip: false,
         }}
         onOpenClaude={onOpenClaude}

@@ -20,7 +20,7 @@ const NEW_MODULES = [
   'backend/slack-link.mjs',
   'backend/slack-notice.mjs',
   'backend/slack-watch-store.mjs',
-  'backend/claude-sessions.mjs',
+  'backend/harness/claude-code/sessions.mjs',
   'backend/slack-watcher.mjs',
   'backend/slack-board.mjs',
 ];

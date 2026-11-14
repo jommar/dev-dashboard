@@ -7,6 +7,8 @@
 // click hands the thread to the in-app dialog instead of navigating away.
 import { timeAgo } from '../../ui/dom.js';
 import { DashboardTooltip } from './Primitives.jsx';
+import { useHarness } from '../lib/harness-context.js';
+import { say } from '../../ui/harness.js';
 
 // The Claude sessions the watcher has attached to this thread. A missing or unreadable
 // count is 0, so the chip stays plain.
@@ -18,7 +20,7 @@ function attachedCount(thread) {
 // Slack's own snapshot can arrive cold, without a reply count, and a thread
 // without activity has no timestamp at all. Each such part is dropped instead of
 // printing "undefined" or "NaN"; timeAgo already returns "" for a missing date.
-function threadLabel(thread) {
+function threadLabel(thread, harness) {
   const parts = ['Slack thread'];
   const replies = thread?.replyCount;
   if (Number.isFinite(replies)) parts.push(`${replies} ${replies === 1 ? 'reply' : 'replies'}`);
@@ -26,19 +28,20 @@ function threadLabel(thread) {
   if (when) parts.push(when);
   if (thread?.needsReply) parts.push('needs reply');
   const sessions = attachedCount(thread);
-  if (sessions === 1) parts.push('Claude session attached');
-  else if (sessions > 1) parts.push(`${sessions} Claude sessions attached`);
+  if (sessions === 1) parts.push(say('{name} session attached', harness));
+  else if (sessions > 1) parts.push(say(`${sessions} {name} sessions attached`, harness));
   return parts.join(' · ');
 }
 
 export function SlackThreadLinks({ links = [], onOpen }) {
+  const harness = useHarness();
   // Nothing matched: render nothing at all, so a disconnected Slack leaves the
   // row byte-identical to the pre-link version.
   if (!links.length) return null;
   return (
     <span className="my-ticket-slack">
       {links.map((thread) => {
-        const label = threadLabel(thread);
+        const label = threadLabel(thread, harness);
         const replies = Number.isFinite(thread.replyCount) ? thread.replyCount : 0;
         const attached = attachedCount(thread) > 0;
         return (

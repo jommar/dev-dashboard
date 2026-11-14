@@ -844,7 +844,7 @@ export async function watchFixture(t, options = {}) {
       });
     } else fixture.slack = fakeReader;
     if (sessionsMode === 'real') {
-      const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+      const { createClaudeSessions } = await import('../backend/harness/claude-code/sessions.mjs');
       fixture.sessions = createClaudeSessions({
         execFileImpl: exec.execFileImpl,
         store: fixture.store,

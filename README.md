@@ -279,7 +279,7 @@ The page, static assets and these setup endpoints remain available:
 
 | Endpoint                      | Contract                                                                                                                                                                                                                                                             |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/config`             | Tail count, derived Jira browse URL and `setup` (readiness, errors, revision, origin, connection status)                                                                                                                                                             |
+| `GET /api/config`             | Tail count, derived Jira browse URL, `setup` (readiness, errors, revision, origin, connection status) and `harness` (see [Harnesses](#harnesses))                                                                                                                    |
 | `GET /api/settings`           | Editable saved settings, revision, token presence/source and setup status; no tokens                                                                                                                                                                                 |
 | `PUT /api/settings`           | Full editable configuration plus `expectedRevision`; optional `credentials.githubToken` / `credentials.jiraToken`; omitted/blank replacements retain saved tokens                                                                                                    |
 | `POST /api/settings/validate` | JSON object body with optional `expectedRevision` (sent by the browser); stale revisions return `409 REVISION_CONFLICT` before probes. Revalidates saved settings and returns public state with the current revision; `setup`/connection errors determine the result |
@@ -1262,6 +1262,34 @@ worktree's own branch, never pushes or opens a pull request, and leaves a short 
   through `--add-dir`. Groom, review and e2e check sessions get no `--add-dir` and are not instructed to
   write workflow state there.
 
+### Harnesses
+
+Everything that speaks the agent CLI (listing, launching, stopping, resuming, the chat turn, token
+fields, attach and resume commands, the spec review's tool limits, the `~/.claude` readability gate)
+sits behind one adapter in [`backend/harness/`](backend/harness/README.md), whose guide has the contract
+and "Adding a harness". Claude Code is the only registered adapter and the default, and with it active
+every argument array, command, file, route, reply shape, reason code and word is as before. One harness
+is active per process, chosen in code (`DEFAULT_HARNESS_ID`, or `integrations.harness` in tests); there
+is no setting, environment variable or picker, and no second real harness has been tried.
+
+- **`GET /api/config` carries `harness`:** `{ id, label, name, command, capabilities: { chat, usage } }`;
+  for Claude Code the label is `Claude Code`, the name `Claude`, the command `claude` and both
+  capabilities `true`. The UI fills its wording from it (`ui/harness.js`), and a missing or invalid
+  value reads as Claude Code.
+- **`harness_unsupported`** is a 409 `CLAUDE_REFUSED` reason, worded "This action is not available with
+  {label}.". It answers a spec review launch on a harness without tool limits (before anything is
+  written or started), a chat send, stop or stream on a harness without a chat, and an answers, approve,
+  continue, re-review or chat send on a record another harness wrote (before any file write or CLI
+  call). A harness without token fields is not refused: see [Claude usage](#claude-usage).
+- **Records.** A new `launch.json` phase record and standalone chat record carry `"harness": "<id>"`
+  only for a non-default harness (see [State files](#state-files)), so Claude Code writes the same bytes
+  as before and every older file reads as Claude Code.
+- **Not renamed:** the `claude`-named routes, codes, log prefix and state directory keep their names
+  (the list is in the [guide](backend/harness/README.md#what-leaves-the-backend)).
+- **One prompt source.** The [prompts](#custom-prompts) are one set for every harness, never a copy per
+  harness: the words that name a harness's own mechanism are the placeholders `{SKILL}` and `{ASK_TOOL}`,
+  filled from the adapter's `prompt` data.
+
 ### Icon and dialog
 
 The icon's colour, badge shape and words all carry the state, so no state is colour alone. Its
@@ -1380,6 +1408,10 @@ planning session stays reachable then.
 `claude/<KEY>/status.json` is shared with the session. The key must match `^[A-Z]{1,10}-\d{1,7}$`
 before any path is built, and a folder under `claude/` with another name is ignored (`claude/chat/`
 holds the records of standalone chats, see [Chat](#chat)).
+
+A phase record in `claude/<KEY>/launch.json` (`{ name, launchedAt, id }`) gains `harness` only when
+the active harness is not Claude Code; a record without it, or with `"harness": "claude-code"`, belongs
+to Claude Code (see [Harnesses](#harnesses)).
 
 `nodemon.json` makes `npm run dev` ignore `claude/`. Without it, every write to these files (a launch,
 a saved answer, the session's own updates) would restart the dashboard and cut off the request in
@@ -1913,7 +1945,9 @@ successful answer send for that phase's session, `changed answers` for a later n
 new or changed answers, and `answers (sent again)` for an explicit resend (`resend: true`), which
 only the planning lane has, whether or not the answers changed. `{PR}` is the validated spec PR
 number, and `{PORT}` is the running browser's port (9300-9399), read from the DevTools registry,
-not client text. Any placeholder not listed for that template stays in the text as written, so in
+not client text. Every template also takes `{SKILL}` (what the active harness calls a named skill) and
+`{ASK_TOOL}` (how it asks the human), filled from the harness adapter's `prompt` field; for Claude Code
+they render exactly as the text always read (`skill`, `a question tool`). Any other placeholder not listed for that template stays in the text as written, so in
 `groom.md`, which has no status file, `{STATUS_FILE}` is left as literal text. The file is read as
 UTF-8, trimmed, and otherwise used as written.
 
@@ -2125,13 +2159,13 @@ Slack routes, because they need neither GitHub nor Jira. They run behind the sam
 so `curl` works, bodies are JSON objects of at most 64 KiB, and responses carry
 `Cache-Control: no-store`. Failures answer `{ code, error, errors[] }`, with `errors[0]` the reason:
 
-| Status | Code             | When                                                                                                                                                                                                                                                                                                                                                  |
-| ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the supported launch actions, `pr` is bad for `spec-review`, or `browserId` is not `b-` and eight hex digits for `e2e-ticket-check`                                                                                                                                                  |
-| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record for the question's phase                                                                                                |
-| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                                                                                                                          |
-| `409`  | `CLAUDE_REFUSED` | `session_running` (the action asked for runs), `not_failed` (Continue), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable`, `status_unreadable`, `unrecognised_state` (review), or `browser_not_found` and `browser_not_running` (e2e check) |
-| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist; for an e2e check the browser is left for the finish-time stop), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused)                                            |
+| Status | Code             | When                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `INVALID_TICKET` | `key` does not match `^[A-Z]{1,10}-\d{1,7}$`, `phase` is none of the supported launch actions, `pr` is bad for `spec-review`, or `browserId` is not `b-` and eight hex digits for `e2e-ticket-check`                                                                                                                                                                                                       |
+| `400`  | `INVALID_ANSWER` | `answers` is neither `[]` nor a plain object of at most 20 entries, an id is malformed or names no existing question, a text is not a string of at most 2000 characters, or the ticket has no status file or no launch record for the question's phase                                                                                                                                                     |
+| `400`  | `INVALID_PROMPT` | `PUT /api/claude/prompts/<name>` with a `text` that is missing, not a string, empty once trimmed, over 20,000 characters once trimmed, or holding a NUL byte                                                                                                                                                                                                                                               |
+| `409`  | `CLAUDE_REFUSED` | `session_running` (the action asked for runs), `not_failed` (Continue), `investigate_running`, `implement_running`, `not_planned`, `plan_missing`, `questions_unanswered`, `answers_not_sent`, `plan_not_done`, `prompt_unreadable`, `status_unreadable`, `unrecognised_state` (review), `browser_not_found` and `browser_not_running` (e2e check), or `harness_unsupported` (see [Harnesses](#harnesses)) |
+| `502`  | `CLAUDE_FAILED`  | `listing_unavailable`, `untrusted_workspace` (exit code 1 and `Workspace not trusted`), `timed_out` (no answer within 30 seconds; the session may exist; for an e2e check the browser is left for the finish-time stop), `spawn_failed`, or `prompt_not_changed` (a prompt save or reset the disk refused)                                                                                                 |
 
 `INVALID_JSON` and `BODY_TOO_LARGE` come from the shared body reader. CLI output, the prompt a
 launch sends and the name are never logged or returned beyond the validated `id` and the computed
@@ -2204,7 +2238,7 @@ Also taken as assumptions until then: `--bg` prints a standalone 8-character id,
 without the flag (shown as `ended without finishing`) or blocks it (shown as `blocked, needs you`),
 and a resume 15 seconds after a stop (the settle gap) continues the same session instead of
 starting a copy. If one is wrong, the fix is a single constant or rule: the id pattern
-(`STARTED_ID` in `backend/claude-sessions.mjs`), the command for a blocked session (`goToFor` in
+(`STARTED_ID` in `backend/harness/claude-code/sessions.mjs`), the command for a blocked session (`goToFor` in
 `backend/claude-ticket-state.mjs`), or, for the last one, `SETTLE_MS` in
 `backend/slack-watcher.mjs`, which the Slack wake shares. To roll the feature back, revert the change;
 `claude/` holds only local files you can delete, and running sessions are unaffected.
@@ -2252,6 +2286,10 @@ has none, so there a chat cannot start.
   session working in the background): its history shows, the message box is read-only with the reason, there
   is no Stop, and **Refresh** reads it again. The chat never sends into a running session and never starts
   a second copy.
+- **Harness without a chat.** The chat runs through the active [harness](#harnesses): one with no chat
+  facet answers send, stop and the stream with 409 `harness_unsupported`, and the Chat screen shows its
+  message box read-only with "Chat is not available with {label}.". A chat record another harness wrote
+  refuses a send the same way (its history still opens).
 - **Stop.** **Stop** interrupts the turn (Ctrl-C to the CLI). If it has not ended 5 seconds later it is
   terminated, and 5 seconds after that killed. The session stays usable: your next message continues it.
 - **One turn at a time.** Each message is one `claude -p` process, started for that turn and ended with
@@ -2326,6 +2364,10 @@ appears twice.
 summed over the session's newest transcript and its subagents' transcripts. A session with no
 transcript answers an empty, complete tally. The body holds numbers and model ids only, never a path, a
 working directory or any text. Tokens only: there is no price table and no dollar figure.
+
+A harness without a usage facet (see [Harnesses](#harnesses)) answers an all-zero, complete tally for
+every session without reading any file, and the UI does not ask. The transcript line format is Claude
+Code's (`backend/harness/claude-code/usage.mjs`).
 
 The reader (`backend/claude-usage.mjs`) keeps a byte offset per transcript file and parses only newly
 appended complete lines. Lines of one API message id repeat the same usage and are contiguous, so one
@@ -3497,7 +3539,9 @@ the app (`ui/keep-if-equal.js`), and the refresh countdown re-renders only its o
 while the page is hidden or its screen is not shown.
 
 `GET /api/config` supplies the tail line count, derived Jira browse URL and setup
-status used to choose Settings-only or ready-mode boot.
+status used to choose Settings-only or ready-mode boot, and the active harness (`harness`), which the
+UI turns into its wording through `ui/harness.js` and `HarnessContext`; absent or invalid means Claude
+Code (see [Harnesses](#harnesses)).
 
 The DOM is labelled with `data-testid` throughout for Playwright and agent use —
 treat those names as a contract and don't rename them.

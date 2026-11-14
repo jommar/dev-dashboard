@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CssBaseline, ThemeProvider } from '@mui/material';
 import { AppShell, StartupState } from './components/AppShell.jsx';
 import { ScreenSlot } from './components/ScreenSlot.jsx';
 import { dashboardTheme } from './theme.js';
 import { getConfig } from './lib/api.js';
+import { HarnessContext } from './lib/harness-context.js';
 import { lazyScreen } from './lib/lazy-screen.js';
 import { useServiceEvents } from './hooks/useServiceEvents.js';
 import { HomePanel } from './panels/HomePanel.jsx';
@@ -14,6 +15,7 @@ import { SlackPanel } from './panels/SlackPanel.jsx';
 import { SlackTabBadge } from './components/SlackTabBadge.jsx';
 import { SettingsPanel } from './panels/SettingsPanel.jsx';
 import { chatSessionFromQuery } from '../ui/chat-stream.js';
+import { harnessFrom } from '../ui/harness.js';
 import { ticketFromQuery } from '../ui/ticket-link.js';
 import './styles.css';
 
@@ -79,6 +81,7 @@ export function App() {
   const [ticketRequest, setTicketRequest] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const redirecting = useRef(false);
+  const harness = useMemo(() => harnessFrom(config?.harness), [config]);
   const ready = config?.setup?.ready === true;
   const tabs = ready ? READY_TABS : SETTINGS_TAB;
   const setupChanged = useCallback(() => {
@@ -155,58 +158,60 @@ export function App() {
       {!config ? (
         <StartupState error={bootError} onRetry={() => setReloadKey((key) => key + 1)} />
       ) : (
-        <AppShell
-          tabs={tabs}
-          active={active}
-          onNavigate={navigate}
-          connection={connection}
-          ready={ready}
-        >
-          {ready && (
-            <>
-              <Home config={config} active={active === 'home'} />
-              <Services config={config} active={active === 'services'} services={services} />
-              <Prs config={config} active={active === 'prs'} />
-              <MyTickets
-                config={config}
-                active={active === 'my-tickets'}
-                requestedTicket={ticketRequest}
-                onTicketHandled={ticketHandled}
-              />
-              <ScreenSlot
-                id="releases"
-                label="Releases"
-                board={false}
-                Screen={Releases}
-                config={config}
-                active={active === 'releases'}
-                view={releaseView}
-                onViewChange={changeReleaseView}
-              />
-              <Slack active={active === 'slack'} />
-              <ScreenSlot
-                id="chat"
-                label="Chat"
-                Screen={Chat}
-                active={active === 'chat'}
-                session={chatSession}
-              />
-              <ScreenSlot
-                id="devtools"
-                label="DevTools"
-                Screen={Devtools}
-                active={active === 'devtools'}
-              />
-              <ScreenSlot
-                id="mascots"
-                label="Mascots"
-                Screen={Mascots}
-                active={active === 'mascots'}
-              />
-            </>
-          )}
-          <Settings config={config} active={active === 'settings'} />
-        </AppShell>
+        <HarnessContext.Provider value={harness}>
+          <AppShell
+            tabs={tabs}
+            active={active}
+            onNavigate={navigate}
+            connection={connection}
+            ready={ready}
+          >
+            {ready && (
+              <>
+                <Home config={config} active={active === 'home'} />
+                <Services config={config} active={active === 'services'} services={services} />
+                <Prs config={config} active={active === 'prs'} />
+                <MyTickets
+                  config={config}
+                  active={active === 'my-tickets'}
+                  requestedTicket={ticketRequest}
+                  onTicketHandled={ticketHandled}
+                />
+                <ScreenSlot
+                  id="releases"
+                  label="Releases"
+                  board={false}
+                  Screen={Releases}
+                  config={config}
+                  active={active === 'releases'}
+                  view={releaseView}
+                  onViewChange={changeReleaseView}
+                />
+                <Slack active={active === 'slack'} />
+                <ScreenSlot
+                  id="chat"
+                  label="Chat"
+                  Screen={Chat}
+                  active={active === 'chat'}
+                  session={chatSession}
+                />
+                <ScreenSlot
+                  id="devtools"
+                  label="DevTools"
+                  Screen={Devtools}
+                  active={active === 'devtools'}
+                />
+                <ScreenSlot
+                  id="mascots"
+                  label="Mascots"
+                  Screen={Mascots}
+                  active={active === 'mascots'}
+                />
+              </>
+            )}
+            <Settings config={config} active={active === 'settings'} />
+          </AppShell>
+        </HarnessContext.Provider>
       )}
     </ThemeProvider>
   );

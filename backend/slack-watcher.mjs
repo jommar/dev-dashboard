@@ -7,9 +7,7 @@
 //
 // Only keys, ids, timestamps and fixed reason codes are kept; no message text, name or error
 // text is held, logged or returned. The watcher reads Slack and never writes to it.
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { defaultHarness } from './harness/index.mjs';
 import { renderNotice } from './slack-notice.mjs';
 import { shouldWake } from './slack-model.mjs';
 
@@ -31,15 +29,6 @@ const PER_LINK_FAILURES = new Set(['too_long', 'thread_unreadable']);
 const WAITING_AWAITING = { status: 'waiting', reason: 'awaiting_wake' };
 const WAITING_SETTLING = { status: 'waiting', reason: 'settling' };
 const LISTING_UNAVAILABLE = { status: 'failed-transient', reason: 'listing_unavailable' };
-
-export function claudeHomeReadable(home = os.homedir()) {
-  try {
-    fs.accessSync(path.join(home, '.claude'), fs.constants.R_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function slackTsFromMs(milliseconds) {
   const micro = (milliseconds % 1000) * 1000;
@@ -99,7 +88,7 @@ export function createSlackWatcher({
   sessions,
   now = Date.now,
   timers = { setTimeout, clearTimeout },
-  claudeHomeReadable: homeReadable = claudeHomeReadable,
+  claudeHomeReadable: homeReadable = defaultHarness().homeReadable,
 }) {
   let started = false;
   let generation = 0;

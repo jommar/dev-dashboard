@@ -19,12 +19,13 @@
 // editor, still in this one dialog: the footer then holds Back (the same button, so it keeps focus)
 // and Close, and everything this component holds (answer drafts, copy status, the last send result)
 // is there when Back returns.
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { ClaudePromptsEditor } from './ClaudePromptsEditor.jsx';
 import { UseInServices } from './UseInServices.jsx';
 import { LazyDialog } from './ScreenSlot.jsx';
 import { lazyScreen } from '../lib/lazy-screen.js';
+import { useHarness } from '../lib/harness-context.js';
 import {
   BUTTON_CLASS,
   DismissButton,
@@ -35,6 +36,7 @@ import {
   workflowSteps,
 } from './ClaudeSteps.jsx';
 import { copyText } from '../../ui/dom.js';
+import { say } from '../../ui/harness.js';
 import { useClaudeUsage } from '../hooks/useClaudeUsage.js';
 import { tokensLabel } from '../../ui/format-tokens.js';
 
@@ -56,22 +58,22 @@ const BROWSER_GONE = ['browser_not_found', 'browser_not_running'];
 // the dashboard's, and it serves both the hint beside a disabled item and the line after a failure.
 const REASON_TEXT = {
   untrusted_workspace:
-    'Claude does not trust ~/pathwise yet. Run claude there once and accept the trust prompt.',
-  timed_out: 'Claude took too long to start. Check Go to session before launching again.',
-  spawn_failed: 'Could not start Claude. Is the claude command installed?',
-  listing_unavailable: 'Claude status is unavailable.',
-  session_running: 'A Claude session is already running for this ticket.',
+    '{name} does not trust ~/pathwise yet. Run {command} there once and accept the trust prompt.',
+  timed_out: '{name} took too long to start. Check Go to session before launching again.',
+  spawn_failed: 'Could not start {name}. Is the {command} command installed?',
+  listing_unavailable: '{name} status is unavailable.',
+  session_running: '{A} {name} session is already running for this ticket.',
   browser_not_found: BROWSER_GONE_TEXT,
   browser_not_running: BROWSER_GONE_TEXT,
   investigate_running: 'Investigate and plan is still running.',
   implement_running: 'Implement plan is running.',
-  session_not_found: 'The Claude session could not be found.',
-  live_at_resume: 'The Claude session is still running.',
-  resume_failed: 'The Claude session could not be resumed.',
+  session_not_found: 'The {name} session could not be found.',
+  live_at_resume: 'The {name} session is still running.',
+  resume_failed: 'The {name} session could not be resumed.',
   answers_not_sent:
     'All questions are answered, but they have not been sent to the session. Press Save answers to send them.',
   not_failed: 'Continue is only for a session that ended without finishing.',
-  plan_not_done: 'Claude has not marked the plan done. Check the session before implementing.',
+  plan_not_done: '{name} has not marked the plan done. Check the session before implementing.',
   not_approved: 'Approve the plan first.',
   already_approved: 'The plan is approved.',
   implement_started: 'Implement plan has started.',
@@ -81,6 +83,7 @@ const REASON_TEXT = {
   status_unreadable: "The ticket's status file cannot be read.",
   prompt_unreadable:
     "A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.",
+  harness_unsupported: 'This action is not available with {label}.',
 };
 
 // The note under the workflow strip for a groom that is not ready (keys are the closed enum;
@@ -97,22 +100,24 @@ const SKIPPED_TEXT = {
   implement_started: 'Saved. Implement plan has started, so nothing was sent.',
 };
 
-function approveText({ send }) {
-  if (send?.status === 'sent') return 'Approval sent. Claude is checking the plan.';
-  const why = REASON_TEXT[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
+function approveText({ send }, reasonText, harness) {
+  if (send?.status === 'sent') return say('Approval sent. {name} is checking the plan.', harness);
+  const why = reasonText[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
   return `Approval not sent: ${why}. Press Approve plan to retry.`;
 }
 
-function continueText({ send }) {
-  if (send?.status === 'sent') return 'Continue sent. Claude is picking up where it stopped.';
-  const why = REASON_TEXT[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
+function continueText({ send }, reasonText, harness) {
+  if (send?.status === 'sent') {
+    return say('Continue sent. {name} is picking up where it stopped.', harness);
+  }
+  const why = reasonText[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
   return `Continue not sent: ${why}. Press Continue to retry.`;
 }
 
-function sendText({ send, ticket }) {
-  if (send?.status === 'sent') return 'Answers sent. Claude is updating the plan.';
+function sendText({ send, ticket }, reasonText, harness) {
+  if (send?.status === 'sent') return say('Answers sent. {name} is updating the plan.', harness);
   if (send?.status === 'failed') {
-    const why = REASON_TEXT[send.reason].replace(/\.$/, '');
+    const why = reasonText[send.reason].replace(/\.$/, '');
     return `Answers saved, but they could not be sent: ${why}. Save again to retry.`;
   }
   if (send?.reason === 'incomplete') {
@@ -141,8 +146,8 @@ const NOT_STARTED = {
 const breakAtSlashes = (path) =>
   path.split('/').flatMap((part, index) => (index ? ['/', <wbr key={index} />, part] : [part]));
 
-const failureText = ({ errors, error }) =>
-  REASON_TEXT[errors?.[0]] ?? error ?? 'The Claude request failed.';
+const failureText = ({ errors, error }, reasonText, harness) =>
+  reasonText[errors?.[0]] ?? error ?? say('The {name} request failed.', harness);
 
 const STEP_LABEL = {
   investigate: 'Investigate and plan',
@@ -172,6 +177,14 @@ export function ClaudeDialog({
   continueSession,
   sessionIds,
 }) {
+  const harness = useHarness();
+  const reasonText = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(REASON_TEXT).map(([code, text]) => [code, say(text, harness)]),
+      ),
+    [harness],
+  );
   const entry = listed ?? NOT_STARTED;
   const { blocks, questions, goTo } = entry;
   // The tokens this ticket's sessions have used, asked for once when the dialog opens (it is mounted
@@ -261,7 +274,7 @@ export function ClaudeDialog({
     setError('');
     const result = await action();
     setBusy(false);
-    if (!result.ok) setError(failureText(result));
+    if (!result.ok) setError(failureText(result, reasonText, harness));
     return result;
   };
 
@@ -278,7 +291,7 @@ export function ClaudeDialog({
     setSendResult('');
     const result = await run(() => answer(ticketKey, dirty ? changed : []));
     if (!result.ok) return;
-    setSendResult(sendText(result));
+    setSendResult(sendText(result, reasonText, harness));
     // The saved drafts are dropped; whatever was typed while the request ran is kept.
     setDrafts((current) =>
       Object.fromEntries(Object.entries(current).filter(([id, text]) => changed[id] !== text)),
@@ -289,20 +302,20 @@ export function ClaudeDialog({
   const resend = async () => {
     setSendResult('');
     const result = await run(() => answer(ticketKey, [], { resend: true }));
-    if (result.ok) setSendResult(sendText(result));
+    if (result.ok) setSendResult(sendText(result, reasonText, harness));
   };
 
   const approvePlan = async () => {
     setApproveResult('');
     const result = await run(() => approve(ticketKey));
-    if (result.ok) setApproveResult(approveText(result));
+    if (result.ok) setApproveResult(approveText(result, reasonText, harness));
   };
 
   // Messages the failed workflow session to carry on; the card follows the next poll.
   const continueRun = async () => {
     setContinueResult('');
     const result = await run(() => continueSession(ticketKey));
-    if (result.ok) setContinueResult(continueText(result));
+    if (result.ok) setContinueResult(continueText(result, reasonText, harness));
   };
 
   // The e2e dialog's Start: a refusal comes back as the sentence to show, whether to start over and
@@ -314,7 +327,7 @@ export function ClaudeDialog({
       ok: false,
       gone: BROWSER_GONE.includes(result.errors?.[0]),
       handedOver: result.errors?.[0] === 'timed_out',
-      message: failureText(result),
+      message: failureText(result, reasonText, harness),
     };
   };
 
@@ -344,16 +357,16 @@ export function ClaudeDialog({
   const held = entry.state === 'working' || entry.state === 'unknown';
   const reasons = [];
   for (const { phase } of steps) {
-    const text = REASON_TEXT[blockOf[phase]];
+    const text = reasonText[blockOf[phase]];
     if (!text) continue;
     const lead = reasons.find((reason) => reason.text === text);
     if (lead) lead.names.push(STEP_SHORT[phase]);
     reasons.push({ phase, text, names: [STEP_SHORT[phase]], quiet: held || Boolean(lead) });
   }
-  const describedBy = (phase) => (REASON_TEXT[blockOf[phase]] ? `${hintId}-${phase}` : undefined);
+  const describedBy = (phase) => (reasonText[blockOf[phase]] ? `${hintId}-${phase}` : undefined);
 
   // The Resend hint is for what the lines under the strip do not already say.
-  const resendText = REASON_TEXT[blocks.resend];
+  const resendText = reasonText[blocks.resend];
   const resendShown =
     dirty ||
     (Boolean(resendText) &&
@@ -490,7 +503,7 @@ export function ClaudeDialog({
                     className="claude-action-hint"
                     data-testid="claude-action-hint-continue"
                   >
-                    {REASON_TEXT[blocks.continue] ??
+                    {reasonText[blocks.continue] ??
                       'Asks the same session to finish what is missing. Your answers are kept.'}
                   </span>
                 </div>
@@ -567,9 +580,9 @@ export function ClaudeDialog({
                   </Button>
                   {goTo.groom && <SessionChip phase="groom" onGoTo={() => copyCommand('groom')} />}
                 </div>
-                {REASON_TEXT[blocks.groom] && (
+                {reasonText[blocks.groom] && (
                   <span className="claude-action-hint" data-testid="claude-action-hint-groom">
-                    {REASON_TEXT[blocks.groom]}
+                    {reasonText[blocks.groom]}
                   </span>
                 )}
                 <span className="claude-action-hint" data-testid="claude-groom-note">
@@ -610,9 +623,9 @@ export function ClaudeDialog({
                   </Button>
                   {goTo.e2e && <SessionChip phase="e2e" onGoTo={() => copyCommand('e2e')} />}
                 </div>
-                {REASON_TEXT[blocks.e2e] && (
+                {reasonText[blocks.e2e] && (
                   <span className="claude-action-hint" data-testid="claude-action-hint-e2e">
-                    {REASON_TEXT[blocks.e2e]}
+                    {reasonText[blocks.e2e]}
                   </span>
                 )}
                 <span className="claude-action-hint">
@@ -636,7 +649,7 @@ export function ClaudeDialog({
 
               {entry.reason === 'answers_not_sent' && (
                 <p className="claude-note" data-testid="claude-answers-hint">
-                  {REASON_TEXT.answers_not_sent}
+                  {reasonText.answers_not_sent}
                 </p>
               )}
 
@@ -674,7 +687,7 @@ export function ClaudeDialog({
                   >
                     {dirty
                       ? 'Save your changes first.'
-                      : (REASON_TEXT[blocks.resend] ??
+                      : (reasonText[blocks.resend] ??
                         'Sends the saved answers to the session again, even if unchanged.')}
                   </p>
                   <p className="claude-note">

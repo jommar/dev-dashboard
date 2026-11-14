@@ -2,6 +2,8 @@
 // its title is the PR link, and its Claude icon opens the panel's spec-review dialog (the card
 // starts nothing itself). Presentational only: the panel owns the feed and the dialog.
 import { ClaudeIcon } from './ClaudeIcon.jsx';
+import { useHarness } from '../lib/harness-context.js';
+import { say } from '../../ui/harness.js';
 
 // The viewer's own review of this PR as a chip. The words carry the meaning; warn marks new commits.
 const REVIEW_CHIPS = {
@@ -10,6 +12,7 @@ const REVIEW_CHIPS = {
 };
 
 export function SpecReviewCard({ spec, jiraBase, onOpenClaude }) {
+  const harness = useHarness();
   const [firstKey] = spec.keys;
   const reviewChip = REVIEW_CHIPS[spec.review];
   const reviewRequested = spec.reviewRequested === true;
@@ -64,7 +67,7 @@ export function SpecReviewCard({ spec, jiraBase, onOpenClaude }) {
         <ClaudeIcon
           ticketKey={firstKey}
           onOpen={() => onOpenClaude(spec)}
-          label={`Claude spec review for ${firstKey}`}
+          label={say(`{name} spec review for ${firstKey}`, harness)}
           testId={`prs-spec-claude-icon-${spec.number}`}
           tooltip={false}
         />

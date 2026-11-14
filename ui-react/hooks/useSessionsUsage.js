@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getClaudeUsage } from '../lib/api.js';
+import { useHarness } from '../lib/harness-context.js';
+import { can } from '../../ui/harness.js';
 import { usageChunks, usageSessionIds } from '../../ui/session-usage.js';
 
 // The token tallies of the Sessions drawer's rows: `{ [sessionId]: { tokens, models, messages, complete } }`
@@ -10,8 +12,9 @@ import { usageChunks, usageSessionIds } from '../../ui/session-usage.js';
 export function useSessionsUsage({ groups, active }) {
   const [usage, setUsage] = useState({});
   const key = useMemo(() => usageSessionIds(groups).join(','), [groups]);
+  const usable = can(useHarness(), 'usage');
   useEffect(() => {
-    if (!active || !key) return undefined;
+    if (!active || !usable || !key) return undefined;
     let current = true;
     for (const chunk of usageChunks(key.split(','))) {
       getClaudeUsage(chunk).then((result) => {
@@ -21,6 +24,6 @@ export function useSessionsUsage({ groups, active }) {
     return () => {
       current = false;
     };
-  }, [active, key]);
+  }, [active, usable, key]);
   return usage;
 }

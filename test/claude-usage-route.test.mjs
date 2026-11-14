@@ -115,7 +115,7 @@ for (const site of ['cross-site', 'same-site'])
 
 test('no content read: the tickets poll stats transcripts and never asks the usage reader', async (t) => {
   const reads = { readFile: 0, readActivities: 0, tally: 0 };
-  const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+  const { createClaudeSessions } = await import('../backend/harness/claude-code/sessions.mjs');
   const { createHttpHandler } = await import('../backend/http-app.mjs');
   const { createSlackWatchStore } = await import('../backend/slack-watch-store.mjs');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-usage-route-'));

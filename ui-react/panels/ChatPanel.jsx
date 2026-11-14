@@ -5,21 +5,23 @@ import { Button } from '../components/Primitives.jsx';
 import { useChatSession } from '../hooks/useChatSession.js';
 import { notifyClaudeTicketsChanged, useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { useClaudeUsage } from '../hooks/useClaudeUsage.js';
+import { useHarness } from '../lib/harness-context.js';
 import { BOT_STATE_WORDS } from '../../ui/bot-bar.js';
 import { chatHref, costLabel } from '../../ui/chat-stream.js';
 import { tokensLabel } from '../../ui/format-tokens.js';
 import { timeAgo } from '../../ui/dom.js';
+import { can, say } from '../../ui/harness.js';
 
 const ANNOUNCEMENTS = {
-  working: 'Claude is working',
-  completed: 'Claude replied',
+  working: '{name} is working',
+  completed: '{name} replied',
   stopped: 'Turn stopped',
   failed: 'Turn failed',
 };
 const FAILURE_WORDS = {
-  spawn_failed: 'Claude could not be started.',
-  api_error: 'Claude returned an error.',
-  exited: 'Claude stopped unexpectedly.',
+  spawn_failed: '{name} could not be started.',
+  api_error: '{name} returned an error.',
+  exited: '{name} stopped unexpectedly.',
 };
 // Why a send or a stop was refused, by the server's reason (`errors[0]`) or, with none, its code.
 const REFUSAL_WORDS = {
@@ -28,12 +30,17 @@ const REFUSAL_WORDS = {
   session_not_found: 'That session could not be found.',
   too_many_turns: 'Four chats are already replying. Wait for one to finish.',
   no_turn: 'There is no turn to stop.',
-  listing_unavailable: 'Claude status is unavailable.',
-  live_at_resume: 'The Claude session is still running.',
-  spawn_failed: 'Could not start Claude. Is the claude command installed?',
+  listing_unavailable: '{name} status is unavailable.',
+  live_at_resume: 'The {name} session is still running.',
+  spawn_failed: 'Could not start {name}. Is the {command} command installed?',
+  harness_unsupported: 'This action is not available with {label}.',
   INVALID_MESSAGE: 'A message cannot be empty or longer than 32000 characters.',
 };
-const refusal = ({ errors, code }, fallback) => REFUSAL_WORDS[errors?.[0] ?? code] ?? fallback;
+// A table entry with the harness's words in it, or undefined when the table has no such key.
+const wording = (table, key, harness) => table[key] && say(table[key], harness);
+const refusal = ({ errors, code }, fallback, harness) =>
+  wording(REFUSAL_WORDS, errors?.[0] ?? code, harness) ?? fallback;
+const UNAVAILABLE_WORDS = 'Chat is not available with {label}.';
 const OUTSIDE_WORDS =
   'This session is running outside the chat, so it is read-only here. Refresh to read its latest messages.';
 
@@ -44,6 +51,7 @@ const turnPhase = (view) => (view.state === 'working' ? 'working' : (view.turn?.
 // text of the one polite status line says what changed. Nothing for the first view of a chat, so
 // opening one is silent.
 function useTurnChanges(view, onChange) {
+  const harness = useHarness();
   const [message, setMessage] = useState('');
   const seen = useRef(null);
   const id = view?.session;
@@ -52,21 +60,21 @@ function useTurnChanges(view, onChange) {
     const before = seen.current;
     seen.current = id ? { id, phase } : null;
     if (!id || before?.id !== id || before.phase === phase) return;
-    setMessage(ANNOUNCEMENTS[phase] ?? '');
+    setMessage(wording(ANNOUNCEMENTS, phase, harness) ?? '');
     onChange();
-  }, [id, phase, onChange]);
+  }, [id, phase, onChange, harness]);
   return message;
 }
 
 // What an ended turn says under the conversation: that it was stopped, why it failed, and the tools it
 // was not allowed to use.
-function turnNote(turn) {
+function turnNote(turn, harness) {
   if (!turn) return '';
   const ended =
     turn.outcome === 'stopped'
-      ? ['Stopped before Claude finished.']
+      ? [say('Stopped before {name} finished.', harness)]
       : turn.outcome === 'failed'
-        ? [turn.error || FAILURE_WORDS[turn.reason] || 'The turn failed.']
+        ? [turn.error || wording(FAILURE_WORDS, turn.reason, harness) || 'The turn failed.']
         : [];
   const denied = turn.denials?.length ? [`Not allowed to use ${turn.denials.join(', ')}.`] : [];
   return [...ended, ...denied].join(' ');
@@ -79,11 +87,12 @@ function stateLabel(view) {
 }
 
 // Why the composer waits, in words: nothing when it does not.
-function blockedReason({ sending, loading, outside, working }) {
+function blockedReason({ unavailable, sending, loading, outside, working }, harness) {
+  if (unavailable) return say(UNAVAILABLE_WORDS, harness);
   if (sending) return 'Sending…';
   if (loading) return 'Loading the conversation…';
   if (outside) return OUTSIDE_WORDS;
-  return working ? 'Claude is replying. Stop the turn to write again.' : '';
+  return working ? say('{name} is replying. Stop the turn to write again.', harness) : '';
 }
 
 function ChatList({ chats, session }) {
@@ -124,6 +133,7 @@ function ChatList({ chats, session }) {
 // working outside the chat it is read-only and says why in words; it stays aria-disabled, not
 // disabled, so the focus the writer had is still there when the turn ends.
 function ChatConversation({ active, session, focusOnMount }) {
+  const harness = useHarness();
   const { view, error, send, stop, refresh } = useChatSession({ active, session });
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -139,11 +149,12 @@ function ChatConversation({ active, session, focusOnMount }) {
   const live = view?.live === true;
   const outside = working && !live;
   const loading = Boolean(session) && !view && !error;
-  const blocked = sending || loading || working;
-  const reason = blockedReason({ sending, loading, outside, working });
+  const unavailable = !can(harness, 'chat');
+  const blocked = sending || loading || working || unavailable;
+  const reason = blockedReason({ unavailable, sending, loading, outside, working }, harness);
   const lastUser = view?.items.findLast(({ kind }) => kind === 'user');
   const retryable = !working && ['stopped', 'failed'].includes(view?.turn?.outcome) && lastUser;
-  const note = view && !working ? turnNote(view.turn) : '';
+  const note = view && !working ? turnNote(view.turn, harness) : '';
   // Shown only while idle: the CLI's cost is the session's total so far, stale once a turn starts. The
   // token tally is asked for when a chat opens and again each time a turn ends, never on a timer.
   const cost = view && !working ? costLabel(view.turn?.costUsd) : '';
@@ -174,7 +185,7 @@ function ChatConversation({ active, session, focusOnMount }) {
     sendingNow.current = false;
     setSending(false);
     if (!result.ok) {
-      setProblem(refusal(result, 'Could not send the message.'));
+      setProblem(refusal(result, 'Could not send the message.', harness));
       return false;
     }
     notifyClaudeTicketsChanged();
@@ -193,7 +204,7 @@ function ChatConversation({ active, session, focusOnMount }) {
     setStopping(true);
     const result = await stop();
     setStopping(false);
-    if (!result.ok) setProblem(refusal(result, 'Could not stop the turn.'));
+    if (!result.ok) setProblem(refusal(result, 'Could not stop the turn.', harness));
   };
 
   return (
@@ -228,7 +239,7 @@ function ChatConversation({ active, session, focusOnMount }) {
         <p className="chat-empty" data-testid="chat-empty">
           {session
             ? 'Loading the conversation…'
-            : 'Send a message to start a new Claude session. It has no ticket.'}
+            : say('Send a message to start a new {name} session. It has no ticket.', harness)}
         </p>
       )}
       {error && (
@@ -264,7 +275,7 @@ function ChatConversation({ active, session, focusOnMount }) {
             readOnly={blocked}
             aria-disabled={blocked || undefined}
             aria-describedby={reason ? reasonId : undefined}
-            placeholder="Message Claude"
+            placeholder={say('Message {name}', harness)}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
@@ -307,6 +318,7 @@ function ChatConversation({ active, session, focusOnMount }) {
 // it, so another chat starts from nothing: no transcript, draft or Retry of the last one. Its stream is
 // open only while this screen is.
 export function ChatPanel({ active, session }) {
+  const harness = useHarness();
   const claude = useClaudeTickets({ active, source: 'chat' });
   const focusOnMount = useRef(false);
   return (
@@ -314,7 +326,7 @@ export function ChatPanel({ active, session }) {
       <BoardSection
         name="chat"
         title="Chat"
-        sub="Talk to a Claude session, with or without a ticket."
+        sub={say('Talk to {A} {name} session, with or without a ticket.', harness)}
         testIds={{ title: 'chat-heading', list: 'chat-body' }}
       >
         <div className="board-pane chat-pane">

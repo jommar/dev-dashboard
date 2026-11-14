@@ -17,9 +17,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { DASHBOARD_DIR } from './config.mjs';
 import { newestEntries, writeFileAtomic } from './credentials.mjs';
-import { settleSession } from './claude-sessions.mjs';
+import { defaultHarness, harnessIdOf, harnessStamp } from './harness/index.mjs';
+import { settleSession } from './harness/session-entry.mjs';
 import { defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
-import { createPromptStore, PROMPT_TEMPLATES } from './claude-prompts.mjs';
+import {
+  createPromptStore,
+  fillTemplate,
+  harnessValues,
+  PROMPT_TEMPLATES,
+} from './claude-prompts.mjs';
 import { createClaudeArtifacts } from './claude-artifacts.mjs';
 import { BROWSER_ID, PORT_FIRST, PORT_LAST } from './browser-devtools.mjs';
 import {
@@ -103,87 +109,17 @@ const PROMPT_NAME = {
 // The message each workflow phase gets when the user answers a question it asked.
 const ANSWER_PROMPT = { [INVESTIGATE]: 'answers', [IMPLEMENT]: 'answers-implement' };
 
-// What the spec review launch enforces on the command line, which no prompt can widen. The built-in
-// tools are only these (no Bash, Edit, Write, Grep, Glob, WebFetch or Agent), so the `Read` deny rules
-// are the only file limit. The deny list is an explicit list of named toolkit write tools and `Read`
-// paths, not an exhaustive one: reads inside the working directory are otherwise unrestricted. The read
-// tools, `github_submit_pr_review` and the Slack prepare and confirm pair stay allowed. Other launches
-// get none of these flags.
-const SPEC_REVIEW_LIMITS = {
-  tools: ['Read', 'Skill', 'ToolSearch'],
-  disallowedTools: [
-    'mcp__toolkit-mcp__github_add_pr_comment',
-    'mcp__toolkit-mcp__github_create_pr',
-    'mcp__toolkit-mcp__github_create_pr_review_comment',
-    'mcp__toolkit-mcp__github_delete_pr_issue_comment',
-    'mcp__toolkit-mcp__github_delete_pr_review_comment',
-    'mcp__toolkit-mcp__github_dismiss_pr_review',
-    'mcp__toolkit-mcp__github_merge_pr',
-    'mcp__toolkit-mcp__github_request_pr_reviewers',
-    'mcp__toolkit-mcp__github_resolve_review_thread',
-    'mcp__toolkit-mcp__github_unresolve_review_thread',
-    'mcp__toolkit-mcp__github_update_pr',
-    'mcp__toolkit-mcp__github_update_pr_assignees',
-    'mcp__toolkit-mcp__github_update_pr_comment',
-    'mcp__toolkit-mcp__github_update_pr_labels',
-    'mcp__toolkit-mcp__github_update_pr_review_comment',
-    'mcp__toolkit-mcp__jira_add_comment',
-    'mcp__toolkit-mcp__jira_assign_issue',
-    'mcp__toolkit-mcp__jira_create_issue',
-    'mcp__toolkit-mcp__jira_delete_comment',
-    'mcp__toolkit-mcp__jira_link_issues',
-    'mcp__toolkit-mcp__jira_transition_issue',
-    'mcp__toolkit-mcp__jira_update_comment',
-    'mcp__toolkit-mcp__jira_update_issue',
-    'mcp__toolkit-mcp__confluence_create_page',
-    'mcp__toolkit-mcp__confluence_update_page',
-    'mcp__toolkit-mcp__figma_post_comment',
-    'mcp__toolkit-mcp__slack_login',
-    'mcp__toolkit-mcp__slack_logout',
-    'Read(~/.config/**)',
-    'Read(~/.ssh/**)',
-    'Read(~/.aws/**)',
-    'Read(~/.claude.json)',
-    'Read(**/.env*)',
-    'Read(**/config.json)',
-    'Read(**/config.json.*)',
-    'Read(**/.mcp.json)',
-    'Read(**/*.sql)',
-    'Read(./.worktrees/**)',
-    'Read(./.corpus_runs/**)',
-    'Read(~/.claude/.credentials.json)',
-    'Read(~/.claude/projects/**)',
-    'Read(~/.claude/history.jsonl)',
-    'Read(~/.bash_history*)',
-    'Read(~/.local/share/**)',
-    'Read(~/.git-credentials)',
-    'Read(~/.npmrc)',
-    'Read(~/.netrc)',
-    'Read(~/.docker/**)',
-    'Read(~/.gnupg/**)',
-    'Read(//ezat/**)',
-    'Read(**/*.csv)',
-    'Read(./TravelTracker/files/**)',
-    'Read(**/.playwright/**)',
-    'Read(./.playwright-mcp/**)',
-    'Read(**/cypress.env.json)',
-    'Read(**/auth.json)',
-  ],
-};
-
 // The launch record a side action refuses its own relaunch on.
 const OWN_SESSION_RECORD = { [GROOM]: readGroom, [SPEC_REVIEW]: readSpecReview, [E2E]: readE2e };
 
-// Fills `{NAME}` placeholders from `values`. A function replaces them, so a `$` in a value or in the
-// template is never a replacement pattern, and a name that is not in `values` stays as written.
-const fillTemplate = (template, values) =>
-  template.replace(/\{([A-Z_]+)\}/g, (match, name) =>
-    Object.hasOwn(values, name) ? values[name] : match,
-  );
-
 // The built-in E2E text, with the same validated key/registry-port values the launcher supplies.
 export const e2ePrompt = (key, port) =>
-  fillTemplate(PROMPT_TEMPLATES.e2e, { KEY: key, SLUG: key.toLowerCase(), PORT: port });
+  fillTemplate(PROMPT_TEMPLATES.e2e, {
+    ...harnessValues(defaultHarness()),
+    KEY: key,
+    SLUG: key.toLowerCase(),
+    PORT: port,
+  });
 
 const sendFailed = (reason) => ({ status: 'failed', reason });
 // The failures of `settleSession` this module logs, and the step each is logged under; a stop that
@@ -216,6 +152,7 @@ export const failed = (reason) =>
 
 export function createClaudeLauncher({
   claudeSessions,
+  harness = defaultHarness(),
   stateDir = CLAUDE_STATE_DIR,
   home = os.homedir(),
   fs = fsDefault,
@@ -276,6 +213,10 @@ export function createClaudeLauncher({
   };
 
   const promptStore = createPromptStore({ promptsDir, fs });
+
+  // A prompt filled with the values of the request and the active harness's own words.
+  const fill = (template, values) =>
+    fillTemplate(template, { ...harnessValues(harness), ...values });
 
   // The template named `name`, read now: the user's file or the built-in text. Null when the file is
   // there but cannot be used: it is never replaced by the built-in text.
@@ -339,6 +280,8 @@ export function createClaudeLauncher({
         planPresent: status?.[INVESTIGATE] === true && planExists(key),
         recovered,
         held: claudeSessions.isHeld,
+        commands: harness.commands,
+        harnessId: harness.id,
       }),
     );
   }
@@ -391,7 +334,16 @@ export function createClaudeLauncher({
     return port;
   }
 
+  // A record written for another harness names a session this one cannot resume: refused before
+  // anything is read further, written or sent.
+  function requireOwnHarness(launch, phases) {
+    if (phases.some((phase) => launch?.[phase] && harnessIdOf(launch[phase]) !== harness.id))
+      throw refused('harness_unsupported');
+  }
+
   async function launchLocked(key, phase, pr, browserId) {
+    // The tool limits of a spec review are the harness's to enforce, so one without them cannot run it.
+    if (phase === SPEC_REVIEW && !harness.limits) throw refused('harness_unsupported');
     const entries = await freshListing();
     const isWorkflow = PHASES.includes(phase);
     // Independent actions never read, write or restore workflow status during launch.
@@ -427,7 +379,13 @@ export function createClaudeLauncher({
       : promptValues(key, phase);
 
     const name = sessionName(key, phase);
-    const record = { name, launchedAt: now(), id: null, ...(phase === E2E && { browserId }) };
+    const record = {
+      name,
+      launchedAt: now(),
+      id: null,
+      ...harnessStamp(harness),
+      ...(phase === E2E && { browserId }),
+    };
     if (phase === IMPLEMENT) {
       // The answers saved for questions the implement session asked stay answered on a relaunch.
       const earlier = readLaunch(launched.value).find((found) => found.phase === IMPLEMENT);
@@ -461,15 +419,11 @@ export function createClaudeLauncher({
       if (isWorkflow) writeJson(statusPath(key), nextStatus);
       result = await claudeSessions.launch({
         name,
-        prompt: fillTemplate(template, values),
+        prompt: fill(template, values),
         cwd: launchDirectory,
         // Independent actions get no access to the workflow state folder.
         ...(isWorkflow && { addDir: stateDir }),
-        ...(phase === SPEC_REVIEW && {
-          ...SPEC_REVIEW_LIMITS,
-          // The launch directory's MCP config, loaded alone (`--strict-mcp-config`): the servers it names.
-          mcpConfig: path.join(launchDirectory, '.mcp.json'),
-        }),
+        ...(phase === SPEC_REVIEW && harness.limits.specReview({ launchDirectory })),
       });
     } catch (error) {
       rollback();
@@ -505,13 +459,14 @@ export function createClaudeLauncher({
   async function rereviewLocked(key) {
     const entries = await freshListing();
     const launched = readObject(launchPath(key));
+    requireOwnHarness(launched.value, [REVIEW]);
     const record = readReview(launched.value);
     const reason = rereviewBlock(sideActionState(record, entries, now()), entries);
     if (reason) throw refused(reason);
 
     const template = promptTemplate('rereview');
     const result = template
-      ? await deliverToSession(key, record, fillTemplate(template, rereviewValues(key)))
+      ? await deliverToSession(key, record, fill(template, rereviewValues(key)))
       : sendFailed('prompt_unreadable');
     if (result.status === 'sent') {
       writeJson(launchPath(key), {
@@ -536,6 +491,7 @@ export function createClaudeLauncher({
   async function continueLocked(key) {
     const entries = await freshListing();
     const launched = readObject(launchPath(key));
+    requireOwnHarness(launched.value, PHASES);
     const record = currentRecord(launched.value);
     const session = record ? resolveSession(entries, record) : null;
     const reason = continueBlock({ state: ticketEntry(key, entries).state, session });
@@ -543,7 +499,7 @@ export function createClaudeLauncher({
 
     const template = promptTemplate('continue');
     const result = template
-      ? await deliverToSession(key, record, fillTemplate(template, promptValues(key)))
+      ? await deliverToSession(key, record, fill(template, promptValues(key)))
       : sendFailed('prompt_unreadable');
     const listing =
       result.status === 'sent' ? await claudeSessions.entries({ fresh: true }) : entries;
@@ -672,7 +628,7 @@ export function createClaudeLauncher({
     for (const lane of messages) {
       const isPlanning = lane.phase === INVESTIGATE;
       const change = lane.record.sent ? 'changed answers' : 'answers';
-      const notice = fillTemplate(lane.template, {
+      const notice = fill(lane.template, {
         ...promptValues(key),
         QUESTION_IDS: lane.plan.changed.join(', '),
         CHANGE: resend && isPlanning ? 'answers (sent again)' : change,
@@ -701,6 +657,7 @@ export function createClaudeLauncher({
   async function approveLocked(key) {
     const entries = await freshListing();
     const launched = readObject(launchPath(key));
+    requireOwnHarness(launched.value, PHASES);
     requireNoRunningSession(entries, launched);
     const status = readObject(statusPath(key));
     const reason = approveBlock(statusOf(status), launched.value, planExists(key));
@@ -709,7 +666,7 @@ export function createClaudeLauncher({
     const record = readLaunch(launched.value).find(({ phase }) => phase === INVESTIGATE);
     const template = promptTemplate('approve');
     const result = template
-      ? await deliverToSession(key, record, fillTemplate(template, promptValues(key)), {
+      ? await deliverToSession(key, record, fill(template, promptValues(key)), {
           beforeResume: () =>
             writeJson(statusPath(key), { ...status.value, done: false, approved: true }),
           // Nothing was delivered: the file goes back as it was, never left saying approved.
@@ -731,6 +688,7 @@ export function createClaudeLauncher({
   async function answerLocked(key, pairs, resend) {
     const entries = await freshListing();
     const launched = readObject(launchPath(key));
+    requireOwnHarness(launched.value, PHASES);
     requireNoRunningSession(entries, launched);
     const { value } = readObject(statusPath(key));
     if (value === undefined) throw invalid('INVALID_ANSWER', 'The ticket has no status file.');

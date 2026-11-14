@@ -11,21 +11,17 @@
 //
 // Metadata only: the cache holds numbers and model ids, never a line, a message or a path's content,
 // and nothing is logged. Paths come from `claudeSessions.transcriptFiles` (names only); a caller
-// never supplies one. The chat's one-writer mark is never taken: this only reads.
+// never supplies one. What a line says about tokens is the harness's `usage.parseLine`. The chat's
+// one-writer mark is never taken: this only reads.
 import { open, stat } from 'node:fs/promises';
+import { defaultHarness } from './harness/index.mjs';
 
 const BUDGET_BYTES = 8 * 1024 * 1024;
 const MAX_FILES = 256;
-const MODEL_ID = /^[\w.:[\]-]{1,100}$/;
-const FIELDS = {
-  input: 'input_tokens',
-  output: 'output_tokens',
-  cacheRead: 'cache_read_input_tokens',
-  cacheCreation: 'cache_creation_input_tokens',
-};
+// The token counts of a tally, whatever the harness calls them.
+const TOKEN_NAMES = ['input', 'output', 'cacheRead', 'cacheCreation'];
 
-const emptyTokens = () => Object.fromEntries(Object.keys(FIELDS).map((name) => [name, 0]));
-const count = (value) => (Number.isFinite(value) && value > 0 ? Math.floor(value) : 0);
+const emptyTokens = () => Object.fromEntries(TOKEN_NAMES.map((name) => [name, 0]));
 
 async function readBytes(file, offset, length) {
   const handle = await open(file, 'r');
@@ -52,36 +48,24 @@ const freshState = (ino) => ({
 function commit(state) {
   const { pending } = state;
   if (!pending) return;
-  for (const name of Object.keys(FIELDS)) state.tokens[name] += pending.usage[name];
+  for (const name of TOKEN_NAMES) state.tokens[name] += pending.usage[name];
   state.messages += 1;
   if (pending.model) state.models.set(pending.model, (state.models.get(pending.model) ?? 0) + 1);
   state.pending = null;
 }
 
-// Folds one complete line into `state`. Anything that is not an assistant line with usage is ignored.
-function foldLine(state, line) {
-  if (!line.includes('"usage"')) return;
-  let message;
-  try {
-    message = JSON.parse(line)?.message;
-  } catch {
-    return;
-  }
-  const { id, usage, model } = message ?? {};
-  if (typeof id !== 'string' || !usage || typeof usage !== 'object') return;
-  if (state.pending?.id !== id) commit(state);
-  state.pending = {
-    id,
-    model: typeof model === 'string' && MODEL_ID.test(model) ? model : null,
-    usage: Object.fromEntries(
-      Object.entries(FIELDS).map(([name, key]) => [name, count(usage[key])]),
-    ),
-  };
+// Folds one complete line into `state`. Anything `parseLine` does not read as a message with usage is
+// ignored.
+function foldLine(state, line, parseLine) {
+  const parsed = parseLine(line);
+  if (!parsed) return;
+  if (state.pending?.id !== parsed.id) commit(state);
+  state.pending = { id: parsed.id, model: parsed.model, usage: parsed.tokens };
 }
 
 // Reads what is new in `file` into its state, within `budget.left` bytes. False when the file could
 // not be read to its end.
-async function advance(state, file, size, budget, io) {
+async function advance(state, file, size, budget, io, parseLine) {
   while (state.offset < size) {
     const length = Math.min(size - state.offset, budget.left);
     if (length <= 0) return false;
@@ -104,7 +88,7 @@ async function advance(state, file, size, budget, io) {
       '\n',
     );
     state.skipping = false;
-    for (const line of lines) if (line) foldLine(state, line);
+    for (const line of lines) if (line) foldLine(state, line, parseLine);
     state.offset += lastBreak + 1;
   }
   return true;
@@ -115,11 +99,11 @@ function snapshot(states) {
   const models = {};
   let messages = 0;
   for (const state of states) {
-    for (const name of Object.keys(FIELDS)) tokens[name] += state.tokens[name];
+    for (const name of TOKEN_NAMES) tokens[name] += state.tokens[name];
     for (const [model, n] of state.models) models[model] = (models[model] ?? 0) + n;
     messages += state.messages;
     if (state.pending) {
-      for (const name of Object.keys(FIELDS)) tokens[name] += state.pending.usage[name];
+      for (const name of TOKEN_NAMES) tokens[name] += state.pending.usage[name];
       messages += 1;
       if (state.pending.model) models[state.pending.model] = (models[state.pending.model] ?? 0) + 1;
     }
@@ -128,6 +112,7 @@ function snapshot(states) {
 }
 
 export function createUsageReader({
+  harness = defaultHarness(),
   io = { stat, read: readBytes },
   budgetBytes = BUDGET_BYTES,
   maxFiles = MAX_FILES,
@@ -151,7 +136,10 @@ export function createUsageReader({
     cache.set(file, state);
     while (cache.size > maxFiles) cache.delete(cache.keys().next().value);
     try {
-      return { state, complete: await advance(state, file, size, budget, io) };
+      return {
+        state,
+        complete: await advance(state, file, size, budget, io, harness.usage.parseLine),
+      };
     } catch {
       return { state, complete: false };
     }
@@ -159,6 +147,8 @@ export function createUsageReader({
 
   // `budget` is shared by everything one request reads: bytes left and files left.
   async function tallyFiles(files, budget) {
+    // A harness that reports no tokens has nothing to read: zero tallies, no file touched.
+    if (!harness.usage) return { ...snapshot([]), complete: true };
     const states = [];
     const looked = files.slice(0, Math.max(0, budget.filesLeft));
     budget.filesLeft -= looked.length;

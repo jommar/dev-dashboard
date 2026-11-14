@@ -433,21 +433,88 @@ like groom and review; the contracts the backend and UI hold:
   status.json single-writer rule holds by construction. `blocks.continue` exists only on a `failed`
   entry. README "Continue a failed session" has the refusals.
 
+## Harness seam: facts not to break
+
+Everything that speaks the agent CLI sits behind one adapter in `backend/harness/`. The contract, the
+"Adding a harness" steps and checks, what leaves the backend and what is not renamed are in
+[`backend/harness/README.md`](backend/harness/README.md); the user-facing rules are README "Harnesses".
+Claude Code is the only registered adapter and the default; with it active every argv, command string,
+file, route, reply shape, reason code and pinned word is unchanged. Rules a change can break:
+
+- **One list, one wiring point.** `HARNESSES` in `backend/harness/index.mjs` is the only list (no
+  hard-coded id or count anywhere); `assertHarness` runs on every entry at load and `buildSessions`
+  checks the sessions service's methods where `createHttpHandler` builds it. `createHttpHandler` picks
+  `integrations.harness || defaultHarness()` once and passes it to the sessions service, launcher, chat,
+  usage reader and Slack watcher, each defaulting to Claude Code. No setting, env var or UI control
+  chooses it (`editable()` would drop a new settings key), and a registered harness needs a driver in
+  `test/harness-conformance.test.mjs` (`DRIVERS`). `test/harness-fake.mjs` is the test-only second
+  adapter; nothing here is verified against another CLI.
+- **Import rule.** Nothing outside `backend/harness/<id>/` imports from it except
+  `backend/harness/index.mjs`, and an adapter imports only Node built-ins, `config.mjs`,
+  `claude-log.mjs`, `slack-watch-store.mjs` (`isSessionId`), the generic files in `backend/harness/` and
+  its own directory, never a launcher, chat, ticket-state, usage or HTTP module (no cycles).
+  `test/harness-layout.test.mjs` pins both, that the two Claude files that moved into the adapter
+  (sessions, chat items) leave nothing at their old `backend/` paths (moved with `git mv`, no shim) and
+  that no generic module spells the `claude` binary or an `mcp__` name. A Claude literal in a generic
+  module (argv, command string, tool name, usage field, `~/.claude`) belongs in the adapter.
+- **The `harness` stamp is additive.** A new `launch.json` phase record and a new standalone chat record
+  get `...harnessStamp(harness)`: `{}` for Claude Code (the bytes are unchanged), `{ harness: id }` for
+  any other. `harnessIdOf(record)` reads a valid `harness` and otherwise `claude-code`, so older files
+  read as Claude Code. Never rename an id (a stored value), and never write `harness: 'claude-code'`.
+  `status.json` is untouched (a protocol with the session). A record of another harness still lists but
+  gets no go-to command (the active harness's commands would misname it).
+- **`harness_unsupported` is the one new refusal**, 409 `CLAUDE_REFUSED`, before any file write, session
+  call or spawn (the sites are listed in README "Harnesses"): `requireChat`, `requireOwnHarness` and the
+  spec review's `limits.specReview` check. A chat `send` to another harness's record is refused, but
+  `resolveSession` is not, so such a chat's history still opens. Launching over another harness's record
+  is not refused (it replaces the record). A missing `usage` facet is not a refusal: zero, complete
+  tallies and no file read.
+- **Capabilities are derived from facets** (`harnessMeta`), never declared beside them.
+  `GET /api/config` is the only response that gains a field (`harness`); every other reply key set stays
+  pinned by the route tests.
+- **UI helper.** `ui/harness.js` is pure and import-free, at most 2048 bytes (asserted in
+  `test/harness.test.mjs`): `DEFAULT_HARNESS`, `harnessFrom(raw)` (invalid or missing gives Claude Code,
+  never throws), `say(text, harness)` (fills `{name}`, `{label}`, `{command}`, `{A}`) and
+  `can(harness, capability)`. `HarnessContext` / `useHarness` live in `ui-react/lib/harness-context.js`
+  and `App.jsx` provides them around both the setup-only and the ready shell. Wording stays a token in
+  the source (`say('{name} session attached', harness)`) and is filled at render, so the default harness
+  reproduces every old literal; `test/harness.test.mjs` ties its golden table to the source text, and
+  two source-text tests pin the token form (`ui-react-contract.test.mjs` for the Slack chip,
+  `pr-review-board-contract.test.mjs` for the review labels). The usage hooks ask `/api/claude/usage`
+  only when `can(harness, 'usage')`, and Chat shows its composer read-only with "Chat is not available
+  with {label}." when `!can(harness, 'chat')`. A new user-visible string that names the harness uses a
+  token, never the literal.
+- **Not renamed, on purpose** (the list is in the guide's "What leaves the backend"): the `claude`-named
+  routes, codes, log prefix, state directory, modules, test ids and CSS classes name the product area and
+  are pinned by tests.
+- **One prompt source for every harness.** The built-in prompts and `prompts/*.md` are the only prompt
+  set; no per-harness copy, directory or template exists. The few harness-specific words are the
+  placeholders `{SKILL}` and `{ASK_TOOL}`, filled by `harnessValues` in `claude-prompts.mjs` from the
+  adapter's required `prompt: { skill, askTool }` (checked by `assertHarness`, covered by the
+  conformance suite). Rendered for Claude Code they are byte-identical
+  (`test/claude-prompts-golden.test.mjs`); a new harness-specific fragment becomes a placeholder, never a
+  second text.
+- **Untouched by design:** `backend/manager.mjs` and the `config.mjs` exports (`withoutSecrets` and
+  `SECRET_ENV_NAMES` stay the one credential list, used by every adapter's process starts).
+
 ## Chat: facts not to break
 
 The Chat tab (`ui-react/panels/ChatPanel.jsx`) talks to a real Claude Code session: the server runs
-`claude -p` and streams normalized events to the browser. A chat is addressed by one value, the session
-UUID (`#/chat?session=<uuid>`): a **standalone chat** (a record in `claude/chat/<uuid>.json`, no ticket,
+the harness's turn command (Claude Code: `claude -p`) and streams normalized events to the browser. A
+chat is addressed by one value, the session UUID (`#/chat?session=<uuid>`): a **standalone chat** (a
+record in `claude/chat/<uuid>.json`, no ticket,
 cwd always `~/pathwise`) or any session `claude agents --json --all` lists, which includes every ticket
 session. The CLI does not list a `-p` run, which is why the dashboard keeps its own record for standalone
 chats. The contract is README "Chat" (routes, errors, events, items); its two ends are
-`backend/claude-chat-items.mjs` (CLI line to event, transcript to items) and `ui/chat-stream.js` (the
-client reducer).
+`backend/harness/claude-code/chat-items.mjs` (CLI line to event, transcript to items, the adapter's
+chat facet) and `ui/chat-stream.js` (the client reducer).
 
 - **One writer per session, and its refusals.** `claudeSessions.beginTurn(sessionId)` in
-  `backend/claude-sessions.mjs` is the only writer mark; the chat turn and `resume()` (so the launcher's
-  answers, approve, re-review and Continue, and the Slack watcher) go through it, never through a second lock. A held session reads `state: "working"` in
-  `entries()`, so the launcher's guards, the ticket card and the bot bar see a turn as work in progress.
+  `backend/harness/claude-code/sessions.mjs` (built on `createSessionLock` in
+  `backend/harness/session-lock.mjs`) is the only writer mark; the chat turn and `resume()` (so the
+  launcher's answers, approve, re-review and Continue, and the Slack watcher) go through it, never
+  through a second lock. A held session reads `state: "working"` in `entries()`, so the launcher's
+  guards, the ticket card and the bot bar see a turn as work in progress.
   The refusals are 409 `CLAUDE_REFUSED` with `errors[0]` `chat_busy` (a turn is already in flight on this
   session), `session_running` (a listed session is working outside the chat, or the mark is held),
   `session_not_found`, `too_many_turns` (4 in flight) and `no_turn` (stop with none), and 502
@@ -459,13 +526,14 @@ client reducer).
   look like work elsewhere. The stop-poll itself is therefore unguarded, as it is for the launcher. The mark
   is per dashboard process: a terminal that resumes the same session is not seen.
 - **Argument arrays, no shell, scrubbed env, on every child.** The turn is
-  `spawn('claude', [...], { cwd, env: withoutSecrets(process.env), stdio: pipes })` with no `shell` option.
-  The arguments are the fixed `TURN_ARGS` plus `--resume <uuid>` or `--session-id <uuid>`; the message is a
-  stdin line, never an argument (it would show in `ps`), and no permission, model, tool or MCP flag is
-  passed. `withoutSecrets` in `backend/config.mjs` is the one place the credential names
-  (`SECRET_ENV_NAMES`) are removed, and every place that starts a process uses it: `launch()`, `resume()`,
-  the manager's Node runtime and the chat. A new child gets it too. The cwd comes from the record or the
-  listing, never from a request; a listed entry with no usable cwd is `spawn_failed` rather than a run in
+  `spawn(turn.command, turn.args, { cwd, env: withoutSecrets(process.env), stdio: pipes })` with no `shell`
+  option, where `turn` is the harness's `chat.buildTurn(...)` (Claude Code: `claude`, the fixed
+  `TURN_ARGS` in `backend/harness/claude-code/cli.mjs` plus `--resume <uuid>` or
+  `--session-id <uuid>`); the message is a stdin line, never an argument (it would show in `ps`), and
+  no permission, model, tool or MCP flag is passed. `withoutSecrets` in `backend/config.mjs` is the one
+  place the credential names (`SECRET_ENV_NAMES`) are removed, and every place that starts a process
+  uses it: `launch()`, `resume()`, the manager's Node runtime and the chat. A new child gets it too.
+  The cwd comes from the record or the listing, never from a request; a listed entry with no usable cwd is `spawn_failed` rather than a run in
   the dashboard's own directory.
 - **Nothing said is ever logged.** A failure is one `[claude]` line through `logClaudeFailure` with the
   step, reason, exit code and the 8-character session prefix: no message, title, CLI output, event or
@@ -513,9 +581,9 @@ client reducer).
   there. The reason and send errors sit above the field for the same reason.
 - **Orphaned sessions are recovered, never guessed.** `launch.json` keeps only the 8-hex short id; when
   `claude agents --json --all` no longer lists a recorded session (`claude rm`, pruned) the conversation is
-  still on disk. `recoverSessionIds` (`claude-sessions.mjs`, the same `scanTranscripts` helper as `lastActive`, a separate pass)
-  maps a short id to the full id: regular `<uuid>.jsonl` files only (the uuid directories beside them do not
-  count) and exactly one distinct id behind the prefix, else nothing. The launcher asks (`recoverOrphans`,
+  still on disk. `recoverSessionIds` (`backend/harness/claude-code/sessions.mjs`, the same
+  `scanTranscripts` helper as `lastActive`, a separate pass) maps a short id to the full id: regular `<uuid>.jsonl` files only (the uuid directories beside them
+  do not count) and exactly one distinct id behind the prefix, else nothing. The launcher asks (`recoverOrphans`,
   from `list()` only, and only with a usable listing, so a failed listing never makes every session an
   orphan; every answer, found or not, is kept for `ORPHAN_RETRY_MS`, 5 minutes on the injectable clock, then
   asked again, so a hit whose transcript is gone is dropped) and `phaseSessions` turns a record the listing

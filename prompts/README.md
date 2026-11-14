@@ -4,6 +4,10 @@ This folder holds local overrides for the dashboard's Claude launcher. This READ
 not a prompt: only the eleven exact filenames below are registered. Overrides (including nested
 contents) stay gitignored; this guide is the only tracked file here.
 
+The prompts are one set for every [harness](../backend/harness/README.md): this folder and the
+built-in texts are the single source, and the few words that name a harness's own mechanism are the
+placeholders `{SKILL}` and `{ASK_TOOL}` below. A harness never has its own prompt files.
+
 ## Templates and placeholders
 
 The shared editor, prompt API and `npm run claude:prompts` use this registry order:
@@ -39,7 +43,12 @@ built-in `groom.md` asks for `Readiness: READY`, `Readiness: NEEDS_INFO` or `Rea
 the first line of `groom.md` (the report), which the dashboard shows as a chip; an existing
 `prompts/groom.md` keeps its own text and shows no chip until it asks for that line.
 
-Only the placeholders listed for each template are substituted; others remain literal.
+- `{SKILL}` is what the active harness calls a named skill (`skill` for Claude Code) and `{ASK_TOOL}` is
+  how it asks the human (`a question tool`); they are substituted in every template (they are not in the
+  per-template table above) and come from the active harness adapter's `prompt` field. For Claude Code the built-in text renders exactly as it always did, and an override
+  that spells those words out, or never uses the placeholders, keeps working unchanged.
+
+Only the placeholders listed for each template, plus `{SKILL}` and `{ASK_TOOL}`, are substituted; others remain literal.
 `review.md` is not the continuation message: that is `rereview.md`, never `re-review.md`.
 
 ## Question phase tags

@@ -42,7 +42,9 @@ import { DashboardTooltip } from './Primitives.jsx';
 import { mascotFor } from '../lib/mascot-for.js';
 import { hasBoardRefresh, refreshBoard } from '../lib/board-refresh.js';
 import { ShortcutsContext } from '../lib/shortcuts-context.js';
+import { useHarness } from '../lib/harness-context.js';
 import { chatHref } from '../../ui/chat-stream.js';
+import { say } from '../../ui/harness.js';
 import { ticketHref } from '../../ui/ticket-link.js';
 import {
   BOT_STATE_WORDS,
@@ -203,6 +205,7 @@ const Bot = memo(function Bot({
 });
 
 export function BotBar() {
+  const harness = useHarness();
   // The opt-in desktop notification: only while it is on and permitted does the bar keep polling a hidden page.
   const notify = useNotifyPreference();
   const claude = useClaudeTickets({ active: true, source: 'bot-bar', whileHidden: notify.active });
@@ -320,7 +323,12 @@ export function BotBar() {
         ))}
       </div>
       {visible.length > 0 && (
-        <div className="bot-bar" role="group" aria-label="Claude sessions" data-testid="bot-bar">
+        <div
+          className="bot-bar"
+          role="group"
+          aria-label={say('{name} sessions', harness)}
+          data-testid="bot-bar"
+        >
           {visible.map((bot) => (
             <Bot
               key={bot.key}
@@ -376,7 +384,7 @@ export function BotBar() {
         />
       )}
       {open && open.phase !== 'review' && (
-        <LazyDialog key={open.ticket} label="The Claude dialog" onClose={close}>
+        <LazyDialog key={open.ticket} label={say('The {name} dialog', harness)} onClose={close}>
           <ClaudeDialog
             ticketKey={open.ticket}
             summary=""

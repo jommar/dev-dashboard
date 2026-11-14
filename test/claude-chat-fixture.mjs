@@ -349,7 +349,7 @@ export function scratchDir(t, prefix) {
 // `home/.claude/projects/p` holds the transcripts the sessions double points at (`writeTranscript`).
 export async function chatEnvironment(
   t,
-  { claudeSessions, spawn, withFs = true, launchedName } = {},
+  { claudeSessions, spawn, withFs = true, launchedName, harness } = {},
 ) {
   const { createClaudeChat } = await import('../backend/claude-chat.mjs');
   const root = scratchDir(t, 'chat-test-');
@@ -366,6 +366,7 @@ export async function chatEnvironment(
   const logs = [];
   const chat = createClaudeChat({
     claudeSessions: sessions,
+    ...(harness && { harness }),
     spawn:
       spawn ??
       ((...args) => {

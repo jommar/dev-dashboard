@@ -7,6 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { isSessionId } from './slack-watch-store.mjs';
+import { defaultHarness, harnessIdOf } from './harness/index.mjs';
 
 export const INVESTIGATE = 'investigate-and-plan';
 export const IMPLEMENT = 'implement-plan';
@@ -311,17 +312,24 @@ function classify({ record, session, entries, now, flag, unanswered, planPresent
   return { state: 'failed', reason: session ? 'ended_without_flag' : 'session_missing' };
 }
 
-// How to join the session in a terminal. A live or blocked session is attached by its short id; a
-// finished one is resumed by its session id from ~/pathwise, the directory every launch runs from (the
-// CLI finds a conversation by its id, so this also works for a session that started elsewhere).
-function goToFor(session) {
+// The go-to that resumes a finished session by its id from ~/pathwise, the directory every launch runs
+// from (the harness finds a conversation by its id, so this also works for a session that started
+// elsewhere), or null when the harness has no resume command. `commands` is the harness's.
+export function resumeGoTo(commands, sessionId) {
+  const command = commands.resume(sessionId);
+  return command === null ? null : { kind: 'resume', command: `cd ~/pathwise && ${command}` };
+}
+
+// How to join the session in a terminal, with the harness's `commands`. A live or blocked session is
+// attached by its short id; a finished one is resumed (see `resumeGoTo`).
+function goToFor(session, commands) {
   if (!session || !KNOWN_STATES.includes(session.state)) return null;
-  if (typeof session.pid === 'number' || session.state === 'blocked')
-    return isShortId(session.id)
-      ? { kind: 'attach', command: `claude attach ${session.id}` }
-      : null;
+  if (typeof session.pid === 'number' || session.state === 'blocked') {
+    const command = isShortId(session.id) ? commands.attach(session.id) : null;
+    return command === null ? null : { kind: 'attach', command };
+  }
   return FINISHED_STATES.includes(session.state) && isSessionId(session.sessionId)
-    ? { kind: 'resume', command: `cd ~/pathwise && claude --resume ${session.sessionId}` }
+    ? resumeGoTo(commands, session.sessionId)
     : null;
 }
 
@@ -351,9 +359,10 @@ function recoveredEntry(record, recovered, held) {
 // its record resolves to, or null. A record that is missing, or no listing, resolves to nothing.
 //
 // `recovered` maps a short id to the full session id found on disk for it (see `recoverSessionIds`
-// in claude-sessions.mjs). A record whose session the listing no longer shows (the CLI dropped it,
-// its conversation is kept) resolves to a finished entry with that id; the listing always wins, and
-// without a listing nothing is recovered, so a failed listing never turns every session into one.
+// in harness/claude-code/sessions.mjs). A record whose session the listing no longer shows (the CLI
+// dropped it, its conversation is kept) resolves to a finished entry with that id; the listing always
+// wins, and without a listing nothing is recovered, so a failed listing never turns every session
+// into one.
 // `held(sessionId)` says a chat turn is writing to that session now: a recovered one then reads
 // working (no process, so no go-to), as a listed one does.
 export function phaseSessions(launch, entries, recovered = new Map(), held = () => false) {
@@ -367,13 +376,25 @@ export function phaseSessions(launch, entries, recovered = new Map(), held = () 
 }
 
 // How to join each own session: `{ investigate, implement, groom }` (plus `review` and `e2e` for a
-// ticket with such a record), each a goToFor result for the session phaseSessions resolves.
-function goToAll(launch, entries, recovered, held) {
+// ticket with such a record), each a goToFor result for the session phaseSessions resolves. A record
+// of another harness gets none: `commands` are the active harness's, not the one that owns it.
+const LAUNCH_KEYS = {
+  investigate: INVESTIGATE,
+  implement: IMPLEMENT,
+  review: REVIEW,
+  groom: GROOM,
+  e2e: E2E,
+};
+
+function goToAll(launch, entries, recovered, held, commands, harnessId) {
   const hasReview = Boolean(readReview(launch));
   return Object.fromEntries(
     Object.entries(phaseSessions(launch, entries, recovered, held))
       .filter(([phase]) => phase !== 'review' || hasReview)
-      .map(([phase, session]) => [phase, goToFor(session)]),
+      .map(([phase, session]) => [
+        phase,
+        harnessIdOf(launch?.[LAUNCH_KEYS[phase]]) !== harnessId ? null : goToFor(session, commands),
+      ]),
   );
 }
 
@@ -427,7 +448,19 @@ export function continueBlock({ state, session }) {
 // the plan file exists. `recovered` is the short-to-full ids of sessions the listing no longer shows
 // (see `phaseSessions`); it gives their go-to, and changes the state only while `held` says a chat
 // turn is writing to the session: then the current one reads working, as a listed one does.
-export function deriveEntry({ status, launch, entries, now, planPresent, recovered, held }) {
+// `commands` is the harness's attach and resume commands (Claude Code's by default); they make the go-to,
+// and `harnessId` is that harness's id, so a record another harness owns gets no go-to.
+export function deriveEntry({
+  status,
+  launch,
+  entries,
+  now,
+  planPresent,
+  recovered,
+  held,
+  commands = defaultHarness().commands,
+  harnessId = defaultHarness().id,
+}) {
   const flags = {
     [INVESTIGATE]: status?.[INVESTIGATE] === true,
     [IMPLEMENT]: status?.[IMPLEMENT] === true,
@@ -505,6 +538,6 @@ export function deriveEntry({ status, launch, entries, now, planPresent, recover
     specReview,
     e2e,
     blocks,
-    goTo: goToAll(launch, entries, recovered, held),
+    goTo: goToAll(launch, entries, recovered, held, commands, harnessId),
   };
 }

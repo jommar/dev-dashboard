@@ -1678,7 +1678,13 @@ const CLAUDE_PROMPT_LABELS = {
   rereview: 'Re-review message',
   groom: 'Groom ticket prompt',
 };
-const CLAUDE_PROMPT_PLACEHOLDERS = ['{KEY}', '{SLUG}', '{STATUS_FILE}'];
+const CLAUDE_HARNESS_PLACEHOLDERS = ['{SKILL}', '{ASK_TOOL}'];
+const CLAUDE_PROMPT_PLACEHOLDERS = [
+  '{KEY}',
+  '{SLUG}',
+  '{STATUS_FILE}',
+  ...CLAUDE_HARNESS_PLACEHOLDERS,
+];
 export const CLAUDE_PROMPT_DEFAULTS = {
   investigate: 'Work out the plan for {KEY} and record progress in {STATUS_FILE}.',
   implement: 'Build the plan for {KEY} in the folder {SLUG} and record progress in {STATUS_FILE}.',
@@ -1699,9 +1705,16 @@ export function claudePromptEntry(name, source = 'default', text = CLAUDE_PROMPT
     text: source === 'custom' ? text : CLAUDE_PROMPT_DEFAULTS[name],
     placeholders:
       name === 'answers'
-        ? [...CLAUDE_PROMPT_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}']
+        ? [
+            '{KEY}',
+            '{SLUG}',
+            '{STATUS_FILE}',
+            '{QUESTION_IDS}',
+            '{CHANGE}',
+            ...CLAUDE_HARNESS_PLACEHOLDERS,
+          ]
         : name === 'groom' || name === 'rereview'
-          ? ['{KEY}', '{SLUG}']
+          ? ['{KEY}', '{SLUG}', ...CLAUDE_HARNESS_PLACEHOLDERS]
           : CLAUDE_PROMPT_PLACEHOLDERS,
   };
 }

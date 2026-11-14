@@ -5,6 +5,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MarkdownView } from './MarkdownView.jsx';
 import { Button } from './Primitives.jsx';
+import { useHarness } from '../lib/harness-context.js';
 import { copyText } from '../../ui/dom.js';
 
 // How long "Copied" shows on a copy button.
@@ -52,11 +53,12 @@ function CodeBlock({ node, children }) {
 const MARKDOWN_COMPONENTS = { pre: CodeBlock };
 
 const ChatMessage = memo(function ChatMessage({ item }) {
+  const { name } = useHarness();
   const mine = item.kind === 'user';
   return (
     <article className="chat-message" data-kind={item.kind} data-testid={`chat-message-${item.id}`}>
       <header className="chat-message-head">
-        <span className="chat-who">{mine ? 'You' : 'Claude'}</span>
+        <span className="chat-who">{mine ? 'You' : name}</span>
         <CopyButton
           text={item.text}
           label="Copy"
@@ -102,6 +104,7 @@ const ChatToolChip = memo(function ChatToolChip({ item }) {
 // to read is never undone, except when a message of the reader's own arrives. It is announced by the screen's one status line, not as it streams
 // (`aria-live="off"`), and it takes focus so the keyboard can scroll it.
 export function ChatLog({ items, tail }) {
+  const { name } = useHarness();
   const log = useRef(null);
   const following = useRef(true);
   const lastSent = useRef(null);
@@ -135,7 +138,7 @@ export function ChatLog({ items, tail }) {
       )}
       {tail && (
         <div className="chat-message" data-kind="assistant">
-          <span className="chat-who">Claude</span>
+          <span className="chat-who">{name}</span>
           <p className="chat-plain" data-testid="chat-tail">
             {tail}
           </p>

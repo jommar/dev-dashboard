@@ -7,6 +7,7 @@ import { RelativeTime } from './slack-watch/RelativeTime.jsx';
 import { SessionDelivery } from './slack-watch/SessionDelivery.jsx';
 import { WatchSettingsForm } from './slack-watch/WatchSettingsForm.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
+import { useHarness } from '../lib/harness-context.js';
 import { SLACK_WATCH_POLL_MS } from '../../ui/polling.js';
 import { slackWatchSummary } from '../../ui/slack-watch-summary.js';
 
@@ -28,6 +29,7 @@ const linesOf = (text) =>
 // a stable callback.
 export const SlackWatchCard = memo(function SlackWatchCard({ active, hidden = false, onSummary }) {
   const api = useDashboardApi();
+  const harness = useHarness();
   const [watch, setWatch] = useState(null);
   const [listFailed, setListFailed] = useState(false);
   const [pickerSessions, setPickerSessions] = useState([]);
@@ -109,10 +111,10 @@ export const SlackWatchCard = memo(function SlackWatchCard({ active, hidden = fa
 
   const settle = useCallback(
     async (response, { refreshPicker = false } = {}) => {
-      setActionError(response.ok ? '' : actionErrorText(response));
+      setActionError(response.ok ? '' : actionErrorText(response, harness));
       await load({ refreshPicker });
     },
-    [load],
+    [load, harness],
   );
 
   const addLinks = async () => {
@@ -198,8 +200,8 @@ export const SlackWatchCard = memo(function SlackWatchCard({ active, hidden = fa
         </div>
       )}
       <p className="slack-note">
-        Paste Slack thread links and attach the Claude Code sessions to wake when a thread gets a
-        new message.
+        Paste Slack thread links and attach the {harness.label} sessions to wake when a thread gets
+        a new message.
       </p>
       {actionError && (
         <p className="slack-watch-error" role="alert" data-testid="slack-watch-action-error">

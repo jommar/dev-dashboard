@@ -19,7 +19,7 @@ import { slackIntegration } from './slack.mjs';
 import { parseSlackLink } from './slack-link.mjs';
 import { withAttachedSessions } from './slack-model.mjs';
 import { createSlackWatchStore, isSessionId } from './slack-watch-store.mjs';
-import { createClaudeSessions } from './claude-sessions.mjs';
+import { buildSessions, defaultHarness, harnessMeta } from './harness/index.mjs';
 import { createClaudeLauncher, failed } from './claude-launcher.mjs';
 import { createClaudeChat } from './claude-chat.mjs';
 import { createUsageReader } from './claude-usage.mjs';
@@ -231,21 +231,23 @@ function logFailure(log, req, error, status, code) {
 export function createHttpHandler({ settings, manager, integrations = {} }) {
   const slack = integrations.slack || slackIntegration;
   const slackWatchStore = integrations.slackWatchStore || createSlackWatchStore();
+  const harness = integrations.harness || defaultHarness();
   const claudeSessions =
-    integrations.claudeSessions || createClaudeSessions({ store: slackWatchStore });
+    integrations.claudeSessions || buildSessions(harness, { store: slackWatchStore });
   const claudePrompts = integrations.claudePrompts || createPromptStore();
   const claudeArtifacts = integrations.claudeArtifacts || createClaudeArtifacts();
   const browserDevtools = integrations.browserDevtools || createBrowserDevtools();
   const claudeLauncher =
     integrations.claudeLauncher ||
-    createClaudeLauncher({ claudeSessions, browsers: browserDevtools });
+    createClaudeLauncher({ claudeSessions, harness, browsers: browserDevtools });
   const claudeChat =
     integrations.claudeChat ||
     createClaudeChat({
       claudeSessions,
+      harness,
       launchedName: (id) => claudeLauncher.launchedName?.(id) ?? null,
     });
-  const claudeUsage = integrations.claudeUsage || createUsageReader();
+  const claudeUsage = integrations.claudeUsage || createUsageReader({ harness });
   const upstreamHealth = integrations.upstreamHealth || defaultUpstreamHealth;
   const log = integrations.log || defaultLog;
   const browserScreencast =
@@ -254,7 +256,13 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     integrations.devtoolsStreams || createDevtoolsStreams({ screencast: browserScreencast });
   const slackWatcher =
     integrations.slackWatcher ||
-    createSlackWatcher({ slack, store: slackWatchStore, settings, sessions: claudeSessions });
+    createSlackWatcher({
+      slack,
+      store: slackWatchStore,
+      settings,
+      sessions: claudeSessions,
+      claudeHomeReadable: harness.homeReadable,
+    });
   const api = {
     fetchOpenPRs,
     fetchMyTickets,
@@ -542,6 +550,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
             ? `${publicSettings.jira.baseUrl.replace(/\/+$/, '')}/browse/`
             : '',
           setup: settings.getSetupStatus(),
+          harness: harnessMeta(harness),
         });
         return;
       }

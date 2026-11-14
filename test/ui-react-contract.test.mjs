@@ -615,7 +615,11 @@ test('delivery statuses and reasons are pinned against the backend sources, the 
   // Stop results are not delivery reasons; `unavailable` is how a failed Slack read is recorded.
   const tolerableCodes = ['stopped', 'not_idle', 'unavailable'];
 
-  const backend = ['backend/slack-watcher.mjs', 'backend/claude-sessions.mjs'].map(readRepoFile);
+  const backend = [
+    'backend/slack-watcher.mjs',
+    'backend/harness/claude-code/sessions.mjs',
+    'backend/harness/session-entry.mjs',
+  ].map(readRepoFile);
   const reasonProperty = /\breason:\s*'([a-z_]+)'/g;
   const outcomeCall = /\b(?:failure|delivered|waiting)\(\s*'([a-z_-]+)'(?:\s*,\s*'([a-z_-]+)')?/g;
   const reasonLiterals = backend.flatMap((source) => [
@@ -1013,8 +1017,8 @@ test('the Slack chip marks an attached session by a filled glyph and words, keep
   const link = read('components/SlackThreadLink.jsx');
   assert.match(link, /attachedSessions/, 'the chip reads the count the threads route annotates');
   assert.match(link, /data-attached=/);
-  assert.match(link, /Claude session attached/);
-  assert.match(link, /Claude sessions attached/, 'a count above one is worded as sessions');
+  assert.match(link, /\{name\} session attached/);
+  assert.match(link, /\{name\} sessions attached/, 'a count above one is worded as sessions');
   // Shape and words carry the state; the stroke contract of the glyph is unchanged.
   assert.ok(
     (link.match(/currentColor/g) || []).length >= 2,

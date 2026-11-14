@@ -54,7 +54,7 @@ const finishedEntry = (sessionId = SESSION_A, extra = {}) =>
   listingEntry({ sessionId, cwd: FINISHED_CWD, ...extra });
 
 async function sessionsEnvironment(t, options = {}) {
-  const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+  const { createClaudeSessions } = await import('../backend/harness/claude-code/sessions.mjs');
   const { createSlackWatchStore } = await import('../backend/slack-watch-store.mjs');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-sessions-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -202,7 +202,7 @@ test('picker resolves names of attached sessions omitted by the CLI without addi
 
 test('registry-only names do not require reading omitted sessions transcripts', async (t) => {
   let scanned = [];
-  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const { readTranscriptActivities } = await import('../backend/harness/claude-code/sessions.mjs');
   const env = await sessionsEnvironment(t, {
     readActivities: async (files, cache) => {
       scanned = files;
@@ -268,7 +268,7 @@ test('a transient registry read failure is incomplete until the name can be read
 });
 
 test('a transient transcript read failure is incomplete and does not rescan unchanged transcripts', async (t) => {
-  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const { readTranscriptActivities } = await import('../backend/harness/claude-code/sessions.mjs');
   let fail = true;
   const reads = [];
   const env = await sessionsEnvironment(t, {
@@ -395,7 +395,7 @@ test('metadata directory errors are incomplete for names that depend on them', a
 });
 
 test('a transient project directory failure retains the transcript cache for recovery', async (t) => {
-  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const { readTranscriptActivities } = await import('../backend/harness/claude-code/sessions.mjs');
   let fail = false;
   let reads = 0;
   const env = await sessionsEnvironment(t, {
@@ -435,7 +435,7 @@ test('a transient project directory failure retains the transcript cache for rec
 });
 
 test('overlapping scans share unchanged files but read a changed fingerprint independently', async (t) => {
-  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const { readTranscriptActivities } = await import('../backend/harness/claude-code/sessions.mjs');
   const entered = deferred();
   const release = deferred();
   t.after(() => release.resolve());
@@ -582,7 +582,8 @@ test('fallback listing sorts attached sessions by their transcripts and keeps un
 
 for (const failure of ['disappears', 'cannot be read'])
   test(`one duplicate transcript that ${failure} does not hide another`, async (t) => {
-    const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+    const { readTranscriptActivities } =
+      await import('../backend/harness/claude-code/sessions.mjs');
     const duplicate = path.join('.claude', 'projects', 'removed', `${SESSION_A}.jsonl`);
     let failed = false;
     const env = await sessionsEnvironment(t, {
@@ -757,7 +758,7 @@ test('watcher does not wait for a picker or sort its listing', async (t) => {
 });
 
 test('overlapping pickers take fresh listings while a watcher remains unsorted', async (t) => {
-  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const { readTranscriptActivities } = await import('../backend/harness/claude-code/sessions.mjs');
   const entered = deferred();
   const release = deferred();
   t.after(() => release.resolve());
@@ -801,7 +802,7 @@ test('overlapping pickers take fresh listings while a watcher remains unsorted',
 });
 
 test('a fallback refresh sees attachments made during an earlier scan', async (t) => {
-  const { readTranscriptActivities } = await import('../backend/claude-sessions.mjs');
+  const { readTranscriptActivities } = await import('../backend/harness/claude-code/sessions.mjs');
   const entered = deferred();
   const release = deferred();
   t.after(() => release.resolve());
@@ -971,7 +972,7 @@ test('picker route exposes attached registry and saved titles without leaking th
 });
 
 test('picker route reports incomplete metadata and clears the flag after recovery', async (t) => {
-  const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+  const { createClaudeSessions } = await import('../backend/harness/claude-code/sessions.mjs');
   const f = await watchFixture(t, { http: true, sessions: 'real' });
   await f.watch({ sessionIds: [SESSION_A] });
   f.exec.setListing([]);
@@ -1693,7 +1694,7 @@ test('a stop or a resume made without a ticket (the Slack wake) logs nothing', a
 // ---- a session ended with `claude stop` is listed as stopped with pid null: finished ----
 
 test('stateOf: a stopped session with a null pid is finished; other null or text pids stay unknown', async () => {
-  const { stateOf } = await import('../backend/claude-sessions.mjs');
+  const { stateOf } = await import('../backend/harness/session-entry.mjs');
   assert.equal(stateOf({ state: 'stopped', pid: null }), 'finished');
   assert.equal(stateOf({ state: 'stopped' }), 'finished');
   assert.equal(stateOf({ state: 'stopped', pid: 4242 }), 'live', 'a process is a process');
@@ -2001,7 +2002,7 @@ function settleDouble({ observations, stopResult = { status: 'stopped' } }) {
 const seen = (session) => ({ listing: session ? [session] : [], session });
 
 test('scenario 6: settleSession stops a live session, waits through each live poll, and settles when the pid is gone', async () => {
-  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const { settleSession } = await import('../backend/harness/session-entry.mjs');
   const live = idleBackgroundEntry(SESSION_A);
   const gone = finishedEntry(SESSION_A);
   const double = settleDouble({
@@ -2016,7 +2017,7 @@ test('scenario 6: settleSession stops a live session, waits through each live po
 });
 
 test('scenario 6: settleSession does not stop or wait for a session with no pid', async () => {
-  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const { settleSession } = await import('../backend/harness/session-entry.mjs');
   const gone = finishedEntry(SESSION_A);
   const double = settleDouble({ observations: [seen(gone)] });
   const result = await settleSession({ ...double, limit: 30 });
@@ -2025,7 +2026,7 @@ test('scenario 6: settleSession does not stop or wait for a session with no pid'
 });
 
 test('scenario 6: settleSession gives up as live_at_resume at the limit, after limit - 1 gaps', async () => {
-  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const { settleSession } = await import('../backend/harness/session-entry.mjs');
   const double = settleDouble({ observations: [seen(idleBackgroundEntry(SESSION_A))] });
   const result = await settleSession({ ...double, limit: 4 });
   assert.deepEqual(result, { status: 'failed', reason: 'live_at_resume' });
@@ -2038,7 +2039,7 @@ for (const [label, stopResult, reason] of [
   ['a CLI failure', { status: 'failed-transient', reason: 'stop_failed' }, 'resume_failed'],
 ])
   test(`scenario 6: settleSession reports a stop that was ${label} as ${reason}, with no wait`, async () => {
-    const { settleSession } = await import('../backend/claude-sessions.mjs');
+    const { settleSession } = await import('../backend/harness/session-entry.mjs');
     const double = settleDouble({
       observations: [seen(idleBackgroundEntry(SESSION_A))],
       stopResult,
@@ -2049,7 +2050,7 @@ for (const [label, stopResult, reason] of [
   });
 
 test('scenario 6: settleSession reports an unavailable listing and an unlisted session', async () => {
-  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const { settleSession } = await import('../backend/harness/session-entry.mjs');
   const unavailable = settleDouble({ observations: [{ listing: null, session: null }] });
   assert.deepEqual(await settleSession({ ...unavailable, limit: 30 }), {
     status: 'failed',
@@ -2082,7 +2083,7 @@ test('scenario 18: launch passes the CLI an environment without the credential n
 });
 
 test('scenario 6: settleSession gives stop the session it has just read', async () => {
-  const { settleSession } = await import('../backend/claude-sessions.mjs');
+  const { settleSession } = await import('../backend/harness/session-entry.mjs');
   const live = idleBackgroundEntry(SESSION_A);
   const double = settleDouble({ observations: [seen(live), seen(finishedEntry(SESSION_A))] });
   let given;
@@ -2213,7 +2214,7 @@ test('recoverSessionIds: a missing or unreadable projects folder is no id, never
 });
 
 test('isHeld: a session reads held from beginTurn until its release, and only that one', async () => {
-  const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+  const { createClaudeSessions } = await import('../backend/harness/claude-code/sessions.mjs');
   const sessions = createClaudeSessions({ execFileImpl: () => {}, projectsDir: '/nowhere' });
   const id = 'abab1212-0000-4000-8000-000000000000';
   assert.equal(sessions.isHeld(id), false);

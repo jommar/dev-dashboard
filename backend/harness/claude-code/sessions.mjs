@@ -1,4 +1,4 @@
-// claude-sessions.mjs — the Claude CLI's session listing (for the watcher's picker and prune), the
+// sessions.mjs — the Claude CLI's session listing (for the watcher's picker and prune), the
 // stop of an idle background session, the resume that continues a finished one and the launch of a
 // new background session, and the one-writer mark (`beginTurn`) that keeps a chat turn and a resume
 // off the same session.
@@ -16,14 +16,17 @@
 // the Slack wake's calls log nothing. The notice is cut out of that copy and never logged.
 
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { withoutSecrets } from './config.mjs';
-import { isSessionId } from './slack-watch-store.mjs';
-import { cliOutputForLog, defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
+import { withoutSecrets } from '../../config.mjs';
+import { isSessionId } from '../../slack-watch-store.mjs';
+import { cliOutputForLog, defaultClaudeLog, logClaudeFailure } from '../../claude-log.mjs';
+import { stateOf } from '../session-entry.mjs';
+import { createSessionLock } from '../session-lock.mjs';
+import { BIN } from './cli.mjs';
 
-const CLAUDE_BIN = 'claude';
 const LISTING_ARGS = ['agents', '--json', '--all'];
 const LISTING_TIMEOUT_MS = 15_000;
 const LISTING_MAX_BYTES = 8 * 1024 * 1024;
@@ -44,49 +47,21 @@ const SHORT_ID = /^[0-9a-f]{8}$/;
 const delivered = (reason) => ({ status: 'delivered', ...(reason && { reason }) });
 const failure = (status, reason) => ({ status, reason });
 
-// How a stop that did not stop is reported by `settleSession`: a session that is not idle or no longer
-// listed is said so, any other failure of the CLI is a failed resume.
-const STOP_FAILURES = { not_idle: 'session_running', not_listed: 'session_not_found' };
-
-// A live process has a numeric pid, a finished session has none; any other pid is not trusted. The
-// one exception is a session the CLI lists as `stopped` (ended with `claude stop`), which it reports
-// with `pid: null`: that is finished, and without it such a session could never be resumed.
-export function stateOf(entry) {
-  if (typeof entry.pid === 'number') return 'live';
-  if (entry.pid === null && entry.state === 'stopped') return 'finished';
-  return 'pid' in entry ? 'unknown' : 'finished';
+// Whether `~/.claude`, where the CLI keeps its sessions, is readable: the Slack watcher stays disabled
+// while it is not.
+export function homeReadable(home = os.homedir()) {
+  try {
+    fs.accessSync(path.join(home, '.claude'), fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Only a background process with a trusted pid has an activity the watcher may act on.
 function activityOf(entry) {
   if (entry.kind !== 'background' || typeof entry.pid !== 'number') return null;
   return entry.status === 'idle' || entry.status === 'busy' ? entry.status : null;
-}
-
-// Brings a session to a stop, so that a resume continues it instead of starting a copy of it: a live
-// session is stopped, then its entry is polled until it has no pid (the CLI's stop returns before the
-// process is gone), at most `limit` observations with `wait()` between them. `observe()` reads the
-// listing again and answers `{ listing, session }` (no listing: unavailable; no session: not listed),
-// `stop(session)` stops the session just read. Answers `{ status: 'settled', session }` or
-// `{ status: 'failed', reason }`.
-export async function settleSession({ observe, stop, wait, limit }) {
-  const unsettled = (reason) => ({ status: 'failed', reason });
-  let { listing, session } = await observe();
-  if (!listing) return unsettled('listing_unavailable');
-  if (!session) return unsettled('session_not_found');
-  if (typeof session.pid === 'number') {
-    const stopped = await stop(session);
-    if (stopped.status !== 'stopped')
-      return unsettled(STOP_FAILURES[stopped.status] ?? 'resume_failed');
-  }
-  for (let attempt = 1; ; attempt += 1) {
-    ({ listing, session } = await observe());
-    if (!listing) return unsettled('listing_unavailable');
-    if (!session) return unsettled('session_not_found');
-    if (stateOf(session) === 'finished') return { status: 'settled', session };
-    if (attempt >= limit) return unsettled('live_at_resume');
-    await wait();
-  }
 }
 
 const fingerprint = ({ dev, ino, size, mtimeMs, ctimeMs }) =>
@@ -188,30 +163,12 @@ export function createClaudeSessions({
   let pickerRequest = 0;
   let cachedPickerRequest = 0;
   const pendingActivities = new Map();
-  // The sessions a chat turn or a resume is writing to right now, in this process.
-  const held = new Set();
-
-  // The one-writer mark: a release function, or null while another writer holds the session. The
-  // release lets go once, so a late call never frees a mark someone else took since.
-  function beginTurn(sessionId) {
-    if (held.has(sessionId)) return null;
-    held.add(sessionId);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      held.delete(sessionId);
-    };
-  }
-
-  // Whether a chat turn or a resume in this process is writing to the session now. `entries` shows
-  // that on a listed session; this is for one the listing no longer shows.
-  const isHeld = (sessionId) => held.has(sessionId);
+  const { beginTurn, isHeld, overlay } = createSessionLock();
 
   function run(args, options) {
     return new Promise((resolve) => {
       try {
-        execFileImpl(CLAUDE_BIN, args, options, (error, stdout, stderr) =>
+        execFileImpl(BIN, args, options, (error, stdout, stderr) =>
           resolve({ error, stdout, stderr }),
         );
       } catch (error) {
@@ -619,9 +576,7 @@ export function createClaudeSessions({
   async function entries({ fresh = false } = {}) {
     const listed = fresh ? await readEntries() : (await rawListing()).entries;
     if (!listed) return listed;
-    return listed.map((entry) =>
-      held.has(entry.sessionId) ? { ...entry, state: 'working' } : entry,
-    );
+    return overlay(listed);
   }
 
   // The path of the newest copy of a session's transcript, or null when it has none. Only stat is

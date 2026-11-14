@@ -7,9 +7,11 @@ import { Button } from './Primitives.jsx';
 import { actionErrorText } from './slack-watch/actionErrorText.js';
 import { sessionOptionLabel } from './slack-watch/sessionOptionLabel.js';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
+import { useHarness } from '../lib/harness-context.js';
+import { say } from '../../ui/harness.js';
 
 const UNAVAILABLE_TEXT =
-  'Claude sessions are unavailable, so nothing can be attached to this thread right now.';
+  '{name} sessions are unavailable, so nothing can be attached to this thread right now.';
 const NO_LINK_TEXT = 'No link to attach to';
 
 function sessionsAttachedTo(links, watchKey) {
@@ -18,6 +20,7 @@ function sessionsAttachedTo(links, watchKey) {
 }
 
 export function ThreadSession({ ts, url, watchKey, keyPending }) {
+  const harness = useHarness();
   const api = useDashboardApi();
   const titleId = useId();
   // Bumped whenever the thread changes or the section unmounts, so a response that
@@ -68,7 +71,7 @@ export function ThreadSession({ ts, url, watchKey, keyPending }) {
       onSuccess?.();
       await readWatch(started);
     } else {
-      setError(actionErrorText(response));
+      setError(actionErrorText(response, harness));
     }
     if (epoch.current === started) setBusy(false);
   };
@@ -94,11 +97,11 @@ export function ThreadSession({ ts, url, watchKey, keyPending }) {
       data-testid="thread-session"
     >
       <h4 className="slack-thread-session-title" id={titleId}>
-        Claude session
+        {say('{name} session', harness)}
       </h4>
       {unavailable && (
         <p className="slack-note" data-testid="thread-session-unavailable">
-          {UNAVAILABLE_TEXT}
+          {say(UNAVAILABLE_TEXT, harness)}
         </p>
       )}
       {loading && (
@@ -135,7 +138,7 @@ export function ThreadSession({ ts, url, watchKey, keyPending }) {
           <div className="slack-thread-session-attach">
             <select
               data-testid="thread-session-picker"
-              aria-label="Claude session to attach"
+              aria-label={say('{name} session to attach', harness)}
               value={picked}
               disabled={busy || !hasLink}
               onChange={(event) => setPicked(event.target.value)}

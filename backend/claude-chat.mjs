@@ -1,12 +1,13 @@
 // claude-chat.mjs — a conversation with a Claude session from the dashboard. A turn is one `claude -p`
 // process (stream-json both ways): the message goes in on stdin, the CLI's lines are turned into the
-// chat's events (claude-chat-items.mjs) and sent to every stream open on the session, and the
-// process ends with the turn. Three kinds of session can be chatted with: a standalone chat, which
-// the dashboard keeps a record of under `<stateDir>/chat/<uuid>.json` (no ticket, no listing entry,
-// because the CLI does not list a `-p` run), any listed session, which includes every ticket
-// session, and an orphan: a session a launch record names that the CLI no longer lists but whose
-// transcript is on disk (`orphanSession`). A session is addressed by its UUID only; the directory it
-// runs in comes from the record or the listing (`~/pathwise` for an orphan), never from a request.
+// chat's events (the harness's `chat.liveMessages`, harness/claude-code/chat-items.mjs) and sent to
+// every stream open on the session, and the process ends with the turn. Three kinds of session can be
+// chatted with: a standalone chat, which the dashboard keeps a record of under
+// `<stateDir>/chat/<uuid>.json` (no ticket, no listing entry, because the CLI does not list a `-p`
+// run), any listed session, which includes every ticket session, and an orphan: a session a launch
+// record names that the CLI no longer lists but whose transcript is on disk (`orphanSession`). A
+// session is addressed by its UUID only; the directory it runs in comes from the record or the
+// listing (`~/pathwise` for an orphan), never from a request.
 //
 // One writer per session: a turn holds `claudeSessions.beginTurn`, which every other writer (the
 // launcher, the Slack watcher, a resume) reads as work in progress. A listed session that is idle is
@@ -26,7 +27,6 @@ import { fail as tooMany } from './browser-devtools.mjs';
 import { withoutSecrets } from './config.mjs';
 import { newestEntries, writeFileAtomic } from './credentials.mjs';
 import { defaultClaudeLog, logClaudeFailure } from './claude-log.mjs';
-import { historyItems, liveMessages } from './claude-chat-items.mjs';
 import {
   CLAUDE_STATE_DIR,
   FINISH_POLL_LIMIT,
@@ -35,7 +35,9 @@ import {
   pause,
   refused,
 } from './claude-launcher.mjs';
-import { settleSession } from './claude-sessions.mjs';
+import { resumeGoTo } from './claude-ticket-state.mjs';
+import { defaultHarness, harnessIdOf, harnessStamp } from './harness/index.mjs';
+import { settleSession } from './harness/session-entry.mjs';
 import { isSessionId } from './slack-watch-store.mjs';
 
 const MAX_MESSAGE_LENGTH = 32_000;
@@ -55,15 +57,6 @@ const STOP_GRACE_MS = 5_000;
 // How many finished turns are remembered for `hello`.
 const MAX_FINISHED_TURNS = 100;
 const OUTCOMES = ['completed', 'stopped', 'failed'];
-const TURN_ARGS = [
-  '-p',
-  '--input-format',
-  'stream-json',
-  '--output-format',
-  'stream-json',
-  '--verbose',
-  '--include-partial-messages',
-];
 
 const requireSession = (session) => {
   if (!isSessionId(session)) throw invalid('INVALID_SESSION', 'Invalid session id.');
@@ -89,6 +82,7 @@ const isRecord = (value, file) =>
 
 export function createClaudeChat({
   claudeSessions,
+  harness = defaultHarness(),
   spawn = spawnDefault,
   stateDir = CLAUDE_STATE_DIR,
   home = os.homedir(),
@@ -150,9 +144,10 @@ export function createClaudeChat({
       state: working ? 'working' : record.lastOutcome === 'failed' ? 'failed' : 'done',
       createdAt: record.createdAt,
       lastActiveAt: record.lastTurnAt,
-      goTo: working
-        ? null
-        : { kind: 'resume', command: `cd ~/pathwise && claude --resume ${record.id}` },
+      goTo:
+        working || harnessIdOf(record) !== harness.id
+          ? null
+          : resumeGoTo(harness.commands, record.id),
     };
   };
 
@@ -196,6 +191,11 @@ export function createClaudeChat({
     return { kind: 'session', orphan: true, title: name, cwd: path.join(home, 'pathwise') };
   }
 
+  // A harness without a chat facet has no turn to run, stop or stream.
+  function requireChat() {
+    if (!harness.chat) throw refused('harness_unsupported');
+  }
+
   // The size of the session's transcript now, 0 when it has none.
   const transcriptSize = (file) => {
     try {
@@ -219,7 +219,7 @@ export function createClaudeChat({
       let text = buffer.toString('utf8');
       // The read may begin inside a line: that line is dropped.
       if (start > 0) text = text.slice(text.indexOf('\n') + 1);
-      const history = historyItems(text);
+      const history = harness.chat.historyItems(text);
       return { items: history.items, truncated: history.truncated || start > 0 };
     } catch {
       return { items: [], truncated: false };
@@ -242,6 +242,7 @@ export function createClaudeChat({
   // Starts a stream on `sink` for `session`: `hello` first (the history, then the turn in flight),
   // then every event of the session. Reports the client's drain and departure on the handle.
   async function open({ session, sink }) {
+    requireChat();
     requireSession(session);
     if (streams.size >= MAX_STREAMS)
       throw tooMany('TOO_MANY_STREAMS', 'Too many chat streams are open.', 429);
@@ -296,7 +297,7 @@ export function createClaudeChat({
 
   function takeLine(turn, line) {
     if (line.length > MAX_LINE_CHARS) return;
-    for (const { event, data } of liveMessages(line, turn.result)) {
+    for (const { event, data } of harness.chat.liveMessages(line, turn.result)) {
       if (event === 'item') remember(turn, data.item);
       broadcast(turn.session, event, data);
     }
@@ -363,10 +364,10 @@ export function createClaudeChat({
   }
 
   // Starts the process of a turn and sends the message. Throws `spawn_failed` when it cannot start.
-  function startTurn({ session, args, cwd, message, target, record, release, historyEnd }) {
+  function startTurn({ session, turnProcess, cwd, target, record, release, historyEnd }) {
     let child;
     try {
-      child = spawn('claude', args, {
+      child = spawn(turnProcess.command, turnProcess.args, {
         cwd,
         env: withoutSecrets(process.env),
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -408,9 +409,7 @@ export function createClaudeChat({
       if (child.pid === undefined) endTurn(turn, { spawnFailed: true });
     });
     child.on('close', (code) => endTurn(turn, { code }));
-    child.stdin.write(
-      `${JSON.stringify({ type: 'user', message: { role: 'user', content: message } })}\n`,
-    );
+    child.stdin.write(turnProcess.input);
     return turn;
   }
 
@@ -441,6 +440,7 @@ export function createClaudeChat({
       createdAt: iso(),
       lastTurnAt: iso(),
       lastOutcome: null,
+      ...harnessStamp(harness),
     };
     return { kind: 'chat', record, title: record.title, cwd: record.cwd };
   }
@@ -448,6 +448,7 @@ export function createClaudeChat({
   // Sends `message` to the session `session`, or to a new standalone chat when none is given. Answers
   // once the process has started.
   async function send({ message, session }) {
+    requireChat();
     requireMessage(message);
     if (session !== undefined) requireSession(session);
     const id = session ?? randomUUID();
@@ -456,6 +457,9 @@ export function createClaudeChat({
     let release = null;
     try {
       const target = session === undefined ? newChat(id, message) : await resolveSession(id);
+      // One harness's CLI never resumes another harness's chat; refused before the mark or any write.
+      if (target.kind === 'chat' && harnessIdOf(target.record) !== harness.id)
+        throw refused('harness_unsupported');
       // Counted after the session is known, so a listing that fails says so before the cap does.
       if (turns.size + starting.size > MAX_TURNS) throw refused('too_many_turns');
       let { record = null, cwd } = target;
@@ -481,9 +485,8 @@ export function createClaudeChat({
       try {
         turn = startTurn({
           session: id,
-          args: [...TURN_ARGS, ...(resuming ? ['--resume', id] : ['--session-id', id])],
+          turnProcess: harness.chat.buildTurn({ sessionId: id, resuming, message }),
           cwd,
-          message,
           target: { kind: target.kind, title: target.title },
           record,
           release,
@@ -518,6 +521,7 @@ export function createClaudeChat({
   // Interrupts the session's turn: SIGINT, SIGTERM if the process has not closed 5 s later, and
   // SIGKILL 5 s after that, so a process that ignores both cannot hold the session for good.
   async function stop({ session }) {
+    requireChat();
     requireSession(session);
     const turn = turns.get(session);
     if (!turn) throw refused('no_turn');

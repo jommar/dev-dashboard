@@ -875,7 +875,7 @@ function withAnswerDeadline(launcher) {
 // `claudeSessions` replaces the real sessions module (see `routingEnvironment`) and `stateFolder`
 // is the name of the state folder under the temp root.
 export async function launcherEnvironment(t, { claudeSessions, stateFolder = 'claude' } = {}) {
-  const { createClaudeSessions } = await import('../backend/claude-sessions.mjs');
+  const { createClaudeSessions } = await import('../backend/harness/claude-code/sessions.mjs');
   const { createSlackWatchStore } = await import('../backend/slack-watch-store.mjs');
   const { createClaudeLauncher } = await import('../backend/claude-launcher.mjs');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-launcher-'));
@@ -1373,20 +1373,32 @@ const PROMPT_TEXTS = {
   e2e: E2E_TEMPLATE,
 };
 const LAUNCH_PLACEHOLDERS = ['{KEY}', '{SLUG}', '{STATUS_FILE}'];
-const PROMPT_PLACEHOLDERS = {
-  investigate: LAUNCH_PLACEHOLDERS,
-  implement: LAUNCH_PLACEHOLDERS,
-  answers: [...LAUNCH_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}'],
-  'answers-implement': [...LAUNCH_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}'],
-  approve: LAUNCH_PLACEHOLDERS,
-  continue: LAUNCH_PLACEHOLDERS,
-  rereview: ['{KEY}', '{SLUG}'],
-  groom: ['{KEY}', '{SLUG}'],
-  review: ['{KEY}', '{SLUG}'],
-  'spec-review': ['{KEY}', '{SLUG}', '{PR}'],
-  e2e: ['{KEY}', '{SLUG}', '{PORT}'],
-};
-export const promptEntry = (name, source, text = PROMPT_TEXTS[name]) => ({
+// Every prompt also takes the active harness's own words, after its ticket values.
+const HARNESS_PLACEHOLDERS = ['{SKILL}', '{ASK_TOOL}'];
+const PROMPT_PLACEHOLDERS = Object.fromEntries(
+  Object.entries({
+    investigate: LAUNCH_PLACEHOLDERS,
+    implement: LAUNCH_PLACEHOLDERS,
+    answers: [...LAUNCH_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}'],
+    'answers-implement': [...LAUNCH_PLACEHOLDERS, '{QUESTION_IDS}', '{CHANGE}'],
+    approve: LAUNCH_PLACEHOLDERS,
+    continue: LAUNCH_PLACEHOLDERS,
+    rereview: ['{KEY}', '{SLUG}'],
+    groom: ['{KEY}', '{SLUG}'],
+    review: ['{KEY}', '{SLUG}'],
+    'spec-review': ['{KEY}', '{SLUG}', '{PR}'],
+    e2e: ['{KEY}', '{SLUG}', '{PORT}'],
+  }).map(([name, list]) => [name, [...list, ...HARNESS_PLACEHOLDERS]]),
+);
+// The built-in text as the editor and the starter files hold it: what Claude Code is sent, with the
+// harness's own words ("a question tool", and the "skill" of a named skill) back as placeholders. Stated
+// here, apart from the backend, so a fragment turned into a placeholder (or back) fails a test.
+export const withHarnessTokens = (text) =>
+  text
+    .replaceAll('a question tool', '{ASK_TOOL}')
+    .replace(/(`[a-z0-9-]+`|pr-review-transact|find-slack-thread) skill\b/g, '$1 {SKILL}');
+
+export const promptEntry = (name, source, text = withHarnessTokens(PROMPT_TEXTS[name])) => ({
   name,
   label: PROMPT_LABELS[name],
   source,

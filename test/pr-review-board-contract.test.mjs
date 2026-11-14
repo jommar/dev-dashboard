@@ -214,7 +214,7 @@ test('the PR Claude entry opts out of shared tooltips but retains code-review na
   assert.match(control, /\btestId:/);
   assert.match(control, /\blabel:/);
   assert.match(control, /\btooltip: false/);
-  assert.match(control, /Claude code review for \$\{ticket\.key\}/);
+  assert.match(control, /say\(`\{name\} code review for \$\{ticket\.key\}`, harness\)/);
   assert.doesNotMatch(control, /placeholder/i);
   assert.doesNotMatch(
     control,

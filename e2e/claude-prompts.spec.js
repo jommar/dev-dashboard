@@ -212,7 +212,8 @@ test('scenario 55: Prompts opens the editor in place of the answers, and Back re
   // the answers message adds {QUESTION_IDS} and {CHANGE}; grooming and the re-review message have
   // no status file and list {KEY} and {SLUG} alone. The warning for a missing {STATUS_FILE} is
   // checked above for all four: those two never have one to miss.
-  await expect(view.getByText(/\{KEY\}\W+\{SLUG\}\W*$/)).toHaveCount(2);
+  // Every prompt ends its line with the two harness words {SKILL} and {ASK_TOOL}.
+  await expect(view.getByText(/\{KEY\}\W+\{SLUG\}\W+\{SKILL\}\W+\{ASK_TOOL\}\W*$/)).toHaveCount(2);
   await expect(view.getByText(/\{KEY\}\W+\{SLUG\}\W+\{STATUS_FILE\}/)).toHaveCount(4);
   await expect(view.getByText(/\{QUESTION_IDS\}\W+\{CHANGE\}/)).toHaveCount(1);
 

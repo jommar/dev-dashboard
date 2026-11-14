@@ -1,30 +1,36 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { DismissButton, StatePill, stampOf } from './ClaudeSteps.jsx';
+import { useHarness } from '../lib/harness-context.js';
+import { say } from '../../ui/harness.js';
 
 const REVIEW = 'pr-review-transact';
 const SPEC_REVIEW = 'spec-review';
 const REASON_TEXT = {
   untrusted_workspace:
-    'Claude does not trust ~/pathwise yet. Run claude there once and accept the trust prompt.',
-  timed_out: 'Claude took too long to start. Check the review session before launching again.',
-  spawn_failed: 'Could not start Claude. Is the claude command installed?',
-  listing_unavailable: 'Claude review status is unavailable. Try again when status is available.',
+    '{name} does not trust ~/pathwise yet. Run {command} there once and accept the trust prompt.',
+  timed_out: '{name} took too long to start. Check the review session before launching again.',
+  spawn_failed: 'Could not start {name}. Is the {command} command installed?',
+  listing_unavailable: '{name} review status is unavailable. Try again when status is available.',
   unrecognised_state:
-    'Claude review status is unavailable. Check the session before launching again.',
-  session_running: 'A Claude review session is already running for this ticket.',
+    '{name} review status is unavailable. Check the session before launching again.',
+  session_running: '{A} {name} review session is already running for this ticket.',
   no_review_session: 'Start a code review first.',
-  session_not_found: 'The Claude review session could not be found.',
-  live_at_resume: 'The Claude review session is still running.',
-  resume_failed: 'The Claude review session could not be resumed.',
+  session_not_found: 'The {name} review session could not be found.',
+  live_at_resume: 'The {name} review session is still running.',
+  resume_failed: 'The {name} review session could not be resumed.',
   prompt_unreadable:
     "A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder.",
+  harness_unsupported: 'This action is not available with {label}.',
 };
 // The spec variant's own wording for the one reason it shares with code review.
 const SPEC_REASON_TEXT = {
   session_running: 'A spec review session is already running for this ticket.',
 };
-const reasonText = (code, spec) => (spec && SPEC_REASON_TEXT[code]) || REASON_TEXT[code];
+const reasonText = (code, spec, harness) => {
+  const text = (spec && SPEC_REASON_TEXT[code]) || REASON_TEXT[code];
+  return text && say(text, harness);
+};
 // The spec action's label says whether this is the first spec review of the PR or another one.
 const SPEC_ACTION_TEXT = {
   none: 'Start spec review',
@@ -32,9 +38,13 @@ const SPEC_ACTION_TEXT = {
   stale: 'Re-review',
 };
 
-function rereviewText({ send }) {
-  if (send?.status === 'sent') return 'Re-review requested. Claude is checking the linked PRs.';
-  const why = REASON_TEXT[send?.reason]?.replace(/\.$/, '') ?? 'the session could not be reached';
+function rereviewText({ send }, harness) {
+  if (send?.status === 'sent') {
+    return say('Re-review requested. {name} is checking the linked PRs.', harness);
+  }
+  const why =
+    reasonText(send?.reason, false, harness)?.replace(/\.$/, '') ??
+    'the session could not be reached';
   return `Re-review not sent: ${why}. Press Re-review to retry.`;
 }
 
@@ -49,6 +59,7 @@ export function ClaudePlaceholderDialog({
   specNumber,
   review,
 }) {
+  const harness = useHarness();
   const dialogRef = useRef(null);
   const closeButton = useRef(null);
   const close = useRef(onClose);
@@ -75,10 +86,12 @@ export function ClaudePlaceholderDialog({
   // Once a review session exists and can take a message, starting another review is the quiet choice.
   const startQuiet = !spec && block === null && rereviewBlock === null;
   const reasonId = useId();
-  const startReason = reasonText(block, spec) ?? (block ? `${label} cannot start right now.` : '');
+  const startReason =
+    reasonText(block, spec, harness) ?? (block ? `${label} cannot start right now.` : '');
   const rereviewReason = spec
     ? ''
-    : (REASON_TEXT[rereviewBlock] ?? (rereviewBlock ? 'Re-review cannot be sent right now.' : ''));
+    : (reasonText(rereviewBlock, false, harness) ??
+      (rereviewBlock ? 'Re-review cannot be sent right now.' : ''));
   // "Start a code review first." only repeats the primary button beside it, so it is for assistive
   // tech alone then.
   const reasons = [];
@@ -142,7 +155,9 @@ export function ClaudePlaceholderDialog({
     setBusy(false);
     if (!result.ok) {
       setError(
-        reasonText(result.errors?.[0], spec) ?? result.error ?? 'The Claude review request failed.',
+        reasonText(result.errors?.[0], spec, harness) ??
+          result.error ??
+          say('The {name} review request failed.', harness),
       );
       return;
     }
@@ -160,11 +175,13 @@ export function ClaudePlaceholderDialog({
     setBusy(false);
     if (!result.ok) {
       setError(
-        REASON_TEXT[result.errors?.[0]] ?? result.error ?? 'The Claude re-review request failed.',
+        reasonText(result.errors?.[0], false, harness) ??
+          result.error ??
+          say('The {name} re-review request failed.', harness),
       );
       return;
     }
-    setResultText(rereviewText(result));
+    setResultText(rereviewText(result, harness));
   };
 
   return (

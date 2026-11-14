@@ -29,6 +29,7 @@ import {
   fsChanges,
   promptEntry,
   recordingFs,
+  withHarnessTokens,
 } from './claude-launcher-fixture.mjs';
 
 const NAMES = PROMPT_NAMES;
@@ -167,7 +168,7 @@ test('scenario 141: a file of exactly 20 000 characters is custom, the limit is 
   assert.equal(implement.source, 'custom', 'padding around it does not count');
   assert.equal(implement.text, exact);
   assert.equal(answers.source, 'unusable', 'one character more is too long');
-  assert.equal(answers.text, ANSWERS_TEMPLATE);
+  assert.equal(answers.text, withHarnessTokens(ANSWERS_TEMPLATE));
 });
 
 test('scenario 142: read gives the entry that list gives, and both look at the files every time', async (t) => {
@@ -653,9 +654,9 @@ test('scenario 153: the store exports the file format, trimmed text and one newl
 // ---- initial side-action prompt metadata ----
 
 for (const [name, placeholders] of [
-  ['review', ['{KEY}', '{SLUG}']],
-  ['spec-review', ['{KEY}', '{SLUG}', '{PR}']],
-  ['e2e', ['{KEY}', '{SLUG}', '{PORT}']],
+  ['review', ['{KEY}', '{SLUG}', '{SKILL}', '{ASK_TOOL}']],
+  ['spec-review', ['{KEY}', '{SLUG}', '{PR}', '{SKILL}', '{ASK_TOOL}']],
+  ['e2e', ['{KEY}', '{SLUG}', '{PORT}', '{SKILL}', '{ASK_TOOL}']],
 ]) {
   test(`initial prompt override: the store exposes ${name} with only its validated placeholders`, async (t) => {
     const p = await promptStore(t);
@@ -666,7 +667,7 @@ for (const [name, placeholders] of [
     assert.ok(prompt.label.trim(), 'the editor gets a nonempty label');
     assert.equal(prompt.source, 'default');
     assert.deepEqual(prompt.placeholders, placeholders);
-    if (name === 'review') assert.equal(prompt.text, REVIEW_TEMPLATE);
+    if (name === 'review') assert.equal(prompt.text, withHarnessTokens(REVIEW_TEMPLATE));
     assert.deepEqual(
       (await p.store.list()).find((entry) => entry.name === name),
       prompt,
@@ -682,28 +683,32 @@ test('scenario 200: the eleven registered prompt names retain their order', asyn
   assert.deepEqual(names, NAMES);
   assert.equal(names.indexOf('answers-implement'), names.indexOf('answers') + 1, 'after answers');
   assert.deepEqual(Object.keys(PROMPT_TEMPLATES), names);
-  assert.equal(PROMPT_TEMPLATES.groom, GROOM_TEMPLATE, 'the built-in text, word for word');
+  assert.equal(
+    PROMPT_TEMPLATES.groom,
+    withHarnessTokens(GROOM_TEMPLATE),
+    'the built-in text, word for word',
+  );
 });
 
 test('scenario 200: the eleven built-ins are the fixture texts, so the registry and wording agree', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
 
   assert.deepEqual(PROMPT_TEMPLATES, {
-    investigate: INVESTIGATE_TEMPLATE,
-    implement: IMPLEMENT_TEMPLATE,
-    answers: ANSWERS_TEMPLATE,
-    'answers-implement': ANSWERS_IMPLEMENT_TEMPLATE,
-    approve: APPROVE_TEMPLATE,
-    continue: CONTINUE_TEMPLATE,
-    rereview: REREVIEW_TEMPLATE,
-    groom: GROOM_TEMPLATE,
-    review: REVIEW_TEMPLATE,
-    'spec-review': SPEC_REVIEW_TEMPLATE,
-    e2e: E2E_TEMPLATE,
+    investigate: withHarnessTokens(INVESTIGATE_TEMPLATE),
+    implement: withHarnessTokens(IMPLEMENT_TEMPLATE),
+    answers: withHarnessTokens(ANSWERS_TEMPLATE),
+    'answers-implement': withHarnessTokens(ANSWERS_IMPLEMENT_TEMPLATE),
+    approve: withHarnessTokens(APPROVE_TEMPLATE),
+    continue: withHarnessTokens(CONTINUE_TEMPLATE),
+    rereview: withHarnessTokens(REREVIEW_TEMPLATE),
+    groom: withHarnessTokens(GROOM_TEMPLATE),
+    review: withHarnessTokens(REVIEW_TEMPLATE),
+    'spec-review': withHarnessTokens(SPEC_REVIEW_TEMPLATE),
+    e2e: withHarnessTokens(E2E_TEMPLATE),
   });
 });
 
-test('scenario 200: the groom entry has its label and only {KEY} and {SLUG} as placeholders', async (t) => {
+test('scenario 200: the groom entry has its label and its ticket placeholders and the harness words', async (t) => {
   const p = await promptStore(t);
 
   const groom = await p.store.read('groom');
@@ -712,12 +717,12 @@ test('scenario 200: the groom entry has its label and only {KEY} and {SLUG} as p
     name: 'groom',
     label: 'Groom ticket prompt',
     source: 'default',
-    text: GROOM_TEMPLATE,
-    placeholders: ['{KEY}', '{SLUG}'],
+    text: withHarnessTokens(GROOM_TEMPLATE),
+    placeholders: ['{KEY}', '{SLUG}', '{SKILL}', '{ASK_TOOL}'],
   });
   assert.deepEqual((await p.store.list())[7], groom, 'the groom entry keeps its position');
   assert.ok(!groom.text.includes('{STATUS_FILE}'), 'the built-in text has no status file');
-  assert.ok(groom.text.includes('`groom-ticket` skill'), 'it runs the groom-ticket skill');
+  assert.ok(groom.text.includes('`groom-ticket` {SKILL}'), 'it runs the groom-ticket skill');
   assert.ok(groom.text.includes('.orchestrator/{SLUG}/groom.md'), 'and names its deliverable');
   assert.ok(
     groom.text.includes(
@@ -734,7 +739,7 @@ test('scenario 202: the investigate text asks for lettered options inside each q
 
   const { text } = await p.store.read('investigate');
 
-  assert.equal(text, INVESTIGATE_TEMPLATE);
+  assert.equal(text, withHarnessTokens(INVESTIGATE_TEMPLATE));
   const paragraphs = text.split('\n\n');
   const questions = paragraphs.find((paragraph) => paragraph.startsWith('Questions:'));
   assert.ok(questions.includes('its options inline as (a) ..., (b) ..., (c) ...'));
@@ -936,7 +941,7 @@ test('verdict: groom prompt', async () => {
   assert.ok(!groom.includes('{STATUS_FILE}'));
   assert.deepEqual(
     groom.match(/\{[A-Z_]+\}/g).filter((v, i, all) => all.indexOf(v) === i),
-    ['{KEY}', '{SLUG}'],
+    ['{KEY}', '{ASK_TOOL}', '{SKILL}', '{SLUG}'],
   );
   // The e2e prompt already asks for its line and is unchanged.
   assert.ok(

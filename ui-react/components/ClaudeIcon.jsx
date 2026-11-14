@@ -5,6 +5,8 @@
 // record shows its groom, else its e2e check session instead (same looks, and the words say which). Presentational
 // only: the entry comes from useClaudeTickets and the click hands the ticket key to the panel.
 import { DashboardTooltip } from './Primitives.jsx';
+import { useHarness } from '../lib/harness-context.js';
+import { say } from '../../ui/harness.js';
 
 // What an entry's reason reads as; a state with no reason of its own is "not started".
 const PHRASES = {
@@ -57,10 +59,12 @@ export function ClaudeIcon({
   testId,
   tooltip = true,
 }) {
+  const harness = useHarness();
   const side = standIn(listed);
   const entry = side ? listed[side.key] : listed;
   const state = entry?.state ?? 'none';
-  const label = overrideLabel ?? `Claude${side ? ` ${side.words}` : ''}: ${claudePhrase(entry)}`;
+  const label =
+    overrideLabel ?? say(`{name}${side ? ` ${side.words}` : ''}: ${claudePhrase(entry)}`, harness);
   return (
     <DashboardTooltip title={tooltip ? label : undefined}>
       <button

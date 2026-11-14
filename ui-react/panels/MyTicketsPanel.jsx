@@ -15,6 +15,8 @@ import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
 import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
+import { useHarness } from '../lib/harness-context.js';
+import { say } from '../../ui/harness.js';
 import { filterTickets, ticketFilterOptions } from '../../ui/work-filters.js';
 import { sprintDay, sprintCountdown } from '../../ui/domain-helpers.js';
 import { MY_TICKETS_POLL_MS } from '../../ui/polling.js';
@@ -54,6 +56,7 @@ const NO_PR_LINES = Object.freeze({});
 // it once its list is in, then calls `onTicketHandled` so the address is cleared.
 export function MyTicketsPanel({ config, active, requestedTicket = null, onTicketHandled }) {
   const api = useDashboardApi();
+  const harness = useHarness();
   const [includeDone, setIncludeDone] = useState(false);
   const [data, setData] = useState(null);
   const [meta, setMeta] = useState('loading…');
@@ -334,7 +337,11 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
       </BoardSection>
       {dialog}
       {openClaudeTicket && (
-        <LazyDialog key={openClaudeTicket.key} label="The Claude dialog" onClose={closeClaude}>
+        <LazyDialog
+          key={openClaudeTicket.key}
+          label={say('The {name} dialog', harness)}
+          onClose={closeClaude}
+        >
           <ClaudeDialog
             ticketKey={openClaudeTicket.key}
             summary={openClaudeTicket.summary}

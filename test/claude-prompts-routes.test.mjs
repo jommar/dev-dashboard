@@ -42,6 +42,7 @@ import {
   seedPlanned,
   statusFile,
   until,
+  withHarnessTokens,
 } from './claude-launcher-fixture.mjs';
 
 const PROMPTS = '/api/claude/prompts';
@@ -643,16 +644,16 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
     entries('first list').map(({ name, source, text }) => [name, source, text]),
     [
       ['investigate', 'custom', 'my own {KEY}'],
-      ['implement', 'unusable', IMPLEMENT_TEMPLATE],
-      ['answers', 'default', ANSWERS_TEMPLATE],
-      ['answers-implement', 'default', ANSWERS_IMPLEMENT_TEMPLATE],
-      ['approve', 'default', APPROVE_TEMPLATE],
-      ['continue', 'default', CONTINUE_TEMPLATE],
-      ['rereview', 'default', REREVIEW_TEMPLATE],
-      ['groom', 'default', GROOM_TEMPLATE],
-      ['review', 'default', REVIEW_TEMPLATE],
-      ['spec-review', 'default', SPEC_REVIEW_TEMPLATE],
-      ['e2e', 'default', E2E_TEMPLATE],
+      ['implement', 'unusable', withHarnessTokens(IMPLEMENT_TEMPLATE)],
+      ['answers', 'default', withHarnessTokens(ANSWERS_TEMPLATE)],
+      ['answers-implement', 'default', withHarnessTokens(ANSWERS_IMPLEMENT_TEMPLATE)],
+      ['approve', 'default', withHarnessTokens(APPROVE_TEMPLATE)],
+      ['continue', 'default', withHarnessTokens(CONTINUE_TEMPLATE)],
+      ['rereview', 'default', withHarnessTokens(REREVIEW_TEMPLATE)],
+      ['groom', 'default', withHarnessTokens(GROOM_TEMPLATE)],
+      ['review', 'default', withHarnessTokens(REVIEW_TEMPLATE)],
+      ['spec-review', 'default', withHarnessTokens(SPEC_REVIEW_TEMPLATE)],
+      ['e2e', 'default', withHarnessTokens(E2E_TEMPLATE)],
     ],
   );
   assert.equal(replies.save.status, 200);

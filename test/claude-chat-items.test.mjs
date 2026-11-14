@@ -26,7 +26,8 @@ import {
   toolUseLine,
 } from './claude-chat-fixture.mjs';
 
-const { liveMessages, historyItems } = await import('../backend/claude-chat-items.mjs');
+const { liveMessages, historyItems } =
+  await import('../backend/harness/claude-code/chat-items.mjs');
 const map = (value, turn) =>
   liveMessages(typeof value === 'string' ? value : JSON.stringify(value), turn);
 

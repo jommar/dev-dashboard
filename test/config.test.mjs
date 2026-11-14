@@ -30,16 +30,44 @@ test('scenario 18: withoutSecrets copies an environment without the credential n
   assert.notEqual(scrubbed, env, 'a copy');
 });
 
-// The three places that start a process take the environment from the one helper in config.mjs;
-// none keeps a list of its own.
-const IMPORTS_HELPER = /import\s*\{[^}]*\bwithoutSecrets\b[^}]*\}\s*from\s*['"]\.\/config\.mjs['"]/;
+// Every place that starts a process takes the environment from the one helper in config.mjs; none
+// keeps a list of its own. Three are named (the Claude Code adapter's sessions service, the manager,
+// the chat), and any other file under backend/harness that imports node:child_process joins them, so a
+// new adapter that spawns is covered with no edit here.
+const backendRoot = new URL('../backend/', import.meta.url);
 
-for (const backendFile of ['claude-sessions.mjs', 'manager.mjs', 'claude-chat.mjs']) {
+function adapterFilesThatSpawn(directory = new URL('harness/', backendRoot)) {
+  if (!fs.existsSync(directory)) return [];
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const url = new URL(entry.name + (entry.isDirectory() ? '/' : ''), directory);
+    if (entry.isDirectory()) return adapterFilesThatSpawn(url);
+    return entry.name.endsWith('.mjs') &&
+      /from\s*['"](?:node:)?child_process['"]/.test(fs.readFileSync(url, 'utf8'))
+      ? [url.pathname.slice(backendRoot.pathname.length)]
+      : [];
+  });
+}
+
+const SPAWNING_FILES = [
+  ...new Set([
+    'harness/claude-code/sessions.mjs',
+    'manager.mjs',
+    'claude-chat.mjs',
+    ...adapterFilesThatSpawn(),
+  ]),
+];
+
+for (const backendFile of SPAWNING_FILES) {
   test(`scenario 18: ${backendFile} takes its environment from withoutSecrets in config.mjs and lists no credential itself`, () => {
-    const source = fs.readFileSync(new URL(`../backend/${backendFile}`, import.meta.url), 'utf8');
+    const source = fs.readFileSync(new URL(backendFile, backendRoot), 'utf8');
+    // `./config.mjs` from backend/, `../../config.mjs` from backend/harness/claude-code/.
+    const configPath = `${'../'.repeat(backendFile.split('/').length - 1) || './'}config.mjs`;
+    const importsHelper = new RegExp(
+      `import\\s*\\{[^}]*\\bwithoutSecrets\\b[^}]*\\}\\s*from\\s*['"]${configPath.replaceAll('.', '\\.')}['"]`,
+    );
     assert.ok(
-      IMPORTS_HELPER.test(source),
-      `${backendFile} imports withoutSecrets from ./config.mjs`,
+      importsHelper.test(source),
+      `${backendFile} imports withoutSecrets from ${configPath}`,
     );
     assert.ok(!LISTED_NAME.test(source), `${backendFile} spells out no credential name`);
   });
