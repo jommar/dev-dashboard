@@ -153,6 +153,7 @@ test('production HTTP handler gates every operation, unlocks setup, closes revok
     ['/api/prs'],
     ['/api/my-tickets'],
     ['/api/ticket-prs'],
+    ['/api/ticket-specs'],
     ['/api/pr-diff?repo=ExampleOrg/app&number=1'],
     ['/api/releases'],
   ];

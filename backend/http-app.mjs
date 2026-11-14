@@ -8,7 +8,7 @@ import { enrichOpenPRs } from './review.mjs';
 import { fetchPrDashboard } from './prs.mjs';
 import { fetchTicketPrs } from './ticket-prs.mjs';
 import { fetchReviewTickets } from './review-tickets.mjs';
-import { fetchSpecReviews, parseSpecReviewLimit } from './spec-reviews.mjs';
+import { fetchSpecReviews, fetchTicketSpecs, parseSpecReviewLimit } from './spec-reviews.mjs';
 import { fetchHomeVelocity } from './home-velocity.mjs';
 import { getOriginDiff } from './diff.mjs';
 import { listWorktrees, matchWorktrees } from './checkouts.mjs';
@@ -276,6 +276,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     fetchTicketPrs,
     fetchReviewTickets,
     fetchSpecReviews,
+    fetchTicketSpecs,
     fetchHomeVelocity,
     ...integrations,
   };
@@ -847,6 +848,16 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         const limits = url.searchParams.getAll('limit');
         const limit = parseSpecReviewLimit(limits.length > 1 ? limits : limits[0]);
         json(res, 200, specReviewResponse(await api.fetchSpecReviews({ ...options, limit })));
+        return;
+      }
+      // Whether each ticket has an ezat-specs PR, for the My Tickets icon. Always a 200: an
+      // unavailable result is still something the board can render. A load is up to ten GitHub
+      // calls and is never cached, so another site's page may not trigger one.
+      if (req.method === 'GET' && pathname === '/api/ticket-specs') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        const { available, byTicket } = await api.fetchTicketSpecs(options);
+        json(res, 200, { available, byTicket, updatedAt: new Date().toISOString() });
         return;
       }
       // Never fails the board: an unavailable result is still a 200 the board can render. A load

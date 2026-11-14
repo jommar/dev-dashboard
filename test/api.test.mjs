@@ -51,6 +51,31 @@ test('getTicketPrs resolves to unavailable instead of throwing, so PRs never blo
   }
 });
 
+test('getTicketSpecs returns the payload on 200 and asks the new route', async (t) => {
+  const payload = { available: true, byTicket: {} };
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return new Response(JSON.stringify(payload), { status: 200 });
+  });
+  assert.deepEqual(await api.getTicketSpecs(), payload);
+  assert.equal(calls[0][0], '/api/ticket-specs');
+});
+
+test('getTicketSpecs resolves to unavailable instead of throwing, so specs never block tickets', async (t) => {
+  for (const respond of [
+    () => new Response(JSON.stringify({ code: 'SETUP_REQUIRED' }), { status: 409 }),
+    () => new Response('not json', { status: 200 }),
+    () => {
+      throw new TypeError('network down');
+    },
+  ]) {
+    t.mock.method(globalThis, 'fetch', async () => respond());
+    assert.deepEqual(await api.getTicketSpecs(), { available: false });
+    t.mock.restoreAll();
+  }
+});
+
 const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), { status });
 
 test('getTeamVelocity requests one shared team snapshot without filtering parameters', async (t) => {

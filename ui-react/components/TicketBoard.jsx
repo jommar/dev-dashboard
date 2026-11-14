@@ -226,11 +226,35 @@ function ApprovedSeal({ testId }) {
   );
 }
 
+// The mark before the key on a card whose ticket already has an ezat-specs PR (open or merged): a page
+// with a folded corner, linking to that PR. The state is in the words, so it is never carried by shape alone.
+function SpecMark({ spec, testId }) {
+  const label = `ezat-specs PR #${spec.number} (${spec.state.toLowerCase()})`;
+  return (
+    <DashboardTooltip title={label}>
+      <a
+        className="my-tickets-spec"
+        href={spec.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={label}
+        data-testid={testId}
+      >
+        <StrokeGlyph strokeWidth={1.6}>
+          <path d="M4 2.5h5.5L12.5 5.5v8H4z" />
+          <path d="M9.5 2.5v3h3M6 8.5h4M6 11h4" />
+        </StrokeGlyph>
+      </a>
+    </DashboardTooltip>
+  );
+}
+
 function TicketCard({
   ticket,
   jiraBase,
   currentSprints,
   prs = [],
+  spec = null,
   linksByTicket,
   claudeByTicket,
   onOpenThread,
@@ -249,6 +273,7 @@ function TicketCard({
       data-testid={testId()}
     >
       <div className="board-card-top">
+        {spec && <SpecMark spec={spec} testId={testId('spec')} />}
         <a
           className="jira-link my-tickets-card-key"
           href={`${jiraBase || ''}${ticket.key}`}
@@ -309,6 +334,7 @@ export function TicketBoard({
   currentSprints,
   linksByTicket,
   prsByTicket,
+  specsByTicket,
   claudeByTicket,
   onOpenThread,
   onOpenClaude,
@@ -335,6 +361,7 @@ export function TicketBoard({
                   jiraBase={jiraBase}
                   currentSprints={currentSprints}
                   prs={prsByTicket[canonicalTicketKey(ticket.key)] || []}
+                  spec={specsByTicket[canonicalTicketKey(ticket.key)] || null}
                   linksByTicket={linksByTicket}
                   claudeByTicket={claudeByTicket}
                   onOpenThread={onOpenThread}

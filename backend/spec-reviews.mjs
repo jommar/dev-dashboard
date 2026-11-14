@@ -9,6 +9,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { captureConfiguration } from './settings.mjs';
 import { postGraphql } from './github-api.mjs';
+import { canonicalTicketKey } from '../ui/slack-ticket-links.js';
 
 const ORG = 'TransActComm';
 const SPEC_REPO = 'ezat-specs';
@@ -18,6 +19,7 @@ const PAGE_SIZE = 100;
 const DEFAULT_SPEC_LIMIT = 3;
 const SEARCH_MATCH_LIMIT = 1000;
 const CODE_PAGE_LIMIT = 10;
+const TICKET_SPEC_PAGE_LIMIT = 10;
 const CACHE_TTL_MS = 10 * 60_000;
 const DAY_MS = 86_400_000;
 const KEY_PATTERN = /(TAP|TRIPS)-[0-9]+/g;
@@ -353,5 +355,38 @@ export async function fetchSpecReviews({ snapshot, limit = DEFAULT_SPEC_LIMIT } 
     };
   } catch (error) {
     return unavailable(error?.code === 'SPEC_SEARCH_LIMIT' ? 'search_limit' : undefined);
+  }
+}
+
+// One page of every OPEN and MERGED ezat-specs PR, newest first, for the ticket-spec scan.
+const ticketSpecPage = (cursor) =>
+  `query { repository(owner: "${ORG}", name: "${SPEC_REPO}") { pullRequests(first: ${PAGE_SIZE}, states: [OPEN, MERGED], orderBy: {field: CREATED_AT, direction: DESC}${after(cursor)}) { nodes { number title url state } pageInfo { hasNextPage endCursor } } } }`;
+
+// Which tickets already have an ezat-specs PR: each ticket key named in the title of an open or
+// merged PR (TRIPS folded onto TAP) maps to its newest such PR. Any author, label or review state;
+// a closed, unmerged PR does not count. Never throws: any failure is `{ available: false }`, so the
+// My Tickets board shows no icon rather than a wrong one. Not cached, and PRs past the page cap
+// (the newest 1000) are not seen.
+export async function fetchTicketSpecs({ snapshot } = {}) {
+  const none = { available: false, byTicket: {} };
+  try {
+    const config = captureConfiguration(snapshot);
+    if (!config.credentials.githubToken) return none;
+    const byTicket = {};
+    let cursor = null;
+    for (let page = 0; page < TICKET_SPEC_PAGE_LIMIT; page += 1) {
+      const data = await graphqlData(await postGraphql(config, ticketSpecPage(cursor)));
+      const found = data?.repository?.pullRequests;
+      if (!Array.isArray(found?.nodes)) return none;
+      for (const { number, title, url, state } of found.nodes) {
+        for (const key of keysIn(title))
+          byTicket[canonicalTicketKey(key)] ??= { number, url, state };
+      }
+      if (!found.pageInfo?.hasNextPage || !found.pageInfo.endCursor) break;
+      cursor = found.pageInfo.endCursor;
+    }
+    return { available: true, byTicket };
+  } catch {
+    return none;
   }
 }

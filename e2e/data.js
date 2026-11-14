@@ -693,6 +693,7 @@ export function dashboardData() {
       byTicket: {},
       updatedAt: '2026-10-08T09:00:00.000Z',
     },
+    ticketSpecs: { available: true, byTicket: {}, updatedAt: '2026-10-08T09:00:00.000Z' },
     logs: Object.fromEntries(
       services.map((service) => [
         service.id,
@@ -2257,6 +2258,7 @@ export function apiResponse(url, method, data, body) {
     if (url.pathname === '/api/review-tickets') return { json: data.reviewTickets };
     if (url.pathname === '/api/spec-reviews') return { json: data.specReviews };
     if (url.pathname === '/api/ticket-prs') return { json: data.ticketPrs };
+    if (url.pathname === '/api/ticket-specs') return { json: data.ticketSpecs };
     if (url.pathname === '/api/my-tickets') {
       const includeDone = url.searchParams.get('includeDone') === '1';
       const tickets = data.tickets.tickets.filter(

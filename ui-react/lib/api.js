@@ -145,6 +145,18 @@ export async function getTicketPrs() {
   }
 }
 
+// Which tickets have an ezat-specs PR is optional in the same way as PR status: any failure reads
+// as unavailable and never throws, so the board keeps its tickets.
+export async function getTicketSpecs() {
+  try {
+    const res = await fetch('/api/ticket-specs');
+    if (!res.ok) return { available: false };
+    return await res.json();
+  } catch {
+    return { available: false };
+  }
+}
+
 export function getReleases({ version, scope, refresh } = {}) {
   const params = new URLSearchParams();
   if (version) params.set('version', version);

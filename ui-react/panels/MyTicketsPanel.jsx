@@ -51,6 +51,7 @@ const PR_TRUNCATED_NOTE = 'Not all open PRs were fetched, so some tickets may sh
 
 // One shared empty map until the first PR answer, so the board's props stay equal between ticks.
 const NO_PR_LINES = Object.freeze({});
+const NO_SPEC_PRS = Object.freeze({});
 
 // `requestedTicket` is the key a #/my-tickets?ticket=KEY address asks to open (or null); the panel opens
 // it once its list is in, then calls `onTicketHandled` so the address is cleared.
@@ -64,6 +65,7 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
   const [failure, setFailure] = useState('');
   const [prs, setPrs] = useState(null);
   const [prStale, setPrStale] = useState(false);
+  const [specs, setSpecs] = useState(null);
   // The ticket whose Claude dialog is open. It is held here, not in a card, so a card that
   // remounts (a filter or column change) does not close it.
   const [openClaudeKey, setOpenClaudeKey] = useState(null);
@@ -90,6 +92,7 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
   const dataRef = useRef(data);
   dataRef.current = data;
   const prRequest = useRef(0);
+  const specRequest = useRef(0);
   const claude = useClaudeTickets({ active });
   const {
     loadSlack,
@@ -116,6 +119,12 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
       if (request === prRequest.current) setPrStale(true);
     }
   }, [api]);
+  // The ezat-specs icon is a hint, so a failed read keeps the last good answer and says nothing.
+  const loadSpecs = useCallback(async () => {
+    const request = ++specRequest.current;
+    const result = await api.getTicketSpecs();
+    if (request === specRequest.current && result?.available) setSpecs(result);
+  }, [api]);
   const load = useCallback(
     async ({ silent = false, include = includeDone, skipPrs = false } = {}) => {
       // Fired, never awaited: the ticket list must not wait on Slack or on GitHub,
@@ -123,7 +132,10 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
       // in on their own once their answers arrive. Include Done passes skipPrs: it
       // changes which tickets come back, not which PRs exist.
       loadSlack();
-      if (!skipPrs) loadPrs();
+      if (!skipPrs) {
+        loadPrs();
+        loadSpecs();
+      }
       setLoading(true);
       if (!silent) setMeta(dataRef.current ? 'Refreshing…' : 'loading…');
       try {
@@ -151,7 +163,7 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
         setLoading(false);
       }
     },
-    [api, includeDone, loadSlack, loadPrs],
+    [api, includeDone, loadSlack, loadPrs, loadSpecs],
   );
   const { load: refresh, countdown } = useActivePolling({
     active,
@@ -211,6 +223,7 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
         currentSprints={data?.activeSprints}
         linksByTicket={linksByTicket}
         prsByTicket={prs?.byTicket || NO_PR_LINES}
+        specsByTicket={specs?.byTicket || NO_SPEC_PRS}
         claudeByTicket={claude.byTicket}
         onOpenThread={openThread}
         onOpenClaude={openClaude}
@@ -223,6 +236,7 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
       data?.activeSprints,
       linksByTicket,
       prs?.byTicket,
+      specs?.byTicket,
       claude.byTicket,
       openClaude,
     ],

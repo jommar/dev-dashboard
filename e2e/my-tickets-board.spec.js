@@ -154,6 +154,34 @@ test('a card shows its Jira link, named priority, points, update time and clampe
   expect(clamp).toEqual({ lines: '2', clipped: true });
 });
 
+test('a ticket with an ezat-specs PR carries a link to it and a ticket without one carries none @regression', async ({
+  page,
+  dashboard,
+}) => {
+  ticketBoardData(dashboard.data);
+  dashboard.data.ticketSpecs.byTicket['TAP-9001'] = {
+    number: 42,
+    url: 'https://github.com/TransActComm/ezat-specs/pull/42',
+    state: 'MERGED',
+  };
+  await openBoard(page);
+  const mark = page.getByTestId('my-tickets-item-spec-TAP-9001');
+  await expect(mark).toHaveAccessibleName('ezat-specs PR #42 (merged)');
+  await expect(mark).toHaveAttribute('href', 'https://github.com/TransActComm/ezat-specs/pull/42');
+  await expect(mark).toHaveAttribute('target', '_blank');
+  await expect(mark).toHaveAttribute('rel', 'noopener noreferrer');
+  await expectTooltip(page, mark, 'ezat-specs PR #42 (merged)');
+  const [markBox, keyBox] = await Promise.all([
+    mark.boundingBox(),
+    page.getByTestId('my-tickets-item-link-TAP-9001').boundingBox(),
+  ]);
+  expect(markBox.x + markBox.width, 'the icon sits before the ticket key').toBeLessThanOrEqual(
+    keyBox.x,
+  );
+  await expect(page.getByTestId('my-tickets-item-TAP-9008')).toBeVisible();
+  await expect(page.getByTestId('my-tickets-item-spec-TAP-9008')).toHaveCount(0);
+});
+
 test('sprint badges show current, future and closed Jira sprints and omit missing sprints @regression', async ({
   page,
   dashboard,

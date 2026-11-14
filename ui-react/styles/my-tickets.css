@@ -85,6 +85,16 @@ input[type='checkbox'] {
   color: var(--green);
   line-height: 0;
 }
+/* The ezat-specs mark: a page glyph that links to the spec PR; labelled in the markup. */
+.my-tickets-spec {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent);
+  line-height: 0;
+}
+.my-tickets-spec:hover {
+  color: var(--strong);
+}
 .my-tickets-card-key {
   font-family: var(--mono);
   font-size: var(--fs-xs);

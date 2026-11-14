@@ -17,7 +17,7 @@ const KIB = 1024;
 const MAX_INITIAL_RAW = 640 * KIB;
 const MAX_INITIAL_GZIP = 200 * KIB;
 // A guard against bloat, not a target: lazy loading splits code, it must not add much of it.
-const MAX_TOTAL_RAW = 880 * KIB;
+const MAX_TOTAL_RAW = 884 * KIB;
 const MAX_TOTAL_CSS = 180 * KIB;
 // Modules that must load on demand: the four rarely used screens and the two dialogs, plus the
 // markdown renderer both the viewer and the chat pull in.

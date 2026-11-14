@@ -39,6 +39,7 @@ test('the shared API boundary retains every existing endpoint and payload operat
     '/api/prs',
     '/api/my-tickets',
     '/api/ticket-prs',
+    '/api/ticket-specs',
     '/api/releases',
     '/api/pr-diff',
     '/api/slack/status',
@@ -314,6 +315,9 @@ test('My Tickets rows open their Slack thread in an in-app dialog', () => {
   assert.ok(prsCall < ticketsAwait, 'PRs are loaded before the ticket request is awaited');
   assert.doesNotMatch(panel, /await loadPrs\(/, 'PRs are never awaited on the ticket path');
   assert.match(panel, /api\.getTicketPrs\(/);
+  // The ezat-specs icon is optional the same way: fired with the PR load, never awaited.
+  assert.match(panel, /api\.getTicketSpecs\(/);
+  assert.doesNotMatch(panel, /await loadSpecs\(/, 'specs are never awaited on the ticket path');
   // A failed Slack call must leave the ticket list alone rather than reject the
   // unawaited promise.
   assert.match(slackHook, /catch \{\s*if \(id === request\.current\) setSnapshot\(null\);/);

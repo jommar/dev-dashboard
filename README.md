@@ -395,6 +395,7 @@ An agent can read the same logs three ways:
    - `GET /api/my-tickets?includeDone=0|1`
    - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
+   - `GET /api/ticket-specs` (which tickets already have an `ezat-specs` PR; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
    - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers`, `POST /api/claude/approve`, `POST /api/claude/continue` and `POST /api/claude/rereview` (see [Claude launcher](#claude-launcher))
    - `GET /api/claude/usage?sessions=<uuid>,...` (token tallies per session; see [Claude usage](#claude-usage))
@@ -924,6 +925,19 @@ ci:     { state: 'passing' | 'failing' | 'pending' | 'none',
           passed, failed, pending, failing: [name, …] } | null
 comments: { human, copilot, other, conversation, threads, truncated } | null
           human, copilot, other: { threads, unresolved, comments }
+```
+
+**Spec PR icon** — a card whose ticket already has an `ezat-specs` PR shows a small page
+icon beside its key, linking to that PR (tooltip: `ezat-specs PR #N (open|merged)`). It comes from
+`GET /api/ticket-specs`, which the tab calls with the PR load (and, like it, not for an Include Done
+toggle). It reads the newest 1000 open and merged PRs of `TransActComm/ezat-specs`, by anyone and
+whatever their label, and files each under every ticket key in its title (`TRIPS-n` under `TAP-n`);
+the newest PR wins and a closed, unmerged PR does not count. It is not cached, and a ticket whose only
+spec PR is older than that window shows no icon. It is a hint, not a gate: on any failure the last good
+answer stays and nothing is said.
+
+```
+200 { available, updatedAt, byTicket: { "<KEY>": { number, url, state: 'OPEN' | 'MERGED' } } }
 ```
 
 `login` is the GitHub user, `total` GitHub's count of matching open PRs and

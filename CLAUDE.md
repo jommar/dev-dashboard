@@ -812,9 +812,11 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
 - `test/bundle-budget.test.mjs` builds in memory (never `dist/`) and holds initial JS to 640 KiB raw and
   200 KiB gzip -9; a new eager import of a lazy module fails it. `vite.config.js` is pinned by
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
-- **The first-paint gzip and all-JS margins are thin.** With the Slack tab the entry chunk is 627 KiB raw and 204,199 B
-  gzip against 204,800 (about 600 B spare), and all JS is 901,108 B against `MAX_TOTAL_RAW`, 880 KiB (901,120 B), so
-  about 12 B spare: one more byte of lazy code, or a new eager import, can fail the budget test with no apparent cause.
+- **The first-paint gzip and all-JS margins are thin.** With the Slack tab and the My Tickets spec icon the initial closure is
+  628 KiB raw and 204,578 B gzip against 204,800 (about 220 B spare), and all JS is 902,026 B against `MAX_TOTAL_RAW`,
+  884 KiB (905,216 B; raised from 880 KiB for the spec icon), so about 3 KB spare: a few more bytes of eager code, or a new
+  eager import, can fail the budget test with no apparent cause. The spec icon (`SpecMark` in `TicketBoard.jsx`) is eager on
+  purpose: a lazy version measured no smaller at first paint, because the panel state and API call are eager anyway.
   `SessionsBody` stays lazy only because `SessionsDrawer` passes it dressed rows: rolldown makes any module that the
   entry and two or more lazy chunks share its own initial chunk, which cost more than the move saved. A new import in
   `SessionsBody.jsx` (pinned by a source test in `test/edge-drawer.test.mjs`) of a module an eager file and another lazy

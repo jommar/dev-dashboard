@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- My Tickets cards now show a page icon, linking to the PR, when the ticket already has an open or
+  merged `ezat-specs` PR. New `GET /api/ticket-specs`. See [My Tickets](README.md#my-tickets).
 - Added the Slack activity drawer: a second edge tab under Sessions opens Mentions, Threads and Reactions
   from your recent Slack activity (rows are plain links to the message in Slack, read on open and on
   Refresh only), and the tab shows your unread mentions count. New `GET /api/slack/feed`, and
