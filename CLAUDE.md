@@ -810,10 +810,10 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
   listener, `openBot`, `openClaude`), so the first press is never lost and React's 300 ms fallback
   throttle never shows. The review row of a bot still opens the eager `ClaudePlaceholderDialog`.
 - `test/bundle-budget.test.mjs` builds in memory (never `dist/`) and holds initial JS to 640 KiB raw and
-  200 KiB gzip -9; a new eager import of a lazy module fails it. `vite.config.js` is pinned by
+  201 KiB gzip -9 (raised from 200 for the merged-PR rows); a new eager import of a lazy module fails it. `vite.config.js` is pinned by
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
 - **The first-paint gzip and all-JS margins are thin.** With the Slack tab and the My Tickets spec icon the initial closure is
-  628 KiB raw and 204,578 B gzip against 204,800 (about 220 B spare), and all JS is 902,026 B against `MAX_TOTAL_RAW`,
+  628 KiB raw and 204,946 B gzip against 205,824 (201 KiB; about 880 B spare), and all JS is 902,026 B against `MAX_TOTAL_RAW`,
   884 KiB (905,216 B; raised from 880 KiB for the spec icon), so about 3 KB spare: a few more bytes of eager code, or a new
   eager import, can fail the budget test with no apparent cause. The spec icon (`SpecMark` in `TicketBoard.jsx`) is eager on
   purpose: a lazy version measured no smaller at first paint, because the panel state and API call are eager anyway.

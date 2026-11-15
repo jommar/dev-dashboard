@@ -903,7 +903,7 @@ PRs were not fetched, a PR that is missing is not counted. A card with no PR is
 never green.
 
 **PR data** — the lines come from `GET /api/ticket-prs`, which the tab calls on its
-first load, on every 90 second poll and on **Refresh**. It lists **your** open PRs
+first load, on every 90 second poll and on **Refresh**. It lists **your** open and merged PRs
 (authored by the GitHub user the saved token belongs to), drafts included, and
 it finds them through Jira, not through the watched repositories in Settings: the
 server runs the default My Tickets list itself (assigned to you, not Done; the
@@ -919,12 +919,17 @@ when Jira links it, and an open promotion PR you wrote (for example a
 several tickets is read once and listed under each, and each ticket's list is
 newest update first. Keys are the ticket keys Jira returns (`TRIPS-n` is `TAP-n`,
 any other project's key as written). Only a PR with a `github.com` pull URL that
-Jira does not list as merged or declined (a draft PR, which Jira reports as
-`DRAFT`, included) goes on to GitHub; the PR's repository and number are read
-from that URL. GitHub then decides: a PR is kept only when it is `OPEN` and its
+Jira does not list as declined (a draft PR, which Jira reports as
+`DRAFT`, and a merged one included) goes on to GitHub; the PR's repository and number are read
+from that URL. GitHub then decides: a PR is kept only when it is `OPEN` or `MERGED` and its
 author's login equals the saved token's login, ignoring case, so someone else's
-PR that Jira links to your ticket never shows, and a PR Jira still lists as open
-after it merged is dropped. `truncated` is `true` when the My Tickets list itself
+PR that Jira links to your ticket never shows, and a closed (unmerged) PR is dropped.
+A merged PR (`merged: true`, with GitHub's `mergedAt`) is hidden at first: the card shows a
+**Merged (N)** toggle under its open PRs, and a click opens one slim muted row per merged PR (a green
+merge mark and `#number repo`, no CI, review or comment detail; its comments are not read and are
+`null`). The row's tooltip is the PR title and `Merged <date>`, and the word "merged" is in its
+accessible name, so the green mark is never the only signal. Merged PRs do not count toward the green
+all-approved seal. `truncated` is `true` when the My Tickets list itself
 was cut, when you have more than 50 tickets with a Jira id (the tab then notes that
 some tickets may show no PR lines), or when the PR lookup failed for some of the
 tickets asked about; a ticket past the newest 50 shows no PR lines.
@@ -932,7 +937,7 @@ A ticket you finished (Done) shows none either, even when its PR is still open.
 
 ```
 200 { available, login, total, truncated, updatedAt,
-      byTicket: { "<KEY>": [{ repo, number, title, url, draft, updatedAt,
+      byTicket: { "<KEY>": [{ repo, number, title, url, draft, merged, mergedAt, updatedAt,
                               review, ci, comments }] } }
 
 review: { state: 'approved' | 'changes_requested' | 'awaiting', approvals } | null
@@ -3647,7 +3652,7 @@ it (`#/chat?session=<uuid>`, `#/releases?view=list`), and stays mounted, hidden,
 chunk loads a panel with the screen's own shape stands in; a chunk that fails (usually a tab that
 outlived a deploy) shows a **Reload** state in place and the other tabs keep working. An opener of a
 lazy overlay loads it first and opens when it settles, so the first press or click is never lost.
-`test/bundle-budget.test.mjs` builds in memory and holds the initial JS to 640 KiB raw and 200 KiB
+`test/bundle-budget.test.mjs` builds in memory and holds the initial JS to 640 KiB raw and 201 KiB
 gzip, so a new eager import of a lazy module fails it. Identical service snapshots no longer re-render
 the app (`ui/keep-if-equal.js`), and the refresh countdown re-renders only its own readout and pauses
 while the page is hidden or its screen is not shown. On My Tickets, Slack, Pull Requests and DevTools the

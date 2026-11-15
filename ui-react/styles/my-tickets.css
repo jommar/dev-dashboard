@@ -192,6 +192,52 @@ input[type='checkbox'] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A merged PR is one muted row: a green merge mark and the name, no second row and no word. */
+.my-tickets-pr[data-merged='true'] {
+  grid-template-areas: 'ci name';
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+.my-tickets-pr[data-merged='true'] .my-tickets-pr-ci {
+  height: 16px;
+  color: var(--green);
+}
+.my-tickets-pr[data-merged='true'] .my-tickets-pr-name {
+  color: var(--muted);
+}
+/* The closed-by-default disclosure for a card's merged PRs. */
+.my-tickets-merged-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  align-self: flex-start;
+  margin: var(--s1) 0 0;
+  padding: 0 var(--s1) 0 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  cursor: pointer;
+}
+/* The chevron is drawn here, a rotated corner that turns down when open. */
+.my-tickets-merged-toggle::before {
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  content: '';
+  transform: translateX(-1px) rotate(-45deg);
+  transition: transform 120ms var(--ease-out);
+}
+.my-tickets-merged-toggle[aria-expanded='true']::before {
+  transform: translateY(-1px) rotate(45deg);
+}
+.my-tickets-merged-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 /* The DRAFT tag is a .board-chip; this only places it in the PR line's grid. */
 .my-tickets-pr-draft {
   grid-area: draft;
@@ -322,6 +368,9 @@ input[type='checkbox'] {
 }
 
 @media (hover: hover) and (pointer: fine) {
+  .my-tickets-merged-toggle:hover {
+    color: var(--text);
+  }
   .my-tickets-card-key:hover {
     text-decoration: underline;
   }
@@ -337,6 +386,7 @@ input[type='checkbox'] {
 
 @media (prefers-reduced-motion: reduce) {
   .my-tickets-pr,
+  .my-tickets-merged-toggle::before,
   .slack-thread-link {
     transition: none;
   }

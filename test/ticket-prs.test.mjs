@@ -7,7 +7,7 @@ import {
   summarizeThreads,
 } from '../backend/ticket-prs.mjs';
 import { resetPullRequestCaches } from '../backend/dev-status.mjs';
-import { allPrsApproved } from '../ui/ticket-board.js';
+import { allPrsApproved, mergedPrLines } from '../ui/ticket-board.js';
 import { deepFreeze } from '../e2e/deep-freeze.mjs';
 
 // The shared dev-status lookup keeps a module-level cache, so every test starts from an empty one.
@@ -443,6 +443,7 @@ function stubGithub(t, options = {}) {
             pullRequest: {
               ...(selected.state ? { state: spec.state ?? 'OPEN' } : {}),
               ...(selected.isDraft ? { isDraft: spec.isDraft ?? false } : {}),
+              ...(selected.mergedAt ? { mergedAt: spec.mergedAt ?? null } : {}),
               ...(selected.author
                 ? { author: 'author' in spec ? spec.author : { login: 'me' } }
                 : {}),
@@ -557,6 +558,8 @@ test('fetchTicketPrs gives each ticket its PRs with review state and a CI summar
     title: '[TAP-9001] Fix lint rules',
     url: 'https://github.com/ExampleOrg/app/pull/11',
     draft: false,
+    merged: false,
+    mergedAt: null,
     updatedAt: '2026-10-06T12:00:00Z',
     review: { state: 'approved', approvals: 1 },
     ci: { state: 'failing', passed: 1, failed: 2, pending: 0, failing: ['lint', 'ci/legacy'] },
@@ -568,6 +571,8 @@ test('fetchTicketPrs gives each ticket its PRs with review state and a CI summar
     title: '[TAP-9001][TAP-9002] Shared change',
     url: 'https://github.com/ExampleOrg/app/pull/12',
     draft: true,
+    merged: false,
+    mergedAt: null,
     updatedAt: '2026-10-07T12:00:00Z',
     review: { state: 'changes_requested', approvals: 0 },
     ci: { state: 'pending', passed: 1, failed: 0, pending: 1, failing: [] },
@@ -706,6 +711,8 @@ test('a PR in a repo outside github.repos shows on its ticket from Jira dev-stat
         title: 'TAP-10 fix',
         url: 'https://github.com/TransActComm/ezd-transauditor/pull/7',
         draft: false,
+        merged: false,
+        mergedAt: null,
         updatedAt: '2026-10-06T12:00:00Z',
         review: { state: 'approved', approvals: 1 },
         ci: { state: 'passing', passed: 1, failed: 0, pending: 0, failing: [] },
@@ -734,20 +741,90 @@ test('only the signed-in user PRs are listed, matched on the login ignoring case
   assert.equal(result.total, 1, 'total counts the PRs listed');
 });
 
-test('only open PRs are listed: merged and declined are never queried and GitHub state decides', async (t) => {
+test('open and merged PRs are listed; declined is never queried and a closed one is dropped', async (t) => {
   const stub = stubGithub(t, {
     prs: [
       linkedPr(1, '[TAP-1] Merged', '2026-10-06T12:00:00Z', { status: 'MERGED' }),
       linkedPr(2, '[TAP-1] Declined', '2026-10-05T12:00:00Z', { status: 'DECLINED' }),
       linkedPr(3, '[TAP-1] Open', '2026-10-04T12:00:00Z'),
       linkedPr(4, '[TAP-1] Jira lags', '2026-10-03T12:00:00Z'),
+      linkedPr(5, '[TAP-1] Closed', '2026-10-02T12:00:00Z'),
     ],
-    pullRequests: { 'ExampleOrg/app#4': { state: 'MERGED' } },
+    pullRequests: {
+      'ExampleOrg/app#1': { state: 'MERGED' },
+      'ExampleOrg/app#4': { state: 'MERGED' },
+      'ExampleOrg/app#5': { state: 'CLOSED' },
+    },
   });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
-  assert.deepEqual(aliasKeys(stub.graphql), ['ExampleOrg/app#3', 'ExampleOrg/app#4']);
-  assert.deepEqual(Object.keys(result.byTicket), ['TAP-1']);
-  assert.deepEqual(ids(result.byTicket['TAP-1']), ['ExampleOrg/app#3']);
+  assert.deepEqual(aliasKeys(stub.graphql), [
+    'ExampleOrg/app#1',
+    'ExampleOrg/app#3',
+    'ExampleOrg/app#4',
+    'ExampleOrg/app#5',
+  ]);
+  assert.deepEqual(ids(result.byTicket['TAP-1']), [
+    'ExampleOrg/app#1',
+    'ExampleOrg/app#3',
+    'ExampleOrg/app#4',
+  ]);
+  assert.deepEqual(
+    result.byTicket['TAP-1'].map((item) => [item.number, item.merged]),
+    [
+      [1, true],
+      [3, false],
+      [4, true],
+    ],
+  );
+});
+
+test('a merged PR gets no comment read and null comments; only the open ones are asked', async (t) => {
+  const stub = stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] Merged', '2026-10-06T12:00:00Z', { status: 'MERGED' }),
+      linkedPr(2, '[TAP-1] Open', '2026-10-05T12:00:00Z'),
+    ],
+    pullRequests: { 'ExampleOrg/app#1': { state: 'MERGED' } },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(aliasKeys(stub.threadQueries), ['ExampleOrg/app#2']);
+  assert.equal(result.byTicket['TAP-1'][0].comments, null);
+  assert.notEqual(result.byTicket['TAP-1'][1].comments, null);
+});
+
+test('a merged PR carries GitHub mergedAt; an open one carries null', async (t) => {
+  stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] Merged', '2026-10-06T12:00:00Z', { status: 'MERGED' }),
+      linkedPr(2, '[TAP-1] Open', '2026-10-05T12:00:00Z'),
+    ],
+    pullRequests: { 'ExampleOrg/app#1': { state: 'MERGED', mergedAt: '2026-10-06T11:00:00Z' } },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(
+    result.byTicket['TAP-1'].map((item) => item.mergedAt),
+    ['2026-10-06T11:00:00Z', null],
+  );
+});
+
+test('mergedPrLines gives the title, then the merge date; no date is never guessed', () => {
+  const lines = mergedPrLines({
+    title: 'Fix the export',
+    mergedAt: '2026-10-06T11:00:00Z',
+    updatedAt: '2026-10-08T00:00:00Z',
+  });
+  assert.equal(lines[0], 'Fix the export');
+  assert.match(lines[1], /^Merged .*2026$/);
+  assert.deepEqual(mergedPrLines({ title: 'No date', mergedAt: null }), ['No date', 'Merged']);
+});
+
+test("someone else's merged PR is not listed", async (t) => {
+  stubGithub(t, {
+    prs: [linkedPr(1, '[TAP-1] Theirs', '2026-10-06T12:00:00Z', { status: 'MERGED' })],
+    pullRequests: { 'ExampleOrg/app#1': { state: 'MERGED', author: { login: 'other' } } },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(result.byTicket, {});
 });
 
 test('a PR Jira reports as DRAFT or an unknown status still goes to GitHub, which decides', async (t) => {
@@ -758,7 +835,7 @@ test('a PR Jira reports as DRAFT or an unknown status still goes to GitHub, whic
     ],
     pullRequests: {
       'ExampleOrg/app#1': { isDraft: true, author: { login: 'me' } },
-      'ExampleOrg/app#2': { state: 'MERGED' },
+      'ExampleOrg/app#2': { state: 'CLOSED' },
     },
   });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
@@ -1837,6 +1914,14 @@ test('a PR whose 100 reviews are all of its reviews keeps its review state', asy
   const prs = result.byTicket['TAP-1'];
   assert.deepEqual(prs[0].review, { state: 'approved', approvals: 1 });
   assert.equal(allPrsApproved(prs), true);
+});
+
+test('allPrsApproved ignores merged PRs: they neither block nor earn the seal', () => {
+  const approved = { review: { state: 'approved' } };
+  const awaiting = { review: { state: 'awaiting' } };
+  assert.equal(allPrsApproved([approved, { ...awaiting, merged: true }]), true);
+  assert.equal(allPrsApproved([awaiting, { ...approved, merged: true }]), false);
+  assert.equal(allPrsApproved([{ ...approved, merged: true }]), false, 'only merged: no seal');
 });
 
 test('a review window that does not say whether older reviews exist reads as an unknown review', async (t) => {

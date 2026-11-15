@@ -15,7 +15,8 @@ import { build } from 'vite';
 // Baseline at b2eb63d: one entry chunk, 831 KiB raw, 252 KiB gzip -9, 164 kB of CSS.
 const KIB = 1024;
 const MAX_INITIAL_RAW = 640 * KIB;
-const MAX_INITIAL_GZIP = 200 * KIB;
+// Raised from 200 KiB for the merged-PR rows and their toggle on My Tickets.
+const MAX_INITIAL_GZIP = 201 * KIB;
 // A guard against bloat, not a target: lazy loading splits code, it must not add much of it.
 const MAX_TOTAL_RAW = 884 * KIB;
 const MAX_TOTAL_CSS = 180 * KIB;

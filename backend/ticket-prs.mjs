@@ -1,4 +1,4 @@
-// ticket-prs.mjs — the signed-in user's open PRs keyed by the ticket Jira links them to,
+// ticket-prs.mjs — the signed-in user's open and merged PRs keyed by the ticket Jira links them to,
 // each with its review state, CI summary and review-thread counts. The My Tickets list
 // gives the tickets, Jira dev-status the PRs linked to each (every linked PR counts), then
 // one GraphQL batch per 50 PRs for author, state, review and CI, and one per 50 kept PRs
@@ -51,7 +51,7 @@ const REVIEWS_FIELD =
   'reviews(last: 100) { nodes { state submittedAt author { login } } pageInfo { hasPreviousPage } }';
 const CHECKS_FIELD =
   'commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } }';
-const DETAIL_SELECTION = `state isDraft author { login }\n  ${REVIEWS_FIELD}\n  ${CHECKS_FIELD}`;
+const DETAIL_SELECTION = `state isDraft mergedAt author { login }\n  ${REVIEWS_FIELD}\n  ${CHECKS_FIELD}`;
 // The conversation comment count, and each review thread with its resolution and the author of
 // its first comment, which decides the bucket the thread counts under.
 const COMMENTS_SELECTION = `comments(first: 1) { totalCount } reviewThreads(first: ${THREAD_CAP}) { totalCount nodes { isResolved comments(first: 1) { totalCount nodes { author { __typename login } } } } }`;
@@ -138,6 +138,8 @@ function detailOf(json, alias) {
   }
   return {
     open: pr.state === 'OPEN',
+    merged: pr.state === 'MERGED',
+    mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null,
     draft: pr.isDraft === true,
     login: typeof pr.author?.login === 'string' ? pr.author.login : null,
     review: reviewOf(pr.reviews),
@@ -258,16 +260,16 @@ export function prsByTicket(prs) {
   return byTicket;
 }
 
-// The PRs Jira links to each ticket that may still be open, once per PR, each remembering its
-// ticket keys. Only a PR Jira calls merged or declined is skipped here: any other state, a draft
-// ("DRAFT" reads as unknown) included, goes on to GitHub, which decides open, draft and author.
+// The PRs Jira links to each ticket, once per PR, each remembering its ticket keys. Only a PR Jira
+// calls declined is skipped here: any other state, a draft ("DRAFT" reads as unknown) and a
+// merged one included, goes on to GitHub, which decides open, merged, draft and author.
 // The repo and number are read from the PR's URL, and a PR without a GitHub pull URL is skipped.
-function openLinkedPrs(entries, outcomes) {
+function linkedPrs(entries, outcomes) {
   const found = new Map();
   for (const entry of entries) {
     for (const pr of outcomes.get(entry).prs ?? []) {
       const match = GITHUB_PULL_URL.exec(pr.url);
-      if (pr.state === 'merged' || pr.state === 'declined' || !match) continue;
+      if (pr.state === 'declined' || !match) continue;
       const [, repo, digits] = match;
       const number = Number(digits);
       const id = `${repo}#${number}`;
@@ -305,29 +307,35 @@ async function loadTicketPrs(config) {
     const failed = entries.filter((entry) => outcomes.get(entry).error).length;
     if (entries.length && failed === entries.length) return unavailable();
 
-    const linked = openLinkedPrs(entries, outcomes);
+    const linked = linkedPrs(entries, outcomes);
     const details = await readDetails(linked, config);
     if (details.some((detail) => detail.failed)) return unavailable();
     const mineOnly = linked.flatMap((pr, index) =>
-      details[index].open && details[index].login?.toLowerCase() === login.toLowerCase()
+      (details[index].open || details[index].merged) &&
+      details[index].login?.toLowerCase() === login.toLowerCase()
         ? [{ pr, detail: details[index] }]
         : [],
     );
-    const comments = await readComments(
-      mineOnly.map(({ pr }) => pr),
+    // A merged PR is a slim line with no comment chips, so its threads are never read.
+    const unmerged = mineOnly.filter(({ detail }) => !detail.merged);
+    const unmergedComments = await readComments(
+      unmerged.map(({ pr }) => pr),
       config,
     );
-    const prs = mineOnly.map(({ pr, detail }, index) => ({
+    const comments = new Map(unmerged.map(({ pr }, index) => [pr, unmergedComments[index]]));
+    const prs = mineOnly.map(({ pr, detail }) => ({
       repo: pr.repo,
       number: pr.number,
       title: pr.title,
       url: pr.url,
       draft: detail.draft,
+      merged: detail.merged,
+      mergedAt: detail.mergedAt,
       updatedAt: pr.updatedAt,
       tickets: pr.tickets,
       review: detail.review,
       ci: detail.ci,
-      comments: comments[index],
+      comments: comments.get(pr) ?? null,
     }));
     return {
       available: true,

@@ -13,6 +13,7 @@ import {
   ciSummaryText,
   commentChips,
   commentSummaryText,
+  mergedPrLines,
   reviewText,
 } from '../../ui/ticket-board.js';
 import { canonicalTicketKey } from '../../ui/slack-ticket-links.js';
@@ -143,27 +144,42 @@ function CommentChip({ ticketKey, repo, number, chip, onEnter }) {
   );
 }
 
+// The merge mark of a merged PR line: three nodes and the branch joining them.
+function MergeGlyph() {
+  return (
+    <StrokeGlyph size={12}>
+      <circle cx="4.5" cy="3.5" r="1.7" />
+      <circle cx="4.5" cy="12.5" r="1.7" />
+      <circle cx="11.5" cy="9" r="1.7" />
+      <path d="M4.5 5.2v5.6M11.5 7.3C11.5 5 9.4 4.2 6.4 3.8" />
+    </StrokeGlyph>
+  );
+}
+
+// One PR line. A merged PR is done work: one muted row, a green merge mark and "#number repo",
+// with no CI, review or comment detail. Its state is in the accessible name and the tooltip (title
+// and merge date), not in a visible word.
 function PrLine({ ticketKey, pr }) {
   // The comment chips sit inside the line and carry their own popup, so the line's CI popup is
   // controlled: it does not open from a chip and closes when the pointer reaches one, so the two
   // never stack.
   const [lineOpen, setLineOpen] = useState(false);
-  const name = `${pr.repo.split('/').pop()} #${pr.number}`;
+  const merged = pr.merged === true;
+  const repo = pr.repo.split('/').pop();
+  const name = merged ? `#${pr.number} ${repo}` : `${repo} #${pr.number}`;
   const ciState = pr.ci ? pr.ci.state : 'unknown';
   const ciText = ciSummaryText(pr.ci);
   const review = reviewText(pr.review);
   const chips = commentChips(pr.comments);
-  const words = [
-    `${name}${pr.draft ? ', draft' : ''}`,
-    review,
-    ciText,
-    commentSummaryText(pr.comments),
-  ]
-    .filter(Boolean)
-    .join(', ');
+  const mergedLines = merged ? mergedPrLines(pr) : [];
+  const words = merged
+    ? `${name}, ${mergedLines.join(', ').toLowerCase()}`
+    : [`${name}${pr.draft ? ', draft' : ''}`, review, ciText, commentSummaryText(pr.comments)]
+        .filter(Boolean)
+        .join(', ');
   return (
     <DashboardTooltip
-      title={ciText}
+      title={merged ? mergedLines.map((line) => <div key={line}>{line}</div>) : ciText}
       open={lineOpen}
       onOpen={(event) => {
         if (!event.target.closest?.('.my-tickets-pr-comments')) setLineOpen(true);
@@ -176,33 +192,48 @@ function PrLine({ ticketKey, pr }) {
         target="_blank"
         rel="noopener noreferrer"
         data-testid={`my-tickets-pr-${ticketKey}-${slug(pr.repo)}-${pr.number}`}
-        data-ci-state={ciState}
+        data-ci-state={merged ? undefined : ciState}
+        data-merged={merged ? 'true' : undefined}
         aria-label={words}
       >
         <span className="my-tickets-pr-ci">
-          <CiGlyph state={ciState} />
+          {merged ? <MergeGlyph /> : <CiGlyph state={ciState} />}
         </span>
         <span className="my-tickets-pr-name">{name}</span>
-        <span className="my-tickets-pr-meta">
-          <span className="my-tickets-pr-review">{review}</span>
-          {chips.length > 0 && (
-            <span className="my-tickets-pr-chips">
-              {chips.map((chip) => (
-                <CommentChip
-                  key={chip.author}
-                  ticketKey={ticketKey}
-                  repo={pr.repo}
-                  number={pr.number}
-                  chip={chip}
-                  onEnter={() => setLineOpen(false)}
-                />
-              ))}
-            </span>
-          )}
-        </span>
+        {!merged && (
+          <span className="my-tickets-pr-meta">
+            <span className="my-tickets-pr-review">{review}</span>
+            {chips.length > 0 && (
+              <span className="my-tickets-pr-chips">
+                {chips.map((chip) => (
+                  <CommentChip
+                    key={chip.author}
+                    ticketKey={ticketKey}
+                    repo={pr.repo}
+                    number={pr.number}
+                    chip={chip}
+                    onEnter={() => setLineOpen(false)}
+                  />
+                ))}
+              </span>
+            )}
+          </span>
+        )}
         {pr.draft && <span className="board-chip my-tickets-pr-draft">Draft</span>}
       </a>
     </DashboardTooltip>
+  );
+}
+
+function PrList({ ticketKey, prs, id }) {
+  return (
+    <ul className="my-tickets-prs" id={id}>
+      {prs.map((pr) => (
+        <li key={`${pr.repo}#${pr.number}`}>
+          <PrLine ticketKey={ticketKey} pr={pr} />
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -265,6 +296,11 @@ function TicketCard({
   const inCurrentSprint = currentSprints ? inSprints(ticket, currentSprints) : false;
   const allApproved = allPrsApproved(prs);
   const updated = timeAgo(ticket.updated);
+  // Open PRs are lines; merged ones stay behind a "Merged (N)" toggle, closed until clicked.
+  const openPrs = prs.filter((pr) => !pr.merged);
+  const mergedPrs = prs.filter((pr) => pr.merged);
+  const [showMerged, setShowMerged] = useState(false);
+  const mergedId = `my-tickets-merged-${key}`;
   return (
     <article
       className="board-card my-tickets-card"
@@ -309,14 +345,21 @@ function TicketCard({
           {ticket.summary || ''}
         </p>
       </DashboardTooltip>
-      {prs.length > 0 && (
-        <ul className="my-tickets-prs">
-          {prs.map((pr) => (
-            <li key={`${pr.repo}#${pr.number}`}>
-              <PrLine ticketKey={key} pr={pr} />
-            </li>
-          ))}
-        </ul>
+      {openPrs.length > 0 && <PrList ticketKey={key} prs={openPrs} />}
+      {mergedPrs.length > 0 && (
+        <>
+          <button
+            type="button"
+            className="my-tickets-merged-toggle"
+            aria-expanded={showMerged}
+            aria-controls={mergedId}
+            data-testid={testId('merged-toggle')}
+            onClick={() => setShowMerged((open) => !open)}
+          >
+            Merged ({mergedPrs.length})
+          </button>
+          {showMerged && <PrList ticketKey={key} prs={mergedPrs} id={mergedId} />}
+        </>
       )}
       {inCurrentSprint && <span className="sr-only">In current sprint</span>}
       {ticket.sprint?.name && (

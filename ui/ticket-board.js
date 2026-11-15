@@ -216,9 +216,20 @@ export function commentSummaryText(comments) {
 }
 
 // A card is all-approved when it has an open PR and every one reads approved. A draft counts by
-// its review state; a PR with unreadable review data is not approved.
+// its review state; a PR with unreadable review data is not approved; a merged PR is not open,
+// so it neither blocks nor earns the seal.
 export function allPrsApproved(prs) {
-  return (
-    Array.isArray(prs) && prs.length > 0 && prs.every((pr) => pr?.review?.state === 'approved')
-  );
+  if (!Array.isArray(prs)) return false;
+  const open = prs.filter((pr) => !pr?.merged);
+  return open.length > 0 && open.every((pr) => pr?.review?.state === 'approved');
+}
+
+// The tooltip lines of a merged PR: its title, then "Merged <date>". With no merge time from
+// GitHub the line is just "Merged", never a date guessed from another field.
+export function mergedPrLines(pr) {
+  const time = Date.parse(pr.mergedAt);
+  const day = Number.isFinite(time)
+    ? ` ${new Date(time).toLocaleDateString(undefined, { dateStyle: 'medium' })}`
+    : '';
+  return [pr.title, `Merged${day}`].filter(Boolean);
 }

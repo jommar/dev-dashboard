@@ -513,6 +513,59 @@ test('a slow PR route neither delays the cards nor raises a ticket error @regres
   await expect(page.getByTestId('my-tickets-item-TAP-9001')).toBeVisible();
 });
 
+test('merged PRs hide behind a toggle, open as slim green-icon rows with a title and date tooltip, and do not count toward the approved seal', async ({
+  page,
+  dashboard,
+}) => {
+  ticketBoardData(dashboard.data);
+  const { byTicket } = dashboard.data.ticketPrs;
+  const merged = (number) => ({
+    repo: WEB,
+    number,
+    title: 'Invented merged work',
+    url: `https://github.com/${WEB}/pull/${number}`,
+    draft: false,
+    merged: true,
+    mergedAt: '2026-10-06T11:00:00Z',
+    updatedAt: new Date().toISOString(),
+    review: { state: 'approved', approvals: 1 },
+    ci: null,
+    comments: null,
+  });
+  // 9002's only open PR is approved, 9001's is not: a merged PR beside either changes neither.
+  byTicket['TAP-9002'] = [merged(700), ...byTicket['TAP-9002']];
+  byTicket['TAP-9001'] = [merged(701), ...byTicket['TAP-9001']];
+  await page.goto('/#/my-tickets');
+  const row = page.getByTestId(prId('TAP-9002', WEB, 700));
+  const toggle = page.getByTestId('my-tickets-item-merged-toggle-TAP-9002');
+  await expect(page.getByTestId('my-tickets-item-TAP-9002')).toBeVisible();
+  await expect(row).toHaveCount(0);
+  await expect(toggle).toHaveAccessibleName('Merged (1)');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(row).toHaveAttribute('data-merged', 'true');
+  await expect(row).toHaveText('#700 example-web');
+  await expect(row).toHaveAccessibleName(/^#700 example-web, invented merged work, merged .*2026/);
+  const green = await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--green)';
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(row.locator('.my-tickets-pr-ci')).toHaveCSS('color', green);
+  const openBox = await page.getByTestId(prId('TAP-9002', WEB, 904)).boundingBox();
+  const mergedBox = await row.boundingBox();
+  expect(mergedBox.height).toBeLessThan(openBox.height);
+  await expectTooltip(page, row, /^Invented merged workMerged .*2026$/);
+  await expect(page.getByTestId('my-tickets-item-approved-TAP-9002')).toBeVisible();
+  await expect(page.getByTestId('my-tickets-item-approved-TAP-9001')).toHaveCount(0);
+  await toggle.click();
+  await expect(row).toHaveCount(0);
+});
+
 test('a 503 after a good load keeps the PR lines and says they are from the last update @regression', async ({
   page,
   dashboard,
