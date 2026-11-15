@@ -273,9 +273,9 @@ test('e2e: a working, waiting, done or failed e2e session is a bot after the rev
   );
 });
 
-test('e2e: a ticket outside the active sprint gets no e2e bot', () => {
+test('e2e: a finished e2e outside the active sprint gets no bot, a working one does', () => {
   const bots = botsFromTickets({
-    'TAP-1': entry(null, 'none', { e2e: { state: 'working', reason: 'running' } }),
+    'TAP-1': entry(null, 'none', { e2e: { state: 'failed', reason: 'x' } }),
     'TAP-2': entry(null, 'none', { e2e: { state: 'done', reason: 'finished' } }),
   });
   assert.deepEqual(
@@ -283,6 +283,10 @@ test('e2e: a ticket outside the active sprint gets no e2e bot', () => {
     ['TAP-2:e2e'],
   );
   assert.deepEqual(inActiveSprint(bots, new Set(['TAP-99'])), []);
+  const live = botsFromTickets({
+    'TAP-1': entry(null, 'none', { e2e: { state: 'working', reason: 'running' } }),
+  });
+  assert.equal(inActiveSprint(live, new Set(['TAP-99'])).length, 1, 'working is always kept');
 });
 
 test('e2e: working to done is a state change that raises one callout', () => {
@@ -382,11 +386,11 @@ test('a dismissed bot stays away until its state changes', () => {
   assert.equal(dismissBot(memory, working[0]), memory, 'a working bot cannot be dismissed');
 });
 
-test('only bots whose ticket is in the active sprint pass, and an unknown sprint shows none', () => {
+test('finished bots need an active-sprint ticket; live ones (working, waiting) always pass', () => {
   const bots = botsFromTickets({
-    'TAP-1': entry('implement-plan', 'working', { review: { state: 'done', reason: 'finished' } }),
+    'TAP-1': entry('implement-plan', 'done', { review: { state: 'done', reason: 'finished' } }),
     'TAP-2': entry('implement-plan', 'failed'),
-    'TAP-3': entry(null, 'none', { review: { state: 'waiting', reason: 'blocked' } }),
+    'TAP-3': entry(null, 'none', { review: { state: 'done', reason: 'finished' } }),
   });
   const keysOf = (items) => items.map(({ key }) => key);
   assert.deepEqual(keysOf(inActiveSprint(bots, new Set(['TAP-1', 'TAP-3']))), [
@@ -395,14 +399,21 @@ test('only bots whose ticket is in the active sprint pass, and an unknown sprint
     'TAP-3:review',
   ]);
   assert.deepEqual(keysOf(inActiveSprint(bots, ['TAP-2'])), ['TAP-2:implement']);
-  assert.deepEqual(inActiveSprint(bots, null), [], 'not loaded yet: no bots');
-  assert.deepEqual(inActiveSprint(bots, new Set()), [], 'an empty sprint: no bots');
+  assert.deepEqual(inActiveSprint(bots, null), [], 'not loaded yet: no finished bots');
+  assert.deepEqual(inActiveSprint(bots, new Set()), [], 'an empty sprint: no finished bots');
   assert.deepEqual(inActiveSprint(bots, new Set(['TAP-99'])), []);
   assert.deepEqual(inActiveSprint([], new Set(['TAP-1'])), []);
   // Keys are compared the way the app does: trimmed, upper case.
   assert.equal(normalizeTicketKey(' tap-12 '), 'TAP-12');
   assert.deepEqual(keysOf(inActiveSprint(bots, [' tap-2'])), ['TAP-2:implement']);
   assert.equal(inActiveSprint(bots, new Set(['TAP-1'])).length, 2, 'both sessions of a ticket');
+
+  const live = botsFromTickets({
+    'TAP-7': entry('investigate-and-plan', 'working'),
+    'TAP-8': entry('investigate-and-plan', 'waiting'),
+  });
+  assert.deepEqual(keysOf(inActiveSprint(live, null)), ['TAP-7:investigate', 'TAP-8:investigate']);
+  assert.equal(inActiveSprint(live, new Set(['TAP-99'])).length, 2, 'next-sprint work is shown');
 });
 
 test('a good sprint answer replaces the keys and statuses; a failed one keeps the last good set', () => {

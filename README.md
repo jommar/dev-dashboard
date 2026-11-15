@@ -2494,11 +2494,11 @@ the last card or board column ends above the posters: a board gives up that heig
 tall. With no session to show the bar is hidden and so is the gutter.
 
 - **Which sessions.** Every Claude session of each ticket (investigate, implement, review, groom and the
-  [E2E check](#e2e-check)), **of tickets in an active Jira sprint only**. The sessions live in one
+  [E2E check](#e2e-check)), **of tickets in an active Jira sprint, plus any session that is working or waiting on you, whatever its ticket's sprint**. The sessions live in one
   table, `SESSIONS` in [`ui/bot-bar.js`](ui/bot-bar.js) (`BOT_PHASES` is derived from it), which is also the
   order a ticket's bots are drawn in; a new kind of session is one new row. A bot is keyed `<KEY>:<phase>` (an e2e bot `<KEY>:e2e`). A session whose
   state is `none` (never started) or `unknown` (the CLI listing could not be read) has no bot, and neither
-  does a session of a ticket outside the active sprint, which also keeps old finished sessions off the bar.
+  does a _finished_ (done or failed) session of a ticket outside the active sprint, which keeps old finished sessions off the bar; a working or waiting one is always shown.
   **Standalone chats are the exception** (see the [Chat](#chat) tab): they have no ticket, so there is no
   sprint to check and no Jira call. A chat has a bot while it works or when it was written to in the last
   24 hours, keyed `<uuid>:chat` and labelled `chat-` and the first 8 characters of its id; it follows the
@@ -2514,7 +2514,7 @@ tall. With no session to show the bar is hidden and so is the gutter.
   each ticket to its current Jira status name. The pure filter is
   `inActiveSprint` in `ui/bot-bar.js`. The browser asks when the bar sees a ticket it has not placed,
   every 5 minutes (`SPRINT_POLL_MS`) while the page is visible, and when the page becomes visible after
-  that long. **A ticket whose sprint is not known has no bot**: nothing shows until the first answer is
+  that long. **A finished session of a ticket whose sprint is not known has no bot** (a working or waiting one is never held back): nothing finished shows until the first answer is
   in, and when Jira is not configured or unreachable (`available: false`, or a failed request) the bar
   keeps the last good set of keys and adds none, so it never shows a bot it cannot place.
 - **States.** `working` patrols back and forth along the bar, turning at each end. `waiting` is
@@ -2592,7 +2592,7 @@ sessions, open the session list`; under 600px one pill for the single zone). The
   remembered in memory only, so a reload starts the 10 minutes again and brings dismissed bots back.
 - **The session list.** A **Sessions** tab on the right edge of every screen, in the upper of two stacked edge
   tabs (with a count, amber when something needs you), opens a drawer that lists the same sessions as the bot lane: every session of a
-  ticket in an active sprint, plus the standalone chats of the last 24 hours (a chat row is named by its
+  ticket in an active sprint or that is working or waiting, plus the standalone chats of the last 24 hours (a chat row is named by its
   title, has the chat phase icon before it and shows `working` after it, and opens the chat), grouped **Needs you**, **Working**, **Failed** and **Done**, each group with
   the most recently active session first (one with no time last). Unlike the
   bar it does not forget a done bot after 10 minutes or a dismissed one, so a finished session stays

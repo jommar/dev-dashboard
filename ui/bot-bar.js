@@ -132,12 +132,15 @@ export const normalizeTicketKey = (key) =>
 
 // The bots whose ticket is in a sprint Jira calls active: the bar's second filter, applied to what
 // `botsFromTickets` returns. `sprintKeys` is the set (or array) of ticket keys GET
-// /api/active-sprint-tickets last answered, or null while none has been. A ticket whose sprint is
-// not known, because nothing has loaded or Jira could not say, gets no bot.
+// /api/active-sprint-tickets last answered, or null while none has been. A finished (done or failed)
+// session whose sprint is not known, because nothing has loaded or Jira could not say, gets no bot.
+// A live one (working, or waiting on you) is always kept: work in flight on a ticket outside the
+// active sprint (planned for the next one) must never be hidden.
+const isLive = ({ state }) => state === 'working' || state === 'waiting';
+
 export function inActiveSprint(items, sprintKeys) {
-  if (!sprintKeys) return [];
-  const active = new Set([...sprintKeys].map(normalizeTicketKey));
-  return active.size ? items.filter(({ ticket }) => active.has(normalizeTicketKey(ticket))) : [];
+  const active = new Set([...(sprintKeys ?? [])].map(normalizeTicketKey));
+  return items.filter((item) => isLive(item) || active.has(normalizeTicketKey(item.ticket)));
 }
 
 // The sprint answer after a poll, as `{ keys, statuses }`: `keys` is the Set of tickets Jira puts in

@@ -131,8 +131,10 @@ a dialog inside the strip (it would inherit the `pointer-events: none`). Which s
 `inActiveSprint` is applied to the sessions with the keys `useActiveSprintKeys` gets from
 `GET /api/active-sprint-tickets` (`fetchActiveSprintKeys` in `backend/jira.mjs`; per-ticket answers
 cached 5 minutes server side, asked again by the browser every `SPRINT_POLL_MS`, 5 minutes). A ticket
-whose sprint is unknown gets no bot, and on a failed or `available: false` answer the last good key set
-stays; do not show a bot for a ticket the sprint filter has not placed.
+whose sprint is unknown gets no bot **unless its session is live** (`working` or `waiting`: `isLive` in
+`inActiveSprint`, so work on a next-sprint ticket is never hidden; done and failed stay filtered), and on a
+failed or `available: false` answer the last good key set stays; do not show a finished bot for a ticket the
+sprint filter has not placed.
 
 **Chat bots are the exception to both rules above.** A standalone chat has no ticket, so it is not a row
 of `SESSIONS` and has no `entry`: `botsFromChats(chats, now)` in `ui/bot-bar.js` builds its bot from the
