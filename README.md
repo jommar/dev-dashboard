@@ -918,8 +918,9 @@ when Jira links it, and an open promotion PR you wrote (for example a
 `[MERGE] ... -> UAT` PR) shows on every ticket Jira links it to. A PR linked to
 several tickets is read once and listed under each, and each ticket's list is
 newest update first. Keys are the ticket keys Jira returns (`TRIPS-n` is `TAP-n`,
-any other project's key as written). Only a PR Jira lists as open, with a
-`github.com` pull URL, goes on to GitHub; the PR's repository and number are read
+any other project's key as written). Only a PR with a `github.com` pull URL that
+Jira does not list as merged or declined (a draft PR, which Jira reports as
+`DRAFT`, included) goes on to GitHub; the PR's repository and number are read
 from that URL. GitHub then decides: a PR is kept only when it is `OPEN` and its
 author's login equals the saved token's login, ignoring case, so someone else's
 PR that Jira links to your ticket never shows, and a PR Jira still lists as open

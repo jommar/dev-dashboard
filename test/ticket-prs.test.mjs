@@ -750,6 +750,25 @@ test('only open PRs are listed: merged and declined are never queried and GitHub
   assert.deepEqual(ids(result.byTicket['TAP-1']), ['ExampleOrg/app#3']);
 });
 
+test('a PR Jira reports as DRAFT or an unknown status still goes to GitHub, which decides', async (t) => {
+  const stub = stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] Draft', '2026-10-06T12:00:00Z', { status: 'DRAFT' }),
+      linkedPr(2, '[TAP-1] Lagging', '2026-10-05T12:00:00Z', { status: 'SOMETHING_NEW' }),
+    ],
+    pullRequests: {
+      'ExampleOrg/app#1': { isDraft: true, author: { login: 'me' } },
+      'ExampleOrg/app#2': { state: 'MERGED' },
+    },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(aliasKeys(stub.graphql), ['ExampleOrg/app#1', 'ExampleOrg/app#2']);
+  assert.deepEqual(
+    result.byTicket['TAP-1'].map((item) => [item.number, item.draft]),
+    [[1, true]],
+  );
+});
+
 test('the Jira link decides which ticket a PR belongs to, never its title or branch', async (t) => {
   const stub = stubGithub(t, {
     tickets: ['TAP-10', 'TAP-11', 'TAP-12'],

@@ -863,7 +863,7 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
   on its send promise is deliberate (an extra await tick reorders concurrent Slack reads).
 - `backend/dev-status.mjs` is the one Jira dev-status lookup (`lookUpPullRequests`), used by Releases and by
   `GET /api/ticket-prs` (My Tickets PR lines: the default list's newest 50 tickets, every linked PR Jira
-  reports as open, then GitHub GraphQL keeps the OPEN ones whose author is the saved token's login; no
+  does not report as merged or declined, then GitHub GraphQL keeps the OPEN ones whose author is the saved token's login; no
   `ownsPr`, by decision). It keeps **one module-level cache of unfiltered PRs** per Jira origin and issue id,
   so a caller that needs a subset filters itself (Releases applies `ownsPr` and `countsAsMerged` in
   `releases.mjs`; never filter inside the lookup). The TTL is a per-read argument (`ttlMs`: Releases 60 s,

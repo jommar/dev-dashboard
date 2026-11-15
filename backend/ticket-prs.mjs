@@ -258,14 +258,16 @@ export function prsByTicket(prs) {
   return byTicket;
 }
 
-// The open PRs Jira links to each ticket, once per PR, each remembering its ticket keys. The
-// repo and number are read from the PR's URL, and a PR without a GitHub pull URL is skipped.
+// The PRs Jira links to each ticket that may still be open, once per PR, each remembering its
+// ticket keys. Only a PR Jira calls merged or declined is skipped here: any other state, a draft
+// ("DRAFT" reads as unknown) included, goes on to GitHub, which decides open, draft and author.
+// The repo and number are read from the PR's URL, and a PR without a GitHub pull URL is skipped.
 function openLinkedPrs(entries, outcomes) {
   const found = new Map();
   for (const entry of entries) {
     for (const pr of outcomes.get(entry).prs ?? []) {
       const match = GITHUB_PULL_URL.exec(pr.url);
-      if (pr.state !== 'open' || !match) continue;
+      if (pr.state === 'merged' || pr.state === 'declined' || !match) continue;
       const [, repo, digits] = match;
       const number = Number(digits);
       const id = `${repo}#${number}`;
