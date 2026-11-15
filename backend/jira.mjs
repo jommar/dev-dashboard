@@ -358,6 +358,8 @@ function mapTicketIssue(issue, cfg) {
   const sprints = mapSprints(fields[cfg.sprintField]);
   return {
     key: issue.key,
+    // The numeric issue id, which Jira dev-status is keyed by.
+    id: typeof issue.id === 'string' && /^\d+$/.test(issue.id) ? issue.id : null,
     summary: typeof fields.summary === 'string' ? fields.summary : '',
     status: typeof status.name === 'string' ? status.name : 'Unknown',
     statusCategory: status.statusCategory?.name || 'Unknown',

@@ -1,17 +1,28 @@
-// ticket-prs.mjs — the signed-in user's open PRs keyed by every ticket they name,
-// each with its review state, CI summary and review-thread counts. One search, then
-// one GraphQL batch per 50 PRs for review and CI, then one per 50 PRs for the
-// comment counts. The batches are sent one after another, so a poll never holds two
-// GitHub requests open. Never throws: a failed search gives { available: false }, and
-// a failed batch or an unreadable field only blanks that PR's review, CI or comments,
-// so the My Tickets board never waits on or fails because of this data.
+// ticket-prs.mjs — the signed-in user's open PRs keyed by the ticket Jira links them to,
+// each with its review state, CI summary and review-thread counts. The My Tickets list
+// gives the tickets, Jira dev-status the PRs linked to each (every linked PR counts), then
+// one GraphQL batch per 50 PRs for author, state, review and CI, and one per 50 kept PRs
+// for the comment counts. The GitHub batches are sent one after another, so a poll never
+// holds two GitHub requests open. Never throws: a user that cannot be identified, a failed
+// Jira read or a failed detail batch gives { available: false }, and a failed comment batch
+// or an unreadable field only blanks that PR's comments, review or CI, so the My Tickets
+// board never waits on or fails because of this data.
 import { captureConfiguration } from './settings.mjs';
-import { fetchOpenPRs } from './github.mjs';
+import { getLogin } from './github.mjs';
+import { fetchMyTickets, jiraConfig } from './jira.mjs';
+import { lookUpPullRequests } from './dev-status.mjs';
 import { summarizeReviews } from './review.mjs';
 import { postGraphql, pullRequestQuery } from './github-api.mjs';
 import { canonicalTicketKey } from '../ui/slack-ticket-links.js';
 
 const BATCH_SIZE = 50;
+// The newest tickets asked about; more than this marks the answer truncated.
+const TICKET_LOOKUP_CAP = 50;
+// Longer than the board's 90 s poll, so a warm cache serves every second poll.
+const LOOKUP_TTL_MS = 120_000;
+// Error types of a PR alias that GitHub will not show the token: dropped, never retried.
+const UNREADABLE_ERRORS = new Set(['NOT_FOUND', 'FORBIDDEN']);
+const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/;
 // Review threads read per PR. A PR with more reports `truncated`, so its counts are partial.
 const THREAD_CAP = 50;
 // Logins of the Copilot reviewer, lower-cased and without a trailing `[bot]`. GitHub's docs name
@@ -40,7 +51,7 @@ const REVIEWS_FIELD =
   'reviews(last: 100) { nodes { state submittedAt author { login } } pageInfo { hasPreviousPage } }';
 const CHECKS_FIELD =
   'commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } }';
-const DETAIL_SELECTION = `${REVIEWS_FIELD}\n  ${CHECKS_FIELD}`;
+const DETAIL_SELECTION = `state isDraft author { login }\n  ${REVIEWS_FIELD}\n  ${CHECKS_FIELD}`;
 // The conversation comment count, and each review thread with its resolution and the author of
 // its first comment, which decides the bucket the thread counts under.
 const COMMENTS_SELECTION = `comments(first: 1) { totalCount } reviewThreads(first: ${THREAD_CAP}) { totalCount nodes { isResolved comments(first: 1) { totalCount nodes { author { __typename login } } } } }`;
@@ -112,11 +123,26 @@ function ciOf(commits, alias, errors) {
   return summarizeChecks(rollup);
 }
 
+// What one detail alias says about its PR. A failed batch is `failed`, because the author of
+// its PRs is then unknown. A null alias that GitHub says is missing or forbidden is a PR that is
+// not open and not the user's; any other error on it is a transient failure, so it fails the batch.
 function detailOf(json, alias) {
-  const pr = json?.data?.[alias]?.pullRequest;
-  if (!pr) return { review: null, ci: null };
+  if (!json) return { failed: true };
+  const pr = json.data?.[alias]?.pullRequest;
   const errors = Array.isArray(json.errors) ? json.errors : [];
-  return { review: reviewOf(pr.reviews), ci: ciOf(pr.commits, alias, errors) };
+  if (!pr) {
+    const transient = errors.some(
+      (error) => error?.path?.[0] === alias && !UNREADABLE_ERRORS.has(error.type),
+    );
+    return transient ? { failed: true } : { open: false };
+  }
+  return {
+    open: pr.state === 'OPEN',
+    draft: pr.isDraft === true,
+    login: typeof pr.author?.login === 'string' ? pr.author.login : null,
+    review: reviewOf(pr.reviews),
+    ci: ciOf(pr.commits, alias, errors),
+  };
 }
 
 const emptyBucket = () => ({ threads: 0, unresolved: 0, comments: 0 });
@@ -206,10 +232,9 @@ async function readLane(prs, config, selection, readAlias, blank) {
   return results;
 }
 
-// Review and CI for each PR, in input order. A PR that is not queried, or whose
-// batch failed, gets null for both.
+// Open state, draft flag, author, review and CI for each PR, in input order.
 function readDetails(prs, config) {
-  return readLane(prs, config, DETAIL_SELECTION, detailOf, () => ({ review: null, ci: null }));
+  return readLane(prs, config, DETAIL_SELECTION, detailOf, () => ({ open: false }));
 }
 
 // Comment counts for each PR, in input order, from a batch of their own: a failure here never
@@ -233,29 +258,81 @@ export function prsByTicket(prs) {
   return byTicket;
 }
 
+// The open PRs Jira links to each ticket, once per PR, each remembering its ticket keys. The
+// repo and number are read from the PR's URL, and a PR without a GitHub pull URL is skipped.
+function openLinkedPrs(entries, outcomes) {
+  const found = new Map();
+  for (const entry of entries) {
+    for (const pr of outcomes.get(entry).prs ?? []) {
+      const match = GITHUB_PULL_URL.exec(pr.url);
+      if (pr.state !== 'open' || !match) continue;
+      const [, repo, digits] = match;
+      const number = Number(digits);
+      const id = `${repo}#${number}`;
+      if (!found.has(id)) {
+        found.set(id, {
+          repo,
+          number,
+          title: pr.title,
+          url: pr.url,
+          updatedAt: pr.updatedAt,
+          tickets: [],
+        });
+      }
+      found.get(id).tickets.push(entry.ticket.key);
+    }
+  }
+  return [...found.values()];
+}
+
 async function loadTicketPrs(config) {
   try {
-    const found = await fetchOpenPRs({ mine: true, snapshot: config });
-    const details = await readDetails(found.prs, config);
-    const comments = await readComments(found.prs, config);
-    const entries = found.prs.map((pr, index) => ({
+    const token = config.credentials.githubToken;
+    const jira = jiraConfig(config);
+    if (!token || !jira) return unavailable();
+    const login = await getLogin(token, config.github);
+    const mine = await fetchMyTickets({ snapshot: config });
+    const withId = mine.tickets.filter((ticket) => ticket.id);
+    const entries = withId
+      .slice(0, TICKET_LOOKUP_CAP)
+      .map((ticket) => ({ issueId: ticket.id, ticket }));
+    const outcomes = await lookUpPullRequests(jira, entries, {
+      refresh: false,
+      ttlMs: LOOKUP_TTL_MS,
+    });
+    const failed = entries.filter((entry) => outcomes.get(entry).error).length;
+    if (entries.length && failed === entries.length) return unavailable();
+
+    const linked = openLinkedPrs(entries, outcomes);
+    const details = await readDetails(linked, config);
+    if (details.some((detail) => detail.failed)) return unavailable();
+    const mineOnly = linked.flatMap((pr, index) =>
+      details[index].open && details[index].login?.toLowerCase() === login.toLowerCase()
+        ? [{ pr, detail: details[index] }]
+        : [],
+    );
+    const comments = await readComments(
+      mineOnly.map(({ pr }) => pr),
+      config,
+    );
+    const prs = mineOnly.map(({ pr, detail }, index) => ({
       repo: pr.repo,
       number: pr.number,
       title: pr.title,
       url: pr.url,
-      draft: pr.draft,
+      draft: detail.draft,
       updatedAt: pr.updatedAt,
       tickets: pr.tickets,
-      ...details[index],
+      review: detail.review,
+      ci: detail.ci,
       comments: comments[index],
     }));
-    const total = Number.isFinite(found.total) ? found.total : found.prs.length;
     return {
       available: true,
-      login: found.login,
-      total,
-      truncated: total > found.prs.length,
-      byTicket: prsByTicket(entries),
+      login,
+      total: prs.length,
+      truncated: mine.truncated || withId.length > TICKET_LOOKUP_CAP || failed > 0,
+      byTicket: prsByTicket(prs),
     };
   } catch {
     return unavailable();
@@ -263,7 +340,8 @@ async function loadTicketPrs(config) {
 }
 
 // Concurrent calls for one settings revision share one upstream load. The entry is
-// dropped when the load settles, so nothing is cached and a Refresh reaches GitHub.
+// dropped when the load settles, so the result is not cached here. Jira dev-status has its own
+// 120 s cache (LOOKUP_TTL_MS) that a Refresh does not bypass; the GitHub reads are always live.
 const inFlight = new Map();
 
 // The signed-in user's open PRs with review and CI state, keyed by ticket.

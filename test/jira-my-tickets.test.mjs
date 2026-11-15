@@ -146,6 +146,47 @@ test('my-tickets fetch maps issues and paginates', async () => {
   }
 });
 
+test('my-tickets tickets carry the Jira id as a digits string, or null when it is not one', async (t) => {
+  const issue = (id, key) => ({
+    id,
+    key,
+    fields: {
+      summary: `Summary of ${key}`,
+      status: { name: 'In Progress', statusCategory: { name: 'In Progress' } },
+      priority: { name: 'High' },
+      issuetype: { name: 'Story' },
+      updated: '2026-02-01T00:00:00Z',
+      created: '2026-01-01T00:00:00Z',
+    },
+  });
+  t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({
+      isLast: true,
+      issues: [issue('10010', 'PRT-1'), issue('not-a-number', 'PRT-2')],
+    }),
+  );
+  const snapshot = {
+    jira: {
+      baseUrl: 'https://example.atlassian.net',
+      email: 'me@example.com',
+      sprintField: 'customfield_101',
+      pointsField: 'customfield_102',
+    },
+    credentials: { jiraToken: 'tok' },
+  };
+  const { tickets } = await fetchMyTickets({ snapshot });
+  assert.deepEqual(
+    tickets.map(({ key, id }) => [key, id]),
+    [
+      ['PRT-1', '10010'],
+      ['PRT-2', null],
+    ],
+  );
+  assert.equal(tickets[0].summary, 'Summary of PRT-1', 'the existing fields are unchanged');
+  assert.equal(tickets[0].status, 'In Progress');
+  assert.equal(tickets[0].priority, 'High');
+});
+
 test('my-tickets requests the sprint field', () => {
   assert.match(SPRINT_FIELD, /^customfield_\d+$/);
   assert.ok(MY_TICKETS_FIELDS.split(',').includes(SPRINT_FIELD));
