@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   fetchTicketPrs,
@@ -6,14 +6,26 @@ import {
   summarizeChecks,
   summarizeThreads,
 } from '../backend/ticket-prs.mjs';
+import { resetPullRequestCaches } from '../backend/dev-status.mjs';
 import { allPrsApproved } from '../ui/ticket-board.js';
 import { deepFreeze } from '../e2e/deep-freeze.mjs';
 
+// The shared dev-status lookup keeps a module-level cache, so every test starts from an empty one.
+beforeEach(() => resetPullRequestCaches());
+
 const TOKEN = 'synthetic-ticket-prs-token-that-must-not-leak';
+const JIRA_TOKEN = 'synthetic-ticket-prs-jira-token-that-must-not-leak';
 const API = 'https://api.github.example.invalid';
+const JIRA = 'https://jira.example.invalid';
 const snapshot = (overrides = {}) => ({
   github: { api: API, org: 'ExampleOrg', repos: ['app'], maxResults: 50 },
-  credentials: { githubToken: TOKEN },
+  jira: {
+    baseUrl: JIRA,
+    email: 'qa@example.invalid',
+    sprintField: 'customfield_101',
+    pointsField: 'customfield_102',
+  },
+  credentials: { githubToken: TOKEN, jiraToken: JIRA_TOKEN },
   ...overrides,
 });
 
@@ -143,18 +155,44 @@ test('prsByTicket of nothing is an empty map', () => {
   assert.deepEqual(Object.keys(prsByTicket([])), []);
 });
 
-// -- fetchTicketPrs against a stubbed GitHub ---------------------------------------------------
+// -- fetchTicketPrs against a stubbed Jira, dev-status and GitHub ----------------------------------
 
-const searchItem = (number, title, updatedAt, extra = {}) => ({
+// A PR that Jira dev-status links to the tickets in `tickets` (default: the keys named in the
+// title). `status` is Jira's copy of the state; the rest is dev-status's own fields.
+const linkedPr = (number, title, updatedAt, extra = {}) => ({
   number,
   title,
-  user: { login: 'me' },
-  html_url: `https://github.com/ExampleOrg/app/pull/${number}`,
-  created_at: '2026-10-01T00:00:00Z',
-  updated_at: updatedAt,
-  draft: false,
-  labels: [],
+  updatedAt,
+  repo: 'ExampleOrg/app',
+  status: 'OPEN',
+  tickets: [...new Set(title.match(/\b[A-Z][A-Z0-9]*-\d+\b/g) ?? [])],
   ...extra,
+});
+const onePr = [linkedPr(1, '[TAP-1] x', '2026-10-06T12:00:00Z')];
+const GITHUB_INSTANCE = 'oAuth-com.github.integration.production';
+const ticketId = (key) => String(10000 + Number(key.split('-').pop()));
+const rawOf = (linked) => ({
+  id: linked.id ?? `#${linked.number}`,
+  name: linked.title,
+  status: linked.status,
+  url: 'url' in linked ? linked.url : `https://github.com/${linked.repo}/pull/${linked.number}`,
+  repositoryName: linked.repositoryName ?? linked.repo,
+  repositoryUrl: `https://github.com/${linked.repo}`,
+  source: { branch: linked.head ?? `feature/${linked.number}` },
+  destination: { branch: linked.base ?? 'ops/development' },
+  lastUpdate: linked.updatedAt,
+});
+const issueOf = ({ key, id }) => ({
+  id,
+  key,
+  fields: {
+    summary: `Summary of ${key}`,
+    status: { name: 'In Progress', statusCategory: { name: 'In Progress' } },
+    priority: { name: 'High' },
+    issuetype: { name: 'Story' },
+    updated: '2026-10-06T12:00:00.000+0000',
+    created: '2026-10-01T00:00:00.000+0000',
+  },
 });
 const reply = (body, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -198,10 +236,20 @@ function selectionOf(query) {
 }
 
 // `pullRequests` maps `repo#number` to `{ reviews, rollup, threads, conversation, threadTotal,
-// reviewsPageInfo }`. `reviewsPageInfo` is the `pageInfo` of the reviews connection (default
-// `{ hasPreviousPage: false }`); like GitHub, the detail batch answers it only when its query
-// selects `reviews { pageInfo { hasPreviousPage } }`.
-// `forbidden` lists the keys whose check rollup GitHub refuses with a FORBIDDEN error entry.
+// reviewsPageInfo, state, isDraft, author }`. `reviewsPageInfo` is the `pageInfo` of the reviews
+// connection (default `{ hasPreviousPage: false }`); like GitHub, the detail batch answers it only
+// when its query selects `reviews { pageInfo { hasPreviousPage } }`. Likewise `state`, `isDraft` and
+// `author` (defaults `OPEN`, false, `{ login: 'me' }`; `author: null` is a deleted account) are
+// answered only when the detail query selects them on the pull request itself.
+// `forbidden` lists the keys whose check rollup GitHub refuses with a FORBIDDEN error entry, and
+// `unreadable` the keys whose alias GitHub answers with a null pull request and an error entry.
+//
+// Jira is stubbed beside GitHub. `prs` are the PRs Jira links (`linkedPr`), `tickets` the assigned
+// tickets, newest first (default: every key a PR is linked to, as `{ key, id }`; a plain string is a
+// key with `ticketId(key)` as its id). `options.search(call)` and `options.devStatus(call)` return a
+// Response to override an answer; `call.issueId` names the ticket of a dev-status call. The search
+// answers 50 tickets a page. Dev-status summary and detail answer from the linked PRs of the ticket
+// whose id is asked for, under one GitHub instance key.
 //
 // The review-and-CI batches and the comment batches are two lanes. A GraphQL body that reads
 // `reviewThreads` is a comment batch: it is logged in `threadQueries` (its own indexes), answered
@@ -214,31 +262,117 @@ function selectionOf(query) {
 // conversation total only when its query selects `comments { totalCount }` on the pull request
 // itself. Every other GraphQL body is a detail batch and
 // keeps `graphql` and its indexes, so a comment batch can never shift `stub.graphql[n]`.
-// `maxInFlight` is the most requests ever open at once.
+// `searches` and `devStatus` log the Jira calls. `maxInFlight` is the most GitHub requests ever
+// open at once, `maxDevStatusInFlight` the same for dev-status. Any other request is `unexpected`,
+// which includes a GitHub search.
 function stubGithub(t, options = {}) {
-  const { login = 'me', items = [], total = items.length, pullRequests = {} } = options;
+  const { login = 'me', prs = [], pullRequests = {} } = options;
+  const tickets = (options.tickets ?? [...new Set(prs.flatMap((linked) => linked.tickets))]).map(
+    (ticket) => (typeof ticket === 'string' ? { key: ticket, id: ticketId(ticket) } : ticket),
+  );
   const forbidden = new Set(options.forbidden || []);
+  const unreadable = new Set(options.unreadable || []);
   const failingThreads = new Set(options.failingThreads || []);
   const partialThreads = new Set(options.partialThreads || []);
   const calls = [];
+  const searches = [];
+  const devStatusCalls = [];
   const graphql = [];
   const threadQueries = [];
   const unexpected = [];
-  const stub = { calls, graphql, threadQueries, unexpected, maxInFlight: 0 };
+  const stub = {
+    calls,
+    searches,
+    devStatus: devStatusCalls,
+    graphql,
+    threadQueries,
+    unexpected,
+    maxInFlight: 0,
+    maxDevStatusInFlight: 0,
+  };
   let inFlight = 0;
+  let devStatusInFlight = 0;
+
+  const answerJira = async (call, url) => {
+    if (url.pathname === '/rest/api/3/search/jql') {
+      call.jql = url.searchParams.get('jql');
+      searches.push(call);
+      if (options.search) {
+        const override = await options.search(call);
+        if (override) return override;
+      }
+      const page = Number(url.searchParams.get('nextPageToken')?.replace('page-', '') ?? 0);
+      const last = (page + 1) * 50 >= tickets.length;
+      return reply({
+        issues: tickets.slice(page * 50, page * 50 + 50).map(issueOf),
+        isLast: last,
+        ...(last ? {} : { nextPageToken: `page-${page + 1}` }),
+      });
+    }
+    const kind = /^\/rest\/dev-status\/latest\/issue\/(summary|detail)$/.exec(url.pathname)?.[1];
+    if (!kind) return null;
+    call.kind = kind;
+    call.issueId = url.searchParams.get('issueId');
+    devStatusCalls.push(call);
+    if (options.devStatus) {
+      const override = await options.devStatus(call);
+      if (override) return override;
+    }
+    const ticket = tickets.find((candidate) => candidate.id === call.issueId);
+    const linked = prs.filter((candidate) => candidate.tickets.includes(ticket?.key));
+    if (kind === 'summary') {
+      return reply({
+        errors: [],
+        configErrors: [],
+        summary: {
+          pullrequest: {
+            overall: { count: linked.length, dataType: 'pullrequest' },
+            byInstanceType: linked.length
+              ? { [GITHUB_INSTANCE]: { count: linked.length, name: 'GitHub' } }
+              : {},
+          },
+        },
+      });
+    }
+    const asked = url.searchParams.get('applicationType');
+    return reply({
+      errors: [],
+      detail:
+        asked === GITHUB_INSTANCE && linked.length
+          ? [
+              {
+                _instance: { name: 'GitHub', type: GITHUB_INSTANCE },
+                pullRequests: linked.map(rawOf),
+                branches: [],
+                repositories: [],
+              },
+            ]
+          : [],
+    });
+  };
+
   t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
     const url = String(input);
     const call = { url, init, seq: calls.length };
     calls.push(call);
-    inFlight += 1;
-    stub.maxInFlight = Math.max(stub.maxInFlight, inFlight);
+    const isGithub = url.startsWith(API);
+    const isDevStatus = url.startsWith(`${JIRA}/rest/dev-status/`);
+    if (isGithub) {
+      inFlight += 1;
+      stub.maxInFlight = Math.max(stub.maxInFlight, inFlight);
+    }
+    if (isDevStatus) {
+      devStatusInFlight += 1;
+      stub.maxDevStatusInFlight = Math.max(stub.maxDevStatusInFlight, devStatusInFlight);
+    }
     try {
       // One turn of the event loop, so two requests that were not sent one after another overlap.
       await new Promise((resolve) => setImmediate(resolve));
-      if (url.endsWith('/user')) return options.user ? options.user(call) : reply({ login });
-      if (url.includes('/search/issues')) {
-        return options.search ? options.search(call) : reply({ total_count: total, items });
+      if (url.startsWith(JIRA)) {
+        const answered = await answerJira(call, new URL(url));
+        if (answered) return answered;
       }
+      if (url.endsWith('/user')) return options.user ? options.user(call) : reply({ login });
       if (url.endsWith('/graphql')) {
         const { query } = JSON.parse(init.body);
         call.query = query;
@@ -292,11 +426,26 @@ function stubGithub(t, options = {}) {
         }
         const data = {};
         const errors = [];
-        const reviewFields = selectionOf(query).query?.repository?.pullRequest?.reviews ?? {};
+        const selected = selectionOf(query).query?.repository?.pullRequest ?? {};
+        const reviewFields = selected.reviews ?? {};
         for (const [alias, key] of call.aliases) {
           const spec = pullRequests[key] || {};
+          if (unreadable.has(key)) {
+            data[alias] = { pullRequest: null };
+            errors.push({
+              type: 'NOT_FOUND',
+              path: [alias, 'repository'],
+              message: 'Could not resolve to a Repository (upstream detail)',
+            });
+            continue;
+          }
           data[alias] = {
             pullRequest: {
+              ...(selected.state ? { state: spec.state ?? 'OPEN' } : {}),
+              ...(selected.isDraft ? { isDraft: spec.isDraft ?? false } : {}),
+              ...(selected.author
+                ? { author: 'author' in spec ? spec.author : { login: 'me' } }
+                : {}),
               reviewDecision: null,
               reviews: {
                 nodes: spec.reviews || [],
@@ -334,7 +483,8 @@ function stubGithub(t, options = {}) {
       unexpected.push(url);
       return reply({ message: 'unexpected request' }, 500);
     } finally {
-      inFlight -= 1;
+      if (isGithub) inFlight -= 1;
+      if (isDevStatus) devStatusInFlight -= 1;
     }
   });
   return stub;
@@ -360,19 +510,15 @@ const ZERO_COMMENTS = {
   threads: 0,
   truncated: false,
 };
-const NO_REVIEW_OR_CI = [null, null];
 
 const authorizationOf = (init) => new Headers(init.headers).get('authorization');
 const UNAVAILABLE = { available: false, login: null, total: 0, truncated: false, byTicket: {} };
 
 test('fetchTicketPrs gives each ticket its PRs with review state and a CI summary', async (t) => {
   const stub = stubGithub(t, {
-    items: [
-      searchItem(11, '[TAP-9001] Fix lint rules', '2026-10-06T12:00:00Z'),
-      searchItem(12, '[TAP-9001][TRIPS-9002] Shared change', '2026-10-07T12:00:00Z', {
-        draft: true,
-      }),
-      searchItem(13, 'No ticket named here', '2026-10-08T12:00:00Z'),
+    prs: [
+      linkedPr(11, '[TAP-9001] Fix lint rules', '2026-10-06T12:00:00Z'),
+      linkedPr(12, '[TAP-9001][TAP-9002] Shared change', '2026-10-07T12:00:00Z'),
     ],
     pullRequests: {
       'ExampleOrg/app#11': {
@@ -387,6 +533,7 @@ test('fetchTicketPrs gives each ticket its PRs with review state and a CI summar
         ]),
       },
       'ExampleOrg/app#12': {
+        isDraft: true,
         reviews: [review('carol', 'CHANGES_REQUESTED', '2026-10-02T00:00:00Z')],
         rollup: rollup('PENDING', [
           run('build', 'IN_PROGRESS', null),
@@ -400,7 +547,7 @@ test('fetchTicketPrs gives each ticket its PRs with review state and a CI summar
   assert.deepEqual(stub.unexpected, []);
   assert.equal(result.available, true);
   assert.equal(result.login, 'me');
-  assert.equal(result.total, 3);
+  assert.equal(result.total, 2);
   assert.equal(result.truncated, false);
   assert.deepEqual(Object.keys(result.byTicket).sort(), ['TAP-9001', 'TAP-9002']);
 
@@ -418,7 +565,7 @@ test('fetchTicketPrs gives each ticket its PRs with review state and a CI summar
   const shared = {
     repo: 'ExampleOrg/app',
     number: 12,
-    title: '[TAP-9001][TRIPS-9002] Shared change',
+    title: '[TAP-9001][TAP-9002] Shared change',
     url: 'https://github.com/ExampleOrg/app/pull/12',
     draft: true,
     updatedAt: '2026-10-07T12:00:00Z',
@@ -432,7 +579,7 @@ test('fetchTicketPrs gives each ticket its PRs with review state and a CI summar
 
 test('fetchTicketPrs reads a PR with no reviews as awaiting and a PR with no checks as none', async (t) => {
   stubGithub(t, {
-    items: [searchItem(21, '[TAP-1] Quiet change', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(21, '[TAP-1] Quiet change', '2026-10-06T12:00:00Z')],
     pullRequests: { 'ExampleOrg/app#21': { reviews: [], rollup: null } },
   });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
@@ -443,9 +590,9 @@ test('fetchTicketPrs reads a PR with no reviews as awaiting and a PR with no che
 
 test('fetchTicketPrs reads a standing change request as changes_requested beside another approval', async (t) => {
   stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] Approved after the request', '2026-10-06T12:00:00Z'),
-      searchItem(2, '[TAP-2] Approved before the request', '2026-10-05T12:00:00Z'),
+    prs: [
+      linkedPr(1, '[TAP-1] Approved after the request', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Approved before the request', '2026-10-05T12:00:00Z'),
     ],
     pullRequests: {
       'ExampleOrg/app#1': {
@@ -471,10 +618,10 @@ test('fetchTicketPrs reads a standing change request as changes_requested beside
 
 test('a FORBIDDEN error on one PR check rollup nulls only that PR CI and keeps its review', async (t) => {
   stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] Readable', '2026-10-06T12:00:00Z'),
-      searchItem(2, '[TAP-2] Token cannot read checks', '2026-10-05T12:00:00Z'),
-      searchItem(3, '[TAP-3] No checks at all', '2026-10-04T12:00:00Z'),
+    prs: [
+      linkedPr(1, '[TAP-1] Readable', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Token cannot read checks', '2026-10-05T12:00:00Z'),
+      linkedPr(3, '[TAP-3] No checks at all', '2026-10-04T12:00:00Z'),
     ],
     forbidden: ['ExampleOrg/app#2'],
     pullRequests: {
@@ -502,7 +649,7 @@ test('a FORBIDDEN error on one PR check rollup nulls only that PR CI and keeps i
 
 test('an unrelated GraphQL error entry drops nothing', async (t) => {
   stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] Change', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] Change', '2026-10-06T12:00:00Z')],
     errors: [{ type: 'INTERNAL', message: 'something odd upstream' }],
     pullRequests: {
       'ExampleOrg/app#1': {
@@ -518,6 +665,299 @@ test('an unrelated GraphQL error entry drops nothing', async (t) => {
   assert.ok(!JSON.stringify(result).includes('something odd upstream'));
 });
 
+const secretsIn = (value) =>
+  [TOKEN, JIRA_TOKEN, 'Bad credentials', 'socket hang up', 'schema went away'].filter((secret) =>
+    JSON.stringify(value).includes(secret),
+  );
+const jiraCalls = (stub) => stub.calls.filter((call) => call.url.startsWith(JIRA));
+const isUser = (call) => call.url.endsWith('/user');
+const aliasKeys = (calls) => calls.flatMap((call) => [...call.aliases.values()]).sort();
+
+test('a PR in a repo outside github.repos shows on its ticket from Jira dev-status', async (t) => {
+  const stub = stubGithub(t, {
+    prs: [
+      linkedPr(7, 'TAP-10 fix', '2026-10-06T12:00:00Z', {
+        repo: 'TransActComm/ezd-transauditor',
+        tickets: ['TAP-10'],
+      }),
+    ],
+    pullRequests: {
+      'TransActComm/ezd-transauditor#7': {
+        reviews: [review('bob', 'APPROVED', '2026-10-02T00:00:00Z')],
+        rollup: rollup('SUCCESS', [run('build', 'COMPLETED', 'SUCCESS')]),
+      },
+    },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+
+  assert.deepEqual(stub.unexpected, []);
+  assert.ok(
+    !stub.calls.some((call) => call.url.includes('/search/issues')),
+    'no GitHub search is made',
+  );
+  assert.equal(result.available, true);
+  assert.deepEqual(Object.keys(result.byTicket), ['TAP-10']);
+  assert.deepEqual(
+    result.byTicket['TAP-10'].map((item) => ({ ...item })),
+    [
+      {
+        repo: 'TransActComm/ezd-transauditor',
+        number: 7,
+        title: 'TAP-10 fix',
+        url: 'https://github.com/TransActComm/ezd-transauditor/pull/7',
+        draft: false,
+        updatedAt: '2026-10-06T12:00:00Z',
+        review: { state: 'approved', approvals: 1 },
+        ci: { state: 'passing', passed: 1, failed: 0, pending: 0, failing: [] },
+        comments: ZERO_COMMENTS,
+      },
+    ],
+  );
+});
+
+test('only the signed-in user PRs are listed, matched on the login ignoring case', async (t) => {
+  stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] Mine', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-1] Someone else', '2026-10-05T12:00:00Z'),
+      linkedPr(3, '[TAP-1] Deleted author', '2026-10-04T12:00:00Z'),
+    ],
+    pullRequests: {
+      'ExampleOrg/app#1': { author: { login: 'Me' } },
+      'ExampleOrg/app#2': { author: { login: 'other' } },
+      'ExampleOrg/app#3': { author: null },
+    },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.equal(result.available, true);
+  assert.deepEqual(ids(result.byTicket['TAP-1']), ['ExampleOrg/app#1']);
+  assert.equal(result.total, 1, 'total counts the PRs listed');
+});
+
+test('only open PRs are listed: merged and declined are never queried and GitHub state decides', async (t) => {
+  const stub = stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] Merged', '2026-10-06T12:00:00Z', { status: 'MERGED' }),
+      linkedPr(2, '[TAP-1] Declined', '2026-10-05T12:00:00Z', { status: 'DECLINED' }),
+      linkedPr(3, '[TAP-1] Open', '2026-10-04T12:00:00Z'),
+      linkedPr(4, '[TAP-1] Jira lags', '2026-10-03T12:00:00Z'),
+    ],
+    pullRequests: { 'ExampleOrg/app#4': { state: 'MERGED' } },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(aliasKeys(stub.graphql), ['ExampleOrg/app#3', 'ExampleOrg/app#4']);
+  assert.deepEqual(Object.keys(result.byTicket), ['TAP-1']);
+  assert.deepEqual(ids(result.byTicket['TAP-1']), ['ExampleOrg/app#3']);
+});
+
+test('the Jira link decides which ticket a PR belongs to, never its title or branch', async (t) => {
+  const stub = stubGithub(t, {
+    tickets: ['TAP-10', 'TAP-11', 'TAP-12'],
+    prs: [
+      linkedPr(1, '[MERGE] ops/development -> UAT', '2026-10-06T12:00:00Z', {
+        tickets: ['TAP-10'],
+        head: 'ops/uat',
+      }),
+      linkedPr(2, 'fix', '2026-10-05T12:00:00Z', { tickets: ['TAP-10'], head: 'feature/x' }),
+      linkedPr(3, 'TAP-100 other', '2026-10-04T12:00:00Z', { tickets: ['TAP-10'] }),
+      linkedPr(4, 'TRIPS-11 login', '2026-10-03T12:00:00Z', { tickets: ['TAP-11'] }),
+      linkedPr(5, 'TAP-12 orphan', '2026-10-02T12:00:00Z', { tickets: [] }),
+    ],
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(Object.keys(result.byTicket).sort(), ['TAP-10', 'TAP-11']);
+  assert.deepEqual(ids(result.byTicket['TAP-10']), [
+    'ExampleOrg/app#1',
+    'ExampleOrg/app#2',
+    'ExampleOrg/app#3',
+  ]);
+  assert.deepEqual(ids(result.byTicket['TAP-11']), ['ExampleOrg/app#4']);
+  assert.ok(!aliasKeys(stub.graphql).includes('ExampleOrg/app#5'), 'an unlinked PR is never read');
+});
+
+test('the draft flag comes from GitHub isDraft', async (t) => {
+  stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] Draft', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-1] Ready', '2026-10-05T12:00:00Z'),
+    ],
+    pullRequests: { 'ExampleOrg/app#1': { isDraft: true }, 'ExampleOrg/app#2': { isDraft: false } },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(
+    result.byTicket['TAP-1'].map((item) => [item.number, item.draft]),
+    [
+      [1, true],
+      [2, false],
+    ],
+  );
+});
+
+test('a PR linked to two tickets is listed under both and read once', async (t) => {
+  const stub = stubGithub(t, {
+    prs: [
+      linkedPr(5, 'Shared change', '2026-10-05T12:00:00Z', { tickets: ['TAP-1', 'TAP-2'] }),
+      linkedPr(6, 'Only the first', '2026-10-07T12:00:00Z', { tickets: ['TAP-1'] }),
+      linkedPr(7, 'Only the second', '2026-10-03T12:00:00Z', { tickets: ['TAP-2'] }),
+    ],
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(
+    result.byTicket['TAP-1'].map((item) => item.number),
+    [6, 5],
+    'newest update first',
+  );
+  assert.deepEqual(
+    result.byTicket['TAP-2'].map((item) => item.number),
+    [5, 7],
+    'newest update first',
+  );
+  assert.deepEqual(aliasKeys(stub.graphql), [
+    'ExampleOrg/app#5',
+    'ExampleOrg/app#6',
+    'ExampleOrg/app#7',
+  ]);
+  assert.equal(result.total, 3, 'total counts distinct PRs');
+});
+
+test('ticket cap: the default list is searched and the 50 newest tickets are looked up', async (t) => {
+  const many = Array.from({ length: 60 }, (_, i) =>
+    linkedPr(i + 1, `[TAP-${i + 1}] Change`, '2026-10-06T12:00:00Z'),
+  );
+  const stub = stubGithub(t, { prs: many });
+  const cut = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.match(stub.searches[0].jql, /assignee = currentUser\(\)/);
+  assert.match(stub.searches[0].jql, /statusCategory != Done/);
+  assert.deepEqual(
+    [...new Set(stub.devStatus.map((call) => call.issueId))].sort(),
+    Array.from({ length: 50 }, (_, i) => ticketId(`TAP-${i + 1}`)).sort(),
+    'dev-status is asked for the first 50 of the newest-first search only',
+  );
+  assert.equal(cut.truncated, true);
+  assert.equal(Object.keys(cut.byTicket).length, 50);
+  t.mock.restoreAll();
+
+  const stubWhole = stubGithub(t, { prs: many.slice(0, 50) });
+  const whole = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.equal(stubWhole.searches.length, 1);
+  assert.equal(whole.truncated, false);
+  assert.equal(Object.keys(whole.byTicket).length, 50);
+});
+
+test('a poll costs one /user, one search page, one dev-status detail per ticket and two GraphQL POSTs, then the cache serves dev-status', async (t) => {
+  const many = Array.from({ length: 50 }, (_, i) =>
+    linkedPr(i + 1, `[TAP-${i + 1}] Change ${i + 1}`, '2026-10-06T12:00:00Z'),
+  );
+  const timeouts = [];
+  const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', (ms) => {
+    timeouts.push(ms);
+    return realTimeout(ms);
+  });
+  const stub = stubGithub(t, { prs: many });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+
+  assert.deepEqual(stub.unexpected, []);
+  assert.equal(stub.calls.filter(isUser).length, 1);
+  assert.equal(stub.searches.length, 1, 'one search page for 50 tickets');
+  const details = stub.devStatus.filter((call) => call.kind === 'detail');
+  const summaries = stub.devStatus.filter((call) => call.kind === 'summary');
+  assert.equal(details.length, 50, 'one dev-status detail per ticket');
+  assert.ok(summaries.length <= 1, 'at most the one summary that learns the instance key');
+  assert.equal(stub.graphql.length, 1, 'one detail POST');
+  assert.equal(stub.threadQueries.length, 1, 'one comment POST');
+  assert.equal(stub.calls.length, 4 + 50 + summaries.length, 'no other call');
+  assert.ok(stub.maxDevStatusInFlight <= 4, 'dev-status runs four at a time at most');
+  assert.equal(stub.maxInFlight, 1, 'never two GitHub requests open at once');
+  const lastJira = Math.max(...jiraCalls(stub).map((call) => call.seq));
+  assert.ok(stub.graphql[0].seq > lastJira, 'GitHub batches follow the Jira work');
+  assert.ok(stub.threadQueries[0].seq > stub.graphql[0].seq, 'comments follow the detail POST');
+
+  for (const call of stub.calls) {
+    assert.ok(call.init.signal instanceof AbortSignal, `${call.url} has a timeout signal`);
+    assert.ok(!call.url.includes(TOKEN) && !call.url.includes(JIRA_TOKEN), 'no token in a URL');
+    assert.ok(!String(call.init.body ?? '').includes(TOKEN), 'no token in a body');
+    const expected = call.url.startsWith(JIRA)
+      ? `Basic ${Buffer.from(`qa@example.invalid:${JIRA_TOKEN}`).toString('base64')}`
+      : `Bearer ${TOKEN}`;
+    assert.equal(authorizationOf(call.init), expected, 'the token travels in a header only');
+  }
+  assert.ok(timeouts.filter((ms) => ms === 15_000).length >= stub.calls.length);
+  assert.ok(timeouts.every((ms) => ms <= 15_000));
+  assert.equal(Object.keys(result.byTicket).length, 50);
+  assert.deepEqual(secretsIn(result), []);
+
+  const before = stub.calls.length;
+  const again = await fetchTicketPrs({ snapshot: snapshot() });
+  const warm = stub.calls.slice(before);
+  assert.equal(
+    warm.filter((call) => call.url.includes('/rest/dev-status/')).length,
+    0,
+    'a second poll within 120 s makes no dev-status call',
+  );
+  assert.equal(warm.filter(isUser).length, 1);
+  assert.equal(warm.filter((call) => call.url.includes('/search/jql')).length, 1);
+  assert.equal(warm.filter((call) => call.url.endsWith('/graphql')).length, 2);
+  assert.deepEqual(again, result);
+});
+
+for (const [name, options] of [
+  ['a 502 on the My Tickets search', { search: () => reply({ message: `no ${JIRA_TOKEN}` }, 502) }],
+  ['every dev-status call answering 500', { devStatus: () => reply({ message: 'down' }, 500) }],
+]) {
+  test(`Jira failing: ${name} is unavailable`, async (t) => {
+    const stub = stubGithub(t, {
+      prs: [
+        linkedPr(1, '[TAP-1] First', '2026-10-06T12:00:00Z'),
+        linkedPr(2, '[TAP-2] Second', '2026-10-05T12:00:00Z'),
+      ],
+      ...options,
+    });
+    const result = await fetchTicketPrs({ snapshot: snapshot() });
+    assert.deepEqual(result, UNAVAILABLE);
+    assert.equal(stub.searches.length, 1, 'the My Tickets search was asked');
+    if (options.devStatus) assert.ok(stub.devStatus.length > 0, 'dev-status was asked');
+    assert.equal(stub.graphql.length, 0, 'no GraphQL request');
+    assert.deepEqual(secretsIn(result), []);
+  });
+}
+
+test('Jira failing: one failed lookup of three keeps the other tickets and marks the answer truncated', async (t) => {
+  stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] First', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Second', '2026-10-05T12:00:00Z'),
+      linkedPr(3, '[TAP-3] Third', '2026-10-04T12:00:00Z'),
+    ],
+    devStatus: (call) =>
+      call.issueId === ticketId('TAP-2') ? reply({ message: 'down' }, 500) : null,
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.equal(result.available, true);
+  assert.equal(result.truncated, true);
+  assert.deepEqual(Object.keys(result.byTicket).sort(), ['TAP-1', 'TAP-3']);
+});
+
+test('GitHub failing: no token is unavailable and no Jira request is made', async (t) => {
+  const stub = stubGithub(t, { prs: onePr });
+  const result = await fetchTicketPrs({
+    snapshot: snapshot({ credentials: { githubToken: '', jiraToken: JIRA_TOKEN } }),
+  });
+  assert.deepEqual(result, UNAVAILABLE);
+  assert.equal(jiraCalls(stub).length, 0);
+});
+
+test('GitHub failing: a /user answering 401 is unavailable and no Jira request is made', async (t) => {
+  const stub = stubGithub(t, {
+    prs: onePr,
+    user: () => reply({ message: `no ${TOKEN}` }, 401),
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(result, UNAVAILABLE);
+  assert.equal(jiraCalls(stub).length, 0);
+  assert.deepEqual(secretsIn(result), []);
+});
+
 for (const [name, graphql] of [
   ['a non-OK response', () => reply({ message: `Bad credentials ${TOKEN}` }, 502)],
   [
@@ -528,114 +968,104 @@ for (const [name, graphql] of [
   ],
   ['a body without data', () => reply({ errors: [{ message: 'schema went away' }] })],
 ]) {
-  test(`${name} on the GraphQL batch lists the PRs with null review and CI`, async (t) => {
-    stubGithub(t, {
-      items: [
-        searchItem(1, '[TAP-1] First', '2026-10-06T12:00:00Z'),
-        searchItem(2, '[TAP-2] Second', '2026-10-05T12:00:00Z'),
+  test(`GitHub failing: ${name} on the detail batch is unavailable`, async (t) => {
+    const stub = stubGithub(t, {
+      prs: [
+        linkedPr(1, '[TAP-1] First', '2026-10-06T12:00:00Z'),
+        linkedPr(2, '[TAP-2] Second', '2026-10-05T12:00:00Z'),
       ],
       graphql,
     });
     const result = await fetchTicketPrs({ snapshot: snapshot() });
-    assert.equal(result.available, true);
-    assert.deepEqual(Object.keys(result.byTicket).sort(), ['TAP-1', 'TAP-2']);
-    for (const list of Object.values(result.byTicket)) {
-      for (const item of list) {
-        assert.equal(item.review, null);
-        assert.equal(item.ci, null);
-      }
-    }
-    const text = JSON.stringify(result);
-    for (const secret of [TOKEN, 'Bad credentials', 'socket hang up', 'schema went away']) {
-      assert.ok(!text.includes(secret), `the result never carries "${secret}"`);
-    }
+    assert.deepEqual(result, UNAVAILABLE);
+    assert.equal(stub.graphql.length, 1, 'the detail batch was attempted for the linked PRs');
+    assert.deepEqual(secretsIn(result), []);
   });
 }
 
-test('a failed batch leaves the PRs of the other batches intact', async (t) => {
-  const items = Array.from({ length: 60 }, (_, i) =>
-    searchItem(
-      i + 1,
-      `[TAP-${i + 1}] Change ${i + 1}`,
-      `2026-10-06T12:${String(i).padStart(2, '0')}:00Z`,
-    ),
-  );
-  const approved = {
-    reviews: [review('bob', 'APPROVED', '2026-10-02T00:00:00Z')],
-    rollup: rollup('SUCCESS', [run('build', 'COMPLETED', 'SUCCESS')]),
-  };
-  const pullRequests = Object.fromEntries(
-    items.map((item) => [`ExampleOrg/app#${item.number}`, approved]),
+test('GitHub failing: one failed detail batch among several makes the whole answer unavailable', async (t) => {
+  // One ticket linked to 60 PRs, so the lookup cap does not shrink the list.
+  const linked = Array.from({ length: 60 }, (_, i) =>
+    linkedPr(i + 1, `Change ${i + 1}`, `2026-10-06T12:${String(i).padStart(2, '0')}:00Z`, {
+      tickets: ['TAP-1'],
+    }),
   );
   const stub = stubGithub(t, {
-    items,
-    pullRequests,
-    graphql: (call) => (call.index === 0 ? reply({ message: 'down' }, 503) : null),
+    prs: linked,
+    graphql: (call) => (call.index === 1 ? reply({ message: 'down' }, 503) : null),
   });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
-  assert.equal(stub.graphql.length, 2, '60 PRs take two batches');
-  const failed = new Set(stub.graphql[0].aliases.values());
-  const served = new Set(stub.graphql[1].aliases.values());
-  assert.ok(failed.size > 0 && served.size > 0);
-  for (const list of Object.values(result.byTicket)) {
-    for (const item of list) {
-      const key = `${item.repo}#${item.number}`;
-      if (failed.has(key)) assert.deepEqual([item.review, item.ci], [null, null], key);
-      else {
-        assert.ok(served.has(key), `${key} was in a batch`);
-        assert.equal(item.review.state, 'approved', key);
-        assert.equal(item.ci.state, 'passing', key);
-      }
-    }
-  }
+  assert.equal(stub.graphql.length, 2, '60 PRs take two detail batches, the second one fails');
+  assert.deepEqual(result, UNAVAILABLE);
 });
 
-test('fetchTicketPrs degrades to available false when the user, search or token is missing', async (t) => {
-  const cases = [
-    ['no token', {}, snapshot({ credentials: { githubToken: '' } })],
-    ['a failing /user', { user: () => reply({ message: `no ${TOKEN}` }, 401) }, snapshot()],
-    ['a failing search', { search: () => reply({ message: `no ${TOKEN}` }, 500) }, snapshot()],
-    [
-      'a network error',
-      {
-        search: () => {
-          throw new Error(`offline ${TOKEN}`);
-        },
-      },
-      snapshot(),
+test('GitHub failing: an error entry on one alias drops only that PR', async (t) => {
+  const stub = stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] Readable', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Unreadable repo', '2026-10-05T12:00:00Z'),
+      linkedPr(3, '[TAP-3] Readable too', '2026-10-04T12:00:00Z'),
     ],
-  ];
-  for (const [name, options, snap] of cases) {
-    const stub = stubGithub(t, {
-      items: [searchItem(1, '[TAP-1] x', '2026-10-06T12:00:00Z')],
-      ...options,
-    });
-    const result = await fetchTicketPrs({ snapshot: snap });
-    assert.deepEqual(result, UNAVAILABLE, name);
-    assert.equal(stub.graphql.length, 0, `${name}: no GraphQL request`);
-    assert.ok(!JSON.stringify(result).includes(TOKEN), name);
-    t.mock.restoreAll();
-  }
-});
-
-test('total_count above the returned PRs marks the result truncated', async (t) => {
-  const items = Array.from({ length: 50 }, (_, i) =>
-    searchItem(i + 1, `[TAP-${i + 1}] Change`, '2026-10-06T12:00:00Z'),
+    unreadable: ['ExampleOrg/app#2'],
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.equal(result.available, true);
+  assert.deepEqual(Object.keys(result.byTicket).sort(), ['TAP-1', 'TAP-3']);
+  assert.ok(
+    !aliasKeys(stub.threadQueries).includes('ExampleOrg/app#2'),
+    'the comment lane reads the kept PRs only',
   );
-  stubGithub(t, { items, total: 60 });
-  const cut = await fetchTicketPrs({ snapshot: snapshot() });
-  assert.equal(cut.truncated, true);
-  assert.equal(cut.total, 60);
-  t.mock.restoreAll();
-
-  stubGithub(t, { items: items.slice(0, 2), total: 2 });
-  const whole = await fetchTicketPrs({ snapshot: snapshot() });
-  assert.equal(whole.truncated, false);
-  assert.equal(whole.total, 2);
+  assert.ok(!JSON.stringify(result).includes('upstream detail'), 'no upstream error text');
 });
 
-test('no open PRs means no GraphQL request and an empty map', async (t) => {
-  const stub = stubGithub(t, { items: [], total: 0 });
+test('GitHub failing: a transient error on a null alias makes the whole answer unavailable', async (t) => {
+  stubGithub(t, {
+    prs: [linkedPr(1, '[TAP-1] Readable', '2026-10-06T12:00:00Z')],
+    graphql: () =>
+      reply({
+        data: { a0: { pullRequest: null } },
+        errors: [{ type: 'RESOURCE_LIMITS_EXCEEDED', path: ['a0'], message: 'upstream detail' }],
+      }),
+  });
+  assert.deepEqual(await fetchTicketPrs({ snapshot: snapshot() }), UNAVAILABLE);
+});
+
+test('the review, CI and comment lanes stay independent of each other', async (t) => {
+  stubGithub(t, {
+    prs: [
+      linkedPr(1, '[TAP-1] Standing change request', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Token cannot read checks', '2026-10-05T12:00:00Z'),
+    ],
+    forbidden: ['ExampleOrg/app#2'],
+    threadsGraphql: () => reply({ message: 'down' }, 503),
+    pullRequests: {
+      'ExampleOrg/app#1': {
+        reviews: [
+          review('alice', 'CHANGES_REQUESTED', '2026-10-02T00:00:00Z'),
+          review('bob', 'APPROVED', '2026-10-03T00:00:00Z'),
+        ],
+        rollup: rollup('SUCCESS', [run('build', 'COMPLETED', 'SUCCESS')]),
+      },
+      'ExampleOrg/app#2': {
+        reviews: [review('bob', 'APPROVED', '2026-10-02T00:00:00Z')],
+        rollup: rollup('SUCCESS', [run('build', 'COMPLETED', 'SUCCESS')]),
+      },
+    },
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.equal(result.available, true);
+  const [requested] = result.byTicket['TAP-1'];
+  const [forbiddenPr] = result.byTicket['TAP-2'];
+  assert.equal(requested.comments, null, 'a failed comment batch nulls comments only');
+  assert.deepEqual(requested.review, { state: 'changes_requested', approvals: 1 });
+  assert.equal(requested.ci.state, 'passing');
+  assert.equal(forbiddenPr.ci, null, 'an unreadable CI is null and review stays');
+  assert.deepEqual(forbiddenPr.review, { state: 'approved', approvals: 1 });
+  assert.equal(forbiddenPr.comments, null);
+});
+
+test('no linked PRs means no GraphQL request and an empty map', async (t) => {
+  const stub = stubGithub(t, { tickets: ['TAP-1', 'TAP-2'], prs: [] });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
   assert.equal(stub.graphql.length, 0);
   assert.equal(stub.threadQueries.length, 0, 'no comment batch either');
@@ -648,83 +1078,60 @@ test('no open PRs means no GraphQL request and an empty map', async (t) => {
   });
 });
 
-test('a poll costs one /user, one search, and per 50 PRs one detail POST and one comment POST, each guarded', async (t) => {
-  const items = Array.from({ length: 120 }, (_, i) =>
-    searchItem(i + 1, `[TAP-${i + 1}] Change ${i + 1}`, '2026-10-06T12:00:00Z'),
-  );
-  const timeouts = [];
-  const realTimeout = AbortSignal.timeout.bind(AbortSignal);
-  t.mock.method(AbortSignal, 'timeout', (ms) => {
-    timeouts.push(ms);
-    return realTimeout(ms);
+test('dev-status data is untrusted: only plain GitHub pull URLs reach a query or the board', async (t) => {
+  const mine = { tickets: ['TAP-1'] };
+  const stub = stubGithub(t, {
+    prs: [
+      linkedPr(1, 'Real', '2026-10-09T12:00:00Z', mine),
+      linkedPr(2, 'Fractional id', '2026-10-08T12:00:00Z', {
+        ...mine,
+        id: '#2.5',
+        url: 'https://github.com/ExampleOrg/app/pull/2.5',
+      }),
+      linkedPr(3, 'Text id', '2026-10-07T12:00:00Z', { ...mine, id: 'abc' }),
+      linkedPr(4, 'Scheme', '2026-10-06T12:00:00Z', { ...mine, url: 'javascript:alert(1)' }),
+      linkedPr(5, 'Plain http', '2026-10-05T12:00:00Z', {
+        ...mine,
+        url: 'http://github.com/ExampleOrg/app/pull/5',
+      }),
+      linkedPr(6, 'Look-alike host', '2026-10-04T12:00:00Z', {
+        ...mine,
+        url: 'https://github.com.evil.example/ExampleOrg/app/pull/6',
+      }),
+      linkedPr(9, 'Short repository name', '2026-10-03T12:00:00Z', {
+        ...mine,
+        repositoryName: 'app',
+      }),
+    ],
   });
-  const stub = stubGithub(t, { items });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
-
-  assert.deepEqual(stub.unexpected, []);
-  assert.equal(stub.calls.length, 8, '1 /user + 1 search + 3 detail + 3 comment POSTs');
-  assert.equal(stub.calls.filter((call) => call.url.endsWith('/user')).length, 1);
-  const searches = stub.calls.filter((call) => call.url.includes('/search/issues'));
-  assert.equal(searches.length, 1);
-  const search = decodeURIComponent(searches[0].url);
-  assert.match(search, /author:me/);
-  assert.doesNotMatch(search, /-author:/, 'my PRs only');
-
-  assert.equal(stub.graphql.length, 3, 'three detail POSTs');
-  assert.equal(stub.threadQueries.length, 3, 'three comment POSTs');
-  assert.equal(stub.maxInFlight, 1, 'never two GitHub requests open at once');
-  assert.ok(
-    Math.max(...stub.graphql.map((call) => call.seq)) <
-      Math.min(...stub.threadQueries.map((call) => call.seq)),
-    'the comment POSTs follow the detail POSTs',
+  // The number comes from the URL, so a text id cannot reach a query and does not hide the PR.
+  const expected = ['ExampleOrg/app#1', 'ExampleOrg/app#3', 'ExampleOrg/app#9'];
+  assert.deepEqual(ids(result.byTicket['TAP-1']), expected);
+  assert.deepEqual(aliasKeys(stub.graphql), expected);
+  assert.deepEqual(
+    aliasKeys(stub.threadQueries),
+    expected,
+    'the comment query holds the same guard',
   );
-  for (const lane of [stub.graphql, stub.threadQueries]) {
-    assert.deepEqual(
-      lane.map((call) => call.aliases.size).sort((a, b) => b - a),
-      [50, 50, 20],
-    );
-    const covered = lane.flatMap((call) => [...call.aliases.values()]);
-    assert.equal(new Set(covered).size, 120, 'every PR is read exactly once');
+  const text = JSON.stringify(result);
+  for (const bad of ['javascript:', 'http://', 'evil.example']) {
+    assert.ok(!text.includes(bad), `the result never carries "${bad}"`);
   }
-  for (const call of [...stub.graphql, ...stub.threadQueries]) {
-    assert.equal(call.init.method, 'POST');
-    assert.equal(call.init.redirect, 'error');
-    assert.ok(call.init.signal instanceof AbortSignal, 'a timeout signal');
-    assert.equal(authorizationOf(call.init), `Bearer ${TOKEN}`);
-  }
-  for (const call of stub.graphql) {
-    for (const field of [
-      'statusCheckRollup',
-      'commits(last: 1)',
-      'contexts(first: 100)',
-      'reviews(last: 100)',
-    ]) {
-      assert.ok(call.query.includes(field), `the detail query reads ${field}`);
-    }
-  }
-  for (const call of stub.threadQueries) {
-    for (const field of [
-      'reviewThreads(first: 50)',
-      'isResolved',
-      'comments(first: 1)',
-      'totalCount',
-      '__typename',
-      'login',
-    ]) {
-      assert.ok(call.query.includes(field), `the comment query reads ${field}`);
-    }
-    assert.ok(!call.query.includes('statusCheckRollup'), 'checks stay out of the comment query');
-    assert.ok(!call.query.includes('reviews(last'), 'reviews stay out of the comment query');
-  }
-  assert.ok(timeouts.filter((ms) => ms === 15_000).length >= 6, 'each POST has a 15 s timeout');
-  assert.ok(timeouts.every((ms) => ms <= 15_000));
-  assert.equal(Object.keys(result.byTicket).length, 120);
-  assert.ok(!JSON.stringify(result).includes(TOKEN), 'the token never reaches the result');
+});
+
+test('the PR number is read from the URL, not from the dev-status id', async (t) => {
+  const stub = stubGithub(t, {
+    prs: [linkedPr(1, '[TAP-1] Id disagrees', '2026-10-06T12:00:00Z', { id: '#999' })],
+  });
+  const result = await fetchTicketPrs({ snapshot: snapshot() });
+  assert.deepEqual(aliasKeys(stub.graphql), ['ExampleOrg/app#1']);
+  assert.deepEqual(ids(result.byTicket['TAP-1']), ['ExampleOrg/app#1']);
 });
 
 test('a PR under a non-TAP project key lands under that key as typed', async (t) => {
   stubGithub(t, {
-    items: [searchItem(31, '[PRT-1543] Portal change', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(31, '[PRT-1543] Portal change', '2026-10-06T12:00:00Z')],
     pullRequests: {
       'ExampleOrg/app#31': {
         reviews: [review('bob', 'APPROVED', '2026-10-02T00:00:00Z')],
@@ -760,7 +1167,7 @@ test('a /user call that never answers ends as available false instead of hanging
   const realTimeout = AbortSignal.timeout.bind(AbortSignal);
   t.mock.method(AbortSignal, 'timeout', () => realTimeout(20));
   const stub = stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] x', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] x', '2026-10-06T12:00:00Z')],
     user: neverAnswers,
   });
   assert.deepEqual(await fetchTicketPrs({ snapshot: snapshot() }), UNAVAILABLE);
@@ -768,34 +1175,39 @@ test('a /user call that never answers ends as available false instead of hanging
   assert.equal(stub.graphql.length, 0);
 });
 
-test('a search that never answers ends as available false instead of hanging', async (t) => {
+test('a Jira search that never answers ends as available false instead of hanging', async (t) => {
   const realTimeout = AbortSignal.timeout.bind(AbortSignal);
   t.mock.method(AbortSignal, 'timeout', () => realTimeout(20));
-  const stub = stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] x', '2026-10-06T12:00:00Z')],
-    search: neverAnswers,
-  });
+  const stub = stubGithub(t, { prs: onePr, search: neverAnswers });
   assert.deepEqual(await fetchTicketPrs({ snapshot: snapshot() }), UNAVAILABLE);
-  const [search] = stub.calls.filter((call) => call.url.includes('/search/issues'));
-  assert.ok(search.init.signal instanceof AbortSignal, 'the search has a timeout signal');
+  assert.ok(stub.searches[0].init.signal instanceof AbortSignal, 'the search has a timeout signal');
   assert.equal(stub.graphql.length, 0);
 });
 
-const searches = (stub) => stub.calls.filter((call) => call.url.includes('/search/issues'));
-const oneItem = [searchItem(1, '[TAP-1] x', '2026-10-06T12:00:00Z')];
+test('a dev-status lookup that never answers ends as available false instead of hanging', async (t) => {
+  const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', () => realTimeout(20));
+  const stub = stubGithub(t, { prs: onePr, devStatus: neverAnswers });
+  assert.deepEqual(await fetchTicketPrs({ snapshot: snapshot() }), UNAVAILABLE);
+  assert.ok(
+    stub.devStatus[0].init.signal instanceof AbortSignal,
+    'dev-status has a timeout signal',
+  );
+  assert.equal(stub.graphql.length, 0);
+});
 
 test('concurrent calls for one revision share a single upstream fetch', async (t) => {
-  const stub = stubGithub(t, { items: oneItem });
+  const stub = stubGithub(t, { prs: onePr });
   const [first, second] = await Promise.all([
     fetchTicketPrs({ snapshot: snapshot({ revision: 7 }) }),
     fetchTicketPrs({ snapshot: snapshot({ revision: 7 }) }),
   ]);
-  assert.equal(searches(stub).length, 1);
+  assert.equal(stub.searches.length, 1);
   assert.deepEqual(second, first);
 });
 
 test('concurrent calls for one revision share the comment batches as well', async (t) => {
-  const stub = stubGithub(t, { items: oneItem });
+  const stub = stubGithub(t, { prs: onePr });
   await Promise.all([
     fetchTicketPrs({ snapshot: snapshot({ revision: 7 }) }),
     fetchTicketPrs({ snapshot: snapshot({ revision: 7 }) }),
@@ -805,74 +1217,19 @@ test('concurrent calls for one revision share the comment batches as well', asyn
 });
 
 test('a call after the shared fetch settles starts a new upstream fetch', async (t) => {
-  const stub = stubGithub(t, { items: oneItem });
+  const stub = stubGithub(t, { prs: onePr });
   await fetchTicketPrs({ snapshot: snapshot({ revision: 7 }) });
   await fetchTicketPrs({ snapshot: snapshot({ revision: 7 }) });
-  assert.equal(searches(stub).length, 2);
+  assert.equal(stub.searches.length, 2);
 });
 
 test('a different settings revision does not share an in-flight fetch', async (t) => {
-  const stub = stubGithub(t, { items: oneItem });
+  const stub = stubGithub(t, { prs: onePr });
   await Promise.all([
     fetchTicketPrs({ snapshot: snapshot({ revision: 8 }) }),
     fetchTicketPrs({ snapshot: snapshot({ revision: 9 }) }),
   ]);
-  assert.equal(searches(stub).length, 2);
-});
-
-test('search items with a fractional or string number never reach the GraphQL query', async (t) => {
-  const stub = stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] Real', '2026-10-06T12:00:00Z'),
-      searchItem(2, '[TAP-2] Fractional', '2026-10-05T12:00:00Z', { number: 2.5 }),
-      searchItem(3, '[TAP-3] String', '2026-10-04T12:00:00Z', { number: '3' }),
-    ],
-    pullRequests: { 'ExampleOrg/app#1': { reviews: [], rollup: null } },
-  });
-  const result = await fetchTicketPrs({ snapshot: snapshot() });
-  assert.deepEqual(Object.keys(result.byTicket), ['TAP-1']);
-  assert.deepEqual(
-    stub.graphql.flatMap((call) => [...call.aliases.values()]),
-    ['ExampleOrg/app#1'],
-  );
-  assert.deepEqual(
-    stub.threadQueries.flatMap((call) => [...call.aliases.values()]),
-    ['ExampleOrg/app#1'],
-    'the comment query holds the same guard',
-  );
-});
-
-test('search items whose URL is not a github.com pull page never reach the board', async (t) => {
-  const stub = stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] Real', '2026-10-06T12:00:00Z'),
-      searchItem(4, '[TAP-4] Scheme', '2026-10-05T12:00:00Z', {
-        html_url: 'javascript:alert(1)',
-      }),
-      searchItem(5, '[TAP-5] Plain http', '2026-10-04T12:00:00Z', {
-        html_url: 'http://github.com/ExampleOrg/app/pull/5',
-      }),
-      searchItem(6, '[TAP-6] Look-alike host', '2026-10-03T12:00:00Z', {
-        html_url: 'https://github.com.evil.example/ExampleOrg/app/pull/6',
-      }),
-    ],
-    pullRequests: { 'ExampleOrg/app#1': { reviews: [], rollup: null } },
-  });
-  const result = await fetchTicketPrs({ snapshot: snapshot() });
-  assert.deepEqual(Object.keys(result.byTicket), ['TAP-1']);
-  assert.deepEqual(
-    stub.graphql.flatMap((call) => [...call.aliases.values()]),
-    ['ExampleOrg/app#1'],
-  );
-  assert.deepEqual(
-    stub.threadQueries.flatMap((call) => [...call.aliases.values()]),
-    ['ExampleOrg/app#1'],
-    'the comment query holds the same guard',
-  );
-  const text = JSON.stringify(result);
-  for (const bad of ['javascript:', 'http://', 'evil.example']) {
-    assert.ok(!text.includes(bad), `the result never carries "${bad}"`);
-  }
+  assert.equal(stub.searches.length, 2);
 });
 
 // -- summarizeThreads buckets review threads by who started them -------------------------------------
@@ -1059,7 +1416,7 @@ test('summarizeThreads counts a thread comment total that is not an integer as z
 test('a thread comment total of text never reaches the result as text', async (t) => {
   const markup = '<img src=x onerror=alert(1)>';
   stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] Hostile total', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] Hostile total', '2026-10-06T12:00:00Z')],
     pullRequests: {
       'ExampleOrg/app#1': withThreads([
         thread(user('alice'), false, markup),
@@ -1102,10 +1459,10 @@ const REVIEW_AND_CI = {
 
 test('fetchTicketPrs gives each PR its comment counts beside its review and CI', async (t) => {
   const stub = stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] Talked about', '2026-10-06T12:00:00Z'),
-      searchItem(2, '[TAP-2] Quiet', '2026-10-05T12:00:00Z'),
-      searchItem(3, '[TAP-3] Long review', '2026-10-04T12:00:00Z'),
+    prs: [
+      linkedPr(1, '[TAP-1] Talked about', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Quiet', '2026-10-05T12:00:00Z'),
+      linkedPr(3, '[TAP-3] Long review', '2026-10-04T12:00:00Z'),
     ],
     pullRequests: {
       'ExampleOrg/app#1': withThreads(
@@ -1168,9 +1525,9 @@ for (const [name, threadsGraphql] of [
 ]) {
   test(`${name} on the comment batch nulls comments and leaves review and CI alone`, async (t) => {
     stubGithub(t, {
-      items: [
-        searchItem(1, '[TAP-1] First', '2026-10-06T12:00:00Z'),
-        searchItem(2, '[TAP-2] Second', '2026-10-05T12:00:00Z'),
+      prs: [
+        linkedPr(1, '[TAP-1] First', '2026-10-06T12:00:00Z'),
+        linkedPr(2, '[TAP-2] Second', '2026-10-05T12:00:00Z'),
       ],
       pullRequests: {
         'ExampleOrg/app#1': withThreads([thread(user('alice'), false, 2)]),
@@ -1205,7 +1562,7 @@ test('a comment batch that never answers ends as null comments instead of hangin
   const realTimeout = AbortSignal.timeout.bind(AbortSignal);
   t.mock.method(AbortSignal, 'timeout', () => realTimeout(20));
   const stub = stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] Slow threads', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] Slow threads', '2026-10-06T12:00:00Z')],
     pullRequests: { 'ExampleOrg/app#1': withThreads([thread(user('alice'), false, 2)]) },
     threadsGraphql: neverAnswers,
   });
@@ -1223,10 +1580,10 @@ test('a comment batch that never answers ends as null comments instead of hangin
 
 test('an error entry on one comment alias nulls only that PR comments', async (t) => {
   stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] Readable', '2026-10-06T12:00:00Z'),
-      searchItem(2, '[TAP-2] Refused', '2026-10-05T12:00:00Z'),
-      searchItem(3, '[TAP-3] Readable too', '2026-10-04T12:00:00Z'),
+    prs: [
+      linkedPr(1, '[TAP-1] Readable', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Refused', '2026-10-05T12:00:00Z'),
+      linkedPr(3, '[TAP-3] Readable too', '2026-10-04T12:00:00Z'),
     ],
     failingThreads: ['ExampleOrg/app#2'],
     pullRequests: {
@@ -1252,7 +1609,7 @@ test('an error entry on one comment alias nulls only that PR comments', async (t
 
 test('an unrelated error entry on the comment batch drops nothing', async (t) => {
   stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] Change', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] Change', '2026-10-06T12:00:00Z')],
     threadErrors: [{ type: 'INTERNAL', message: 'something odd upstream' }],
     pullRequests: { 'ExampleOrg/app#1': withThreads([thread(user('alice'), false, 2)]) },
   });
@@ -1265,7 +1622,7 @@ test('an unrelated error entry on the comment batch drops nothing', async (t) =>
 
 test('the conversation count comes from the comments total selected on the pull request itself', async (t) => {
   stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] Discussed', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] Discussed', '2026-10-06T12:00:00Z')],
     pullRequests: {
       'ExampleOrg/app#1': withThreads([thread(user('alice'), false, 2)], { conversation: 7 }),
     },
@@ -1282,9 +1639,9 @@ test('the conversation count comes from the comments total selected on the pull 
 
 test('a null thread node in one PR leaves its other threads counted and no PR data blanked', async (t) => {
   stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] One thread unreadable', '2026-10-06T12:00:00Z'),
-      searchItem(2, '[TAP-2] Plain', '2026-10-05T12:00:00Z'),
+    prs: [
+      linkedPr(1, '[TAP-1] One thread unreadable', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Plain', '2026-10-05T12:00:00Z'),
     ],
     pullRequests: {
       'ExampleOrg/app#1': withThreads([
@@ -1311,10 +1668,10 @@ test('a null thread node in one PR leaves its other threads counted and no PR da
 
 test('an error entry on a comment alias that still carries data nulls that PR comments only', async (t) => {
   stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] Readable', '2026-10-06T12:00:00Z'),
-      searchItem(2, '[TAP-2] Partly refused', '2026-10-05T12:00:00Z'),
-      searchItem(3, '[TAP-3] Readable too', '2026-10-04T12:00:00Z'),
+    prs: [
+      linkedPr(1, '[TAP-1] Readable', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Partly refused', '2026-10-05T12:00:00Z'),
+      linkedPr(3, '[TAP-3] Readable too', '2026-10-04T12:00:00Z'),
     ],
     partialThreads: ['ExampleOrg/app#2'],
     pullRequests: {
@@ -1339,10 +1696,10 @@ test('an error entry on a comment alias that still carries data nulls that PR co
 
 test('a non-integer conversation or thread total nulls only that PR comments', async (t) => {
   stubGithub(t, {
-    items: [
-      searchItem(1, '[TAP-1] Conversation total is text', '2026-10-06T12:00:00Z'),
-      searchItem(2, '[TAP-2] Thread total is fractional', '2026-10-05T12:00:00Z'),
-      searchItem(3, '[TAP-3] Readable', '2026-10-04T12:00:00Z'),
+    prs: [
+      linkedPr(1, '[TAP-1] Conversation total is text', '2026-10-06T12:00:00Z'),
+      linkedPr(2, '[TAP-2] Thread total is fractional', '2026-10-05T12:00:00Z'),
+      linkedPr(3, '[TAP-3] Readable', '2026-10-04T12:00:00Z'),
     ],
     pullRequests: {
       'ExampleOrg/app#1': withThreads([thread(user('alice'), false, 2)], { conversation: 'seven' }),
@@ -1363,55 +1720,21 @@ test('a non-integer conversation or thread total nulls only that PR comments', a
   }
 });
 
-for (const [name, graphql] of [
-  ['a non-OK response', () => reply({ message: `Bad credentials ${TOKEN}` }, 502)],
-  [
-    'a network error',
-    () => {
-      throw new Error(`socket hang up for ${TOKEN}`);
-    },
-  ],
-  ['a body without data', () => reply({ errors: [{ message: 'schema went away' }] })],
-]) {
-  test(`${name} on the detail batch leaves comments filled`, async (t) => {
-    stubGithub(t, {
-      items: [
-        searchItem(1, '[TAP-1] First', '2026-10-06T12:00:00Z'),
-        searchItem(2, '[TAP-2] Second', '2026-10-05T12:00:00Z'),
-      ],
-      pullRequests: {
-        'ExampleOrg/app#1': withThreads([thread(user('alice'), false, 2)]),
-        'ExampleOrg/app#2': withThreads([thread(bot('Copilot'), true, 2)]),
-      },
-      graphql,
-    });
-    const result = await fetchTicketPrs({ snapshot: snapshot() });
-    const [first] = result.byTicket['TAP-1'];
-    const [second] = result.byTicket['TAP-2'];
-    for (const item of [first, second]) assert.deepEqual([item.review, item.ci], NO_REVIEW_OR_CI);
-    assert.ok(first.comments && second.comments, 'comments is a field of every PR');
-    assert.deepEqual(first.comments.human, { threads: 1, unresolved: 1, comments: 2 });
-    assert.deepEqual(second.comments.copilot, { threads: 1, unresolved: 0, comments: 2 });
-    assert.ok(!JSON.stringify(result).includes(TOKEN));
-  });
-}
-
 test('a failed comment batch leaves the PRs of the other comment batches intact', async (t) => {
-  const items = Array.from({ length: 60 }, (_, i) =>
-    searchItem(
-      i + 1,
-      `[TAP-${i + 1}] Change ${i + 1}`,
-      `2026-10-06T12:${String(i).padStart(2, '0')}:00Z`,
-    ),
+  // One ticket linked to 60 PRs, so the lookup cap does not shrink the list.
+  const linked = Array.from({ length: 60 }, (_, i) =>
+    linkedPr(i + 1, `Change ${i + 1}`, `2026-10-06T12:${String(i).padStart(2, '0')}:00Z`, {
+      tickets: ['TAP-1'],
+    }),
   );
   const pullRequests = Object.fromEntries(
-    items.map((item) => [
+    linked.map((item) => [
       `ExampleOrg/app#${item.number}`,
       withThreads([thread(user('alice'), false, 2)]),
     ]),
   );
   const stub = stubGithub(t, {
-    items,
+    prs: linked,
     pullRequests,
     threadsGraphql: (call) => (call.index === 0 ? reply({ message: 'down' }, 503) : null),
   });
@@ -1437,7 +1760,7 @@ test('a failed comment batch leaves the PRs of the other comment batches intact'
 
 test('the comment batch carries the token in its header and never in its body', async (t) => {
   const stub = stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] Real', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] Real', '2026-10-06T12:00:00Z')],
     pullRequests: { 'ExampleOrg/app#1': withThreads([thread(user('alice'), false, 2)]) },
   });
   await fetchTicketPrs({ snapshot: snapshot() });
@@ -1461,7 +1784,7 @@ const LAST_HUNDRED_REVIEWS = [
 
 test('a PR with older reviews than the 100 read has an unknown review, so it is never approved', async (t) => {
   const stub = stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] Long review history', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] Long review history', '2026-10-06T12:00:00Z')],
     pullRequests: {
       'ExampleOrg/app#1': withThreads([thread(user('alice'), false, 2)], {
         reviews: LAST_HUNDRED_REVIEWS,
@@ -1483,7 +1806,7 @@ test('a PR with older reviews than the 100 read has an unknown review, so it is 
 
 test('a PR whose 100 reviews are all of its reviews keeps its review state', async (t) => {
   stubGithub(t, {
-    items: [searchItem(1, '[TAP-1] Exactly the window', '2026-10-06T12:00:00Z')],
+    prs: [linkedPr(1, '[TAP-1] Exactly the window', '2026-10-06T12:00:00Z')],
     pullRequests: {
       'ExampleOrg/app#1': withThreads([], {
         reviews: LAST_HUNDRED_REVIEWS,
@@ -1507,9 +1830,7 @@ test('a review window that does not say whether older reviews exist reads as an 
     'false',
   ];
   const stub = stubGithub(t, {
-    items: pageInfos.map((_, i) =>
-      searchItem(i + 1, `[TAP-${i + 1}] Unclear`, '2026-10-06T12:00:00Z'),
-    ),
+    prs: pageInfos.map((_, i) => linkedPr(i + 1, `[TAP-${i + 1}] Unclear`, '2026-10-06T12:00:00Z')),
     pullRequests: Object.fromEntries(
       pageInfos.map((reviewsPageInfo, i) => [
         `ExampleOrg/app#${i + 1}`,
@@ -1527,7 +1848,7 @@ test('a review window that does not say whether older reviews exist reads as an 
 });
 
 test('the review lane selects whether older reviews exist than the 100 it reads', async (t) => {
-  const stub = stubGithub(t, { items: oneItem });
+  const stub = stubGithub(t, { prs: onePr });
   await fetchTicketPrs({ snapshot: snapshot() });
   assert.equal(stub.graphql.length, 1);
   const reviews = selectionOf(stub.graphql[0].query).query.repository.pullRequest.reviews;

@@ -856,10 +856,20 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
 ## Integration health: facts not to break
 
 - `backend/upstream.mjs` is the one fetch seam for Jira and GitHub (`jira.mjs`, `github.mjs`,
-  `github-api.mjs`, `team-velocity.mjs`, `releases.mjs`); a source test forbids a bare `fetch(`.
+  `github-api.mjs`, `team-velocity.mjs`, `dev-status.mjs`); a source test forbids a bare `fetch(`,
+  and also in `releases.mjs` and `ticket-prs.mjs`, which reach Jira only through `dev-status.mjs`.
   `upstreamError(name, res, message)` keeps the caller's message byte-identical. Slack feeds the same
   record from `slack.mjs` and keeps its own `fetchImpl`, timeout and cool-down; the side-branch `.catch`
   on its send promise is deliberate (an extra await tick reorders concurrent Slack reads).
+- `backend/dev-status.mjs` is the one Jira dev-status lookup (`lookUpPullRequests`), used by Releases and by
+  `GET /api/ticket-prs` (My Tickets PR lines: the default list's newest 50 tickets, every linked PR Jira
+  reports as open, then GitHub GraphQL keeps the OPEN ones whose author is the saved token's login; no
+  `ownsPr`, by decision). It keeps **one module-level cache of unfiltered PRs** per Jira origin and issue id,
+  so a caller that needs a subset filters itself (Releases applies `ownsPr` and `countsAsMerged` in
+  `releases.mjs`; never filter inside the lookup). The TTL is a per-read argument (`ttlMs`: Releases 60 s,
+  My Tickets 120 s), so an expired entry is a miss that is overwritten, never deleted on read: one reader's
+  shorter TTL must not evict what the other still serves. Cached PR objects are shared and never mutated.
+  A change to the lookup, its call order or its cache must keep the Releases call-count suites green.
 - `GET /api/health` makes no upstream call and sits before the setup gate; never add a call there.
   `useUpstreamHealth` owns no timer (one read on activation and on `refreshKey`), `/api/health` appears
   once in `api.js`, and `UpstreamNote` is mounted in the `notes` slot of My Tickets, Pull Requests and Slack.

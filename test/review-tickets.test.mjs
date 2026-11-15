@@ -607,10 +607,13 @@ test('new queue reads and the legacy own-author scope never share an in-flight r
     const url = new URL(input);
     seen.push(url.pathname);
     if (url.pathname === '/user') return Response.json({ login: 'me' });
-    if (url.pathname === '/search/issues') return Response.json({ items: [], total_count: 0 });
     if (url.pathname === '/repos/ExampleOrg/app/pulls') return Response.json([]);
     if (url.pathname === '/rest/api/3/search/jql')
-      return Response.json({ issues: [issue()], isLast: true });
+      return Response.json({ issues: [{ ...issue(), id: '10010' }], isLast: true });
+    if (url.pathname === '/rest/dev-status/latest/issue/summary')
+      return Response.json({
+        summary: { pullrequest: { overall: { count: 0 }, byInstanceType: {} } },
+      });
     assert.fail(`Unexpected mocked path ${url.pathname}`);
   });
   const [queue, own] = await Promise.all([
@@ -620,8 +623,12 @@ test('new queue reads and the legacy own-author scope never share an in-flight r
   assert.equal(queue.total, 1);
   assert.equal(own.total, 0);
   assert.deepEqual(own.byTicket, {});
-  assert.ok(seen.includes('/repos/ExampleOrg/app/pulls'));
-  assert.ok(seen.includes('/search/issues'));
+  assert.ok(seen.includes('/repos/ExampleOrg/app/pulls'), 'the queue read the watched repo');
+  assert.ok(
+    seen.includes('/rest/dev-status/latest/issue/summary'),
+    'the own read asked Jira dev-status for the ticket',
+  );
+  assert.ok(!seen.includes('/search/issues'), 'no GitHub search is made');
 });
 
 test('same-revision configurations remain isolated and every upstream read uses its captured snapshot', async (t) => {

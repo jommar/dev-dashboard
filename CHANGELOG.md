@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- My Tickets now finds your PRs through Jira instead of searching the Settings repositories: `GET /api/ticket-prs`
+  reads the PRs Jira's development status links to each ticket in the default list (newest 50) and keeps your
+  open ones, so a PR in a repository that is not among the watched repositories (for example `ezd-transauditor`) shows
+  on its card. Jira's link decides the ticket (PR titles are no longer read, so a promotion PR you wrote can
+  show on several cards), the lookup is shared with Releases and cached 120 seconds for this screen (Refresh
+  does not bypass it), `total` counts the PRs listed, and a failed author read now makes the answer
+  unavailable. The Pull Requests screen is unchanged. See [My Tickets](README.md#my-tickets).
 - My Tickets cards now show a page icon, linking to the PR, when the ticket already has an open or
   merged `ezat-specs` PR. New `GET /api/ticket-specs`. See [My Tickets](README.md#my-tickets).
 - Added the Slack activity drawer: a second edge tab under Sessions opens Mentions, Threads and Reactions

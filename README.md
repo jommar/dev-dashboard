@@ -802,9 +802,10 @@ silently broaden the list. Filters are browser-local and are not shared in URLs.
 `GET /api/prs` retains its existing own-PR, draft, approval-threshold and
 merge-candidate contracts. The CLI's
 `node backend/cli.mjs prs` retains its own-PR and approval output.
-Neither is the new review queue. `/api/ticket-prs` remains the
-own-author PR feed used by My Tickets. My Tickets, Slack and the existing
-diff viewer keep their behavior.
+Neither is the new review queue. `/api/ticket-prs` is the own-author PR
+feed used by My Tickets; it no longer reads the Settings repositories, it
+follows the PRs Jira links to your tickets (see [My Tickets](#my-tickets)).
+My Tickets, Slack and the existing diff viewer keep their behavior.
 
 Configure the GitHub owner, repositories and token through **Settings**. Missing
 credentials close the all-integrations setup gate; environment tokens are
@@ -903,17 +904,30 @@ never green.
 
 **PR data** — the lines come from `GET /api/ticket-prs`, which the tab calls on its
 first load, on every 90 second poll and on **Refresh**. It lists **your** open PRs
-(authored by the GitHub user the saved token belongs to) in the watched
-repositories from Settings, drafts included and whatever their ticket's Jira status.
-This is separate from the other-assigned [PR review board](#open-prs).
-A PR is filed under every ticket key in its
-title (`[TAP-1665]`, bare `PRT-1221`): `TRIPS-n` keys are filed under `TAP-n`,
-any other project's key as written, and a PR whose title has no ticket key is
-left out (the legacy `/api/prs` feed still includes it). A key repeated in one title
-counts once, and each key's list is newest update first. Only the newest PRs up
-to **GitHub maximum results** (1 to 100) in Settings are fetched; `truncated`
-says there were more, and the tab then notes that some tickets may show no PR
-lines.
+(authored by the GitHub user the saved token belongs to), drafts included, and
+it finds them through Jira, not through the watched repositories in Settings: the
+server runs the default My Tickets list itself (assigned to you, not Done; the
+newest 50 tickets by update time that have a Jira id) and asks Jira's
+development-status (`dev-status`) for the PRs linked to each. A PR in any
+repository Jira's GitHub integration sees therefore shows on its ticket card,
+whether or not the repository is in Settings. This is separate from the
+other-assigned [PR review board](#open-prs).
+Jira's link decides which ticket a PR belongs to, as Jira reports it: the PR's
+title and branch are not read, so a PR with no ticket key in its title shows
+when Jira links it, and an open promotion PR you wrote (for example a
+`[MERGE] ... -> UAT` PR) shows on every ticket Jira links it to. A PR linked to
+several tickets is read once and listed under each, and each ticket's list is
+newest update first. Keys are the ticket keys Jira returns (`TRIPS-n` is `TAP-n`,
+any other project's key as written). Only a PR Jira lists as open, with a
+`github.com` pull URL, goes on to GitHub; the PR's repository and number are read
+from that URL. GitHub then decides: a PR is kept only when it is `OPEN` and its
+author's login equals the saved token's login, ignoring case, so someone else's
+PR that Jira links to your ticket never shows, and a PR Jira still lists as open
+after it merged is dropped. `truncated` is `true` when the My Tickets list itself
+was cut, when you have more than 50 tickets with a Jira id (the tab then notes that
+some tickets may show no PR lines), or when the PR lookup failed for some of the
+tickets asked about; a ticket past the newest 50 shows no PR lines.
+A ticket you finished (Done) shows none either, even when its PR is still open.
 
 ```
 200 { available, login, total, truncated, updatedAt,
@@ -940,8 +954,9 @@ answer stays and nothing is said.
 200 { available, updatedAt, byTicket: { "<KEY>": { number, url, state: 'OPEN' | 'MERGED' } } }
 ```
 
-`login` is the GitHub user, `total` GitHub's count of matching open PRs and
-`updatedAt` the time the server answered; `repo` is `owner/name`. `review.state`
+`login` is the GitHub user, `total` the number of distinct PRs listed (a PR on
+two tickets counts once) and `updatedAt` the time the server answered; `repo` is
+`owner/name`, read from the PR's URL. `review.state`
 follows the rule under [Review status](#review-status): a change request that
 still stands makes it `changes_requested` even when another reviewer approved
 later; with none standing, the newest approval or change request decides, and it
@@ -977,16 +992,28 @@ boolean only, no login, title or comment text.
 The route is behind the [setup gate](#setup-gate-and-apis): `409 SETUP_REQUIRED`
 before setup, and `200` after it whatever GitHub does, except that a browser
 request from another site is refused (below). A GitHub problem never
-becomes an error, it only narrows what the answer reports: with no token, or
-when GitHub fails `/user` or the search, the answer is `{ available: false,
-login: null, total: 0, truncated: false, byTicket: {} }` plus `updatedAt`. Review
-and CI come from one GraphQL batch per 50 PRs and the comment counts from another,
-so a failure in one lane never blanks the other: when a review and CI batch fails,
-those PRs are listed with `review: null, ci: null` and keep their `comments`; when a
-comment batch fails, those PRs get `comments: null` and keep their review and CI;
-when GitHub reports an error on one PR's checks, that PR gets `ci: null` and keeps
-its review and comments, and an error on one PR's comment fields nulls only that
-PR's `comments`. A token that cannot read checks and commit statuses is expected
+becomes an error, it only narrows what the answer reports: with no GitHub token
+or no Jira connection, when GitHub fails `/user` (no Jira call is made then),
+when the My Tickets search fails, when every dev-status lookup that was attempted
+fails, or when a detail GraphQL batch (below) fails, the answer is `{ available:
+false, login: null, total: 0, truncated: false, byTicket: {} }` plus `updatedAt`.
+If only some tickets' lookups fail, the answer is `available: true` with
+`truncated: true` and the other tickets keep their PRs. When Jira holds no
+dev-status data for any ticket, the answer is `available: true` with an empty
+`byTicket`, which the board cannot tell from "no PRs". Author, open state, draft
+flag, review and CI come from one GraphQL batch per 50 PRs and the comment counts
+from another, over the kept PRs only. The two lanes differ in what a failure
+costs: a detail batch that fails outright (non-OK, network error or no data), or
+a PR alias that comes back null with an error other than `NOT_FOUND` or
+`FORBIDDEN`, makes the whole answer `available: false`, because the author of its
+PRs cannot be told and a guess would show other people's PRs. An alias that is
+null with `NOT_FOUND` or `FORBIDDEN` (a repository the token cannot read) is
+dropped silently and only that PR is missing; there is no per-PR unreadable state
+in the answer. A failing comment batch never blanks the other lane: when a comment
+batch fails, those PRs get `comments: null` and keep their review and CI; when
+GitHub reports an error on one PR's checks, that PR gets `ci: null` and keeps its
+review and comments, and an error on one PR's comment fields nulls only that PR's
+`comments`. A token that cannot read checks and commit statuses is expected
 to show up that way, as CI unknown on each PR while reviews still work; how GitHub
 reports a refused field has not been checked against the live API, and Settings
 validation does not probe for it. Neither has the comment query: its field names
@@ -994,13 +1021,22 @@ validation does not probe for it. Neither has the comment query: its field names
 PR's comment `totalCount`) and the Copilot reviewer login were checked against
 GitHub's documentation only. If GitHub rejects the query, every PR gets `comments:
 null` and the board shows no chips, with no error anywhere. A poll costs one
-`GET /user`, one search and two GraphQL requests per 50 PRs (review and CI, then
-comments), sent one after another, and the answer waits for both; each call times
-out after 15 seconds, and a timeout counts as that call failing. Requests made
-while a load is running, with the same saved settings revision, share that
-load. Nothing is cached: once it finishes the result is dropped, so the next
-poll or **Refresh** asks GitHub again. A load costs many GitHub calls and there is
-no result cache, so a browser request whose `Sec-Fetch-Site` is `cross-site` or
+`GET /user`, the My Tickets search (up to 4 pages, the same search `/api/my-tickets`
+runs, so Jira is searched twice per poll), the dev-status calls for the tickets
+asked about, and two GraphQL requests per 50 PRs (author, state, review and CI,
+then comments), sent one after another after the Jira work, and the answer waits
+for both. Cold, that is at most 50 dev-status lookups, run 4 at a time (plus up to
+50 extra summaries only when no ticket has a linked PR and the Jira instance key is
+never learned); the GraphQL requests are always live. The PR lists Jira returns are
+remembered for 120 seconds, longer than the 90 second poll, so about every second
+poll makes no dev-status call; **Refresh does not bypass that cache**, so a PR you
+opened seconds ago, or linked in Jira, can take up to two minutes (and Jira's own
+indexing delay) to show. The cache is the one the [Releases](#releases) tab uses;
+it holds each ticket's linked PRs unfiltered, and the 120 seconds is this route's
+read limit. Each call times out after 15 seconds, and a timeout counts as that call
+failing. Requests made while a load is running, with the same saved settings
+revision, share that load; once it finishes the result itself is dropped. A load
+costs many Jira and GitHub calls, so a browser request whose `Sec-Fetch-Site` is `cross-site` or
 `same-site` (a page from another site or another port) gets `403` with the
 generic `OPERATION_FAILED` body, before anything is sent to GitHub. The
 dashboard's own page (`same-origin`), a typed address (`none`), `curl` and any
@@ -1012,11 +1048,12 @@ HTTP.
 The tab never waits on it. The cards render as soon as `/api/my-tickets`
 answers, and PR lines fill in when the PR answer arrives. They load on the first
 load, on every 90 second poll and on **Refresh**, but not when **Include Done**
-is toggled: that changes which tickets come back, not which of your PRs are open,
-so the lines already loaded stay. If a later PR refresh fails, the lines from the
+is toggled: the route reads the default list only (Done tickets are never looked
+up, whatever the toggle), so the lines already loaded stay. If a later PR refresh fails, the lines from the
 last good answer stay and a note says so; if none has ever loaded, the tickets show without PR lines and say `PR status
 unavailable`. A slow or failing PR route never shows the ticket error state. The
-GitHub reads are in [`backend/ticket-prs.mjs`](backend/ticket-prs.mjs), and the
+PR discovery and the GitHub reads are in [`backend/ticket-prs.mjs`](backend/ticket-prs.mjs);
+the Jira dev-status lookup it calls is in [`backend/dev-status.mjs`](backend/dev-status.mjs). The
 board's `data-testid` names are pinned by `e2e/my-tickets-board.spec.js`; treat
 them as a contract.
 
@@ -2674,7 +2711,7 @@ still need attention first. It is available in the **Releases** tab, via
 Everything is read from Jira: the project's versions, a JQL search for the
 version's tickets (`fixVersion = <id>`, plus `assignee = currentUser()` for
 Mine) and Jira's development-status (`dev-status`) endpoints for each ticket's
-PRs. **No GitHub call is made and no GitHub token is read.** Within each
+PRs (the same lookup that finds the PRs on [My Tickets](#my-tickets) cards). **No GitHub call is made and no GitHub token is read.** Within each
 merge-state group the ticket cards are masonry-packed using CSS multi-columns. The
 shared [local work filters](#local-work-filters) are not mounted on this tab.
 
@@ -2727,6 +2764,8 @@ case, in its title or its source branch: a key followed by more digits, or
 preceded by more letters or digits, is a different ticket. A PR naming several
 keys belongs to each of them. PRs with the same URL are shown once, and a URL
 that is not a plain GitHub pull-request address is shown as text without a link.
+This filter belongs to Releases: My Tickets reads the same dev-status lookup but
+does not apply it, because there Jira's link alone decides.
 
 ### What the tab can and cannot tell you
 
@@ -2760,9 +2799,12 @@ first open the tab and when you act: pick a version, change scope or press
 **Refresh**. A response that arrives after a newer choice is discarded.
 Refresh sends `refresh=1`, which bypasses the server's PR cache.
 
-The server remembers each ticket's successfully looked-up PRs for 60 seconds
+The server remembers each ticket's successfully looked-up PRs, unfiltered
 (keyed by Jira URL and issue id), so reloading or flipping between Mine and All
-is cheap. Dev-status detail lookups run at most 4 at a time, and every Jira call
+is cheap. Releases reads that memory for 60 seconds and then keeps only the PRs
+that name the ticket (below); My Tickets reads the same memory for 120 seconds
+and keeps every linked PR, so a lookup made by either screen can serve the other,
+and a Releases **Refresh** also warms the My Tickets lines. Dev-status detail lookups run at most 4 at a time, and every Jira call
 times out after 15 seconds. A cold load of an N-ticket release is roughly N + 3
 Jira calls: the versions list, a search (one call per 50 tickets), one summary to
 learn the instance key and one detail lookup per ticket. With the key already
@@ -2815,7 +2857,9 @@ browser.
 
 The rules above — version order, request validation, JQL, PR ownership and the
 merge roll-up — are pure and live in [`backend/release-model.mjs`](backend/release-model.mjs);
-the Jira calls, caches and concurrency are in [`backend/releases.mjs`](backend/releases.mjs).
+the dev-status calls, cache and concurrency are in [`backend/dev-status.mjs`](backend/dev-status.mjs),
+shared with My Tickets, and the versions, the search and the PR ownership filter are in
+[`backend/releases.mjs`](backend/releases.mjs).
 The browser's grouping and remembered-version helpers are DOM-free in
 [`ui/releases-data.js`](ui/releases-data.js). Tests are
 `test/release-*.test.mjs` and `test/ui-releases-*.test.mjs`. The Releases

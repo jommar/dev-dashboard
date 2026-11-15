@@ -17,11 +17,16 @@ test('no bare fetch in the Jira and GitHub modules: every request goes through u
     'github.mjs',
     'github-api.mjs',
     'team-velocity.mjs',
-    'releases.mjs',
+    'dev-status.mjs',
   ]) {
     const source = code(read(`backend/${file}`));
     assert.doesNotMatch(source, /(?<![\w.])fetch\(/, `${file} calls fetch( directly`);
     assert.match(source, /upstreamFetch\(/, `${file} uses upstreamFetch`);
+  }
+  // Releases and My Tickets reach Jira only through the shared dev-status module.
+  for (const file of ['releases.mjs', 'ticket-prs.mjs']) {
+    const source = code(read(`backend/${file}`));
+    assert.doesNotMatch(source, /(?<![\w.])fetch\(/, `${file} calls fetch( directly`);
   }
 });
 

@@ -20,7 +20,7 @@ function headers(tokenStr) {
   };
 }
 
-async function getLogin(tokenStr, config) {
+export async function getLogin(tokenStr, config) {
   const res = await upstreamFetch('github', `${config.api}/user`, {
     headers: headers(tokenStr),
     redirect: 'error',
