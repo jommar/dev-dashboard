@@ -584,9 +584,10 @@ like groom and review; the contracts the backend and UI hold:
   step-2 hint reads `browser.headed` from the launch response: the default points to the live view
   (Take control) and never mentions a window, the headed one names the window as a second way to sign
   in. The live viewer is a modal over the dialog, so Start is unreachable while it is open
-  (no separate unmount code). Closing at step 2 before Start stops the browser; while Start runs, close
-  does nothing and unmount stops nothing; after `timed_out` no close path stops it (the backend's
-  auto-stop owns it). No `EventSource` in the component.
+  (no separate unmount code). Closing at step 2 before Start **removes** the browser (record and profile: a
+  throw-away browser no session used, so no Stopped row piles up; the finish-time auto-stop above still only
+  stops); while Start runs, close does nothing and unmount removes nothing; after `timed_out` no close path
+  stops or removes it (the backend's auto-stop owns it). No `EventSource` in the component.
 - **Verdict.** `ticketEntry` in the launcher adds `verdict` to `entry.e2e` / `entry.groom` only while
   that side is `done`, from `createClaudeArtifacts.verdict(key, name)` (the `VERDICT_FILES` table in
   `backend/claude-artifacts.mjs`: `e2e.md` `Verdict:` PASS|FAIL|PARTIAL|BLOCKED, `groom.md` `Readiness:`

@@ -1901,15 +1901,17 @@ ticket refuses another (`session_running`).
   and gates nothing. The row also shows the session's state, a **Go to e2e check session** chip, and
   once `done` a **View e2e result** link that opens `e2e.md` in the artifact viewer. The entry's `e2e`
   gains an optional `verdict`, only while it is `done`.
-- **Browser.** The dashboard stops the browser, never removes it (the signed-in profile stays on
-  disk and the browser stays in the DevTools tab as stopped), in two cases. Closing the dialog at
-  step 2 before Start (Close, Esc, the backdrop; also closing while Launch browser is still
-  opening) stops it, and a failed stop is ignored. And when the next `GET /api/claude/tickets` finds
-  the session `done` or `failed`, it stops the browser once, under the ticket's lock, and writes
+- **Browser.** Two cases end the browser. Closing the dialog at step 2 before Start (Close, Esc,
+  the backdrop; also closing while Launch browser is still opening) **removes** it, record and
+  profile, because it is a throw-away browser no session has used, so a Stopped row would only pile
+  up in the DevTools tab; a failed remove is ignored (the browser stays in the DevTools tab). And
+  when the next `GET /api/claude/tickets` finds the session `done` or `failed`, the dashboard
+  **stops** the browser once (never removes it: the signed-in profile stays on disk and the browser
+  stays in the DevTools tab as stopped), under the ticket's lock, and writes
   `browserStoppedAt` (or `browserStopFailed` with the error code, which is logged and not retried)
   into the record; a browser that is already stopped or gone is only marked, and a failed stop never
-  fails the listing. While Start is in flight, closing does nothing and the dialog going away stops nothing: the launch
-  outcome decides. After a `timed_out` start no close path stops it, because a session may exist:
+  fails the listing. While Start is in flight, closing does nothing and the dialog going away removes nothing: the launch
+  outcome decides. After a `timed_out` start no close path stops or removes it, because a session may exist:
   only the finish-time stop does. A relaunch
   before a poll saw the earlier session finish, or closing the dashboard tab at step 2, leaves a
   browser running; stop it in the DevTools tab.

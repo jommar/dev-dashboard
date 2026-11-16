@@ -4,20 +4,21 @@
 // optional way to sign in) and "I've logged in, start check", the only thing that starts the session.
 // The person is the only driver until Start; the viewer is a modal over this dialog, so Start cannot be
 // reached while it is open, and closing it lets go of the shared stream. Closing the dialog at step 2
-// before a successful Start stops that browser (a failed stop is ignored: it stays in the DevTools
-// tab); after Start the backend owns the stop. This component opens no event stream of its own.
+// before a successful Start removes that browser, record and profile (it is a throw-away one nobody
+// else has seen, so a Stopped row would only pile up; a failed remove is ignored: it stays in the
+// DevTools tab); after Start the backend owns the stop. This component opens no event stream of its own.
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
 import { ShowWindowToggle } from './ShowWindowToggle.jsx';
 import { DevtoolsViewer } from './DevtoolsViewer.jsx';
-import { launchDevtoolsBrowser, stopDevtoolsBrowser } from '../lib/api.js';
+import { launchDevtoolsBrowser, removeDevtoolsBrowser } from '../lib/api.js';
 import { DEFAULT_DEVTOOLS_URL } from '../../ui/devtools-defaults.js';
 
 const START_LABEL = "I've logged in, start check";
 
 // `start(browserId)` launches the session and answers `{ ok }` or, for a refusal,
 // `{ ok: false, gone, handedOver, message }`: `gone` when the browser is no longer there, `handedOver`
-// when a session may be running on it, so closing no longer stops it.
+// when a session may be running on it, so closing no longer removes it.
 export function E2eCheckDialog({ ticketKey, start, onClose }) {
   const dialogRef = useRef(null);
   const close = useRef(null);
@@ -29,7 +30,7 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [watching, setWatching] = useState(false);
-  // The browser this dialog opened and has not handed to a session; closing stops it.
+  // The browser this dialog opened and has not handed to a session; closing removes it.
   const owned = useRef(null);
   const mounted = useRef(false);
   // While Start runs the session is being launched on that browser, so closing waits for the answer.
@@ -37,9 +38,9 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
   const inputRef = useRef(null);
   const startRef = useRef(null);
 
-  // Stops what the dialog still owns, then leaves. Also the unmount path, for a parent that goes away.
+  // Removes what the dialog still owns, then leaves. Also the unmount path, for a parent that goes away.
   const release = () => {
-    if (owned.current) stopDevtoolsBrowser(owned.current);
+    if (owned.current) removeDevtoolsBrowser(owned.current);
     owned.current = null;
   };
   const dismiss = () => {
@@ -89,9 +90,9 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
       url: url.trim(),
       headed,
     });
-    // Closed while the browser was opening: nothing else will ever stop it.
+    // Closed while the browser was opening: nothing else will ever remove it.
     if (!mounted.current) {
-      if (result.ok) stopDevtoolsBrowser(result.browser.id);
+      if (result.ok) removeDevtoolsBrowser(result.browser.id);
       return;
     }
     setBusy(false);

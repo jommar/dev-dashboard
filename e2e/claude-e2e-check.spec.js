@@ -283,7 +283,7 @@ test('e2e check: start check hands the browser to the session alone', async ({
   await expect(iconOf(page)).toHaveAttribute('data-state', 'working');
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('claude-dialog')).toHaveCount(0);
-  expect(browserCalls(dashboard, '/stop')).toEqual([]);
+  expect(browserCalls(dashboard, '/remove')).toEqual([]);
 });
 
 test('e2e check: a browser stopped before start returns to step 1', async ({ page, dashboard }) => {
@@ -295,7 +295,7 @@ test('e2e check: a browser stopped before start returns to step 1', async ({ pag
   await expect(e2eDialog(page).getByText(GONE)).toBeVisible();
   await expect(launchButton(page)).toBeVisible();
   await expect(startButton(page)).toHaveCount(0);
-  expect(browserCalls(dashboard, '/stop')).toEqual([]);
+  expect(browserCalls(dashboard, '/remove')).toEqual([]);
   // Nothing started: the row shows no e2e session.
   await page.keyboard.press('Escape');
   await expect(e2eDialog(page)).toHaveCount(0);
@@ -312,7 +312,7 @@ test('e2e check: any other refusal keeps step 2 and the browser', async ({ page,
   await expect(e2eDialog(page).getByText(UNAVAILABLE)).toBeVisible();
   await expect(startButton(page)).toBeEnabled();
   await expect(e2eDialog(page).getByText(`Port ${BROWSER.port}`)).toBeVisible();
-  expect(browserCalls(dashboard, '/stop')).toEqual([]);
+  expect(browserCalls(dashboard, '/remove')).toEqual([]);
 
   // A retry that succeeds proceeds as a first Start does.
   dashboard.data.claude.listing = 'ok';
@@ -322,7 +322,7 @@ test('e2e check: any other refusal keeps step 2 and the browser', async ({ page,
     { key: KEY, phase: 'e2e-ticket-check', browserId: BROWSER.id },
     { key: KEY, phase: 'e2e-ticket-check', browserId: BROWSER.id },
   ]);
-  expect(browserCalls(dashboard, '/stop')).toEqual([]);
+  expect(browserCalls(dashboard, '/remove')).toEqual([]);
 });
 
 test('e2e check: closing after a timed out start leaves the browser alone', async ({
@@ -344,14 +344,14 @@ test('e2e check: closing after a timed out start leaves the browser alone', asyn
   // The session may exist: the backend stops the browser when it finishes, not the dialog.
   await e2eDialog(page).getByRole('button', { name: 'Close', exact: true }).click();
   await expect(e2eDialog(page)).toHaveCount(0);
-  expect(browserCalls(dashboard, '/stop')).toEqual([]);
+  expect(browserCalls(dashboard, '/remove')).toEqual([]);
 });
 
-test('e2e check: closing before start stops the browser', async ({ page, dashboard }) => {
+test('e2e check: closing before start removes the browser', async ({ page, dashboard }) => {
   await openBoard(page, dashboard);
   const claude = await openDialog(page);
   const open = () => claude.getByTestId('claude-action-e2e').click();
-  const stopped = () => browserCalls(dashboard, '/stop').map(({ body }) => body);
+  const removed = () => browserCalls(dashboard, '/remove').map(({ body }) => body);
   const launchNext = async (id) => {
     dashboard.data.devtools.nextLaunch = { id, port: BROWSER.port };
     await open();
@@ -359,31 +359,31 @@ test('e2e check: closing before start stops the browser', async ({ page, dashboa
     await expect(startButton(page)).toBeVisible();
   };
 
-  // At step 1 there is no browser, so nothing is stopped.
+  // At step 1 there is no browser, so nothing is removed.
   await open();
   await expect(e2eDialog(page)).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(e2eDialog(page)).toHaveCount(0);
-  expect(stopped()).toEqual([]);
+  expect(removed()).toEqual([]);
 
-  // At step 2 each way of closing stops that browser, once.
+  // At step 2 each way of closing removes that browser, once.
   await launchNext('b-1a000001');
   await e2eDialog(page).getByRole('button', { name: 'Close', exact: true }).click();
   await expect(e2eDialog(page)).toHaveCount(0);
-  expect(stopped()).toEqual([{ id: 'b-1a000001' }]);
+  expect(removed()).toEqual([{ id: 'b-1a000001' }]);
 
   await launchNext('b-1a000002');
   await page.keyboard.press('Escape');
   await expect(e2eDialog(page)).toHaveCount(0);
-  expect(stopped()).toEqual([{ id: 'b-1a000001' }, { id: 'b-1a000002' }]);
+  expect(removed()).toEqual([{ id: 'b-1a000001' }, { id: 'b-1a000002' }]);
 
   await launchNext('b-1a000003');
   await page.mouse.click(4, 4);
   await expect(e2eDialog(page)).toHaveCount(0);
-  expect(stopped().map(({ id }) => id)).toEqual(['b-1a000001', 'b-1a000002', 'b-1a000003']);
+  expect(removed().map(({ id }) => id)).toEqual(['b-1a000001', 'b-1a000002', 'b-1a000003']);
 
-  // A stop that fails changes nothing for the person: the dialog still closes.
-  await page.route('**/api/devtools/browsers/stop', (route) =>
+  // A remove that fails changes nothing for the person: the dialog still closes.
+  await page.route('**/api/devtools/browsers/remove', (route) =>
     route.fulfill({
       status: 500,
       contentType: 'application/json',
@@ -391,7 +391,7 @@ test('e2e check: closing before start stops the browser', async ({ page, dashboa
     }),
   );
   await launchNext('b-1a000004');
-  const failing = page.waitForRequest((request) => request.url().endsWith('/browsers/stop'));
+  const failing = page.waitForRequest((request) => request.url().endsWith('/browsers/remove'));
   await e2eDialog(page).getByRole('button', { name: 'Close', exact: true }).click();
   expect((await failing).postDataJSON()).toEqual({ id: 'b-1a000004' });
   await expect(e2eDialog(page)).toHaveCount(0);
@@ -411,7 +411,7 @@ async function holdRequest(page, url, method) {
   return release;
 }
 
-test('e2e check: closing while the browser opens still stops it', async ({ page, dashboard }) => {
+test('e2e check: closing while the browser opens still removes it', async ({ page, dashboard }) => {
   const release = await holdRequest(page, '**/api/devtools/browsers', 'POST');
   await openBoard(page, dashboard);
   const claude = await openDialog(page);
@@ -422,7 +422,7 @@ test('e2e check: closing while the browser opens still stops it', async ({ page,
 
   release();
   await expect
-    .poll(() => browserCalls(dashboard, '/stop').map(({ body }) => body))
+    .poll(() => browserCalls(dashboard, '/remove').map(({ body }) => body))
     .toEqual([{ id: BROWSER.id }]);
 });
 
@@ -439,7 +439,7 @@ test('e2e check: closing while the session starts leaves the browser alone', asy
 
   release();
   await expect(e2eDialog(page)).toHaveCount(0);
-  expect(browserCalls(dashboard, '/stop')).toEqual([]);
+  expect(browserCalls(dashboard, '/remove')).toEqual([]);
 });
 
 test('e2e check: a working session disables the button with a visible reason', async ({
