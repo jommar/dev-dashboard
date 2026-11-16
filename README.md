@@ -2722,9 +2722,9 @@ mascot you register appears on it with no page change.
 
 The **Sprint** tab (in the tools group after Mascots, `#/sprint`, `g` then `b`) is a product-owner view
 of one team's sprint: every ticket in the chosen sprint whoever is assigned to it, with its estimate,
-status, Claude sessions and groom verdict, and the tickets that need a decision marked. It only reads
-Jira: nothing on it writes to Jira, and grooming goes through the same Claude launch as a ticket's
-Claude dialog. Its code loads on first visit, like Chat, Releases, DevTools and Mascots.
+status, Claude sessions, groom verdict and Slack threads, and the tickets that need a decision marked.
+It only reads Jira and Slack: nothing on it writes to Jira, and grooming goes through the same Claude
+launch as a ticket's Claude dialog. Its code loads on first visit, like Chat, Releases, DevTools and Mascots.
 
 - **Team and sprint.** The Team select lists every team that has an active, future or recently closed
   sprint. A team is the sprint-name prefix Home also uses ("Nexus Sprint 17" is Nexus). The Sprint
@@ -2743,15 +2743,27 @@ Claude dialog. Its code loads on first visit, like Chat, Releases, DevTools and 
   per attention reason with its count. Pressed toggles narrow both views to tickets with any pressed
   reason; pressing again releases it. Toggles are not remembered and reset on a team or sprint change.
   Until Claude's session state is first read, the three Claude reasons (Claude waiting, Groom: open
-  questions, Not groomed) show `–` and cannot be pressed, because an unknown state never counts.
+  questions, Not groomed) show `–` and cannot be pressed, because an unknown state never counts. Slack reply
+  owed is not one of these: it counts 0 until the Slack thread list is read, and while Slack is disconnected
+  or unavailable.
 - **Board and Needs attention.** **Board** has one column per Jira status in the My Tickets order, every
   assignee's tickets together. **Needs attention** lists only the tickets with a reason: by their most
   important reason (the order below), then by how many reasons they have, then by key. Its tab shows
   the count.
-- **The card.** The key as a Jira link, the issue type, the points or "No estimate", a **Groom** button,
-  the summary, the assignee or "Unassigned", the status, a chip per Claude session the ticket has
-  (investigate or implement, groom, code review, spec review, E2E check) with its state, the groom
-  verdict once a groom finished, and a chip per attention reason. Linked PRs are not shown (see below).
+- **The card.** The key as a Jira link, the ticket's Slack thread chips, the issue type, the points or
+  "No estimate", a **Groom** button, the summary, the assignee or "Unassigned", the status, a chip per
+  Claude session the ticket has (investigate or implement, groom, code review, spec review, E2E check)
+  with its state, the groom verdict once a groom finished, and a chip per attention reason. Linked PRs
+  are not shown (see below).
+- **Slack threads.** The chips are the [My Tickets Slack chips](#slack-threads), from the same thread
+  list and the same thread dialog: a thread whose subject starts with the ticket's key (TAP, or TRIPS
+  folded onto TAP; other project keys never match), among the threads you started **and** the ones you
+  were mentioned in, since a sprint is mostly other people's tickets (as on Pull Requests). The list is
+  read with each sprint read, never awaited, so the tickets never wait on Slack, and only through the
+  existing reads the other boards share (`GET /api/slack/status` and `GET /api/slack/threads`; no Slack call
+  of the tab's own). An incomplete thread list shows the
+  note "Slack thread results may be incomplete" with a link to the Slack tab. With Slack disconnected
+  there are no chips and no Slack reply owed reason.
 
 ### Attention reasons
 
@@ -2762,6 +2774,7 @@ comment or description.
 | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | **Claude waiting**        | the ticket's workflow session, or its groom, code review, spec review or E2E session, is waiting for you        |
 | **Groom: open questions** | a finished groom's verdict is Needs info or Blocked                                                             |
+| **Slack reply owed**      | a Slack thread that names the ticket (a chip on its card) needs your reply                                      |
 | **Blocked**               | the Jira status is an attention kind (Blocked, Impediment, Rejected, Active Incident, CS Escalation)            |
 | **Unassigned**            | the ticket has no assignee                                                                                      |
 | **No estimate**           | the ticket has no story points                                                                                  |
@@ -2802,6 +2815,8 @@ a groom whose file opens with anything else has no verdict, so Groom: open quest
   two for a ticket with no PR, on every uncached read. On a 60-second poll that is sustained Jira load,
   and one rate-limit answer stops every Jira call for up to 15 minutes. For the same reason there is no
   "in progress with no PR" reason.
+- The Slack thread list is the shared one (cached by its route), read with each sprint read and again
+  when the thread dialog closes; the tab adds no Slack route and no Slack call.
 - The tab never calls `/api/team-velocity` and never touches Home's snapshot. It shows no
   [integration health](#integration-health) note.
 - Not checked against a live Jira: that `sprint = <id>` searches as written, and that sprint ids are

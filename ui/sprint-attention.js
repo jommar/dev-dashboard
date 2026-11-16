@@ -1,12 +1,14 @@
 // sprint-attention.js — which sprint tickets need the product owner's attention, and why.
-// Pure: no DOM, no storage, no backend imports. Reasons come only from Jira fields and the Claude
-// ticket map, never from comment or description text.
+// Pure: no DOM, no storage, no backend imports. Reasons come only from Jira fields, the Claude
+// ticket map and the reply state of the Slack threads that name the ticket, never from comment,
+// description or message text.
 import { jiraStatusKind } from './jira-status.js';
 import { TICKET_KEY } from './needs-you.js';
 
 export const ATTENTION_REASONS = Object.freeze([
   Object.freeze({ id: 'claude-waiting', label: 'Claude waiting' }),
   Object.freeze({ id: 'groom-open', label: 'Groom: open questions' }),
+  Object.freeze({ id: 'slack-reply', label: 'Slack reply owed' }),
   Object.freeze({ id: 'jira-blocked', label: 'Blocked' }),
   Object.freeze({ id: 'unassigned', label: 'Unassigned' }),
   Object.freeze({ id: 'no-estimate', label: 'No estimate' }),
@@ -40,11 +42,13 @@ const hasNoGroomRecord = (entry) => !entry || entry.groom?.state === 'none';
 // and "unknown" look alike.
 export const CLAUDE_REASONS = Object.freeze(['claude-waiting', 'groom-open', 'not-groomed']);
 
-export function attentionReasons(ticket, entry, { claudeLoaded }) {
+// `slackLinks` are the ticket's Slack threads; only a known reply owed (`needsReply: true`) counts.
+export function attentionReasons(ticket, entry, { claudeLoaded, slackLinks = [] }) {
   if (isDone(ticket)) return [];
   const fires = {
     'claude-waiting': isWaiting(entry),
     'groom-open': hasOpenGroom(entry),
+    'slack-reply': slackLinks.some((thread) => thread?.needsReply === true),
     'jira-blocked': jiraStatusKind(ticket.status) === 'attention',
     unassigned: ticket.assignee == null,
     'no-estimate': ticket.storyPoints == null,

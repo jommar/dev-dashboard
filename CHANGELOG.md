@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The **Sprint** tab now shows each ticket's Slack threads as the same chips My Tickets has (threads you started and
+  threads you were mentioned in, opening the same thread dialog), and a seventh attention reason, **Slack reply owed**,
+  marks a ticket whose thread needs your reply. Slack is read through the existing thread list only, never awaited by
+  the ticket read; an incomplete list shows a note. No new route. See [Sprint](README.md#sprint).
 - Added the **Sprint** tab (tools group after Mascots, `#/sprint`, `g` then `b`): a product-owner view of one team's
   sprint, every ticket whoever has it, as a board by status or a Needs attention list. A summary strip counts tickets,
   points committed and done, and six attention reasons (Claude waiting, Groom: open questions, Blocked, Unassigned, No

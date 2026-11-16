@@ -156,20 +156,25 @@ test('board.css draws a note as an amber one-line chip that wraps when open', ()
   );
 });
 
-test('only the My Tickets Slack coverage note starts open', () => {
-  const panel = read('panels/MyTicketsPanel.jsx');
-  assert.ok(
-    /<BoardNote\b(?=[^>]*\btestId="my-tickets-slack-coverage")(?=[^>]*\bdefaultOpen\b)[^>]*>/.test(
-      panel,
-    ),
-    'the note that carries a link starts open',
-  );
+const LINKED_NOTES = {
+  'MyTicketsPanel.jsx': 'my-tickets-slack-coverage',
+  'SprintPanel.jsx': 'sprint-board-slack-coverage',
+};
+
+test('only the Slack coverage notes, which carry a link, start open', () => {
+  for (const [file, testId] of Object.entries(LINKED_NOTES))
+    assert.ok(
+      new RegExp(
+        `<BoardNote\\b(?=[^>]*\\btestId="${testId}")(?=[^>]*\\bdefaultOpen\\b)[^>]*>`,
+      ).test(read(`panels/${file}`)),
+      `${file}: the note that carries a link starts open`,
+    );
   for (const file of fs.readdirSync(new URL('../ui-react/panels/', import.meta.url))) {
     const source = read(`panels/${file}`);
     const opened = [...source.matchAll(/<BoardNote\b([^>]*)>/g)].filter(([, props]) =>
       /\bdefaultOpen\b/.test(props),
     );
-    const expected = file === 'MyTicketsPanel.jsx' ? 1 : 0;
+    const expected = file in LINKED_NOTES ? 1 : 0;
     assert.equal(opened.length, expected, `${file} opens ${expected} note(s) by default`);
   }
 });

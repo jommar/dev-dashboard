@@ -805,6 +805,67 @@ const BOARD_TEAM = 'T0EXAMPLE1';
 const BOARD_CHANNEL = 'C0EXAMPLE1';
 const BOARD_FAILING_CHECKS = ['lint', 'unit-tests'];
 
+// Two Slack threads for the Sprint tab, laid over any `dashboardData()`: two TAP tickets join Nexus
+// Sprint 17 (Slack threads match TAP and TRIPS keys only), one named by a thread someone else started
+// and mentioned the user in that waits on a reply, the other by a quiet thread the user started.
+// Neither ticket has any other attention reason. Invented data only.
+export const SPRINT_THREAD_TS = {
+  owed: `${boardRootSeconds + 2000}.000100`,
+  quiet: `${boardRootSeconds + 2100}.000100`,
+};
+export function withSprintSlackThreads(data) {
+  const activityAt = new Date(Date.now() - 3_600_000).toISOString();
+  const [base] = data.sprintBoard.tickets[417];
+  const host = { id: 'U0EXAMPLE3', name: 'Morgan Example' };
+  const me = { id: 'U0EXAMPLE1', name: 'Sam Example' };
+  const row = (ts, key, author, needsReply) => ({
+    ts,
+    url: slackAppThreadLink(BOARD_TEAM, BOARD_CHANNEL, ts),
+    watchKey: `${BOARD_CHANNEL}:${ts}`,
+    text: `${key}: Invented question about the route schedule`,
+    author,
+    starter: author,
+    replyCount: 2,
+    activityAt,
+    latestReplyBy: needsReply ? host : me,
+    needsReply,
+    attachedSessions: 0,
+  });
+  const owed = row(SPRINT_THREAD_TS.owed, 'TAP-9301', host, true);
+  const quiet = row(SPRINT_THREAD_TS.quiet, 'TAP-9302', me, false);
+  data.sprintBoard.tickets[417].push(
+    { ...base, key: 'TAP-9301', id: '79301', summary: 'Invented sprint item TAP-9301' },
+    { ...base, key: 'TAP-9302', id: '79302', summary: 'Invented sprint item TAP-9302' },
+  );
+  data.slack.threads.started = [quiet];
+  data.slack.threads.mentions = [owed];
+  data.slack.threadReads = Object.fromEntries(
+    [owed, quiet].map((thread) => [
+      thread.ts,
+      {
+        ts: thread.ts,
+        url: thread.url,
+        watchKey: thread.watchKey,
+        channel: { id: BOARD_CHANNEL, name: 'example_channel' },
+        replyCount: thread.replyCount,
+        truncated: false,
+        updatedAt: new Date().toISOString(),
+        names: { [host.id]: host.name, [me.id]: me.name },
+        messages: [
+          {
+            ts: thread.ts,
+            at: activityAt,
+            author: thread.author,
+            text: thread.text,
+            mrkdwn: thread.text,
+          },
+        ],
+      },
+    ]),
+  );
+  return data;
+}
+
 // A review-thread bucket and a PR's `comments` as the backend returns them: `human`, `copilot`
 // and `other` hold threads read, unresolved threads and comments in them; `threads` is the total
 // GitHub reports and `truncated` says more exist than were read.

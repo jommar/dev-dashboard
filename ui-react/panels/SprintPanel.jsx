@@ -1,7 +1,8 @@
 // SprintPanel.jsx — the Sprint tab: one team's sprint for whoever owns it. Every ticket of the chosen
 // sprint whoever has it, a summary whose attention counts are filter toggles, a Board and a Needs
-// attention view, a Groom button per card (the ticket's Claude dialog) and a capped, confirmed batch
-// groom of the ungroomed tickets. It only reads Jira; grooming goes through the Claude launch.
+// attention view, a Groom button per card (the ticket's Claude dialog), the Slack threads that name
+// each ticket (the shared thread hook and dialog) and a capped, confirmed batch groom of the
+// ungroomed tickets. It only reads Jira and Slack; grooming goes through the Claude launch.
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Board,
@@ -21,9 +22,11 @@ import { useHarness } from '../lib/harness-context.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
+import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
 import { say } from '../../ui/harness.js';
 import { slug } from '../../ui/dom.js';
 import { boardColumns } from '../../ui/ticket-board.js';
+import { normalizeTicketKey } from '../../ui/slack-ticket-links.js';
 import {
   ATTENTION_REASONS,
   CLAUDE_REASONS,
@@ -46,6 +49,7 @@ import {
 
 const NO_TICKETS = Object.freeze([]);
 const NO_REASONS = Object.freeze([]);
+const NO_LINKS = Object.freeze([]);
 const NO_GROOM_REASON = `Nothing to groom: every unstarted ticket is groomed, or ${GROOM_BATCH_MAX} grooms are running.`;
 const CLAUDE_UNREAD_REASON = 'Waiting for the {name} session state.';
 
@@ -103,12 +107,37 @@ export function SprintPanel({ config, active }) {
   const [groomBatch, setGroomBatch] = useState(null);
   const latest = useRef(0);
   const groomReasonId = useId();
+  // Where focus goes when the thread dialog closes: the chip, in whichever view shows it.
+  const resolveThreadOpener = useCallback((ts) => {
+    const panel = document.getElementById('panel-sprint');
+    if (!panel || panel.hidden) return null;
+    return (
+      panel.querySelector(`[data-testid="slack-thread-link-${CSS.escape(ts)}"]`) ||
+      panel.querySelector('[data-testid="sprint-refresh"]')
+    );
+  }, []);
+  // Mentions too: a sprint is mostly other people's tickets, whose threads someone else started.
+  const {
+    loadSlack,
+    openThread,
+    linksByTicket,
+    dialog: slackDialog,
+    snapshot: slackSnapshot,
+    incomplete: slackIncomplete,
+  } = useTicketSlackThreads({
+    source: 'sprint',
+    active,
+    resolveOpener: resolveThreadOpener,
+    includeMentions: true,
+  });
 
   // Reads the team list, then the chosen sprint's tickets. Only the newest read may change the
   // screen, so a switch made while an older read is out is never overwritten by its answer.
   const load = useCallback(
     async ({ silent = false } = {}) => {
       const request = ++latest.current;
+      // Fired, never awaited: Slack is optional and slow, and its outage is not a failed refresh.
+      loadSlack();
       setLoading(true);
       if (!silent) setMeta(dataRef.current ? 'Refreshing…' : 'loading…');
       try {
@@ -152,7 +181,7 @@ export function SprintPanel({ config, active }) {
         if (request === latest.current) setLoading(false);
       }
     },
-    [api],
+    [api, loadSlack],
   );
   const { load: refresh, countdown } = useActivePolling({
     active,
@@ -178,15 +207,23 @@ export function SprintPanel({ config, active }) {
   const chooseTeam = (name) => choose({ team: name, sprint: null });
 
   const tickets = data?.tickets ?? NO_TICKETS;
+  // Threads are keyed by the normalised key (TRIPS folds onto TAP).
+  const slackLinksOf = useCallback(
+    (key) => linksByTicket.get(normalizeTicketKey(key)) || NO_LINKS,
+    [linksByTicket],
+  );
   const reasonsByKey = useMemo(
     () =>
       Object.fromEntries(
         tickets.map((ticket) => [
           ticket.key,
-          attentionReasons(ticket, claude.byTicket[ticket.key], { claudeLoaded: claude.loaded }),
+          attentionReasons(ticket, claude.byTicket[ticket.key], {
+            claudeLoaded: claude.loaded,
+            slackLinks: slackLinksOf(ticket.key),
+          }),
         ]),
       ),
-    [tickets, claude.byTicket, claude.loaded],
+    [tickets, claude.byTicket, claude.loaded, slackLinksOf],
   );
   const summary = useMemo(() => sprintSummary(tickets, reasonsByKey), [tickets, reasonsByKey]);
   const shown = useMemo(
@@ -252,7 +289,9 @@ export function SprintPanel({ config, active }) {
                     jiraBase={jiraBase}
                     entry={claude.byTicket[ticket.key]}
                     reasons={reasonsByKey[ticket.key]}
+                    slackLinks={slackLinksOf(ticket.key)}
                     onGroom={openClaude}
+                    onOpenThread={openThread}
                   />
                 </li>
               ))}
@@ -284,7 +323,9 @@ export function SprintPanel({ config, active }) {
                   jiraBase={jiraBase}
                   entry={claude.byTicket[ticket.key]}
                   reasons={reasonsByKey[ticket.key]}
+                  slackLinks={slackLinksOf(ticket.key)}
                   onGroom={openClaude}
+                  onOpenThread={openThread}
                 />
               </li>
             ))}
@@ -292,7 +333,18 @@ export function SprintPanel({ config, active }) {
         ))}
       </Board>
     );
-  }, [view, attention, shown, tickets, jiraBase, claude.byTicket, reasonsByKey, openClaude]);
+  }, [
+    view,
+    attention,
+    shown,
+    tickets,
+    jiraBase,
+    claude.byTicket,
+    reasonsByKey,
+    openClaude,
+    slackLinksOf,
+    openThread,
+  ]);
 
   return (
     <BoardPanel id="sprint" active={active} busy={loading}>
@@ -394,6 +446,12 @@ export function SprintPanel({ config, active }) {
                 The sprint could not refresh. Showing the last tickets read.
               </BoardNote>
             )}
+            {(slackIncomplete || slackSnapshot?.continuation) && (
+              <BoardNote testId="sprint-board-slack-coverage" defaultOpen>
+                Slack thread results may be incomplete.{' '}
+                <a href="#/slack">View Slack and load more</a>.
+              </BoardNote>
+            )}
             {(data?.truncated || teamsTruncated) && (
               <BoardNote testId="sprint-truncated">
                 Not every ticket of this sprint was fetched, so the board and its totals may be
@@ -415,6 +473,7 @@ export function SprintPanel({ config, active }) {
           body
         )}
       </BoardSection>
+      {slackDialog}
       {groomBatch && (
         <SprintGroomDialog tickets={groomBatch} launch={claude.launch} onClose={closeGroomBatch} />
       )}

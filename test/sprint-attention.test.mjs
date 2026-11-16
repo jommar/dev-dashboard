@@ -46,6 +46,7 @@ test('attention reasons fire one per rule, listed in table sequence', async () =
     [
       { id: 'claude-waiting', label: 'Claude waiting' },
       { id: 'groom-open', label: 'Groom: open questions' },
+      { id: 'slack-reply', label: 'Slack reply owed' },
       { id: 'jira-blocked', label: 'Blocked' },
       { id: 'unassigned', label: 'Unassigned' },
       { id: 'no-estimate', label: 'No estimate' },
@@ -84,6 +85,56 @@ test('attention reasons fire one per rule, listed in table sequence', async () =
       loaded,
     ),
     ['claude-waiting', 'unassigned', 'no-estimate', 'not-groomed'],
+  );
+});
+
+test('a Slack thread that names the ticket and waits on a reply flags it, whatever Claude has read', async () => {
+  const { CLAUDE_REASONS, attentionReasons } = await load();
+  const thread = (needsReply) => ({
+    ts: '1700000000.000100',
+    url: 'https://example.invalid/t',
+    needsReply,
+  });
+
+  assert.equal(CLAUDE_REASONS.includes('slack-reply'), false);
+  assert.deepEqual(
+    attentionReasons(ticket('ABC-1'), undefined, {
+      ...loaded,
+      slackLinks: [thread(false), thread(true)],
+    }),
+    ['slack-reply'],
+  );
+  assert.deepEqual(
+    attentionReasons(ticket('ABC-2'), undefined, {
+      claudeLoaded: false,
+      slackLinks: [thread(true)],
+    }),
+    ['slack-reply'],
+  );
+  // Only a known reply owed counts: a quiet thread or an unknown reply state is no reason.
+  assert.deepEqual(
+    attentionReasons(ticket('ABC-3'), undefined, {
+      ...loaded,
+      slackLinks: [thread(false), thread(null), thread(undefined)],
+    }),
+    [],
+  );
+  assert.deepEqual(attentionReasons(ticket('ABC-4'), undefined, loaded), []);
+  // In table sequence among the others, and never on a done ticket.
+  assert.deepEqual(
+    attentionReasons(
+      ticket('ABC-5', { status: 'Blocked' }),
+      entry({ groom: side('done', { verdict: 'NEEDS_INFO' }) }),
+      { ...loaded, slackLinks: [thread(true)] },
+    ),
+    ['groom-open', 'slack-reply', 'jira-blocked'],
+  );
+  assert.deepEqual(
+    attentionReasons(ticket('ABC-6', { status: 'Done', statusCategory: 'Done' }), undefined, {
+      ...loaded,
+      slackLinks: [thread(true)],
+    }),
+    [],
   );
 });
 

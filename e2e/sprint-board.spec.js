@@ -1,12 +1,13 @@
 import { test, expect } from './fixtures.js';
-import { claudeEntry } from './data.js';
+import { SPRINT_THREAD_TS, claudeEntry, withSprintSlackThreads } from './data.js';
 
 // The Sprint tab (`#/sprint`): one team's sprint for its product owner. The fixture is
 // `sprintBoardData` in e2e/data.js (Nexus Sprint 17 by default, Orion Sprint 3 beside it). Test ids:
 //   sprint-section | title | meta | list, sprint-board, sprint-column-*, sprint-card-<KEY> and its
 //   sprint-card-<KEY>-groom button, sprint-summary, sprint-reason-<id> (aria-pressed),
 //   sprint-view-attention, sprint-attention-list, sprint-groom-batch, sprint-groom-dialog,
-//   sprint-groom-item-<KEY>, sprint-groom-outcome-<KEY>, sprint-team-select, sprint-sprint-select.
+//   sprint-groom-item-<KEY>, sprint-groom-outcome-<KEY>, sprint-team-select, sprint-sprint-select,
+//   slack-thread-link-<ts> (a card's thread chip), sprint-board-slack-coverage.
 
 const STORAGE_KEY = 'dev-dashboard.sprint-board';
 const NEXUS_TODO = ['NXS-105', 'NXS-106', 'NXS-107', 'NXS-108', 'NXS-109', 'NXS-110', 'NXS-111'];
@@ -264,5 +265,62 @@ test.describe('Sprint tab', () => {
     const batch = page.getByTestId('sprint-groom-batch');
     await expect(batch).toBeDisabled();
     await expect(batch).toHaveAccessibleDescription(/waiting/i);
+  });
+
+  test("a ticket's Slack threads show on its card, a reply owed flags it, and a chip opens the thread", async ({
+    page,
+    dashboard,
+  }) => {
+    withSprintSlackThreads(dashboard.data);
+    const { owed, quiet } = SPRINT_THREAD_TS;
+    const board = await openSprint(page);
+
+    // The owed thread is under `mentions` only, so it shows because the board reads mentions too.
+    const owedChip = card(page, 'TAP-9301').getByTestId(`slack-thread-link-${owed}`);
+    await expect(owedChip).toBeVisible();
+    await expect(owedChip).toHaveAccessibleName(/needs reply/);
+    await expect(card(page, 'TAP-9302').getByTestId(`slack-thread-link-${quiet}`)).toBeVisible();
+    await expect(card(page, 'NXS-101').locator('.slack-thread-link')).toHaveCount(0);
+    await expect(page.getByTestId('sprint-board-slack-coverage')).toHaveCount(0);
+
+    await expect(card(page, 'TAP-9301').locator('[data-reason="slack-reply"]')).toHaveText(
+      'Slack reply owed',
+    );
+    await expect(card(page, 'TAP-9302').locator('[data-reason]')).toHaveCount(0);
+    const toggle = page.getByTestId('sprint-reason-slack-reply');
+    await expect(toggle.locator('.sprint-board-toggle-count')).toHaveText('1');
+    await toggle.click();
+    await expect.poll(() => cardKeys(board)).toEqual(['TAP-9301']);
+
+    await owedChip.click();
+    const close = page.getByTestId('slack-thread-close');
+    await expect(close).toBeVisible();
+    await expect(page.getByTestId(`slack-thread-message-${owed}`)).toBeVisible();
+    await close.click();
+    await expect(close).toBeHidden();
+    await expect(owedChip).toBeFocused();
+  });
+
+  test('an incomplete Slack read says the threads may be missing, and the tickets never wait on it', async ({
+    page,
+    dashboard,
+  }) => {
+    withSprintSlackThreads(dashboard.data);
+    dashboard.data.slack.threads.partial = true;
+    let releaseSlack;
+    const slackHeld = new Promise((resolve) => (releaseSlack = resolve));
+    await page.route('**/api/slack/threads*', async (route) => {
+      await slackHeld;
+      await route.fallback();
+    });
+    await openSprint(page);
+    await expect(card(page, 'TAP-9301')).toBeVisible();
+    await expect(page.getByTestId('sprint-board-slack-coverage')).toHaveCount(0);
+
+    releaseSlack();
+    await expect(page.getByTestId('sprint-board-slack-coverage')).toContainText(/incomplete/i);
+    await expect(
+      card(page, 'TAP-9301').getByTestId(`slack-thread-link-${SPRINT_THREAD_TS.owed}`),
+    ).toBeVisible();
   });
 });

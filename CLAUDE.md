@@ -472,8 +472,8 @@ contract, so a refactor never renames them):
   `hint` (spoken and shown on hover, so the tone is never colour alone).
 - `BoardNote` (an amber one-line chip, `role="status"`, exact text always in the DOM and clamped by CSS; a
   24px text-less toggle, `board-note-toggle`, named "Show full note" / "Collapse note", appears only while the text
-  overflows, measured on the text span; `defaultOpen` starts it expanded, used only by `my-tickets-slack-coverage`
-  because that note carries a link) and `BoardState` (loading, empty, error or warning body).
+  overflows, measured on the text span; `defaultOpen` starts it expanded, used only by the two Slack coverage notes,
+  `my-tickets-slack-coverage` and `sprint-board-slack-coverage`, because they carry a link) and `BoardState` (loading, empty, error or warning body).
 - `Board` and `BoardColumn` — `.board-frame` > `.board-track` and its columns. `Board` owns scroll
   preservation (`usePreservedInteraction`), so a screen never wires it again. Optional `BoardColumn.hint`
   gives a heading existing `DashboardTooltip` help on hover/keyboard focus; only hinted headings gain
@@ -482,8 +482,9 @@ contract, so a refactor never renames them):
   `.board-card-summary`, `.board-card-stat` and `.board-chip` — the card shell and status chip. A
   domain card adds its own class beside them (`board-card my-tickets-card`).
 
-**Shared by the two screens that open Slack threads** (My Tickets chips, the Slack board), each
-once, with the differences passed in rather than forked:
+**Shared by the four screens that open Slack threads** (the Slack board directly; the My Tickets, Pull
+Requests and Sprint card chips through `ui-react/hooks/useTicketSlackThreads.jsx`), each once, with the
+differences passed in rather than forked:
 
 - `ui-react/hooks/useSlackThreadDialog.jsx` — the activity clock, the rule that a thread past the
   cutoff closes its dialog, the `slack-session-changed` listener, the dialog's session-mismatch
@@ -829,6 +830,15 @@ team's sprint. README "Sprint" has the user-facing rules and the reply shapes.
 - **Linked PRs are deliberately absent.** No `dev-status.mjs` or GitHub call from this screen: a per-ticket
   dev-status lookup on a 60 s poll is sustained Jira load, and one 429 cools every Jira call down for up to 900 s.
   Adding PRs needs a cheaper discovery first, not a call per card.
+- **Slack threads come only through the shared hook.** `useTicketSlackThreads` with `source: 'sprint'` and
+  `includeMentions: true` (a sprint is mostly other people's tickets, as on Pull Requests); `loadSlack()` is fired from
+  the panel's own `load`, never awaited, so the tickets never wait on Slack. No Slack route, method call or
+  `/api/slack` literal of this screen's own: the hook's existing reads (`GET /api/slack/status` and the route-cached
+  `GET /api/slack/threads`) are the only ones.
+  The card's chips are `SlackThreadLinks`, looked up by `normalizeTicketKey` (TAP and TRIPS only), opened through the
+  hook's `openThread` with `selectedTicketKey`, and its `dialog` is rendered inside the panel after the section. The
+  coverage note is `sprint-board-slack-coverage` (the hook's `incomplete` or a `continuation`); it starts open
+  (`defaultOpen`) because it carries a link, as My Tickets' does, and `test/board-shell-refresh.test.mjs` pins both.
 - **Grooming has one path.** The card's Groom opens the existing `ClaudeDialog` (after `loadClaudeDialog()`
   resolves; see the bundle note under "Lazy screens"). The batch launches only through `claude.launch(key, 'groom')`
   from `useClaudeTickets`, awaited one after another, never in parallel, capped by `groomCandidates` at
@@ -836,7 +846,9 @@ team's sprint. README "Sprint" has the user-facing rules and the reply shapes.
   on, and any other refusal stops the rest. No second launch route and no Jira write. The cap is client-side only.
 - **Attention reasons are one closed table.** `ATTENTION_REASONS` in `ui/sprint-attention.js` (id, label, order) is
   the only list: the card chips, the summary toggles and `attentionOrder` read it, and `CLAUDE_REASONS` names the
-  three that need a Claude answer (`–` and `aria-disabled` until `claude.loaded`, never counted before). A done-kind
+  three that need a Claude answer (`–` and `aria-disabled` until `claude.loaded`, never counted before). `slack-reply`
+  is not one of them: it reads `needsReply === true` on the ticket's thread rows, passed in as `slackLinks` in
+  `attentionReasons`' options (the panel's one lookup), never from message text. A done-kind
   ticket, or an unknown status under Done, has none. A new reason is a row there and its rule in `attentionReasons`,
   never a list in a component. Batch eligibility uses `TICKET_KEY` exported from `ui/needs-you.js`, never a new regex.
 - **Phase words are a tested copy.** `SESSION_CHIP_WORDS` in `ui/sprint-board.js` copies `PHASES[*].words` of
@@ -871,9 +883,10 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
 - `test/bundle-budget.test.mjs` builds in memory (never `dist/`) and holds initial JS to 640 KiB raw and
   201 KiB gzip -9 (raised from 200 for the merged-PR rows); a new eager import of a lazy module fails it. `vite.config.js` is pinned by
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
-- **The first-paint gzip, all-JS and CSS margins are thin.** With the Sprint tab the initial closure is 645,684 B raw
-  (631 KiB) and 205,240 B gzip against 205,824 (201 KiB; 584 B spare), all JS is 918,417 B against `MAX_TOTAL_RAW`,
-  900 KiB (921,600 B; raised from 884 KiB for the lazy Sprint screen), so 3,183 B spare, and all CSS is 181,863 B against
+- **The first-paint gzip, all-JS and CSS margins are thin.** With the Sprint tab and its Slack threads the initial
+  closure is 645,708 B raw (631 KiB) and 205,252 B gzip against 205,824 (201 KiB; 572 B spare), all JS is 919,687 B
+  against `MAX_TOTAL_RAW`, 900 KiB (921,600 B; raised from 884 KiB for the lazy Sprint screen), so 1,913 B spare
+  (the Sprint screen's Slack wiring reuses eager modules and split none out), and all CSS is 181,863 B against
   180 KiB (184,320 B), 2,457 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
   test with no apparent cause. A lazy screen that imports a module the entry also uses can split it into an initial
   chunk of its own: `SprintPanel` therefore opens `ClaudeDialog` after `loadClaudeDialog()` instead of importing

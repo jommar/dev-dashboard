@@ -532,14 +532,15 @@ test('Slack and My Tickets wire the thread dialog through one hook, not two copi
   assert.match(hook, /notifySlackSessionChanged\(/);
 
   // Each panel only passes what is its own; none keeps a copy of the wiring.
-  // (My Tickets and Pull Requests reach it through useTicketSlackThreads, which is itself a user.)
+  // (My Tickets, Pull Requests and Sprint reach it through useTicketSlackThreads, which is itself a user.)
   assert.match(read('hooks/useTicketSlackThreads.jsx'), /from '\.\/useSlackThreadDialog\.jsx'/);
-  for (const file of ['panels/MyTicketsPanel.jsx', 'panels/PrsPanel.jsx'])
+  for (const file of ['panels/MyTicketsPanel.jsx', 'panels/PrsPanel.jsx', 'panels/SprintPanel.jsx'])
     assert.match(read(file), /from '\.\.\/hooks\/useTicketSlackThreads\.jsx'/, `${file} uses it`);
   for (const file of [
     'panels/SlackPanel.jsx',
     'panels/MyTicketsPanel.jsx',
     'panels/PrsPanel.jsx',
+    'panels/SprintPanel.jsx',
   ]) {
     const panel = read(file);
     if (file === 'panels/SlackPanel.jsx')
@@ -550,6 +551,33 @@ test('Slack and My Tickets wire the thread dialog through one hook, not two copi
       `${file} leaves the dialog wiring to the hook`,
     );
   }
+});
+
+test('the Sprint tab reads Slack threads through the shared hook, fired beside its ticket read', () => {
+  const panel = read('panels/SprintPanel.jsx');
+  assert.match(
+    panel,
+    /useTicketSlackThreads\(\{[^}]*\bsource: 'sprint'[^}]*\bincludeMentions: true/,
+  );
+  // Never on the ticket path: fired before the sprint list is awaited, and never awaited itself.
+  const slackCall = panel.indexOf('loadSlack();');
+  assert.ok(slackCall > -1, 'the sprint load fires a Slack load');
+  assert.ok(
+    slackCall < panel.indexOf('await api.getSprints'),
+    'Slack starts before Jira is awaited',
+  );
+  assert.doesNotMatch(panel, /await loadSlack\(/);
+  // No Slack route or method of its own: the hook's read is the only one.
+  assert.doesNotMatch(panel, /getSlackThreads|getSlackStatus|\/api\/slack/);
+  assert.ok(
+    panel.indexOf('{slackDialog}') > panel.lastIndexOf('</BoardSection>') &&
+      panel.indexOf('{slackDialog}') < panel.indexOf('</BoardPanel>'),
+    'the thread dialog is rendered inside the panel, after the section',
+  );
+  // The card shows the chips with the one shared component, looked up by the normalised key.
+  const card = read('components/SprintCard.jsx');
+  assert.match(card, /<SlackThreadLinks\b/);
+  assert.match(panel, /linksByTicket\.get\(normalizeTicketKey\(/);
 });
 
 test('keeping a scroll place, per re-render and per view, shares one read and one write', () => {

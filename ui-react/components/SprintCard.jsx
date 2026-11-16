@@ -1,14 +1,16 @@
-// SprintCard.jsx — one ticket of the Sprint tab: its Jira key, type, points, summary, assignee and
-// status, a chip per Claude session that exists, the groom verdict once a groom finished, and a chip
-// per attention reason. Its Groom button opens the ticket's Claude dialog; it launches nothing itself.
+// SprintCard.jsx — one ticket of the Sprint tab: its Jira key, the Slack threads that name it, type,
+// points, summary, assignee and status, a chip per Claude session that exists, the groom verdict once
+// a groom finished, and a chip per attention reason. Its Groom button opens the ticket's Claude
+// dialog and a thread chip the thread dialog; it launches nothing itself.
 import { memo } from 'react';
 import { VERDICT_TONE, verdictWord } from '../../ui/claude-verdict.js';
 import { ATTENTION_REASONS } from '../../ui/sprint-attention.js';
 import { sessionChipWords, sessionChips } from '../../ui/sprint-board.js';
+import { SlackThreadLinks } from './SlackThreadLink.jsx';
 
 const REASON_LABELS = Object.fromEntries(ATTENTION_REASONS.map(({ id, label }) => [id, label]));
 
-function SprintCardView({ ticket, jiraBase, entry, reasons, onGroom }) {
+function SprintCardView({ ticket, jiraBase, entry, reasons, slackLinks, onGroom, onOpenThread }) {
   const chips = entry ? sessionChips(entry) : [];
   const verdict = entry?.groom?.state === 'done' ? entry.groom.verdict : null;
   const verdictText = verdictWord(verdict);
@@ -22,7 +24,13 @@ function SprintCardView({ ticket, jiraBase, entry, reasons, onGroom }) {
           rel="noopener noreferrer"
         >
           {ticket.key}
-        </a>{' '}
+        </a>
+        <span className="board-card-links">
+          <SlackThreadLinks
+            links={slackLinks}
+            onOpen={(thread) => onOpenThread({ ...thread, selectedTicketKey: ticket.key })}
+          />
+        </span>{' '}
         {ticket.issueType && <span className="board-card-stat">{ticket.issueType}</span>}{' '}
         <span className="board-card-stat">
           {Number.isFinite(ticket.storyPoints) ? `${ticket.storyPoints} pt` : 'No estimate'}
