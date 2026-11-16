@@ -13,6 +13,10 @@ export const tabCounts = (feed) =>
     FEED_TABS.map(({ id }) => [id, (feed[id] ?? []).filter((row) => row.unread).length]),
   );
 
+// Unread rows first, each group keeping the server's newest-first order (Array sort is stable).
+export const unreadFirst = (rows) =>
+  [...rows].sort((a, b) => Boolean(b.unread) - Boolean(a.unread));
+
 // `#name` for a channel, the plain name for a DM or group; a row the server could not name is calm.
 export function channelLabel(channel) {
   if (!channel?.name) return 'Unknown conversation';

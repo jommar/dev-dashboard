@@ -68,6 +68,20 @@ test('tabCounts: unread rows per tab, never the number of rows', async () => {
   });
 });
 
+test('unreadFirst: unread rows lead, each group keeps its newest-first order', async () => {
+  const { unreadFirst } = await feedHelpers();
+  const rows = [row('a', false), row('b', true), row('c', false), row('d', true)];
+  assert.deepEqual(
+    unreadFirst(rows).map((r) => r.id),
+    ['b', 'd', 'a', 'c'],
+  );
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ['a', 'b', 'c', 'd'],
+    'the input is not mutated',
+  );
+});
+
 test('channelLabel: #name for a channel, the plain name for a DM or group, a calm word when unknown', async () => {
   const { channelLabel } = await feedHelpers();
   assert.equal(channelLabel({ name: 'example-channel', type: 'channel' }), '#example-channel');

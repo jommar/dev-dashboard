@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getSlackFeed } from '../lib/api.js';
 import { timeAgo } from '../../ui/dom.js';
-import { FEED_TABS, channelLabel, tabCounts } from '../../ui/slack-feed.js';
+import { FEED_TABS, channelLabel, tabCounts, unreadFirst } from '../../ui/slack-feed.js';
 import { BoardNote, BoardState, BoardTabs, tabDomId, tabPanelDomId } from './BoardShell.jsx';
 import { Button } from './Primitives.jsx';
 
@@ -119,7 +119,7 @@ export function SlackFeedPanel({ tabRef, onClose }) {
     ...tab,
     ...(counts[tab.id] && { count: counts[tab.id], hint: 'unread' }),
   }));
-  const rows = feed[view] ?? [];
+  const rows = unreadFirst(feed[view] ?? []);
   return (
     <Frame>
       <div className="slack-feed-toolbar">
