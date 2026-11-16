@@ -291,15 +291,42 @@ export function sprintBoardData() {
 }
 
 // GET /api/sprint-tickets as the server answers it: a sprint id that is not a positive integer is
-// refused before Jira is asked.
-function sprintTicketsResponse(url, { tickets, updatedAt }) {
+// refused before Jira is asked. `ticketsTruncated` marks every sprint's ticket read as capped.
+function sprintTicketsResponse(url, { tickets, updatedAt, ticketsTruncated = false }) {
   const id = url.searchParams.get('sprint') ?? '';
   if (!/^[1-9]\d{0,9}$/.test(id))
     return { status: 400, json: { code: 'INVALID_SPRINT', error: 'Invalid sprint', errors: [] } };
   const list = structuredClone(tickets[id] ?? []);
   return {
-    json: { sprint: Number(id), total: list.length, truncated: false, tickets: list, updatedAt },
+    json: {
+      sprint: Number(id),
+      total: list.length,
+      truncated: ticketsTruncated,
+      tickets: list,
+      updatedAt,
+    },
   };
+}
+
+// Two finished tickets join Nexus Sprint 17: Rejected and Duplicate, both filed under Done by Jira,
+// unassigned and unestimated, so only the Done rule keeps them off the attention list. Invented keys.
+export function withFinishedSprintTickets(data) {
+  const [base] = data.sprintBoard.tickets[417];
+  const finished = (key, status) => ({
+    ...base,
+    key,
+    id: String(70000 + Number(key.split('-')[1])),
+    summary: `Invented sprint item ${key}`,
+    status,
+    statusCategory: 'Done',
+    assignee: null,
+    storyPoints: null,
+  });
+  data.sprintBoard.tickets[417].push(
+    finished('NXS-112', 'Rejected'),
+    finished('NXS-113', 'Duplicate'),
+  );
+  return data;
 }
 
 export function homeVelocityData() {

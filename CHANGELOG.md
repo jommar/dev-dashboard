@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Sprint** tab fixes: a ticket Jira files under Done (Rejected, Duplicate) now counts as finished, so it has no
+  attention reason, no Groom button and is never groomed, and its points count as done; on the board those columns go
+  after Done. The sprint list now comes from Jira's Agile board and sprint lists (at most 20 boards, three read at a
+  time), so closed sprints no longer go missing, with the issue scan kept as a fallback when the board list is refused.
+  A cut-short team list has its own note, apart from the cut-short ticket note. See [Sprint](README.md#sprint).
 - The **Sprint** tab now shows each ticket's Slack threads as the same chips My Tickets has (threads you started and
   threads you were mentioned in, opening the same thread dialog), and a seventh attention reason, **Slack reply owed**,
   marks a ticket whose thread needs your reply. Slack is read through the existing thread list only, never awaited by

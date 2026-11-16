@@ -2739,7 +2739,8 @@ launch as a ticket's Claude dialog. Its code loads on first visit, like Chat, Re
   sprint that becomes the active one goes back to following the active sprint, and a kept sprint that
   is no longer listed falls back to the default. The address stays `#/sprint`, with no query.
 - **Summary strip.** The ticket count, points committed (every estimate in the sprint), points done
-  (the estimates of tickets in a done-kind status, or in a status Jira files under Done), and one toggle
+  (the estimates of finished tickets: a done-kind status, or any status Jira files under Done, such as
+  Rejected or Duplicate), and one toggle
   per attention reason with its count. Pressed toggles narrow both views to tickets with any pressed
   reason; pressing again releases it. Toggles are not remembered and reset on a team or sprint change.
   Until Claude's session state is first read, the three Claude reasons (Claude waiting, Groom: open
@@ -2747,11 +2748,12 @@ launch as a ticket's Claude dialog. Its code loads on first visit, like Chat, Re
   owed is not one of these: it counts 0 until the Slack thread list is read, and while Slack is disconnected
   or unavailable.
 - **Board and Needs attention.** **Board** has one column per Jira status in the My Tickets order, every
-  assignee's tickets together. **Needs attention** lists only the tickets with a reason: by their most
+  assignee's tickets together, except that a finished status that is not a done kind (Rejected,
+  Duplicate) goes after the Done columns instead of among the blocked or queued ones. **Needs attention** lists only the tickets with a reason: by their most
   important reason (the order below), then by how many reasons they have, then by key. Its tab shows
   the count.
 - **The card.** The key as a Jira link, the ticket's Slack thread chips, the issue type, the points or
-  "No estimate", a **Groom** button, the summary, the assignee or "Unassigned", the status, a chip per
+  "No estimate", a **Groom** button (none on a finished ticket), the summary, the assignee or "Unassigned", the status, a chip per
   Claude session the ticket has (investigate or implement, groom, code review, spec review, E2E check)
   with its state, the groom verdict once a groom finished, and a chip per attention reason. Linked PRs
   are not shown (see below).
@@ -2767,7 +2769,8 @@ launch as a ticket's Claude dialog. Its code loads on first visit, like Chat, Re
 
 ### Attention reasons
 
-A closed set, in this order. A ticket in a done-kind status has none, and no reason is ever read from a
+A closed set, in this order. A finished ticket (a done-kind status, or any status Jira files under Done,
+so Rejected and Duplicate too) has none and is never a groom candidate, and no reason is ever read from a
 comment or description.
 
 | Reason                    | Fires when                                                                                                      |
@@ -2808,9 +2811,18 @@ a groom whose file opens with anything else has no verdict, so Groom: open quest
   sprints), per Jira site and account, and concurrent reads share one request, so a Refresh within 30
   seconds shows the cached answer. A team or sprint switch reads at once (from the cache when it is
   fresh), and a poll can follow it within a second; that read is served from the cache too.
-- The sprint list comes from the 300 most recently updated issues in open sprints and the 300 in closed
-  sprints, so a sprint none of them names is not listed. A sprint's tickets are capped at 200. When
-  either is cut short, a note says the board and its totals may be incomplete.
+- The sprint list comes from Jira's Agile API: the scrum boards (`GET /rest/agile/1.0/board?type=scrum`,
+  at most 20 boards), then each board's sprints (`/rest/agile/1.0/board/<id>/sprint`: one page of active
+  and future sprints, and the first page of closed ones, plus the last page when there are more than 50,
+  since Jira lists closed sprints oldest first; if Jira gives no total, up to four closed pages are read
+  forward). Three boards are read at a time, one request each, the first board failure stops the rest,
+  and a sprint on several boards is listed once; a site with 6 boards costs 13 calls per 5 minutes. When
+  the board cap or a page cap is hit, or a board's sprints are refused, a note says some teams or sprints
+  may be missing from the pickers. If Jira refuses the board list itself with 401, 403 or 404, the list falls
+  back to the older scan: the sprints named by the 300 most recently updated issues in open sprints and
+  the 300 in closed sprints. A rate limit never falls back.
+- A sprint's tickets are capped at 200; when they are cut short, a separate note says the board and its
+  totals may be incomplete.
 - Linked PRs are left out on purpose: Jira's development-status lookup costs one call per ticket, and
   two for a ticket with no PR, on every uncached read. On a 60-second poll that is sustained Jira load,
   and one rate-limit answer stops every Jira call for up to 15 minutes. For the same reason there is no

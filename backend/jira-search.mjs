@@ -1,5 +1,17 @@
-// Shared accepted-item cap for My Tickets and Releases. Callers own transport,
-// mapping and errors; raw page leftovers still make a capped result truncated.
+// Shared helpers for paged and pooled upstream reads: the accepted-item cap for My Tickets, Releases
+// and the Sprint tab, and a small worker pool. Callers own transport, mapping and errors.
+
+// Runs `work` over `items` with at most `limit` in flight. A worker takes no next item once
+// `stopped()` is true, so a caller that sets its flag on a failure ends the reads still queued.
+export async function runWithLimit(items, limit, work, stopped = () => false) {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length && !stopped()) await work(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+// Raw page leftovers still make a capped result truncated.
 export async function collectCappedJiraIssues({ fetchPage, mapIssue, maxIssues }) {
   const items = [];
   let truncated = false;

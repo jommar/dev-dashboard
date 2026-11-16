@@ -806,7 +806,9 @@ team's sprint. README "Sprint" has the user-facing rules and the reply shapes.
   `b` in `SHORTCUT_TABS`, `panels/SprintPanel.jsx` in `LAZY_MODULES`. No hash query (`QUERY_ROUTES` is pinned): the
   choice lives in storage. `BoardPanel` > `BoardSection name="sprint"` with `RefreshControl name="sprint"` (the
   palette's Refresh is keyed by tab id) and `Board` / `BoardColumn` with `sprint-*` test ids, never `TicketBoard`,
-  whose ids would collide with My Tickets'.
+  whose ids would collide with My Tickets'. Columns are `finishedColumnsLast(boardColumns(shown))`: the shared
+  `boardColumns` order (attention band first) is left alone, and `finishedColumnsLast` in `ui/sprint-board.js` moves a
+  column of finished tickets that is not done-kind (Rejected, Duplicate) to the end, after the done band.
 - **Its own storage key, never Home's.** `dev-dashboard.sprint-board` (`{ version: 1, team, sprint }`) is read and
   written only by `ui/sprint-board.js`; never a `dev-dashboard.home-velocity*` key or `readVelocityTeam`. `sprint: null`
   means "follow the team's active sprint": `sprintChoice` stores null for the active sprint, a team change stores
@@ -821,6 +823,23 @@ team's sprint. README "Sprint" has the user-facing rules and the reply shapes.
   in the route **and** in `fetchSprintTickets` itself: `400 INVALID_SPRINT` (in the error allow-list), no Jira call.
   A ticket is `mapTicketIssue` plus `assignee`, fetched with the shared `ticketFields(cfg)` from `jira.mjs`; a field
   `mapTicketIssue` reads is added there, never in one caller.
+- **Sprint discovery is the Agile API, bounded.** `fetchSprintList` reads one page of
+  `GET /rest/agile/1.0/board?type=scrum` (50 rows, `BOARDS_MAX` 20 kept), then per board `/board/<id>/sprint`: one
+  `active,future` page and the first `closed` page; when that is not the last, only the last `closed` page (from
+  `total`), or, with no `total`, pages forward up to `CLOSED_PAGES_MAX` (4) closed pages, because Jira lists closed
+  sprints oldest first. Boards run through the shared `runWithLimit` (`backend/jira-search.mjs`, also used by
+  `dev-status.mjs` and `slack-feed.mjs`; never a local copy) `BOARD_CONCURRENCY` (3) at a time, each board's reads one
+  after another, so at most 3 Jira requests are in flight, and the first board failure stops the other workers (its
+  `stopped` flag), because a failed list is not cached and the tab polls every 60 s. A live site with 6 boards is 13
+  calls per 5-minute cache. Board ids must match `SPRINT_ID` before they go into a path. `teamsOf` groups by
+  `boardOf`, dedupes by id (a sprint can sit on several boards) and orders as before (closed newest by end date, 3 per
+  team). More boards than the cap, an open page that is not the last, the closed page cap, or a board answering
+  400/403/404 sets `truncated`, which the panel shows as `sprint-board-teams-truncated` (pickers may miss sprints),
+  separate from the ticket note `sprint-truncated` (`data.truncated` only). A board skipped for a 403 is recorded by
+  `upstreamFetch` as a Jira `auth` failure, so `/api/health` may read "Jira rejected the token" until the next good
+  Jira call (the tickets read that follows usually clears it); that is expected, not a token problem. Only a
+  401/403/404 on the board list, not a rate limit, falls back to the old issue scan (`scannedSprintList`, kept
+  unchanged); every other failure is the reply, so a 429 never adds calls.
 - **Caches.** Module-level: the sprint list 5 minutes, a sprint's tickets 30 s with at most 20 entries, keyed by Jira
   base URL **and account email** (plus the sprint field or the id), concurrent reads share one promise and a failed
   read is forgotten. A Refresh within 30 s gets the cached answer on purpose. `clearSprintBoardCaches()` is for tests.
@@ -848,8 +867,11 @@ team's sprint. README "Sprint" has the user-facing rules and the reply shapes.
   the only list: the card chips, the summary toggles and `attentionOrder` read it, and `CLAUDE_REASONS` names the
   three that need a Claude answer (`–` and `aria-disabled` until `claude.loaded`, never counted before). `slack-reply`
   is not one of them: it reads `needsReply === true` on the ticket's thread rows, passed in as `slackLinks` in
-  `attentionReasons`' options (the panel's one lookup), never from message text. A done-kind
-  ticket, or an unknown status under Done, has none. A new reason is a row there and its rule in `attentionReasons`,
+  `attentionReasons`' options (the panel's one lookup), never from message text. A finished ticket has none:
+  `isFinished` (exported from `ui/sprint-attention.js`) is a done kind **or** `statusCategory === 'Done'` whatever its
+  kind, so Rejected (kind `attention`) and Duplicate (kind `queued`) are finished; the same rule gives done points,
+  keeps finished tickets out of `groomCandidates` and hides the card's Groom button. `ui/jira-status.js` keeps those
+  kinds, because My Tickets and the bot bar share it. A new reason is a row there and its rule in `attentionReasons`,
   never a list in a component. Batch eligibility uses `TICKET_KEY` exported from `ui/needs-you.js`, never a new regex.
 - **Phase words are a tested copy.** `SESSION_CHIP_WORDS` in `ui/sprint-board.js` copies `PHASES[*].words` of
   `ui/session-phases.js` (plus spec review, which that table has no row for), because importing that module from
@@ -884,8 +906,8 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
   201 KiB gzip -9 (raised from 200 for the merged-PR rows); a new eager import of a lazy module fails it. `vite.config.js` is pinned by
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
 - **The first-paint gzip, all-JS and CSS margins are thin.** With the Sprint tab and its Slack threads the initial
-  closure is 645,708 B raw (631 KiB) and 205,252 B gzip against 205,824 (201 KiB; 572 B spare), all JS is 919,687 B
-  against `MAX_TOTAL_RAW`, 900 KiB (921,600 B; raised from 884 KiB for the lazy Sprint screen), so 1,913 B spare
+  closure is 645,708 B raw (631 KiB) and 205,249 B gzip against 205,824 (201 KiB; 575 B spare), all JS is 919,892 B
+  against `MAX_TOTAL_RAW`, 900 KiB (921,600 B; raised from 884 KiB for the lazy Sprint screen), so 1,708 B spare
   (the Sprint screen's Slack wiring reuses eager modules and split none out), and all CSS is 181,863 B against
   180 KiB (184,320 B), 2,457 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
   test with no apparent cause. A lazy screen that imports a module the entry also uses can split it into an initial

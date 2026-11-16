@@ -91,12 +91,66 @@ async function configured(t) {
   return origin;
 }
 
-// A Jira search endpoint answering each JQL from `answers` (a list of issues, paged by
-// `maxResults`), recording every search it is asked.
-function fakeJira(t, answers, { status = 200 } = {}) {
+// A Jira answering each search JQL from `answers` (a list of issues, paged by `maxResults`) and,
+// with `agile`, the Agile board and sprint lists: `agile.boards` is the board list and
+// `agile.sprints[boardId]` a board's sprints, oldest first as Jira lists them. Without `agile` the
+// board list is a 404, so the list falls back to the scan; `boardListHeaders` go on that refusal.
+// `agile.status[boardId]` is the status a board's sprint reads answer with, and `noTotal` leaves
+// `total` out of every sprint page. Returns the searches it is asked, with every Agile request under
+// `.agile` and the most Agile requests at once under `.agilePeak`.
+function fakeJira(
+  t,
+  answers,
+  {
+    status = 200,
+    agile = null,
+    boardListStatus = 404,
+    boardListHeaders = {},
+    noTotal = false,
+  } = {},
+) {
   const searches = [];
+  // Not enumerable, so a deepEqual of the searches still compares the JQL list alone.
+  const agileCalls = [];
+  let agilePeak = 0;
+  Object.defineProperty(searches, 'agile', { value: agileCalls });
+  Object.defineProperty(searches, 'agilePeak', { get: () => agilePeak });
+  let inFlight = 0;
+  const page = (list, url, { withTotal = true } = {}) => {
+    const startAt = Number(url.searchParams.get('startAt') || 0);
+    const size = Math.min(Number(url.searchParams.get('maxResults') || 50), 50);
+    const values = list.slice(startAt, startAt + size);
+    return Response.json({
+      maxResults: size,
+      startAt,
+      ...(withTotal ? { total: list.length } : {}),
+      isLast: startAt + size >= list.length,
+      values,
+    });
+  };
   t.mock.method(globalThis, 'fetch', async (input) => {
     const url = new URL(input);
+    if (url.pathname.startsWith('/rest/agile/1.0/')) {
+      agileCalls.push(`${url.pathname}${url.search}`);
+      if (status !== 200) return new Response('nope', { status });
+      if (url.pathname === '/rest/agile/1.0/board') {
+        if (!agile)
+          return new Response('nope', { status: boardListStatus, headers: boardListHeaders });
+        assert.equal(url.searchParams.get('type'), 'scrum');
+        return page(agile.boards, url);
+      }
+      const match = url.pathname.match(/^\/rest\/agile\/1\.0\/board\/(\d+)\/sprint$/);
+      assert.ok(match, `unexpected Agile path ${url.pathname}`);
+      inFlight += 1;
+      agilePeak = Math.max(agilePeak, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      inFlight -= 1;
+      const refused = agile.status?.[match[1]];
+      if (refused) return new Response('nope', { status: refused });
+      const states = (url.searchParams.get('state') || '').split(',');
+      const list = (agile.sprints[match[1]] || []).filter((each) => states.includes(each.state));
+      return page(list, url, { withTotal: !noTotal });
+    }
     assert.equal(url.pathname, '/rest/api/3/search/jql');
     const jql = url.searchParams.get('jql');
     searches.push(jql);
@@ -115,6 +169,28 @@ function fakeJira(t, answers, { status = 200 } = {}) {
   return searches;
 }
 
+const board = (id, name) => ({ id, name, type: 'scrum' });
+// Nexus on its own board, oldest closed first; a second board holds Nexus Sprint 17 too.
+const AGILE = {
+  boards: [board(11, 'Nexus board'), board(12, 'Orion board'), board(13, 'Shared board')],
+  sprints: {
+    11: [
+      NEXUS_12,
+      NEXUS_13,
+      NEXUS_14,
+      NEXUS_15,
+      NEXUS_16,
+      NEXUS_17,
+      NEXUS_18,
+      NEXUS_19,
+      NEXUS_20,
+      NEXUS_21,
+    ],
+    12: [ORION_3],
+    13: [NEXUS_17],
+  },
+};
+
 const get = (origin, pathname, headers) =>
   requestRaw(origin, pathname, {
     headers,
@@ -122,7 +198,243 @@ const get = (origin, pathname, headers) =>
     timeoutMessage: 'sprint board request timed out',
   });
 
-test('sprint list groups sprints by team: active, future nearest first, then the newest three closed', async (t) => {
+const EXPECTED_TEAMS = [
+  {
+    name: 'Nexus',
+    sprints: [
+      {
+        id: 4017,
+        name: 'Nexus Sprint 17',
+        state: 'active',
+        startDate: '2026-11-09T00:00:00.000Z',
+        endDate: '2026-11-20T00:00:00.000Z',
+      },
+      {
+        id: 4019,
+        name: 'Nexus Sprint 19',
+        state: 'future',
+        startDate: '2026-11-23T00:00:00.000Z',
+        endDate: '2026-12-04T00:00:00.000Z',
+      },
+      {
+        id: 4020,
+        name: 'Nexus Sprint 20',
+        state: 'future',
+        startDate: '2026-12-07T00:00:00.000Z',
+        endDate: '2026-12-18T00:00:00.000Z',
+      },
+      { id: 4018, name: 'Nexus Sprint 18', state: 'future', startDate: null, endDate: null },
+      { id: 4021, name: 'Nexus Sprint 21', state: 'future', startDate: null, endDate: null },
+      {
+        id: 4016,
+        name: 'Nexus Sprint 16',
+        state: 'closed',
+        startDate: '2026-10-27T00:00:00.000Z',
+        endDate: '2026-11-07T00:00:00.000Z',
+      },
+      {
+        id: 4015,
+        name: 'Nexus Sprint 15',
+        state: 'closed',
+        startDate: '2026-10-26T00:00:00.000Z',
+        endDate: '2026-11-06T00:00:00.000Z',
+      },
+      {
+        id: 4014,
+        name: 'Nexus Sprint 14',
+        state: 'closed',
+        startDate: '2026-10-12T00:00:00.000Z',
+        endDate: '2026-10-23T00:00:00.000Z',
+      },
+    ],
+  },
+  {
+    name: 'Orion',
+    sprints: [
+      {
+        id: 5003,
+        name: 'Orion Sprint 3',
+        state: 'active',
+        startDate: '2026-11-02T00:00:00.000Z',
+        endDate: '2026-11-13T00:00:00.000Z',
+      },
+    ],
+  },
+];
+
+test('sprint list reads the Agile boards: by team, active, future nearest first, the newest three closed, each sprint once', async (t) => {
+  const origin = await configured(t);
+  const searches = fakeJira(t, {}, { agile: AGILE });
+  const response = await get(origin, '/api/sprints');
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.text);
+  assert.deepEqual(body.teams, EXPECTED_TEAMS);
+  assert.equal(body.truncated, false);
+  assert.ok(Number.isFinite(Date.parse(body.updatedAt)), 'updatedAt is a timestamp');
+  assert.deepEqual(searches, [], 'no issue scan runs');
+  // One board list, then per board one open read and one closed read, all its closed fitting a page.
+  assert.equal(searches.agile.length, 1 + AGILE.boards.length * 2);
+});
+
+test('closed sprints past one page: only the first and the last page are read, for the newest three', async (t) => {
+  const origin = await configured(t);
+  const closed = Array.from({ length: 120 }, (_, i) =>
+    nexusClosed(
+      i + 1,
+      new Date(Date.UTC(2022, 0, 1 + i * 14)).toISOString(),
+      new Date(Date.UTC(2022, 0, 12 + i * 14)).toISOString(),
+    ),
+  );
+  const searches = fakeJira(
+    t,
+    {},
+    { agile: { boards: [board(11, 'Nexus board')], sprints: { 11: closed } } },
+  );
+  const body = JSON.parse((await get(origin, '/api/sprints')).text);
+  assert.deepEqual(
+    body.teams[0].sprints.map(({ id }) => id),
+    [4120, 4119, 4118],
+  );
+  assert.equal(body.truncated, false);
+  const closedReads = searches.agile.filter((path) => path.includes('state=closed'));
+  assert.equal(closedReads.length, 2, 'the first page, then the last page by total');
+  assert.match(closedReads[1], /startAt=70\b/);
+});
+
+test('board reads are bounded: at most 20 boards, three at a time, and a capped list is truncated', async (t) => {
+  const origin = await configured(t);
+  const boards = Array.from({ length: 25 }, (_, i) => board(100 + i, `Board ${i}`));
+  const sprints = Object.fromEntries(
+    boards.map(({ id }, i) => [id, [sprint(6000 + i, `Team${i} Sprint 1`, 'active')]]),
+  );
+  const searches = fakeJira(t, {}, { agile: { boards, sprints } });
+  const body = JSON.parse((await get(origin, '/api/sprints')).text);
+  assert.equal(body.truncated, true);
+  assert.equal(body.teams.length, 20);
+  const boardReads = new Set(
+    searches.agile.map((path) => path.match(/board\/(\d+)\/sprint/)?.[1]).filter(Boolean),
+  );
+  assert.equal(boardReads.size, 20, 'boards past the cap are never read');
+  assert.ok(
+    searches.agilePeak <= 3,
+    `at most three board reads at once, saw ${searches.agilePeak}`,
+  );
+  assert.ok(searches.agilePeak > 1, 'board reads overlap');
+});
+
+test('a board list Jira refuses with 401, 403 or 404 falls back to the issue scan; a rate limit does not', async (t) => {
+  for (const boardListStatus of [401, 403, 404]) {
+    const origin = await configured(t);
+    t.mock.restoreAll();
+    const searches = fakeJira(
+      t,
+      { [OPEN_JQL]: OPEN_ISSUES, [CLOSED_JQL]: CLOSED_ISSUES },
+      { boardListStatus },
+    );
+    const response = await get(origin, '/api/sprints');
+    assert.equal(response.status, 200, `status after a ${boardListStatus}`);
+    assert.deepEqual(
+      JSON.parse(response.text).teams,
+      EXPECTED_TEAMS,
+      `teams after ${boardListStatus}`,
+    );
+    assert.deepEqual([...searches].sort(), [CLOSED_JQL, OPEN_JQL]);
+  }
+
+  const origin = await configured(t);
+  t.mock.restoreAll();
+  const searches = fakeJira(t, {}, { boardListStatus: 429 });
+  const response = await get(origin, '/api/sprints');
+  assert.equal(response.status, 502);
+  assert.deepEqual(searches, [], 'a rate-limited board list runs no scan');
+
+  // A 403 that says it is a rate limit is not a refusal the scan can cover. No retry time, so no
+  // cool-down outlives this test.
+  const limitedOrigin = await configured(t);
+  t.mock.restoreAll();
+  const limited = fakeJira(
+    t,
+    {},
+    { boardListStatus: 403, boardListHeaders: { 'x-ratelimit-remaining': '0' } },
+  );
+  const limitedResponse = await get(limitedOrigin, '/api/sprints');
+  assert.equal(limitedResponse.status, 502);
+  assert.deepEqual(limited, [], 'a rate-limited 403 runs no scan');
+});
+
+test('a board whose sprint reads are refused with 400, 403 or 404 is skipped and the list is truncated', async (t) => {
+  for (const refused of [400, 403, 404]) {
+    const origin = await configured(t);
+    t.mock.restoreAll();
+    fakeJira(t, {}, { agile: { ...AGILE, status: { 12: refused } } });
+    const response = await get(origin, '/api/sprints');
+    assert.equal(response.status, 200, `status with a board answering ${refused}`);
+    const body = JSON.parse(response.text);
+    assert.equal(body.truncated, true, `truncated after ${refused}`);
+    assert.deepEqual(
+      body.teams.map(({ name }) => name),
+      ['Nexus'],
+      `the other boards are still listed after ${refused}`,
+    );
+  }
+});
+
+test('a board read that fails stops the other board reads: the reply is 502 and the rest are never asked', async (t) => {
+  const origin = await configured(t);
+  const boards = Array.from({ length: 10 }, (_, i) => board(100 + i, `Board ${i}`));
+  const sprints = Object.fromEntries(
+    boards.map(({ id }, i) => [id, [sprint(6000 + i, `Team${i} Sprint 1`, 'active')]]),
+  );
+  const searches = fakeJira(t, {}, { agile: { boards, sprints, status: { 100: 500 } } });
+  const response = await get(origin, '/api/sprints');
+  assert.equal(response.status, 502);
+  // Let any worker still running finish, then count: the two other workers end the board they
+  // are on (two reads each) and start no other.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const boardReads = searches.agile.filter((path) => /board\/\d+\/sprint/.test(path));
+  assert.ok(boardReads.length <= 5, `board reads after the failure: ${boardReads.length}`);
+});
+
+test('closed sprints without a total are paged forward, at most four pages, truncated only at the cap', async (t) => {
+  const closedOf = (count) =>
+    Array.from({ length: count }, (_, i) =>
+      nexusClosed(
+        i + 1,
+        new Date(Date.UTC(2020, 0, 1 + i * 14)).toISOString(),
+        new Date(Date.UTC(2020, 0, 12 + i * 14)).toISOString(),
+      ),
+    );
+  const read = async (count) => {
+    const origin = await configured(t);
+    t.mock.restoreAll();
+    const searches = fakeJira(
+      t,
+      {},
+      {
+        agile: { boards: [board(11, 'Nexus board')], sprints: { 11: closedOf(count) } },
+        noTotal: true,
+      },
+    );
+    const body = JSON.parse((await get(origin, '/api/sprints')).text);
+    const closedReads = searches.agile.filter((path) => path.includes('state=closed'));
+    return { body, closedReads };
+  };
+
+  const within = await read(120);
+  assert.deepEqual(
+    within.body.teams[0].sprints.map(({ id }) => id),
+    [4120, 4119, 4118],
+  );
+  assert.equal(within.body.truncated, false);
+  assert.equal(within.closedReads.length, 3, 'pages at 0, 50 and 100');
+  assert.match(within.closedReads[2], /startAt=100\b/);
+
+  const capped = await read(250);
+  assert.equal(capped.closedReads.length, 4, 'no read past the fourth page');
+  assert.equal(capped.body.truncated, true);
+});
+
+test('the issue scan groups sprints by team: active, future nearest first, then the newest three closed', async (t) => {
   const origin = await configured(t);
   fakeJira(t, { [OPEN_JQL]: OPEN_ISSUES, [CLOSED_JQL]: CLOSED_ISSUES });
   const response = await get(origin, '/api/sprints');
@@ -195,7 +507,7 @@ test('sprint list groups sprints by team: active, future nearest first, then the
   assert.ok(Number.isFinite(Date.parse(body.updatedAt)), 'updatedAt is a timestamp');
 });
 
-test('sprint list is truncated when the open-sprint scan hits its 300-issue cap', async (t) => {
+test('the fallback scan is truncated when the open-sprint scan hits its 300-issue cap', async (t) => {
   const origin = await configured(t);
   const many = Array.from({ length: 301 }, (_, i) => sprintIssue(`NEX-${100 + i}`, [NEXUS_17]));
   fakeJira(t, { [OPEN_JQL]: many, [CLOSED_JQL]: CLOSED_ISSUES });

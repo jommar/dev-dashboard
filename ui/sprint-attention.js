@@ -25,11 +25,10 @@ const isWaiting = (entry) =>
 const hasOpenGroom = (entry) =>
   entry?.groom?.state === 'done' && OPEN_GROOM_VERDICTS.includes(entry.groom.verdict);
 
-// A status the kind table does not know still counts as done when Jira files it under Done.
-const isDone = (ticket) => {
-  const kind = jiraStatusKind(ticket.status);
-  return kind === 'done' || (kind === 'unknown' && ticket.statusCategory === 'Done');
-};
+// Finished: a done-kind status, or any status Jira files under Done (Rejected and Duplicate have
+// other kinds in the shared table, which My Tickets and the bot bar keep).
+export const isFinished = (ticket) =>
+  jiraStatusKind(ticket.status) === 'done' || ticket.statusCategory === 'Done';
 
 const hasNotStarted = (ticket) => {
   const kind = jiraStatusKind(ticket.status);
@@ -44,7 +43,7 @@ export const CLAUDE_REASONS = Object.freeze(['claude-waiting', 'groom-open', 'no
 
 // `slackLinks` are the ticket's Slack threads; only a known reply owed (`needsReply: true`) counts.
 export function attentionReasons(ticket, entry, { claudeLoaded, slackLinks = [] }) {
-  if (isDone(ticket)) return [];
+  if (isFinished(ticket)) return [];
   const fires = {
     'claude-waiting': isWaiting(entry),
     'groom-open': hasOpenGroom(entry),
@@ -68,7 +67,7 @@ export function sprintSummary(tickets, reasonsByKey) {
     if (ticket.storyPoints == null) unestimated += 1;
     else {
       points += ticket.storyPoints;
-      if (isDone(ticket)) donePoints += ticket.storyPoints;
+      if (isFinished(ticket)) donePoints += ticket.storyPoints;
     }
     for (const id of reasonsByKey[ticket.key] ?? []) reasons[id] += 1;
   }

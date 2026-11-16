@@ -1,5 +1,10 @@
 import { test, expect } from './fixtures.js';
-import { SPRINT_THREAD_TS, claudeEntry, withSprintSlackThreads } from './data.js';
+import {
+  SPRINT_THREAD_TS,
+  claudeEntry,
+  withFinishedSprintTickets,
+  withSprintSlackThreads,
+} from './data.js';
 
 // The Sprint tab (`#/sprint`): one team's sprint for its product owner. The fixture is
 // `sprintBoardData` in e2e/data.js (Nexus Sprint 17 by default, Orion Sprint 3 beside it). Test ids:
@@ -252,7 +257,7 @@ test.describe('Sprint tab', () => {
       );
   });
 
-  test('a truncated sprint list says so, and with no Claude answer the batch button says it waits', async ({
+  test('a truncated team list says the pickers may miss sprints, and with no Claude answer the batch button says it waits', async ({
     page,
     dashboard,
   }) => {
@@ -261,10 +266,49 @@ test.describe('Sprint tab', () => {
       route.fulfill({ status: 500, json: { code: 'OPERATION_FAILED', error: 'Unavailable' } }),
     );
     await openSprint(page);
-    await expect(page.getByTestId('sprint-truncated')).toBeVisible();
+    await expect(page.getByTestId('sprint-board-teams-truncated')).toBeVisible();
+    await expect(page.getByTestId('sprint-board-teams-truncated')).toContainText(
+      /teams or sprints may be missing/i,
+    );
+    await expect(page.getByTestId('sprint-truncated')).toHaveCount(0);
     const batch = page.getByTestId('sprint-groom-batch');
     await expect(batch).toBeDisabled();
     await expect(batch).toHaveAccessibleDescription(/waiting/i);
+  });
+
+  test('a truncated ticket read says the board may be incomplete, and only that', async ({
+    page,
+    dashboard,
+  }) => {
+    dashboard.data.sprintBoard.ticketsTruncated = true;
+    await openSprint(page);
+    await expect(page.getByTestId('sprint-truncated')).toBeVisible();
+    await expect(page.getByTestId('sprint-truncated')).toContainText(/not every ticket/i);
+    await expect(page.getByTestId('sprint-board-teams-truncated')).toHaveCount(0);
+  });
+
+  test('finished tickets Jira files under Done: Rejected and Duplicate columns sit after Done, with no Groom and no reasons', async ({
+    page,
+    dashboard,
+  }) => {
+    withFinishedSprintTickets(dashboard.data);
+    const board = await openSprint(page);
+
+    await expect(board.locator('.board-column-title')).toHaveText([
+      'Blocked',
+      'To Do',
+      'In Progress',
+      'Code Review',
+      'Done',
+      'Rejected',
+      'Duplicate',
+    ]);
+    for (const key of ['NXS-112', 'NXS-113', 'NXS-104']) {
+      await expect(card(page, key)).toBeVisible();
+      await expect(page.getByTestId(`sprint-card-${key}-groom`)).toHaveCount(0);
+      await expect(card(page, key).locator('.sprint-board-reason')).toHaveCount(0);
+    }
+    await expect(page.getByTestId('sprint-card-NXS-101-groom')).toBeVisible();
   });
 
   test("a ticket's Slack threads show on its card, a reply owed flags it, and a chip opens the thread", async ({

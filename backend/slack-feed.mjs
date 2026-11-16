@@ -6,6 +6,7 @@
 // seam, so rate limits, timeouts and upstream health are the integration's own. Nothing here
 // marks anything read, and nothing logs message text.
 
+import { runWithLimit } from './jira-search.mjs';
 import { cleanText, person, slackTimestamp, threadLinkFields } from './slack-model.mjs';
 
 const FEED_TYPES = 'at_user,at_channel,keyword,thread_v2,message_reaction';
@@ -129,14 +130,6 @@ export function createSlackFeed({ call, session, verify, users, now, isCurrent, 
     while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value);
   }
 
-  async function pool(list, work, stopped) {
-    let next = 0;
-    const worker = async () => {
-      while (next < list.length && !stopped()) await work(list[next++]);
-    };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, list.length) }, worker));
-  }
-
   // Reads what the budget allows, in priority order. Returns the flags the page reports.
   async function hydrate(credentials, entries, gen) {
     const flags = new Set();
@@ -168,8 +161,9 @@ export function createSlackFeed({ call, session, verify, users, now, isCurrent, 
     }
     const messageReads = [...wantedMessages.values()];
     if (messageReads.length > HYDRATE_BUDGET) flags.add('budget');
-    await pool(
+    await runWithLimit(
       messageReads.slice(0, HYDRATE_BUDGET),
+      CONCURRENCY,
       (entry) =>
         readInto(
           messages,
@@ -206,8 +200,9 @@ export function createSlackFeed({ call, session, verify, users, now, isCurrent, 
     const wantedChannels = unknown.filter((id) => !missed(id));
     if (wantedChannels.length < unknown.length) flags.add('unreadable');
     if (wantedChannels.length > INFO_BUDGET) flags.add('budget');
-    await pool(
+    await runWithLimit(
       wantedChannels.slice(0, INFO_BUDGET),
+      CONCURRENCY,
       (id) =>
         readInto(
           channels,

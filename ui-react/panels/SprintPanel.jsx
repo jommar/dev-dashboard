@@ -39,6 +39,7 @@ import {
 } from '../../ui/sprint-attention.js';
 import {
   SPRINT_BOARD_POLL_MS,
+  finishedColumnsLast,
   pickSprint,
   pickTeam,
   readSprintChoice,
@@ -307,7 +308,7 @@ export function SprintPanel({ config, active }) {
       );
     return (
       <Board label="Sprint board" testId="sprint-board">
-        {boardColumns(shown).map((column) => (
+        {finishedColumnsLast(boardColumns(shown)).map((column) => (
           <BoardColumn
             key={column.status}
             id={slug(column.status)}
@@ -452,10 +453,15 @@ export function SprintPanel({ config, active }) {
                 <a href="#/slack">View Slack and load more</a>.
               </BoardNote>
             )}
-            {(data?.truncated || teamsTruncated) && (
+            {data?.truncated && (
               <BoardNote testId="sprint-truncated">
                 Not every ticket of this sprint was fetched, so the board and its totals may be
                 incomplete.
+              </BoardNote>
+            )}
+            {teamsTruncated && (
+              <BoardNote testId="sprint-board-teams-truncated">
+                Some teams or sprints may be missing from the pickers.
               </BoardNote>
             )}
           </>

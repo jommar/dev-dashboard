@@ -1,5 +1,7 @@
-// sprint-board.js — the Sprint tab's team and sprint choice and its session chips.
+// sprint-board.js — the Sprint tab's team and sprint choice, its column order and its session chips.
 // Pure: storage is passed in (localStorage by default). Its key is its own, never Home's velocity key.
+import { isFinished } from './sprint-attention.js';
+
 export const SPRINT_BOARD_POLL_MS = 60_000;
 export const DEFAULT_SPRINT_TEAM = 'Nexus';
 
@@ -60,6 +62,13 @@ export const pickSprint = (sprints, savedId) =>
   sprints.find(({ state }) => state === 'future') ??
   sprints.find(({ state }) => state === 'closed') ??
   null;
+
+// The shared board order puts Rejected among the blocked and Duplicate among the queued; on the
+// Sprint tab a finished column that is not done-kind goes last instead, the order otherwise kept.
+export function finishedColumnsLast(columns) {
+  const moved = (column) => column.kind !== 'done' && column.tickets.every(isFinished);
+  return [...columns.filter((column) => !moved(column)), ...columns.filter(moved)];
+}
 
 const SIDE_PHASES = ['groom', 'review', 'specReview', 'e2e'];
 

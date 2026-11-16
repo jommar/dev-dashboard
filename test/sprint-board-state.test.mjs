@@ -182,3 +182,35 @@ test('a pinned sprint that has become active settles to following the active spr
     sprint: 17,
   });
 });
+
+test('finished columns that are not done-kind move after the done band, order otherwise kept', async () => {
+  const { finishedColumnsLast } = await load();
+  const { boardColumns } = await import('../ui/ticket-board.js');
+  const tickets = [
+    ['A-1', 'Rejected', 'Done'],
+    ['A-2', 'In Progress', 'In Progress'],
+    ['A-3', 'Complete', 'Done'],
+    ['A-4', 'Duplicate', 'Done'],
+    ['A-5', 'To Do', 'To Do'],
+    ['A-6', 'Blocked', 'In Progress'],
+    ['A-7', 'Deployed', 'Done'],
+  ].map(([key, status, statusCategory]) => ({ key, status, statusCategory }));
+  const columns = boardColumns(tickets);
+  // The shared order puts Rejected in the attention band and Duplicate among the queued.
+  assert.deepEqual(
+    columns.map(({ status }) => status),
+    ['Blocked', 'Rejected', 'To Do', 'Duplicate', 'In Progress', 'Deployed', 'Complete'],
+  );
+
+  const moved = finishedColumnsLast(columns);
+  assert.deepEqual(
+    moved.map(({ status }) => status),
+    ['Blocked', 'To Do', 'In Progress', 'Deployed', 'Complete', 'Rejected', 'Duplicate'],
+  );
+  assert.equal(moved.find(({ status }) => status === 'Rejected').tickets[0].key, 'A-1');
+  assert.deepEqual(
+    columns.map(({ status }) => status),
+    ['Blocked', 'Rejected', 'To Do', 'Duplicate', 'In Progress', 'Deployed', 'Complete'],
+    'the input is not mutated',
+  );
+});

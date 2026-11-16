@@ -1,10 +1,10 @@
 // SprintCard.jsx — one ticket of the Sprint tab: its Jira key, the Slack threads that name it, type,
 // points, summary, assignee and status, a chip per Claude session that exists, the groom verdict once
-// a groom finished, and a chip per attention reason. Its Groom button opens the ticket's Claude
-// dialog and a thread chip the thread dialog; it launches nothing itself.
+// a groom finished, and a chip per attention reason. Its Groom button, absent on a finished ticket,
+// opens the ticket's Claude dialog and a thread chip the thread dialog; it launches nothing itself.
 import { memo } from 'react';
 import { VERDICT_TONE, verdictWord } from '../../ui/claude-verdict.js';
-import { ATTENTION_REASONS } from '../../ui/sprint-attention.js';
+import { ATTENTION_REASONS, isFinished } from '../../ui/sprint-attention.js';
 import { sessionChipWords, sessionChips } from '../../ui/sprint-board.js';
 import { SlackThreadLinks } from './SlackThreadLink.jsx';
 
@@ -35,16 +35,18 @@ function SprintCardView({ ticket, jiraBase, entry, reasons, slackLinks, onGroom,
         <span className="board-card-stat">
           {Number.isFinite(ticket.storyPoints) ? `${ticket.storyPoints} pt` : 'No estimate'}
         </span>{' '}
-        <button
-          type="button"
-          className="sprint-board-card-groom"
-          aria-label={`Groom ${ticket.key}`}
-          aria-haspopup="dialog"
-          data-testid={`sprint-card-${ticket.key}-groom`}
-          onClick={() => onGroom(ticket.key)}
-        >
-          Groom
-        </button>
+        {!isFinished(ticket) && (
+          <button
+            type="button"
+            className="sprint-board-card-groom"
+            aria-label={`Groom ${ticket.key}`}
+            aria-haspopup="dialog"
+            data-testid={`sprint-card-${ticket.key}-groom`}
+            onClick={() => onGroom(ticket.key)}
+          >
+            Groom
+          </button>
+        )}
       </div>
       <p className="board-card-summary">{ticket.summary || ''}</p>
       <p className="sprint-board-card-line">

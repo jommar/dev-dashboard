@@ -186,6 +186,41 @@ test('a status Jira files under Done is done even when the status table does not
   assert.equal(sprintSummary([wontDo], { 'ABC-1': [] }).donePoints, 2);
 });
 
+test('Rejected and Duplicate filed under Done are finished: no reasons, no groom, done points', async () => {
+  const { attentionReasons, groomCandidates, isFinished, sprintSummary } = await load();
+  // Rejected reads as a blocked kind and Duplicate as a queued one, but Jira files both under Done.
+  const rejected = ticket('ABC-1', {
+    status: 'Rejected',
+    statusCategory: 'Done',
+    assignee: null,
+    storyPoints: 2,
+  });
+  const duplicate = ticket('ABC-2', {
+    status: 'Duplicate',
+    statusCategory: 'Done',
+    assignee: null,
+    storyPoints: 3,
+  });
+  const deployed = ticket('ABC-3', { status: 'Deployed', statusCategory: 'Done' });
+  const blocked = ticket('ABC-4', { status: 'Blocked', statusCategory: 'In Progress' });
+  const queued = ticket('ABC-5', notStarted);
+
+  assert.equal(isFinished(rejected), true);
+  assert.equal(isFinished(duplicate), true);
+  assert.equal(isFinished(deployed), true);
+  assert.equal(isFinished(blocked), false);
+  assert.equal(isFinished(queued), false);
+
+  const tickets = [rejected, duplicate, queued];
+  const reasonsByKey = Object.fromEntries(
+    tickets.map((each) => [each.key, attentionReasons(each, undefined, loaded)]),
+  );
+  assert.deepEqual(reasonsByKey['ABC-1'], []);
+  assert.deepEqual(reasonsByKey['ABC-2'], []);
+  assert.deepEqual(groomCandidates(tickets, reasonsByKey, {}), ['ABC-5']);
+  assert.equal(sprintSummary([rejected, duplicate, blocked], reasonsByKey).donePoints, 5);
+});
+
 test('summary totals count, points, done points, unestimated and reasons per id', async () => {
   const { sprintSummary } = await load();
   const tickets = [

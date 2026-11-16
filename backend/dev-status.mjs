@@ -2,6 +2,7 @@
 // (summary -> instance key, then detail). Releases and My Tickets both read it;
 // the cache holds every linked PR, so each caller applies its own filter.
 import { authorization } from './jira.mjs';
+import { runWithLimit } from './jira-search.mjs';
 import { upstreamFetch, upstreamError } from './upstream.mjs';
 import { normalizeDevStatusPr } from './release-model.mjs';
 
@@ -81,14 +82,6 @@ function linkedPullRequests(rawPullRequests) {
 }
 
 const failureOf = (error) => (error?.name === 'TimeoutError' ? 'timeout' : 'http');
-
-async function runWithLimit(items, limit, work) {
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) await work(items[next++]);
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-}
 
 // One ticket's summary and, when it lists PRs, its detail: enough to learn the
 // instance key and to tell "no PRs" from a key that no longer returns any.
