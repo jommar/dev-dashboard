@@ -18,15 +18,17 @@ const MAX_INITIAL_RAW = 640 * KIB;
 // Raised from 200 KiB for the merged-PR rows and their toggle on My Tickets.
 const MAX_INITIAL_GZIP = 201 * KIB;
 // A guard against bloat, not a target: lazy loading splits code, it must not add much of it.
-const MAX_TOTAL_RAW = 884 * KIB;
+// Raised from 884 KiB for the lazy Sprint screen, which could not fit the 1.5 KiB that was left.
+const MAX_TOTAL_RAW = 900 * KIB;
 const MAX_TOTAL_CSS = 180 * KIB;
-// Modules that must load on demand: the four rarely used screens and the two dialogs, plus the
+// Modules that must load on demand: the five rarely used screens and the two dialogs, plus the
 // markdown renderer both the viewer and the chat pull in.
 const LAZY_MODULES = [
   'panels/ChatPanel.jsx',
   'panels/ReleasesPanel.jsx',
   'panels/DevtoolsPanel.jsx',
   'panels/MascotsPanel.jsx',
+  'panels/SprintPanel.jsx',
   'components/ArtifactViewer.jsx',
   'components/E2eCheckDialog.jsx',
   'components/MarkdownView.jsx',

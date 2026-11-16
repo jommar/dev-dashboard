@@ -352,7 +352,19 @@ export function storyPointsOf(raw) {
   return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null;
 }
 
-function mapTicketIssue(issue, cfg) {
+// The fields mapTicketIssue reads, so every search that maps with it asks for the same ones.
+export const ticketFields = (cfg) => [
+  'summary',
+  'status',
+  'priority',
+  'issuetype',
+  'updated',
+  'created',
+  cfg.sprintField,
+  cfg.pointsField,
+];
+
+export function mapTicketIssue(issue, cfg) {
   if (!issue || typeof issue !== 'object' || typeof issue.key !== 'string') return null;
   const fields = issue.fields || {};
   const status = fields.status || {};
@@ -430,21 +442,7 @@ export async function fetchMyTickets({ includeDone = false, snapshot } = {}) {
     fetchPage: async (nextPageToken) => {
       const url = new URL(`${cfg.baseUrl}/rest/api/3/search/jql`);
       url.searchParams.set('jql', jql);
-      url.searchParams.set(
-        'fields',
-        [
-          'summary',
-          'status',
-          'priority',
-          'issuetype',
-          'updated',
-          'created',
-          cfg.sprintField,
-          cfg.pointsField,
-        ]
-          .filter(Boolean)
-          .join(','),
-      );
+      url.searchParams.set('fields', ticketFields(cfg).filter(Boolean).join(','));
       url.searchParams.set('maxResults', String(MY_TICKETS_PAGE_SIZE));
       if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
       const res = await upstreamFetch('jira', url, {

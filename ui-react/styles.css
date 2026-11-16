@@ -13,6 +13,7 @@
 @import './styles/prs.css';
 @import './styles/diff-viewer.css';
 @import './styles/my-tickets.css';
+@import './styles/sprint-board.css';
 @import './styles/claude-launcher.css';
 @import './styles/artifact-viewer.css';
 @import './styles/releases.css';

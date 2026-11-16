@@ -16,6 +16,7 @@ export const SHORTCUT_TABS = Object.freeze({
   v: 'services',
   d: 'devtools',
   m: 'mascots',
+  b: 'sprint',
   ',': 'settings',
 });
 

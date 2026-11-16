@@ -221,6 +221,87 @@ function releasesData() {
   };
 }
 
+// The Sprint tab's fake Jira: GET /api/sprints lists `teams`, GET /api/sprint-tickets?sprint=<id>
+// serves `tickets[id]` (an id that is listed but has no entry is an empty sprint). Nexus Sprint 17 is
+// the default: two assignees and one unassigned ticket across five statuses, and seven To Do tickets
+// with no groom record. Keys and names are invented.
+export function sprintBoardData() {
+  const sprint = (id, name, state, startDate, endDate) => ({
+    id,
+    name,
+    state,
+    startDate,
+    endDate,
+  });
+  const nexusActive = sprint(417, 'Nexus Sprint 17', 'active', '2026-11-09', '2026-11-22');
+  const nexusFuture = sprint(418, 'Nexus Sprint 18', 'future', '2026-11-23', '2026-12-06');
+  const nexusClosed = [
+    sprint(416, 'Nexus Sprint 16', 'closed', '2026-10-26', '2026-11-08'),
+    sprint(415, 'Nexus Sprint 15', 'closed', '2026-10-12', '2026-10-25'),
+    sprint(414, 'Nexus Sprint 14', 'closed', '2026-09-28', '2026-10-11'),
+  ];
+  const orionActive = sprint(503, 'Orion Sprint 3', 'active', '2026-11-10', '2026-11-23');
+  const ticket = (home, key, status, statusCategory, assignee, storyPoints, overrides = {}) => ({
+    key,
+    id: String(70000 + Number(key.split('-')[1])),
+    summary: `Invented sprint item ${key}`,
+    status,
+    statusCategory,
+    issueType: 'Task',
+    priority: 'Medium',
+    updated: '2026-11-15T10:00:00.000Z',
+    created: '2026-11-02T10:00:00.000Z',
+    sprints: [home],
+    sprint: home,
+    storyPoints,
+    assignee,
+    ...overrides,
+  });
+  const nexus = (...args) => ticket(nexusActive, ...args);
+  const orion = (...args) => ticket(orionActive, ...args);
+  return {
+    teams: [
+      { name: 'Nexus', sprints: [nexusActive, nexusFuture, ...nexusClosed] },
+      { name: 'Orion', sprints: [orionActive] },
+    ],
+    tickets: {
+      417: [
+        nexus('NXS-101', 'In Progress', 'In Progress', 'Avery Quill', 5, {
+          summary: 'Invented import of the route schedule',
+          issueType: 'Story',
+        }),
+        nexus('NXS-102', 'Code Review', 'In Progress', 'Bryn Talbot', 3),
+        nexus('NXS-103', 'Blocked', 'In Progress', 'Avery Quill', 2, { issueType: 'Bug' }),
+        nexus('NXS-104', 'Done', 'Done', 'Bryn Talbot', 3),
+        nexus('NXS-105', 'To Do', 'To Do', null, 2),
+        nexus('NXS-106', 'To Do', 'To Do', 'Avery Quill', null),
+        nexus('NXS-107', 'To Do', 'To Do', 'Bryn Talbot', 1),
+        nexus('NXS-108', 'To Do', 'To Do', 'Avery Quill', 3),
+        nexus('NXS-109', 'To Do', 'To Do', 'Bryn Talbot', 2),
+        nexus('NXS-110', 'To Do', 'To Do', 'Avery Quill', 1),
+        nexus('NXS-111', 'To Do', 'To Do', 'Bryn Talbot', 5),
+      ],
+      503: [
+        orion('ORB-201', 'In Progress', 'In Progress', 'Casey Moor', 3),
+        orion('ORB-202', 'To Do', 'To Do', 'Dale Ferris', 2),
+      ],
+    },
+    updatedAt: '2026-11-16T09:00:00.000Z',
+  };
+}
+
+// GET /api/sprint-tickets as the server answers it: a sprint id that is not a positive integer is
+// refused before Jira is asked.
+function sprintTicketsResponse(url, { tickets, updatedAt }) {
+  const id = url.searchParams.get('sprint') ?? '';
+  if (!/^[1-9]\d{0,9}$/.test(id))
+    return { status: 400, json: { code: 'INVALID_SPRINT', error: 'Invalid sprint', errors: [] } };
+  const list = structuredClone(tickets[id] ?? []);
+  return {
+    json: { sprint: Number(id), total: list.length, truncated: false, tickets: list, updatedAt },
+  };
+}
+
 export function homeVelocityData() {
   const entry = (team, id, points, byStatus, extra = {}) => ({
     sprint: {
@@ -706,6 +787,7 @@ export function dashboardData() {
     diff: { diff: '--- a/example.js\n+++ b/example.js\n@@ -1 +1 @@\n-old\n+new\n' },
     releases: releasesData(),
     teamVelocity: homeVelocityData(),
+    sprintBoard: sprintBoardData(),
     slack: slackData(),
     claude: claudeData(),
     devtools: devtoolsData(),
@@ -2254,6 +2336,16 @@ export function apiResponse(url, method, data, body) {
         };
     }
     if (url.pathname === '/api/team-velocity') return { json: data.teamVelocity };
+    if (url.pathname === '/api/sprints' && data.sprintBoard)
+      return {
+        json: {
+          teams: structuredClone(data.sprintBoard.teams),
+          truncated: data.sprintBoard.truncated ?? false,
+          updatedAt: data.sprintBoard.updatedAt,
+        },
+      };
+    if (url.pathname === '/api/sprint-tickets' && data.sprintBoard)
+      return sprintTicketsResponse(url, data.sprintBoard);
     if (url.pathname === '/api/prs') return { json: data.prs };
     if (url.pathname === '/api/review-tickets') return { json: data.reviewTickets };
     if (url.pathname === '/api/spec-reviews') return { json: data.specReviews };

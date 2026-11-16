@@ -8,7 +8,7 @@ import { CALLOUT_TEXT, MAX_CALLOUTS } from './bot-bar.js';
 export const NOTIFY_STATES = Object.freeze(['waiting', 'failed']);
 // Only a real ticket key is ever put in a notification (a chat's `chat-<hex>` label never is).
 // Must match the backend's ticket key pattern (backend/claude-ticket-state.mjs); ui/ cannot import it.
-const TICKET_KEY = /^[A-Z]{1,10}-\d{1,7}$/;
+export const TICKET_KEY = /^[A-Z]{1,10}-\d{1,7}$/;
 const needsYou = ({ ticket, state }) => TICKET_KEY.test(ticket) && NOTIFY_STATES.includes(state);
 
 // How many of the bar's shown bots need the user: ticket bots only, waiting or failed.

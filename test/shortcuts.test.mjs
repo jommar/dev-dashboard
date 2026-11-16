@@ -20,16 +20,18 @@ const TABS = [
   'services',
   'devtools',
   'mascots',
+  'sprint',
   'settings',
 ].map((id) => ({ id }));
 const key = (k, extra = {}) => ({ key: k, target: { tagName: 'BODY' }, ...extra });
 const run = (event, pending = null, now = 1000, more = {}) =>
   resolveShortcut({ event, pending, now, tabs: TABS, blocked: false, ...more });
 
-test('every tab has exactly one chord letter and the table covers the ten tabs', () => {
+test('every tab has exactly one chord letter and the table covers the eleven tabs', () => {
   assert.deepEqual(Object.values(SHORTCUT_TABS).sort(), TABS.map(({ id }) => id).sort());
   assert.equal(chordHint('my-tickets'), 't');
   assert.equal(chordHint('settings'), ',');
+  assert.equal(chordHint('sprint'), 'b');
   assert.equal(chordHint('nope'), null);
 });
 

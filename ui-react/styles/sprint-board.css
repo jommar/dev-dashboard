@@ -1,0 +1,252 @@
+/* sprint-board.css — the Sprint tab (ui-react/panels/SprintPanel.jsx): its team and sprint selects,
+   the summary strip and its reason toggles, the card's extra lines and chips, the Needs attention
+   list and the batch groom dialog. The board frame, columns and card shell are board.css.
+   Tokens only, transitions of at most 120 ms naming their properties, no multi-column masonry.
+   Cyan marks what is interactive or selected; lavender (--support) is the Groom controls only,
+   because they start Claude sessions. */
+
+.sprint-board-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.sprint-board-field select {
+  min-width: 0;
+  max-width: 220px;
+  min-height: 36px;
+  padding: var(--s1) var(--s2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font: inherit;
+}
+.sprint-board-field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Groom ungroomed: the MUI button with the Claude role. */
+.sprint-board-groom-batch.btn.MuiButton-outlined:not(:disabled) {
+  border-color: color-mix(in srgb, var(--support) 45%, var(--border));
+  color: var(--support);
+}
+.sprint-board-groom-reason {
+  max-width: 260px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.sprint-board-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.sprint-board-stat {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sprint-board-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s2);
+}
+.sprint-board-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 28px;
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-xs);
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+.sprint-board-toggle[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--strong);
+}
+.sprint-board-toggle[aria-disabled='true'] {
+  color: var(--muted);
+  cursor: default;
+}
+.sprint-board-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sprint-board-toggle-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sprint-board-card-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.sprint-board-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sprint-board-session[data-state='waiting'],
+.sprint-board-session[data-state='failed'] {
+  color: var(--amber);
+}
+.sprint-board-verdict[data-tone='good'] {
+  color: var(--green);
+}
+.sprint-board-verdict[data-tone='caution'] {
+  color: var(--amber);
+}
+.sprint-board-verdict[data-tone='bad'] {
+  color: var(--red);
+}
+.sprint-board-reason {
+  color: var(--amber);
+}
+.sprint-board-card-groom {
+  margin-left: auto;
+  min-height: 24px;
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--support) 45%, var(--border));
+  color: var(--support);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-xs);
+  transition: background-color 120ms ease-out;
+}
+.sprint-board-card-groom:focus-visible {
+  outline: 2px solid var(--support);
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .sprint-board-toggle:not([aria-disabled='true']):hover {
+    background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  .sprint-board-card-groom:hover {
+    background-color: color-mix(in srgb, var(--support) 10%, transparent);
+  }
+}
+
+/* Needs attention: one list of cards in reading order, an explicit grid of equal tracks. */
+.sprint-board-attention {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sprint-board-dialog {
+  width: min(560px, 94vw);
+  max-height: 80dvh;
+  padding: var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.sprint-board-dialog::backdrop {
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+.sprint-board-dialog-title {
+  margin: 0 0 var(--s2);
+  color: var(--strong);
+  font-size: var(--fs-xl);
+}
+.sprint-board-dialog-text {
+  margin: 0 0 var(--s3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.sprint-board-dialog-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: 0 0 var(--s4);
+  padding: 0;
+  list-style: none;
+}
+.sprint-board-dialog-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.sprint-board-dialog-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+.sprint-board-dialog-key {
+  color: var(--strong);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sprint-board-dialog-summary {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sprint-board-dialog-outcome {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.sprint-board-dialog-outcome[data-outcome='started'] {
+  color: var(--green);
+}
+.sprint-board-dialog-outcome[data-outcome='failed'] {
+  color: var(--red);
+}
+.sprint-board-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+}
+/* Inside the batch dialog the primary fill is the Claude colour, as in the Claude dialog. */
+.sprint-board-dialog .btn.primary:not(:disabled) {
+  border-color: var(--support);
+  background: var(--support);
+}
+.sprint-board-dialog .btn.primary:not(:disabled):hover {
+  border-color: var(--support);
+  background: color-mix(in srgb, var(--support) 82%, var(--strong));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sprint-board-toggle,
+  .sprint-board-card-groom {
+    transition: none;
+  }
+}

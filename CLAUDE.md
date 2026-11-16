@@ -65,7 +65,7 @@ whole app feels consistent regardless of which container a given screen width la
 
 **Not masonry, intentionally:**
 
-- The My Tickets, Slack and Pull Requests boards (`.board-track`, `ui-react/styles/board.css`) are one row of
+- The My Tickets, Slack, Pull Requests and Sprint boards (`.board-track`, `ui-react/styles/board.css`) are one row of
   fixed-width columns (Jira statuses, Slack time groups, PR review lanes) that scrolls sideways inside itself; they
   are not card lists, so they have no `columns:` container and none of the breakpoints above. Each
   column's card list (`.board-column-body`) scrolls vertically on its own, with the column header
@@ -81,6 +81,9 @@ whole app feels consistent regardless of which container a given screen width la
 - `services.css`'s `.grid` (Services tab) sets explicit `grid-template-columns` per breakpoint — a
   real multi-column grid, appropriate because service cards are roughly uniform height, not a
   masonry candidate.
+- The Sprint tab's Needs attention list (`.sprint-board-attention`, `sprint-board.css`) is an explicit
+  `repeat(auto-fill, minmax(280px, 1fr))` grid: its cards are in priority order, which `columns:` would read down
+  the columns, and `BOARD_SHEETS` bans `columns:`. Its Board view is the shared board above.
 
 **The recurring bug this repo has hit three separate times:** a container styled `display: grid;
 gap: <n>px;` with no `grid-template-columns` set. Grid with an unspecified column count collapses to
@@ -372,8 +375,8 @@ focus ring at 3:1; `--red` is lifted to `#fc7a8d` to clear 4.5:1 under its 12% h
 
 - Roles: cyan (`--accent`, `--accent-fill` for a primary fill) means interactive or selected, never decoration.
   The Slack activity edge tab is cyan, not lavender (it is not Claude).
-  Lavender (`--support`) means Claude only: the Sessions tab and drawer, the Chat tab and screen, the Claude
-  launcher including its dialog primary fill (`.claude-dialog .btn.primary`, specificity 0,4,0, keeps `:disabled`
+  Lavender (`--support`) means Claude only: the Sessions tab and drawer, the Chat tab and screen, the Sprint tab's
+  Groom controls, the Claude launcher including its dialog primary fill (`.claude-dialog .btn.primary`, specificity 0,4,0, keeps `:disabled`
   on the base look). Ticket keys (`.jira-link`, `.review-ticket-key`, `.my-tickets-card-key`) are `--strong` and
   underline on hover. Jira status kind `active` is `--status-active`; My Tickets cards also carry a decorative 2px
   top bar (`.my-tickets-card::before`, `--jira-status-color`; the column title says the status, so never colour alone).
@@ -413,7 +416,7 @@ Both launch places (the DevTools tab form and the E2E dialog's step 1) share `Sh
 a "Show browser window" checkbox, unchecked by default. Do not describe a DevTools browser as a real
 or visible window anywhere except when `headed` is set.
 
-## UI layout: the shared board (My Tickets, Slack, Pull Requests)
+## UI layout: the shared board (My Tickets, Slack, Pull Requests, Sprint)
 
 Services also uses `BoardPanel` / `BoardSection`, with a scrolling `.board-pane`
 containing its explicit service grid rather than board columns. Keep service
@@ -421,10 +424,10 @@ identity, status and controls compact above the stable log viewport; the reserve
 feedback footer sits outside the log so polling and feedback do not shift it.
 Service-specific layout stays in `services.css`, not the shared board stylesheet.
 
-My Tickets, Slack and Pull Requests share one screen shape with different data, built from one set of
+My Tickets, Slack, Pull Requests and Sprint share one screen shape with different data, built from one set of
 primitives — `ui-react/components/BoardShell.jsx` and `ui-react/styles/board.css` — not screen-specific copies.
-Toolbar, notes, states, board frame, columns and card shell are changed there and all three screens get
-the change. The panel sheets (`my-tickets.css`, `slack.css`, `prs.css`) hold only what is specific to their own
+Toolbar, notes, states, board frame, columns and card shell are changed there and all four screens get
+the change. The panel sheets (`my-tickets.css`, `slack.css`, `prs.css`, `sprint-board.css`) hold only what is specific to their own
 domain: Jira card state, PR lines and chips, the Slack thread dialog and watcher. Generic classes
 are `board-*`, never prefixed with a screen's name; a rule that would read the same on a second
 screen belongs in `board.css`.
@@ -454,8 +457,8 @@ contract, so a refactor never renames them):
   screen shown again resumes at the true position), never per tick, which would shift a running
   animation. Hidden under reduced motion. Do not `sr-only` the readout (it would clip the line) or
   give a screen its own copy of the rule. Pass `countdown`
-  straight through, never read it as a string. All four board screens (My Tickets, Slack, Pull
-  Requests, DevTools) do this. `RefreshControl` also registers its guarded `onRefresh` under its
+  straight through, never read it as a string. All five board screens (My Tickets, Slack, Pull
+  Requests, DevTools, Sprint) do this. `RefreshControl` also registers its guarded `onRefresh` under its
   `name` (`ui-react/lib/board-refresh.js`) for the command palette; Home has no entry (its velocity
   stays explicit). Pull Requests intentionally adopted the shared `.board-next` countdown; retained
   legacy PR styles do not govern the PR board.
@@ -791,9 +794,63 @@ chat facet) and `ui/chat-stream.js` (the client reducer).
   real CLI with scratch sessions; sessions started with the launcher's extra flags (`--add-dir`,
   `--tools`, `--strict-mcp-config`) and the ticket row's Chat link in a real browser were not.
 
+## Sprint board: facts not to break
+
+The Sprint tab (`ui-react/panels/SprintPanel.jsx`, `SprintCard.jsx`, `SprintGroomDialog.jsx`; pure rules in
+`ui/sprint-attention.js` and `ui/sprint-board.js`; reads in `backend/sprint-board.mjs`) is a product-owner view of one
+team's sprint. README "Sprint" has the user-facing rules and the reply shapes.
+
+- **A lazy board screen in the Tools row.** `READY_TABS` row `sprint` after `mascots` (the mascots-after-devtools pin
+  and `PRIMARY_ROUTES` are unchanged), a memoized `lazyScreen` in a board-shaped `ScreenSlot` that passes `config`, chord
+  `b` in `SHORTCUT_TABS`, `panels/SprintPanel.jsx` in `LAZY_MODULES`. No hash query (`QUERY_ROUTES` is pinned): the
+  choice lives in storage. `BoardPanel` > `BoardSection name="sprint"` with `RefreshControl name="sprint"` (the
+  palette's Refresh is keyed by tab id) and `Board` / `BoardColumn` with `sprint-*` test ids, never `TicketBoard`,
+  whose ids would collide with My Tickets'.
+- **Its own storage key, never Home's.** `dev-dashboard.sprint-board` (`{ version: 1, team, sprint }`) is read and
+  written only by `ui/sprint-board.js`; never a `dev-dashboard.home-velocity*` key or `readVelocityTeam`. `sprint: null`
+  means "follow the team's active sprint": `sprintChoice` stores null for the active sprint, a team change stores
+  null and `settledChoice` turns a kept id that has become the active sprint back into null, so never turn a null
+  into an id. Team defaults to Nexus (`DEFAULT_SPRINT_TEAM`).
+- **No `/api/team-velocity`.** Teams come from `GET /api/sprints` (`boardOf` prefixes, the identity Home shows);
+  `e2e/sprint-board.spec.js` asserts zero velocity reads, and the Home velocity rule above is unaffected.
+- **Read-only routes.** `GET /api/sprints` and `GET /api/sprint-tickets?sprint=<id>` are setup-gated, send no Jira
+  write and log nothing (`test/sprint-board.test.mjs` scans the module for `POST`/`PUT` and `console.`), and reach
+  Jira only through `upstreamFetch` (`sprint-board.mjs` is in the no-bare-fetch list). A cross-site or same-site
+  `Sec-Fetch-Site` is refused before any Jira call. The id goes into JQL, so `SPRINT_ID` (`^[1-9]\d{0,9}$`) is checked
+  in the route **and** in `fetchSprintTickets` itself: `400 INVALID_SPRINT` (in the error allow-list), no Jira call.
+  A ticket is `mapTicketIssue` plus `assignee`, fetched with the shared `ticketFields(cfg)` from `jira.mjs`; a field
+  `mapTicketIssue` reads is added there, never in one caller.
+- **Caches.** Module-level: the sprint list 5 minutes, a sprint's tickets 30 s with at most 20 entries, keyed by Jira
+  base URL **and account email** (plus the sprint field or the id), concurrent reads share one promise and a failed
+  read is forgotten. A Refresh within 30 s gets the cached answer on purpose. `clearSprintBoardCaches()` is for tests.
+  The poll is 60 s (`SPRINT_BOARD_POLL_MS`), never while hidden. A team or sprint switch calls `load` directly (the
+  hook's guarded load would drop it while a read is out), a request counter drops stale answers, and the poll that
+  can follow a switch within a second is accepted, because the cache serves it.
+- **Linked PRs are deliberately absent.** No `dev-status.mjs` or GitHub call from this screen: a per-ticket
+  dev-status lookup on a 60 s poll is sustained Jira load, and one 429 cools every Jira call down for up to 900 s.
+  Adding PRs needs a cheaper discovery first, not a call per card.
+- **Grooming has one path.** The card's Groom opens the existing `ClaudeDialog` (after `loadClaudeDialog()`
+  resolves; see the bundle note under "Lazy screens"). The batch launches only through `claude.launch(key, 'groom')`
+  from `useClaudeTickets`, awaited one after another, never in parallel, capped by `groomCandidates` at
+  `GROOM_BATCH_MAX` (5) minus the groom sessions working anywhere; `groomOutcome` skips `session_running` and goes
+  on, and any other refusal stops the rest. No second launch route and no Jira write. The cap is client-side only.
+- **Attention reasons are one closed table.** `ATTENTION_REASONS` in `ui/sprint-attention.js` (id, label, order) is
+  the only list: the card chips, the summary toggles and `attentionOrder` read it, and `CLAUDE_REASONS` names the
+  three that need a Claude answer (`–` and `aria-disabled` until `claude.loaded`, never counted before). A done-kind
+  ticket, or an unknown status under Done, has none. A new reason is a row there and its rule in `attentionReasons`,
+  never a list in a component. Batch eligibility uses `TICKET_KEY` exported from `ui/needs-you.js`, never a new regex.
+- **Phase words are a tested copy.** `SESSION_CHIP_WORDS` in `ui/sprint-board.js` copies `PHASES[*].words` of
+  `ui/session-phases.js` (plus spec review, which that table has no row for), because importing that module from
+  the lazy screen splits it out of the entry chunk. `test/sprint-board-state.test.mjs` ties the copy to the table, so a
+  renamed phase fails there; change both.
+- **CSS prefix `sprint-board`.** `ui-react/styles/sprint-board.css` is in `BOARD_SHEETS`: every selector starts
+  `.sprint-board` (`.sprint-*` is Home's, in `home.css`), tokens only, short named transitions, a reduced-motion block,
+  no `columns:`. Lavender `--support` marks the Groom controls only (the batch dialog's Confirm through
+  `.sprint-board-dialog .btn.primary`). No `UpstreamNote` is mounted on this screen.
+
 ## Lazy screens and the first-paint bundle
 
-Chat, Releases, DevTools and Mascots load their code on first visit; Home, My Tickets, Slack, Pull
+Chat, Releases, DevTools, Mascots and Sprint load their code on first visit; Home, My Tickets, Slack, Pull
 Requests, Services, Settings (the only screen in setup-only mode) and the bot bar are eager. The ticket
 Claude dialog, the command palette, the shortcuts help and the two edge-drawer bodies (`SlackFeedPanel`, opened by
 the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
@@ -814,10 +871,14 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
 - `test/bundle-budget.test.mjs` builds in memory (never `dist/`) and holds initial JS to 640 KiB raw and
   201 KiB gzip -9 (raised from 200 for the merged-PR rows); a new eager import of a lazy module fails it. `vite.config.js` is pinned by
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
-- **The first-paint gzip and all-JS margins are thin.** With the Slack tab and the My Tickets spec icon the initial closure is
-  628 KiB raw and 204,946 B gzip against 205,824 (201 KiB; about 880 B spare), and all JS is 902,026 B against `MAX_TOTAL_RAW`,
-  884 KiB (905,216 B; raised from 880 KiB for the spec icon), so about 3 KB spare: a few more bytes of eager code, or a new
-  eager import, can fail the budget test with no apparent cause. The spec icon (`SpecMark` in `TicketBoard.jsx`) is eager on
+- **The first-paint gzip, all-JS and CSS margins are thin.** With the Sprint tab the initial closure is 645,684 B raw
+  (631 KiB) and 205,240 B gzip against 205,824 (201 KiB; 584 B spare), all JS is 918,417 B against `MAX_TOTAL_RAW`,
+  900 KiB (921,600 B; raised from 884 KiB for the lazy Sprint screen), so 3,183 B spare, and all CSS is 181,863 B against
+  180 KiB (184,320 B), 2,457 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
+  test with no apparent cause. A lazy screen that imports a module the entry also uses can split it into an initial
+  chunk of its own: `SprintPanel` therefore opens `ClaudeDialog` after `loadClaudeDialog()` instead of importing
+  `LazyDialog` from `ScreenSlot`, and the Sprint card keeps a copy of the phase words instead of importing
+  `ui/session-phases.js` (measured at about +1.4 KB and +450 B of first-paint gzip). The spec icon (`SpecMark` in `TicketBoard.jsx`) is eager on
   purpose: a lazy version measured no smaller at first paint, because the panel state and API call are eager anyway.
   `SessionsBody` stays lazy only because `SessionsDrawer` passes it dressed rows: rolldown makes any module that the
   entry and two or more lazy chunks share its own initial chunk, which cost more than the move saved. A new import in
@@ -858,7 +919,7 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
 ## Integration health: facts not to break
 
 - `backend/upstream.mjs` is the one fetch seam for Jira and GitHub (`jira.mjs`, `github.mjs`,
-  `github-api.mjs`, `team-velocity.mjs`, `dev-status.mjs`); a source test forbids a bare `fetch(`,
+  `github-api.mjs`, `team-velocity.mjs`, `dev-status.mjs`, `sprint-board.mjs`); a source test forbids a bare `fetch(`,
   and also in `releases.mjs` and `ticket-prs.mjs`, which reach Jira only through `dev-status.mjs`.
   `upstreamError(name, res, message)` keeps the caller's message byte-identical. Slack feeds the same
   record from `slack.mjs` and keeps its own `fetchImpl`, timeout and cool-down; the side-branch `.catch`

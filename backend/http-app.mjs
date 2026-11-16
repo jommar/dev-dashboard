@@ -4,6 +4,7 @@ import { DEFAULT_TAIL_LINES } from './config.mjs';
 import { fetchOpenPRs, PR_DISCOVERY_UNAVAILABLE, PR_DISCOVERY_INCOMPLETE } from './github.mjs';
 import { fetchActiveSprintKeys, fetchMyTickets, fetchTicketMetadata } from './jira.mjs';
 import { fetchUatPromoteCandidates } from './uat-promote.mjs';
+import { SPRINT_ID, fetchSprintList, fetchSprintTickets } from './sprint-board.mjs';
 import { enrichOpenPRs } from './review.mjs';
 import { fetchPrDashboard } from './prs.mjs';
 import { fetchTicketPrs } from './ticket-prs.mjs';
@@ -278,6 +279,8 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     fetchSpecReviews,
     fetchTicketSpecs,
     fetchHomeVelocity,
+    fetchSprintList,
+    fetchSprintTickets,
     ...integrations,
   };
   const clients = new Set();
@@ -830,6 +833,22 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         });
         return;
       }
+      // The Sprint tab's whole-team reads. Each is several Jira searches behind a short cache, so
+      // another site's page may not trigger one.
+      if (req.method === 'GET' && pathname === '/api/sprints') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        json(res, 200, await api.fetchSprintList(options));
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/sprint-tickets') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+          throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+        const sprint = url.searchParams.get('sprint') || '';
+        if (!SPRINT_ID.test(sprint)) throw httpError('INVALID_SPRINT', 'Invalid sprint.', 400);
+        json(res, 200, await api.fetchSprintTickets(sprint, options));
+        return;
+      }
       if (req.method === 'GET' && pathname === '/api/team-velocity') {
         if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
           throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
@@ -918,6 +937,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'BODY_TOO_LARGE',
         'INVALID_JSON',
         'INVALID_SPEC_LIMIT',
+        'INVALID_SPRINT',
         'INVALID_LINK',
         'INVALID_SESSION',
         'INVALID_MESSAGE',

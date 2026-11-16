@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added the **Sprint** tab (tools group after Mascots, `#/sprint`, `g` then `b`): a product-owner view of one team's
+  sprint, every ticket whoever has it, as a board by status or a Needs attention list. A summary strip counts tickets,
+  points committed and done, and six attention reasons (Claude waiting, Groom: open questions, Blocked, Unassigned, No
+  estimate, Not groomed) that are also filter toggles. A card's Groom opens the ticket's Claude dialog, and **Groom
+  ungroomed** grooms up to five unstarted, ungroomed tickets one after another after a confirmation. The team and
+  sprint choice is kept in the browser under its own key and follows the team's active sprint. Read-only toward Jira,
+  polled every 60 seconds, and linked PRs are not shown. New `GET /api/sprints` and
+  `GET /api/sprint-tickets?sprint=<id>` (`400 INVALID_SPRINT` for a bad id). See [Sprint](README.md#sprint).
 - My Tickets now finds your PRs through Jira instead of searching the Settings repositories: `GET /api/ticket-prs`
   reads the PRs Jira's development status links to each ticket in the default list (newest 50) and keeps your
   open ones, so a PR in a repository that is not among the watched repositories (for example `ezd-transauditor`) shows

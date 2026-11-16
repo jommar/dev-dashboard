@@ -16,8 +16,8 @@ const rulesFor = (css, attribute) =>
     .map(([, , body]) => body)
     .join('\n');
 
-// The shared board frame and the Jira ticket-card sheet it is layered under.
-const BOARD_SHEETS = ['styles/board.css', 'styles/my-tickets.css'];
+// The shared board frame, the Jira ticket-card sheet it is layered under and the Sprint board's sheet.
+const BOARD_SHEETS = ['styles/board.css', 'styles/my-tickets.css', 'styles/sprint-board.css'];
 
 test('the React entry mounts a themed shell with one shared ready-mode SSE hook', () => {
   assert.match(read('main.jsx'), /createRoot\(document\.getElementById\('root'\)\)/);
@@ -47,6 +47,8 @@ test('the shared API boundary retains every existing endpoint and payload operat
     '/api/slack/thread?ts=',
     '/api/slack/pending',
     '/api/slack/feed',
+    '/api/sprints',
+    '/api/sprint-tickets',
     '/api/events',
   ]) {
     assert.ok(api.includes(route), `API route ${route} is represented`);
@@ -1263,4 +1265,23 @@ test('every custom property a stylesheet reads is declared by the shared sheets,
         declared.has(name) || setInline(name) || fallback,
         `${file} reads ${name}, which nothing declares`,
       );
+});
+
+test('the Sprint tab is registered after Mascots with a nav icon, and its sheet stays Sprint-board scoped', () => {
+  const ids = [...read('App.jsx').matchAll(/\{ id: '([\w-]+)', label:/g)].map((match) => match[1]);
+  assert.equal(ids.indexOf('sprint'), ids.indexOf('mascots') + 1, 'sprint follows mascots');
+  assert.match(read('components/NavIcon.jsx'), /^\s*sprint:/m);
+  const css = read('styles/sprint-board.css');
+  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/, 'the sheet has its own block');
+  const selectors = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)]
+    .map(([, selector]) => selector.trim())
+    .filter((selector) => !selector.startsWith('@') && !/^(?:from|to|\d)/.test(selector))
+    .flatMap((selector) => selector.split(/,(?![^(]*\))/));
+  assert.ok(selectors.length > 0, 'the sheet has rules');
+  for (const selector of selectors)
+    assert.match(
+      selector.trim(),
+      /^\.sprint-board\b/,
+      `${selector.trim()} stays Sprint-board scoped`,
+    );
 });

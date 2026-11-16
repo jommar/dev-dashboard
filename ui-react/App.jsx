@@ -21,8 +21,8 @@ import './styles.css';
 
 // Every screen is a `memo`, so the service feed re-rendering App (a status or log line changed) only
 // re-renders the screen whose props changed: Services is the one that takes `services`. Home,
-// My Tickets, Slack, Pull Requests, Services and Settings are eager; Chat, Releases, DevTools and
-// Mascots load on first visit (see ScreenSlot), which keeps them out of the first-paint bundle.
+// My Tickets, Slack, Pull Requests, Services and Settings are eager; Chat, Releases, DevTools,
+// Mascots and Sprint load on first visit (see ScreenSlot), which keeps them out of the first-paint bundle.
 const Home = memo(HomePanel);
 const Services = memo(ServicesPanel);
 const Prs = memo(PrsPanel);
@@ -33,6 +33,7 @@ const Releases = memo(lazyScreen(() => import('./panels/ReleasesPanel.jsx'), 'Re
 const Chat = memo(lazyScreen(() => import('./panels/ChatPanel.jsx'), 'ChatPanel'));
 const Devtools = memo(lazyScreen(() => import('./panels/DevtoolsPanel.jsx'), 'DevtoolsPanel'));
 const Mascots = memo(lazyScreen(() => import('./panels/MascotsPanel.jsx'), 'MascotsPanel'));
+const Sprint = memo(lazyScreen(() => import('./panels/SprintPanel.jsx'), 'SprintPanel'));
 
 // The badge polls from inside the Slack tab entry, so setup-only mode (which
 // renders SETTINGS_TAB) never starts a Slack request at all.
@@ -46,6 +47,7 @@ const READY_TABS = [
   { id: 'services', label: 'Services' },
   { id: 'devtools', label: 'DevTools' },
   { id: 'mascots', label: 'Mascots' },
+  { id: 'sprint', label: 'Sprint' },
   { id: 'settings', label: 'Settings' },
 ];
 const SETTINGS_TAB = [{ id: 'settings', label: 'Settings' }];
@@ -206,6 +208,13 @@ export function App() {
                   label="Mascots"
                   Screen={Mascots}
                   active={active === 'mascots'}
+                />
+                <ScreenSlot
+                  id="sprint"
+                  label="Sprint"
+                  Screen={Sprint}
+                  config={config}
+                  active={active === 'sprint'}
                 />
               </>
             )}

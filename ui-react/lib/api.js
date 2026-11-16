@@ -124,6 +124,9 @@ export const getSpecReviews = (limit = 3, signal) =>
   getJson(`/api/spec-reviews?limit=${encodeURIComponent(limit)}`, { signal });
 export const getTeamVelocity = () => getJson('/api/team-velocity');
 export const getHealth = () => getJson('/api/health');
+export const getSprints = () => getJson('/api/sprints');
+export const getSprintTickets = (sprintId) =>
+  getJson(`/api/sprint-tickets?sprint=${encodeURIComponent(sprintId)}`);
 
 export async function getMyTickets(includeDone = false) {
   const res = await fetch(`/api/my-tickets${includeDone ? '?includeDone=1' : ''}`);

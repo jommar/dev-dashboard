@@ -429,3 +429,34 @@ test('checkout 14: getWorktrees asks the listing route of the encoded dir', asyn
   assert.equal(calls[0][0], '/api/repos/my%20dir/worktrees');
   assert.ok(!calls[0][1]?.method || calls[0][1].method === 'GET');
 });
+
+test('getSprints and getSprintTickets GET their routes, resolve the payload and reject a coded error', async (t) => {
+  const sprints = {
+    teams: [{ name: 'Nexus', sprints: [{ id: 17, name: 'Nexus Sprint 17', state: 'active' }] }],
+    updatedAt: '2026-11-16T12:00:00Z',
+  };
+  const tickets = {
+    sprint: 17,
+    total: 0,
+    truncated: false,
+    tickets: [],
+    updatedAt: '2026-11-16T12:00:00Z',
+  };
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return jsonResponse(String(args[0]).startsWith('/api/sprints') ? sprints : tickets);
+  });
+  assert.deepEqual(await api.getSprints(), sprints);
+  assert.deepEqual(await api.getSprintTickets(17), tickets);
+  assert.deepEqual(
+    calls.map(([url]) => url),
+    ['/api/sprints', '/api/sprint-tickets?sprint=17'],
+  );
+  for (const [, options] of calls) assert.ok(!options?.method || options.method === 'GET');
+  t.mock.restoreAll();
+  t.mock.method(globalThis, 'fetch', async () =>
+    jsonResponse({ code: 'INVALID_SPRINT', error: 'Unknown sprint' }, 400),
+  );
+  await assert.rejects(() => api.getSprintTickets(17), { code: 'INVALID_SPRINT', status: 400 });
+});

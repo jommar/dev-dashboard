@@ -18,6 +18,7 @@ test('no bare fetch in the Jira and GitHub modules: every request goes through u
     'github-api.mjs',
     'team-velocity.mjs',
     'dev-status.mjs',
+    'sprint-board.mjs',
   ]) {
     const source = code(read(`backend/${file}`));
     assert.doesNotMatch(source, /(?<![\w.])fetch\(/, `${file} calls fetch( directly`);

@@ -19,6 +19,7 @@ const TAB_IDS = [
   'services',
   'devtools',
   'mascots',
+  'sprint',
   'settings',
 ];
 const CHAT = '8c1d4e7f-3a2b-4c5d-9e6f-0a1b2c3d4e5f';
@@ -45,7 +46,7 @@ const openPalette = async (page) => {
 const seedSessions = ({ data }) => {
   Object.assign(data.claude.tickets, {
     'BOT-1': claudeEntry('working', 'running', { phase: 'implement-plan' }),
-    'BOT-7': claudeEntry('none', null, { review: { state: 'working', reason: 'running' } }),
+    'BOT-7': claudeEntry('none', null, { review: { state: 'done', reason: 'finished' } }),
   });
   data.claude.activeSprint.keys = ['BOT-1'];
   data.claude.chats = [
@@ -113,7 +114,7 @@ test('palette sessions list the sprint bots and chats, and open them', async ({
   await page.getByTestId('claude-dialog-close').click();
   await expect(page.getByTestId('claude-dialog')).toBeHidden();
 
-  // A session whose ticket is outside the sprint has no option, though it exists.
+  // A finished session whose ticket is outside the sprint has no option, though it exists.
   await openPalette(page);
   await page.keyboard.type('bot');
   await expect(option(page, 'session-BOT-1:implement')).toBeVisible();
@@ -185,12 +186,18 @@ test('palette refresh runs the active board own load, and Home never reads veloc
 
 test('chord g then a letter goes to a tab, and a wrong letter or a late one goes nowhere', async ({
   page,
+  dashboard,
 }) => {
   await load(page);
   await page.keyboard.press('g');
   await page.keyboard.press('t');
   await expect(page).toHaveURL(/#\/my-tickets$/);
   await expect(page.getByTestId('panel-my-tickets')).toBeVisible();
+  await page.keyboard.press('g');
+  await page.keyboard.press('b');
+  await expect(page).toHaveURL(/#\/sprint$/);
+  await expect(page.getByTestId('panel-sprint')).toBeVisible();
+  expect(velocityReads(dashboard)).toEqual([]);
   await page.keyboard.press('g');
   await page.keyboard.press('h');
   await expect(page).toHaveURL(/#\/home$/);

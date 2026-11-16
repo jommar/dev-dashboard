@@ -17,6 +17,7 @@ const LAZY = [
   ['chat', 'Chat', 'ChatPanel'],
   ['devtools', 'Devtools', 'DevtoolsPanel'],
   ['mascots', 'Mascots', 'MascotsPanel'],
+  ['sprint', 'Sprint', 'SprintPanel'],
 ];
 // Every <ScreenSlot ... /> element in App's source, each as its own text, so a pin does not depend on
 // the order of its props or on how Prettier wrapped them.
@@ -52,16 +53,16 @@ test('memo: every screen App renders is memoized, so a feed tick re-renders only
   assert.match(shell, /const BotBar = memo\(BotBarView\);/);
 });
 
-test('lazy screens: Settings and the daily tabs stay eager, four screens mount on first visit', () => {
+test('lazy screens: Settings and the daily tabs stay eager, five screens mount on first visit', () => {
   const app = read('App.jsx');
-  // Nothing eager imports a lazy screen, and the only dynamic imports are the four screens.
+  // Nothing eager imports a lazy screen, and the only dynamic imports are the five screens.
   for (const [, , panel] of LAZY)
     assert.doesNotMatch(
       app,
       new RegExp(`import \\{ ${panel} \\}`),
       `${panel} is not a static import`,
     );
-  // Each of the four is mounted through one ScreenSlot with its own id, screen and active flag.
+  // Each of the five is mounted through one ScreenSlot with its own id, screen and active flag.
   const slots = slotElements(app);
   for (const [id, name] of LAZY) {
     const own = slots.filter((slot) => slot.includes(`id="${id}"`));
@@ -186,7 +187,7 @@ test('lazy screens: only Releases, the one screen that is not a board, opts out 
   }
   // The screens' own roots agree with the flags: Releases is a plain panel, the rest BoardPanels.
   assert.doesNotMatch(read('panels/ReleasesPanel.jsx'), /<BoardPanel\b/);
-  for (const panel of ['ChatPanel', 'DevtoolsPanel', 'MascotsPanel'])
+  for (const panel of ['ChatPanel', 'DevtoolsPanel', 'MascotsPanel', 'SprintPanel'])
     assert.match(read(`panels/${panel}.jsx`), /<BoardPanel\b/, `${panel} is a board panel`);
 });
 

@@ -60,11 +60,11 @@ Open `http://127.0.0.1:6500`. On a fresh or incomplete installation, only
 **Settings** is available: complete GitHub, Jira and local services, then click
 **Save settings**. See [Settings and setup](#settings-and-setup) for migration and
 validation details. Once setup is ready, a compact top bar puts **Home → My Tickets
-→ Slack** first. Pull Requests, Releases and Services follow in a separate tools
-group, with Settings at the end. Below 1200px the tools move into a **Tools**
-disclosure (a menu icon on phones), while the first three links stay visible.
-The menu supports Tab, Enter and Escape and closes on navigation or an outside
-click. All seven views remain available:
+→ Slack** first. Pull Requests, Chat, Releases, Services, DevTools, Mascots and
+Sprint follow in a separate tools group, with Settings at the end. Below 1200px
+the tools move into a **Tools** disclosure (a menu icon on phones), while the
+first three links stay visible. The menu supports Tab, Enter and Escape and
+closes on navigation or an outside click. All eleven views remain available:
 
 - **Home** — manually generated, browser-saved team/person sprint velocity.
   See [Home](#home). Use its tab or click the
@@ -85,6 +85,8 @@ click. All seven views remain available:
   an Awaiting Merge lane for other-assigned tickets in that Jira status,
   and a Spec review lane of open `ezat-specs` spec PRs with no code PR yet.
   See [PR review board](#open-prs).
+- **Chat** — a conversation with a Claude Code session, standalone or a
+  ticket's. See [Chat](#chat).
 - **Releases** — the tickets of one Jira fix version (the picker defaults to the
   earliest unreleased EZAT version), each with its GitHub PRs, grouped by
   whether the work reached `ops/development`. It opens on your own tickets;
@@ -96,11 +98,17 @@ click. All seven views remain available:
   then the **checkout** select and an **Actions** menu with Start, Stop and
   Restart. The select runs the service from another git worktree of its repo.
   See [Worktree picker](#worktree-picker).
+- **DevTools** — browsers the dashboard launches (Chrome or Chromium), each a live tile;
+  the E2E check launches its browser here. See [E2E check](#e2e-check).
+- **Mascots** — every bot-bar mascot and poster. See [Mascots page](#mascots-page).
+- **Sprint** — one team's whole sprint for its product owner: every ticket
+  whoever has it, the tickets that need a decision, and grooming through the
+  Claude launch. Read-only toward Jira. See [Sprint](#sprint).
 - **Settings** — saved integrations, token replacements, local services and
   advanced options.
 
 The visible view lives in the URL hash (`#/home`, `#/services`, `#/prs`,
-`#/my-tickets`, `#/releases`, `#/slack`, `#/settings`), so a reload — or a link you paste to
+`#/my-tickets`, `#/releases`, `#/slack`, `#/sprint`, `#/settings`), so a reload — or a link you paste to
 yourself — lands where you left off. A bare URL or an unrecognised hash is
 canonicalized to Home when ready, or Settings during setup. During setup, deep links, title clicks
 and back/forward navigation also resolve to Settings; operational panels and the
@@ -395,6 +403,7 @@ An agent can read the same logs three ways:
    - `GET /api/spec-reviews?limit=3` (all eligible directly requested `ezat-specs` specs plus up to `limit` others; see [Spec review lane](#spec-review-lane))
    - `GET /api/my-tickets?includeDone=0|1`
    - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
+   - `GET /api/sprints` and `GET /api/sprint-tickets?sprint=<id>` (every team's sprints, and every ticket in one sprint whoever is assigned; see [Sprint](#sprint))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/ticket-specs` (which tickets already have an `ezat-specs` PR; see [My Tickets](#my-tickets))
    - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
@@ -2658,13 +2667,13 @@ sessions, open the session list`; under 600px one pill for the single zone). The
 
 - **Command palette.** Ctrl+K (Cmd+K on a Mac) opens it over every screen once setup is done. It lists
   **Go to** (every tab, with its chord), **Sessions** (the same sprint-filtered rows as the Sessions
-  drawer, chats included) and **Actions** (New chat, Refresh for My Tickets, Slack, Pull Requests and
-  DevTools when open, and `Open KEY in My Tickets` when a whole ticket key is typed). Type to filter
+  drawer, chats included) and **Actions** (New chat, Refresh for My Tickets, Slack, Pull Requests,
+  DevTools and Sprint when open, and `Open KEY in My Tickets` when a whole ticket key is typed). Type to filter
   (every word must match), arrows move, Enter chooses, Esc closes. It works from the Chat composer, and
   focus returns there on close.
 - **Chords.** `g` then a letter jumps to a tab (1.5 s window, any other key cancels): `h` Home, `t` My
-  Tickets, `s` Slack, `p` Pull Requests, `c` Chat, `r` Releases, `v` Services, `d` DevTools, `m` Mascots
-  and `,` Settings. `?` lists the shortcuts. Plain keys are ignored while typing in a field, while any
+  Tickets, `s` Slack, `p` Pull Requests, `c` Chat, `r` Releases, `v` Services, `d` DevTools, `m` Mascots,
+  `b` Sprint and `,` Settings. `?` lists the shortcuts. Plain keys are ignored while typing in a field, while any
   dialog is open, inside an open menu or listbox popup (the Services Actions menu, say) and on a
   screencast stage in Take control. Ctrl+K is always kept from the browser's own shortcut (address-bar
   search), also while the palette or help is open and on key repeat. The palette and help close on a
@@ -2708,6 +2717,106 @@ mascot you register appears on it with no page change.
   and longest (`TRIPS-12345`) key a poster must fit. A poster you register appears with no page change.
 - **Which mascot would a session get?** Type a session key (`<TICKET>:<phase>`, such as
   `TAP-1234:implement`) to see the mascot the bar would give it, and its card is marked **Picked**.
+
+## Sprint
+
+The **Sprint** tab (in the tools group after Mascots, `#/sprint`, `g` then `b`) is a product-owner view
+of one team's sprint: every ticket in the chosen sprint whoever is assigned to it, with its estimate,
+status, Claude sessions and groom verdict, and the tickets that need a decision marked. It only reads
+Jira: nothing on it writes to Jira, and grooming goes through the same Claude launch as a ticket's
+Claude dialog. Its code loads on first visit, like Chat, Releases, DevTools and Mascots.
+
+- **Team and sprint.** The Team select lists every team that has an active, future or recently closed
+  sprint. A team is the sprint-name prefix Home also uses ("Nexus Sprint 17" is Nexus). The Sprint
+  select lists that team's active sprint, then its future sprints nearest first (by start date, undated
+  ones last), then its three newest closed ones, marked `(future)` or `(closed)`. The default team is
+  Nexus, else the first team; the default sprint is the active one, else the nearest future one, else
+  the newest closed one.
+- **Remembered choice.** The choice is kept in this browser under `dev-dashboard.sprint-board`
+  (`{ version: 1, team, sprint }`), its own key, so it never changes Home's team and Home never changes
+  it. Changing team, or choosing the team's active sprint, stores `sprint: null`: the tab then follows
+  the team's active sprint when the next one starts. Only another sprint is kept by its id; a kept
+  sprint that becomes the active one goes back to following the active sprint, and a kept sprint that
+  is no longer listed falls back to the default. The address stays `#/sprint`, with no query.
+- **Summary strip.** The ticket count, points committed (every estimate in the sprint), points done
+  (the estimates of tickets in a done-kind status, or in a status Jira files under Done), and one toggle
+  per attention reason with its count. Pressed toggles narrow both views to tickets with any pressed
+  reason; pressing again releases it. Toggles are not remembered and reset on a team or sprint change.
+  Until Claude's session state is first read, the three Claude reasons (Claude waiting, Groom: open
+  questions, Not groomed) show `–` and cannot be pressed, because an unknown state never counts.
+- **Board and Needs attention.** **Board** has one column per Jira status in the My Tickets order, every
+  assignee's tickets together. **Needs attention** lists only the tickets with a reason: by their most
+  important reason (the order below), then by how many reasons they have, then by key. Its tab shows
+  the count.
+- **The card.** The key as a Jira link, the issue type, the points or "No estimate", a **Groom** button,
+  the summary, the assignee or "Unassigned", the status, a chip per Claude session the ticket has
+  (investigate or implement, groom, code review, spec review, E2E check) with its state, the groom
+  verdict once a groom finished, and a chip per attention reason. Linked PRs are not shown (see below).
+
+### Attention reasons
+
+A closed set, in this order. A ticket in a done-kind status has none, and no reason is ever read from a
+comment or description.
+
+| Reason                    | Fires when                                                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Claude waiting**        | the ticket's workflow session, or its groom, code review, spec review or E2E session, is waiting for you        |
+| **Groom: open questions** | a finished groom's verdict is Needs info or Blocked                                                             |
+| **Blocked**               | the Jira status is an attention kind (Blocked, Impediment, Rejected, Active Incident, CS Escalation)            |
+| **Unassigned**            | the ticket has no assignee                                                                                      |
+| **No estimate**           | the ticket has no story points                                                                                  |
+| **Not groomed**           | the ticket has no groom session and has not started (a queued status, or an unknown one Jira files under To Do) |
+
+The groom verdict is the `Readiness:` first line of the groom's `groom.md` (see [Groom ticket](#groom-ticket));
+a groom whose file opens with anything else has no verdict, so Groom: open questions never fires for it. A misconfigured story points field makes every ticket read No estimate.
+
+### Grooming from the Sprint tab
+
+- **Groom on a card** (named `Groom <KEY>`) opens that ticket's existing Claude dialog. Nothing launches
+  until the dialog's own Groom is used.
+- **Groom ungroomed (N)** opens a confirmation listing the Not groomed tickets whose key the launcher
+  accepts, all checked: at most 5, less one for each groom session already working anywhere, so a click
+  never takes the number of running grooms past 5. **Confirm** launches the checked tickets one after
+  another through `POST /api/claude/launch` (`{ key, phase: 'groom' }`), and each row then reads
+  Started, Skipped (already grooming) or Failed. A groom already running is skipped and the batch goes
+  on; any other refusal stops it, and the rest read Not started. **Cancel** launches nothing. While
+  launches are going out, Cancel, Escape and the backdrop do nothing, and a confirmed batch finishes
+  even if you leave the tab. The button is disabled, with the reason beside it, until Claude's session
+  state is read and while no ticket is eligible. Every groom gets its bot on the bot bar as usual.
+- The cap is counted in this browser only: two open tabs can each start a batch (the server has no cap
+  on groom sessions).
+
+### Refresh, caches and limits
+
+- The tab reads again every 60 seconds while it is shown and the page is visible, on **Refresh** and
+  on the palette's Refresh entry; the countdown is the shared line along the bottom of Refresh. A
+  failed read keeps the last tickets on screen with a note.
+- The server caches the sprint list for 5 minutes and a sprint's tickets for 30 seconds (up to 20
+  sprints), per Jira site and account, and concurrent reads share one request, so a Refresh within 30
+  seconds shows the cached answer. A team or sprint switch reads at once (from the cache when it is
+  fresh), and a poll can follow it within a second; that read is served from the cache too.
+- The sprint list comes from the 300 most recently updated issues in open sprints and the 300 in closed
+  sprints, so a sprint none of them names is not listed. A sprint's tickets are capped at 200. When
+  either is cut short, a note says the board and its totals may be incomplete.
+- Linked PRs are left out on purpose: Jira's development-status lookup costs one call per ticket, and
+  two for a ticket with no PR, on every uncached read. On a 60-second poll that is sustained Jira load,
+  and one rate-limit answer stops every Jira call for up to 15 minutes. For the same reason there is no
+  "in progress with no PR" reason.
+- The tab never calls `/api/team-velocity` and never touches Home's snapshot. It shows no
+  [integration health](#integration-health) note.
+- Not checked against a live Jira: that `sprint = <id>` searches as written, and that sprint ids are
+  numeric on every instance.
+
+### Sprint routes
+
+Both are [setup-gated](#setup-gate-and-apis) reads. A cross-site or same-site `Sec-Fetch-Site` is
+refused with `403 OPERATION_FAILED` before Jira is asked, and a Jira failure is `502 UPSTREAM_FAILED`
+(see [Integration health](#integration-health)).
+
+| Route                                 | Answer                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/sprints`                    | `{ teams: [{ name, sprints: [{ id, name, state, startDate, endDate }] }], truncated, updatedAt }`: teams by name, each with its active, future (nearest first) and three newest closed sprints; ids are positive integers. Cached 5 minutes                                                                                                                                                   |
+| `GET /api/sprint-tickets?sprint=<id>` | `{ sprint, total, truncated, tickets, updatedAt }`: each ticket has the My Tickets fields (`key`, `id`, `summary`, `status`, `statusCategory`, `issueType`, `priority`, `updated`, `created`, `sprints`, `sprint`, `storyPoints`) plus `assignee` (a display name or `null`); at most 200. `<id>` must match `^[1-9]\d{0,9}$`, else `400 INVALID_SPRINT` with no Jira call. Cached 30 seconds |
 
 ## Releases
 
@@ -3614,7 +3723,7 @@ ui-react/
   lib/api.js            one browser API boundary
   hooks/                shared service event, polling and API hooks
   components/           shell, reusable MUI primitives, filters and card wrappers
-  panels/               Home, Services, PRs, My Tickets, Releases, Slack, Chat and Settings
+  panels/               Home, Services, PRs, My Tickets, Releases, Slack, Chat, Sprint and Settings
   styles.css            theme variables plus the established bespoke panel CSS
 ui/
   dom.js                esc / slug / clamp / copyText / timeAgo
@@ -3625,6 +3734,8 @@ ui/
   keep-if-equal.js      keeps a state value when a new snapshot is byte-identical (DOM-free)
   ticket-board.js       My Tickets column order and CI / review wording (DOM-free)
   review-board.js       PR ticket progress and whole-ticket filters (DOM-free)
+  sprint-attention.js   Sprint tab attention reasons, summary and groom batch (DOM-free)
+  sprint-board.js       Sprint tab team/sprint choice storage and session chips (DOM-free)
   components/           domain-free helpers and tested card/diff data rendering
 
 ui-react/styles/        app-owned bespoke styles, imported by the Vite entry
@@ -3636,21 +3747,21 @@ cards, filters, listboxes, terminal output and status; domain-free selectors
 and established card/diff helpers preserve existing calculations, escaping
 and data-testid contracts. Masonry uses CSS multi-column packing with intact
 cards and sibling spacing at 760px and 1700px; Services retains an explicit
-CSS grid, Home uses one velocity pane in the shared board shell, and My Tickets, Slack and Pull Requests are
+CSS grid, Home uses one velocity pane in the shared board shell, and My Tickets, Slack, Pull Requests and Sprint are
 horizontally scrolling boards of columns that scroll on their own (see
-[My Tickets](#my-tickets)). All three use one shared board frame,
+[My Tickets](#my-tickets)). All four use one shared board frame,
 [`ui-react/components/BoardShell.jsx`](ui-react/components/BoardShell.jsx) with
 [`ui-react/styles/board.css`](ui-react/styles/board.css); how a new screen adopts
 it is in [`CLAUDE.md`](CLAUDE.md). Legacy DOM panel controllers,
 entry points, stylesheet tree and the API compatibility re-export have been
 retired.
 
-**Lazy screens and the bundle.** Chat, Releases, DevTools and Mascots load their code on first visit,
+**Lazy screens and the bundle.** Chat, Releases, DevTools, Mascots and Sprint load their code on first visit,
 and so do the command palette, the shortcuts help, the ticket Claude dialog (with the prompts editor
 and Use in Services it holds), the artifact viewer, the E2E check dialog and the bodies of the two
 right-edge drawers (the Slack activity list and the Sessions list; their edge tabs are in the first
 paint and load the body before opening). `npm run build` emits one
-entry chunk plus per-screen chunks, about 627 KiB raw / 199 KiB gzip before first paint (it was 831
+entry chunk plus per-screen chunks, about 631 KiB raw / 200 KiB gzip before first paint (it was 831
 KiB / 252 KiB). A screen mounts on the render it is first active, or at once when the boot route names
 it (`#/chat?session=<uuid>`, `#/releases?view=list`), and stays mounted, hidden, afterwards. While a
 chunk loads a panel with the screen's own shape stands in; a chunk that fails (usually a tab that
@@ -3659,7 +3770,7 @@ lazy overlay loads it first and opens when it settles, so the first press or cli
 `test/bundle-budget.test.mjs` builds in memory and holds the initial JS to 640 KiB raw and 201 KiB
 gzip, so a new eager import of a lazy module fails it. Identical service snapshots no longer re-render
 the app (`ui/keep-if-equal.js`), and the refresh countdown re-renders only its own readout and pauses
-while the page is hidden or its screen is not shown. On My Tickets, Slack, Pull Requests and DevTools the
+while the page is hidden or its screen is not shown. On My Tickets, Slack, Pull Requests, DevTools and Sprint the
 countdown is seen as a thin cyan line along the bottom edge of **Refresh**, filling left to right over the
 screen's poll interval, restarting at each load and holding while the page is hidden; there are no visible
 words. The `refresh in N s` readout is still in the page, drawn transparent over the button for assistive
@@ -3682,7 +3793,7 @@ tab; the open drawer covers both tabs.
 **Colour, text and buttons.** Every colour is a token in
 [`ui-react/styles/tokens.css`](ui-react/styles/tokens.css) (the one place a stylesheet writes one; `theme.js`
 and `index.html` repeat the values for MUI and the browser chrome). Cyan means interactive or selected,
-lavender means Claude (Sessions, Chat, the Claude dialog; the Slack drawer's tab is cyan), ticket keys are bright neutral, and a ticket's
+lavender means Claude (Sessions, Chat, the Claude dialog, the Sprint tab's Groom controls; the Slack drawer's tab is cyan), ticket keys are bright neutral, and a ticket's
 Jira status kind has its own colour (a top bar on each My Tickets card). Text pairs meet 4.5:1, edges and
 focus rings 3:1, and readable text is never under 12px. Buttons are neutral by default; **primary** (filled
 cyan, lavender inside the Claude dialog) and **danger** (red) are set per call site: Generate velocity before
