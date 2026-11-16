@@ -5,12 +5,13 @@ const width = async (locator) => (await locator.boundingBox()).width;
 const search = (page) =>
   page.getByTestId('panel-prs').getByRole('searchbox', { name: 'Search', exact: true });
 
-// The default fixture holds two tickets To Review and one Reviewing; Reviewed and Spec review are
-// empty, so beside the two populated lanes they are slim rails.
+// The default fixture holds two tickets To Review and one Reviewing; Reviewed, Awaiting Merge and Spec
+// review are empty, so beside the two populated lanes they are slim rails.
 const LANES = [
   ['to-review', 'To Review'],
   ['reviewing', 'Reviewing'],
   ['reviewed', 'Reviewed'],
+  ['awaiting-merge', 'Awaiting Merge'],
   ['spec-review', 'Spec review'],
 ];
 
@@ -20,12 +21,12 @@ test('an empty lane beside a populated one is a slim rail that keeps its name an
   await page.setViewportSize({ width: 1700, height: 900 });
   await page.goto('/#/prs');
   await expect(page.getByTestId('prs-ticket-DEMO-1')).toBeVisible();
-  await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(4);
+  await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(5);
   for (const id of ['to-review', 'reviewing']) {
     expect(await width(lane(page, id))).toBe(280);
     await expect(lane(page, id)).not.toHaveAttribute('data-empty', /.*/);
   }
-  for (const id of ['reviewed', 'spec-review']) {
+  for (const id of ['reviewed', 'awaiting-merge', 'spec-review']) {
     expect(await width(lane(page, id))).toBe(44);
     await expect(lane(page, id)).toHaveAttribute('data-empty', 'true');
     await expect(page.getByTestId(`prs-column-count-${id}`)).toHaveText('0');
@@ -57,7 +58,7 @@ test('a board whose columns are all empty keeps full columns', async ({ page }) 
   await expect(lane(page, 'reviewed')).toHaveAttribute('data-empty', 'true');
   await search(page).fill('no matching ticket');
   await expect(page.getByTestId('prs-no-matches')).toBeVisible();
-  await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(4);
+  await expect(page.getByTestId('prs-board').getByRole('group')).toHaveCount(5);
   for (const [id] of LANES) {
     expect(await width(lane(page, id))).toBe(280);
     await expect(lane(page, id)).toHaveAttribute('data-empty', 'true');
@@ -92,7 +93,7 @@ test('at 390px a rail is 44px wide, snaps to the end and stays reachable, popula
   await expect(page.getByTestId('prs-ticket-DEMO-1')).toBeVisible();
   expect(await width(lane(page, 'to-review'))).toBeCloseTo(390 * 0.82, 0);
   expect(await width(lane(page, 'reviewing'))).toBeCloseTo(390 * 0.82, 0);
-  for (const id of ['reviewed', 'spec-review']) {
+  for (const id of ['reviewed', 'awaiting-merge', 'spec-review']) {
     expect(await width(lane(page, id))).toBe(44);
     // A rail snaps to the end, so the mandatory snap can rest at the track's end.
     expect(await lane(page, id).evaluate((el) => getComputedStyle(el).scrollSnapAlign)).toMatch(

@@ -32,6 +32,8 @@ const LANE_HINTS = {
     'PR/review data is complete and at least one linked open PR has an approval or standing changes request, but the ticket is not fully reviewed: another PR may await approval, a changes request may stand, or a draft may remain. Covers all linked open PRs in watched repositories; not live reviewer activity.',
   reviewed:
     'At least one linked open PR, and every linked open PR across watched repositories is currently approved by anyone, with complete PR/review data, no drafts and no standing changes requests.',
+  'awaiting-merge':
+    'The Jira ticket is in Awaiting Merge, whatever the review state of its linked open PRs. Tickets here are not counted in To Review, Reviewing or Reviewed.',
   'spec-review':
     'Open ezat-specs PRs labelled spec whose title names a TAP or TRIPS ticket that has no open or merged code PR in Portage-backend, Portage-frontend or TravelTracker. Process specs with no ticket key are not listed.',
 };

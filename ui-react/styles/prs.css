@@ -335,6 +335,7 @@
 }
 .review-ticket-assignee,
 .review-ticket-sprint,
+.review-ticket-status,
 .review-ticket-empty,
 .review-ticket-warning {
   margin: 0;

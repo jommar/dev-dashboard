@@ -143,6 +143,7 @@ export async function fetchActiveSprintKeys(keys, { snapshot, now = Date.now() }
 // UAT_PROMOTE_STATUS further down this file.
 export const CODE_REVIEW_STATUS = 'Code Review';
 export const READY_FOR_CODE_REVIEW_STATUS = 'Ready For Code Review';
+export const AWAITING_MERGE_STATUS = 'Awaiting Merge';
 
 // ── My tickets (assignee = currentUser()) ────────────────────────────
 // JQL + mapping + grouping for the "My Tickets" view (UI tab, /api/my-tickets,
@@ -193,7 +194,7 @@ export function buildMyTicketsJql({ includeDone = false } = {}) {
 }
 
 export function buildReviewTicketsJql() {
-  return `assignee IS NOT EMPTY AND assignee != currentUser() AND status = "${READY_FOR_CODE_REVIEW_STATUS}" ORDER BY updated DESC`;
+  return `assignee IS NOT EMPTY AND assignee != currentUser() AND status IN ("${READY_FOR_CODE_REVIEW_STATUS}", "${AWAITING_MERGE_STATUS}") ORDER BY updated DESC`;
 }
 
 export async function fetchReviewReadyTickets({ snapshot } = {}) {

@@ -20,6 +20,7 @@ const LANES = [
   { id: 'to-review', label: 'To Review' },
   { id: 'reviewing', label: 'Reviewing' },
   { id: 'reviewed', label: 'Reviewed' },
+  { id: 'awaiting-merge', label: 'Awaiting Merge' },
 ];
 const pr = (state = 'awaiting', extra = {}) => ({
   repo: 'ExampleOrg/frontend',
@@ -131,7 +132,7 @@ test('an incomplete or missing individual review prevents completion without poi
   assert.equal(progress(ticket('ABC-106', [APPROVED]), COVERAGE), 'reviewed');
 });
 
-test('reviewColumns returns three fixed ordered columns and ticket counts, retaining input order', () => {
+test('reviewColumns returns four fixed ordered columns and ticket counts, retaining input order', () => {
   const columns = selector('reviewColumns');
   const done = ticket('ABC-107', [APPROVED]);
   const secondUnreviewed = ticket('ABC-108', [pr()]);
@@ -139,11 +140,13 @@ test('reviewColumns returns three fixed ordered columns and ticket counts, retai
     { ...LANES[0], tickets: [NO_PR, secondUnreviewed] },
     { ...LANES[1], tickets: [MIXED] },
     { ...LANES[2], tickets: [done] },
+    { ...LANES[3], tickets: [] },
   ]);
   assert.deepEqual(columns([done], COVERAGE), [
     { ...LANES[0], tickets: [] },
     { ...LANES[1], tickets: [] },
     { ...LANES[2], tickets: [done] },
+    { ...LANES[3], tickets: [] },
   ]);
   assert.deepEqual(columns([], COVERAGE), []);
 });
@@ -190,6 +193,7 @@ test('any matching PR selects its entire ticket without removing lines or manufa
       { ...LANES[0], tickets: [] },
       { ...LANES[1], tickets: [MIXED] },
       { ...LANES[2], tickets: [] },
+      { ...LANES[3], tickets: [] },
     ]);
   }
 });
@@ -248,6 +252,7 @@ test('incomplete discovery keeps every eligible ticket and known PR in To Review
     { ...LANES[0], tickets: [MIXED, NO_PR] },
     { ...LANES[1], tickets: [] },
     { ...LANES[2], tickets: [] },
+    { ...LANES[3], tickets: [] },
   ]);
   const filtered = columns([MIXED, NO_PR], coverage, { review: 'approved' });
   assert.deepEqual(filtered[0].tickets, [MIXED]);
@@ -316,6 +321,7 @@ test('ticket prefix matches exact ticket keys AND existing filters without chang
     { ...LANES[0], tickets: [] },
     { ...LANES[1], tickets: [rows[0]] },
     { ...LANES[2], tickets: [] },
+    { ...LANES[3], tickets: [] },
   ]);
   assert.deepEqual(
     columns(rows, { ...COVERAGE, complete: false }, filters),
@@ -323,4 +329,20 @@ test('ticket prefix matches exact ticket keys AND existing filters without chang
     'prefix cannot override incomplete-data precedence',
   );
   assert.deepEqual(rows, before);
+});
+
+test('a ticket in Jira Awaiting Merge has its own lane, whatever its PRs review state', () => {
+  const columns = selector('reviewColumns');
+  const progress = selector('reviewProgress');
+  const merging = ticket('ABC-109', [APPROVED], { status: 'Awaiting Merge' });
+  const unreviewed = ticket('ABC-110', [pr()], { status: 'Awaiting Merge' });
+  const noPr = ticket('ABC-111', [], { status: 'Awaiting Merge' });
+  assert.equal(progress(merging, COVERAGE), 'awaiting-merge');
+  assert.equal(progress(unreviewed, { ...COVERAGE, complete: false }), 'awaiting-merge');
+  assert.deepEqual(columns([NO_PR, merging, unreviewed, noPr], COVERAGE), [
+    { ...LANES[0], tickets: [NO_PR] },
+    { ...LANES[1], tickets: [] },
+    { ...LANES[2], tickets: [] },
+    { ...LANES[3], tickets: [merging, unreviewed, noPr] },
+  ]);
 });

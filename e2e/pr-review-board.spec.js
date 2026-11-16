@@ -648,7 +648,7 @@ for (const width of [390, 1024, 1440]) {
     });
     expect(geometry.direct).toBe(true);
     expect(geometry.width).toBeCloseTo(width <= 599 ? width * 0.82 : 280, 0);
-    expect(geometry.columnCount).toBe(4);
+    expect(geometry.columnCount).toBe(5);
     expect(geometry.trackOverflow).toBe('auto');
     expect(geometry.bodyOverflow).toBe('auto');
     if (width <= 599) expect(geometry.snap).toBe('x mandatory');
@@ -1515,11 +1515,12 @@ test.describe('Spec review lane', () => {
     dashboard.data.specReviews = specFeed([SINGLE, SHARED]);
     await page.goto('/#/prs');
     const groups = page.getByTestId('prs-board').getByRole('group');
-    await expect(groups).toHaveCount(4);
+    await expect(groups).toHaveCount(5);
     await expect(groups.getByRole('heading')).toHaveText([
       'To Review',
       'Reviewing',
       'Reviewed',
+      'Awaiting Merge',
       'Spec review',
     ]);
     await expect(lane(page, 'reviewing').getByTestId('prs-ticket-DEMO-1')).toBeVisible();

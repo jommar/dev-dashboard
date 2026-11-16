@@ -82,6 +82,7 @@ click. All seven views remain available:
   depends on it. See [Slack](#slack).
 - **Pull Requests** — other-assigned Jira tickets in Ready For Code Review, grouped
   automatically into To Review, Reviewing and Reviewed, including tickets without PRs,
+  an Awaiting Merge lane for other-assigned tickets in that Jira status,
   and a Spec review lane of open `ezat-specs` spec PRs with no code PR yet.
   See [PR review board](#open-prs).
 - **Releases** — the tickets of one Jira fix version (the picker defaults to the
@@ -557,7 +558,7 @@ Home reuses the server's team aggregation helpers without generating or changing
 
 The **Pull Requests** tab is a Jira-first review board using the same shared
 board shell as My Tickets and Slack. Each card is one Jira ticket assigned to
-someone other than Jira's authenticated current user, in **Ready For Code Review**.
+someone other than Jira's authenticated current user, in **Ready For Code Review** or **Awaiting Merge**.
 Your own and unassigned tickets are excluded; eligible tickets with no PRs remain.
 
 Each card lists every linked **open** PR across the **current watched repositories
@@ -567,7 +568,7 @@ alias. Multiple repositories share one ticket card, each PR labelled by reposito
 a PR naming two eligible tickets can appear on both cards. Closed/merged history,
 unwatched repos and branch-only/Jira-development links are not fetched. Unticketed
 PRs do not create cards. Cards retain Jira links, sprint cues, PR links and the
-existing diff action.
+existing diff action, and show the ticket's Jira status as a pill.
 
 ### Automatic review lanes
 
@@ -581,6 +582,9 @@ manually moved. With complete discovery and review evidence:
   not mean someone is currently reading the PR.
 - **To Review** covers the rest, including no linked PRs and drafts without
   actionable review activity. Comments and pending reviews alone do not count.
+- **Awaiting Merge** is decided by the ticket's Jira status alone: every ticket in
+  that status sits here, whatever the review state of its linked open PRs, and no
+  other lane counts it.
 
 Missing/incomplete discovery takes priority and keeps **every ticket To Review**;
 unknown review evidence keeps the affected ticket there even if its other PRs are
@@ -637,7 +641,7 @@ session is running). After it is sent the dialog shows when it was last requeste
 
 ### Spec review lane
 
-The fourth column, **Spec review**, lists open PRs in `TransActComm/ezat-specs` that carry
+The last column, **Spec review**, lists open PRs in `TransActComm/ezat-specs` that carry
 the `spec` label and whose title names a ticket (`TAP-n` or `TRIPS-n`). A spec drops out when
 an open or merged PR in Portage-backend, Portage-frontend or TravelTracker names the same key
 in its title or head branch. Specs with no ticket key are not listed. Each card shows its keys

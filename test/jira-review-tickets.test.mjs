@@ -4,7 +4,7 @@ import * as jira from '../backend/jira.mjs';
 import { issue, snapshot, stubQueue } from './review-queue-fixture.mjs';
 
 const JQL =
-  'assignee IS NOT EMPTY AND assignee != currentUser() AND status = "Ready For Code Review" ORDER BY updated DESC';
+  'assignee IS NOT EMPTY AND assignee != currentUser() AND status IN ("Ready For Code Review", "Awaiting Merge") ORDER BY updated DESC';
 const loader = () => {
   assert.equal(
     typeof jira.fetchReviewReadyTickets,

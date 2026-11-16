@@ -7,6 +7,7 @@ import { reviewText } from '../../ui/ticket-board.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { DiffViewer } from './DiffViewer.jsx';
 import { SprintPill } from './SprintPill.jsx';
+import { TicketStatusPill } from './TicketStatusPill.jsx';
 import { DashboardTooltip } from './Primitives.jsx';
 
 export function ReviewTicketCard({
@@ -84,6 +85,11 @@ export function ReviewTicketCard({
             {ticket.assignee || 'Unassigned'}
           </span>
         </p>
+        {ticket.status && (
+          <p className="review-ticket-status">
+            <TicketStatusPill status={ticket.status} testId={`prs-ticket-status-${ticket.key}`} />
+          </p>
+        )}
         {ticket.sprint?.name && (
           <p className="review-ticket-sprint">
             <SprintPill sprint={ticket.sprint} testId={`prs-ticket-sprint-${ticket.key}`} />

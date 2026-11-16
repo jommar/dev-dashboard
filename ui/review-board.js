@@ -4,7 +4,10 @@ const REVIEW_LANES = [
   { id: 'to-review', label: 'To Review' },
   { id: 'reviewing', label: 'Reviewing' },
   { id: 'reviewed', label: 'Reviewed' },
+  { id: 'awaiting-merge', label: 'Awaiting Merge' },
 ];
+// The Jira status that puts a ticket in its own lane, whatever its PRs' review state.
+export const AWAITING_MERGE_STATUS = 'Awaiting Merge';
 // Not a ticket lane: its cards are spec PRs from GET /api/spec-reviews, so reviewColumns leaves it out.
 export const SPEC_REVIEW_LANE = { id: 'spec-review', label: 'Spec review' };
 
@@ -30,6 +33,7 @@ export function queueReviewState(review) {
 }
 
 export function reviewProgress(ticket, prCoverage) {
+  if (ticket.status === AWAITING_MERGE_STATUS) return 'awaiting-merge';
   const prs = ticket.prs || [];
   const states = prs.map((pr) => queueReviewState(pr.review));
   if (!hasCompletePrCoverage(prCoverage) || states.includes('unknown')) return 'to-review';
