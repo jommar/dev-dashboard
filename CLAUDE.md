@@ -496,6 +496,11 @@ differences passed in rather than forked:
   `incomplete` (partial, truncated or either warning). Each panel adds its own causes (Slack:
   replies still being checked, a stale update, threads it cannot place; My Tickets: a continuation)
   and words its own note.
+- `threadTicketKeys(thread)` in `ui/slack-ticket-links.js` — the one rule that ties a Slack thread to
+  tickets: every `TAP`/`TRIPS` key on the thread's subject line (`subjectText`, the first line of the
+  opening message), found in the slugified line so formatting (`_italics_`, labels, brackets, links)
+  never hides one, bounded by `-` so `TAP-12` is not `TAP-1` and `STAP-1` is nothing. `threadsByTicket`
+  (the card chips) and the thread dialog's title both call it; never add a second key regex for Slack text.
 - `readScroll` / `writeScroll` in `hooks/usePreservedInteraction.js` — the one way a scroll place
   is read and put back by `data-testid`; `Board` (per re-render) and `useSectionScroll` (per view)
   both use it.

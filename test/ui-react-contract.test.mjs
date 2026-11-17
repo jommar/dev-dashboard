@@ -490,21 +490,16 @@ test('the Slack tab opens thread conversations in the shared dialog', () => {
     );
   }
 
-  // A mentions row previews the mentioning message, so the list text alone cannot
-  // name the ticket: without a selected card key, the dialog falls back to the
-  // preview and then the loaded root message's plain text, and keeps its plain
-  // title when neither does. Nothing is cached in a ref or effect.
+  // The dialog title names the first ticket on the thread's subject line, by the same rule the
+  // card chips use (`threadTicketKeys`). A mentions row carries the root's subject, and the
+  // loaded root message is the fallback for a row that carries none.
   const dialogSource = read('components/SlackThreadDialog.jsx');
   assert.match(
     dialogSource,
-    /const ticketKey =\s*thread\.selectedTicketKey\s*\|\|\s*ticketKeyFromThread\(thread\.text\)\s*\|\|\s*ticketKeyFromThread\(messages\[0\]\?\.text\);/,
-    'the selected card key takes priority, with the preview and thread root as fallbacks',
+    /const ticketKey =\s*thread\.selectedTicketKey\s*\|\|\s*threadTicketKeys\(thread\)\[0\]\s*\|\|\s*threadTicketKeys\(\{ text: messages\[0\]\?\.text \}\)\[0\];/,
+    'the selected card key takes priority, with the row and thread root as fallbacks',
   );
-  assert.doesNotMatch(
-    dialogSource,
-    /ticketKeyFromThread\(messages\[0\]\?\.mrkdwn\)/,
-    'the fallback reads the cleaned text, not mrkdwn',
-  );
+  assert.doesNotMatch(dialogSource, /ticketKeyFromThread/, 'one shared matching rule');
   assert.match(
     dialogSource,
     /const title = ticketKey \? `\$\{ticketKey\} · Slack thread` : 'Slack thread';/,

@@ -1100,14 +1100,20 @@ same frame, so all of this holds there too (see [UI layout](#ui-layout)).
 
 ### Slack threads
 
-A ticket whose key heads a thread you started in `#ezat_claudio` gets a small
+A ticket whose key appears on the first line of a thread you started in `#ezat_claudio` gets a small
 Slack chip at the start of the links row under its card's figures — one per matching thread,
 newest activity first. The chip is a speech bubble with the thread's reply count
 beside it, and a filled dot when the thread needs a reply (its accessible name
 says so in words). Clicking it opens a dialog with the conversation in Slack
 order, rendered from its own mrkdwn, plus **Copy link** and **Open in Slack**
 actions. The conversation can be truncated.
-Only the thread's subject line is consulted, so the key must start it. Old
+Only the thread's subject line (the first line of its opening message) is consulted, but any
+ticket key on it counts, wherever it sits and however Slack formatted it: `TAP-1: …`,
+`_TAP-1: …_`, `Spec: TAP-1 …`, `[TAP-1]`, a link to the ticket, or a line naming several
+tickets (the thread then shows on each of their cards). A key of another project, or one glued to
+other letters or digits (`STAP-1`, `TAP-1x`), names nothing, and `TAP-12` is never read as
+`TAP-1`. One rule, `threadTicketKeys` in `ui/slack-ticket-links.js`, serves the card chips on
+every board and the thread dialog's title. Old
 `TRIPS-NNNN` threads match `TAP-NNNN` because Jira's rename carried the numbers
 over. The chips reuse the Slack tab's thread list: only threads created within
 the last rolling 28 days appear, even if an older thread has a new reply. A
@@ -2785,7 +2791,7 @@ launch as a ticket's Claude dialog. Its code loads on first visit, like Chat, Re
   with its state, the groom verdict once a groom finished, and a chip per attention reason. Linked PRs
   are not shown (see below).
 - **Slack threads.** The chips are the [My Tickets Slack chips](#slack-threads), from the same thread
-  list and the same thread dialog: a thread whose subject starts with the ticket's key (TAP, or TRIPS
+  list and the same thread dialog: a thread whose subject line names the ticket's key (TAP, or TRIPS
   folded onto TAP; other project keys never match), among the threads you started **and** the ones you
   were mentioned in, since a sprint is mostly other people's tickets (as on Pull Requests). The list is
   read with each sprint read, never awaited, so the tickets never wait on Slack, and only through the

@@ -10,7 +10,7 @@ import { getSlackStatus, getSlackThread } from '../lib/api.js';
 import { copyText } from '../../ui/dom.js';
 import { slackSessionIdentity } from '../../ui/slack-activity.js';
 import { parseSlackText } from '../../ui/slack-mrkdwn.js';
-import { ticketKeyFromThread } from '../../ui/slack-ticket-links.js';
+import { threadTicketKeys } from '../../ui/slack-ticket-links.js';
 
 const AVATAR_TONES = 4;
 
@@ -243,13 +243,12 @@ export function SlackThreadDialog({
 
   const data = load.status === 'ready' ? load.data : null;
   const messages = data?.messages || [];
-  // A mentions row previews the mentioning message rather than the subject, so
-  // the loaded root message supplies a key the preview cannot. Plain `text`, not
-  // mrkdwn: a key buried in emphasis would not be a subject prefix.
+  // The title names the first ticket the thread's subject line names (the same rule the card
+  // chips match by); the loaded root message supplies one for a row that carries no subject.
   const ticketKey =
     thread.selectedTicketKey ||
-    ticketKeyFromThread(thread.text) ||
-    ticketKeyFromThread(messages[0]?.text);
+    threadTicketKeys(thread)[0] ||
+    threadTicketKeys({ text: messages[0]?.text })[0];
   const title = ticketKey ? `${ticketKey} · Slack thread` : 'Slack thread';
   const replies = Number.isFinite(data?.replyCount) ? data.replyCount : null;
   const subtitle = [
