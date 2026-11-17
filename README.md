@@ -399,7 +399,7 @@ An agent can read the same logs three ways:
    - `GET /api/repos/checkout-matches?key=TAP-n` (which worktree of each service repo belongs to a ticket; read at click time only, see [Worktree picker](#worktree-picker))
    - `GET /api/events` (SSE live status)
    - `GET /api/prs`
-   - `GET /api/review-tickets` (other-assigned review-ready Jira tickets with all linked open PRs in watched repos; see [PR review board](#open-prs))
+   - `GET /api/review-tickets` (other-assigned review-ready Jira tickets with all open PRs Jira links to them; see [PR review board](#open-prs))
    - `GET /api/spec-reviews?limit=3` (all eligible directly requested `ezat-specs` specs plus up to `limit` others; see [Spec review lane](#spec-review-lane))
    - `GET /api/my-tickets?includeDone=0|1`
    - `GET /api/team-velocity` (all-team/person sprint aggregates; see [Home](#home))
@@ -570,13 +570,16 @@ board shell as My Tickets and Slack. Each card is one Jira ticket assigned to
 someone other than Jira's authenticated current user, in **Ready For Code Review** or **Awaiting Merge**.
 Your own and unassigned tickets are excluded; eligible tickets with no PRs remain.
 
-Each card lists every linked **open** PR across the **current watched repositories
-in Settings**, from any author, including drafts and any configured specs repo.
-Links come from ticket keys in PR titles, with the existing `TRIPS-n` → `TAP-n`
-alias. Multiple repositories share one ticket card, each PR labelled by repository;
-a PR naming two eligible tickets can appear on both cards. Closed/merged history,
-unwatched repos and branch-only/Jira-development links are not fetched. Unticketed
-PRs do not create cards. Cards retain Jira links, sprint cues, PR links and the
+Each card lists every **open** PR Jira links to the ticket, from any author and in
+any repository Jira's GitHub integration sees (the watched repositories in Settings
+do not limit it), including drafts. The links come from Jira's development status
+(`dev-status`), the same lookup My Tickets uses (cached 120 seconds, so Refresh does
+not bypass it; PR titles are not read), and GitHub then says which of them are open,
+drafts and by whom. Multiple repositories share one ticket card, each PR labelled by
+repository; a PR linked to two eligible tickets can appear on both cards. Closed,
+merged and declined PRs and PRs Jira does not link are not shown. Tickets are looked
+up newest first, at most 100; more than that makes discovery incomplete. PRs do not
+create cards. Cards retain Jira links, sprint cues, PR links and the
 existing diff action, and show the ticket's Jira status as a pill.
 
 ### Automatic review lanes
@@ -602,11 +605,11 @@ superseded approvals do not count. CI and the configured minimum-approver thresh
 are not lane gates. Hover a lane heading or reach it with **Tab** for its meaning;
 Escape, blur or mouse leave dismisses the help.
 
-The tab reads `GET /api/review-tickets`, which pages Jira eligibility and watched-repo
-open PRs rather than using the legacy own-PR result cap. It returns
+The tab reads `GET /api/review-tickets`, which pages Jira eligibility and reads each
+ticket's linked PRs from Jira dev-status rather than listing GitHub repositories. It returns
 `{ total, tickets, prCoverage: { available, complete, repos, reasons }, updatedAt }`;
 each ticket carries its linked `prs` and each PR its current review evidence.
-Coverage describes only the configured watched repos, not every GitHub repository.
+`repos` lists the repositories of the PRs found. A failed dev-status lookup for some tickets, a ticket with no Jira id, or more tickets than the lookup cap make coverage incomplete.
 Jira failure is a queue error, not an empty queue. GitHub failure retains the Jira
 tickets and known PRs without implying completion or a confirmed absence of PRs.
 The read route is setup-gated, uses no-store responses and rejects cross-site or
@@ -627,19 +630,23 @@ and can take a message (then starting another review is a quiet button named **S
 with the same behaviour); while the review works both are off and the reason is one line. A message
 about a send has a **×** and clears once the review stops working. After a re-review, `Last
 re-review requested <time>` shows as quiet text. The PR icon has no
-hover/focus tooltip but retains the accessible name `Claude code review for <KEY>`;
-My Tickets tooltips are unchanged. The same Start control handles first review and
+hover/focus tooltip. It shows the review session's state like the My Tickets icon (a turning ring
+while it works, a dot when it waits for you, a check when it finished, a cross when it failed) and
+its accessible name is `Claude code review for <KEY>`, gaining `: working`, `: finished` and so on
+once a review session exists; My Tickets tooltips are unchanged. A Spec review card's icon does the
+same for its spec review session. The same Start control handles first review and
 re-review through the existing [Claude launcher](#code-review), independently of
 the My Tickets workflow. Start disables during submission or when the server's
-review state refuses another launch. Status refreshes while the dialog is open
-on the active tab and the page is visible; reopening refreshes it too. Completion
+review state refuses another launch. Claude status is read every
+15 seconds while the Pull Requests tab is active and the page is visible (the icons follow it), and
+opening a review dialog reads it again at once. Completion
 means the session finished, not that the review passed.
 
 Close, Escape or a genuine backdrop click dismisses the native modal; dragging
 from its content to the backdrop does not. It survives filtering/lane movement
 but closes on leaving the tab or ticket removal. Focus returns to the PR opener
 or the board if the opener is filtered out. This dialog has no prompt editor,
-answers form or Go to session control, and the PR card has no review-status badge.
+answers form or Go to session control; the card's review-status badge is the icon itself.
 Review templates are editable through the shared **Prompts** editor in the My Tickets Claude
 dialog (see [Custom prompts](#custom-prompts)); no editor button is added to the review dialog.
 

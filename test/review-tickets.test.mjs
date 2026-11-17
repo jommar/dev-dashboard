@@ -1,21 +1,26 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as github from '../backend/github.mjs';
 import * as review from '../backend/review.mjs';
 import { fetchTicketPrs } from '../backend/ticket-prs.mjs';
-import { reviewProgress } from '../ui/review-board.js';
+import { resetPullRequestCaches } from '../backend/dev-status.mjs';
 import { assertNoSecrets, githubToken, jiraToken } from './settings-fixture.mjs';
 import {
   API,
   aliasesOf,
   issue,
+  issueId,
+  linkedPr,
+  openDetail,
   opinion,
-  pull,
   queueLoader,
   reviewPage,
   snapshot,
   stubQueue,
 } from './review-queue-fixture.mjs';
+
+// The shared dev-status lookup keeps a module-level cache, so every test starts from an empty one.
+beforeEach(() => resetPullRequestCaches());
 
 const ids = (prs) => prs.map((pr) => `${pr.repo}#${pr.number}`).sort();
 const reviewLoader = () => {
@@ -59,40 +64,21 @@ test('all-author discovery has its own export without changing legacy author-mod
   assert.equal(typeof github.fetchOpenPRs, 'function');
 });
 
-test('queue is Jira-first, paged across watched repos/specs, canonical and deduplicated by full PR identity', async (t) => {
+test('queue is Jira-first: PRs come from Jira dev-status links in any repository, canonical and deduplicated by full PR identity', async (t) => {
   const fetchReviewTickets = await queueLoader();
   const canonical = ['TAP', '900001'].join('-');
   const alias = ['TRIPS', '900001'].join('-');
-  const first = pull('ExampleOrg/app', 7, `[${alias}] DEMO-2 Shared change`);
   const reviewedIds = [];
   const stub = stubQueue(t, {
     issues: [issue(alias), issue(alias), issue('DEMO-2'), issue('DEMO-3')],
-    pulls: ({ url, init }) => {
-      assert.equal(url.origin, API);
-      assert.equal(url.searchParams.get('state'), 'open');
-      assert.equal(init.redirect, 'error');
-      assert.ok(init.signal instanceof AbortSignal);
-      const repo = url.pathname.split('/')[3];
-      if (repo === 'app' && url.searchParams.get('page') !== '2') {
-        return Response.json([first, pull('ExampleOrg/app', 99, 'Unticketed synthetic change')], {
-          headers: {
-            link: `<${API}/repos/ExampleOrg/app/pulls?state=open&per_page=100&page=2>; rel="next"`,
-          },
-        });
-      }
-      if (repo === 'app')
-        return Response.json([
-          first,
-          pull('ExampleOrg/app', 8, `[${canonical}] Follow-up`, {
-            draft: true,
-            user: { login: 'other-author' },
-          }),
-        ]);
-      if (repo === 'web')
-        return Response.json([pull('ExampleOrg/web', 7, `[${canonical}] Web change`)]);
-      if (repo === 'specs')
-        return Response.json([pull('ExampleOrg/specs', 7, `[${canonical}] Specification`)]);
-      assert.fail('only watched repos are read');
+    linked: [
+      linkedPr('ExampleOrg/app', 7, [alias, 'DEMO-2']),
+      linkedPr('ExampleOrg/app', 8, [canonical]),
+      linkedPr('OtherOrg/tools', 7, [canonical]),
+      linkedPr('ExampleOrg/specs', 7, [canonical]),
+    ],
+    details: {
+      'ExampleOrg/app#8': openDetail({ isDraft: true, author: { login: 'other-author' } }),
     },
     graphql: ({ init }) => {
       assert.equal(init.method, 'POST');
@@ -125,11 +111,15 @@ test('queue is Jira-first, paged across watched repos/specs, canonical and dedup
     'ExampleOrg/app#7',
     'ExampleOrg/app#8',
     'ExampleOrg/specs#7',
-    'ExampleOrg/web#7',
+    'OtherOrg/tools#7',
   ]);
   assert.deepEqual(ids(byKey['DEMO-2'].prs), ['ExampleOrg/app#7']);
   assert.deepEqual(byKey['DEMO-3'].prs, [], 'eligible no-PR ticket stays visible');
-  assert.equal(byKey[canonical].prs.find((entry) => entry.number === 8).draft, true);
+  const draft = byKey[canonical].prs.find(
+    (entry) => entry.number === 8 && entry.repo.endsWith('app'),
+  );
+  assert.equal(draft.draft, true);
+  assert.equal(draft.owner, 'other-author', 'the PR author comes from GitHub');
   assert.equal(
     byKey['DEMO-2'].prs[0].owner,
     'current-github-user',
@@ -150,80 +140,93 @@ test('queue is Jira-first, paged across watched repos/specs, canonical and dedup
     'ExampleOrg/app#7',
     'ExampleOrg/app#8',
     'ExampleOrg/specs#7',
-    'ExampleOrg/web#7',
+    'OtherOrg/tools#7',
   ]);
   assert.equal(reviewedIds.length, 4, 'one review load per deduplicated eligible PR');
   assert.deepEqual(data.prCoverage, {
     available: true,
     complete: true,
-    repos: ['ExampleOrg/app', 'ExampleOrg/web', 'ExampleOrg/specs'],
+    repos: ['ExampleOrg/app', 'ExampleOrg/specs', 'OtherOrg/tools'],
     reasons: [],
   });
   assert.ok(Number.isFinite(Date.parse(data.updatedAt)));
   assert.ok(stub.timeouts.length >= stub.calls.length);
   assert.ok(stub.timeouts.every((ms) => ms === 15_000));
-  assert.deepEqual(stub.unexpected, [], 'no /user, search, history, CI or comment calls');
+  assert.deepEqual(
+    stub.unexpected,
+    [],
+    'no /user, repository listing, search, CI or comment calls',
+  );
+  assert.ok(
+    stub.calls.every(({ url }) => !url.pathname.startsWith('/repos/')),
+    'watched repositories are never listed',
+  );
   assertNoSecrets(data);
 });
 
-for (const [name, next, page] of [
-  [
-    'failed next page',
-    `${API}/repos/ExampleOrg/app/pulls?state=open&page=2`,
-    () => Response.json({ message: githubToken }, { status: 503 }),
-  ],
-  [
-    'malformed next page',
-    `${API}/repos/ExampleOrg/app/pulls?state=open&page=2`,
-    () => Response.json({ items: [] }),
-  ],
-  ['repeated page', `${API}/repos/ExampleOrg/app/pulls?state=open&page=1`, () => Response.json([])],
-  [
-    'cross-origin next link',
-    'https://other.example.invalid/repos/ExampleOrg/app/pulls?state=open&per_page=100&page=2',
-    () => Response.json([]),
-  ],
-  [
-    'unwatched repo next link',
-    `${API}/repos/ExampleOrg/unwatched/pulls?state=open&per_page=100&page=2`,
-    () => Response.json([]),
-  ],
-]) {
-  test(`discovery ${name} retains Jira and known PRs with explicit incomplete coverage`, async (t) => {
-    const fetchReviewTickets = await queueLoader();
-    let appCalls = 0;
-    const stub = stubQueue(t, {
-      pulls: ({ url }) => {
-        if (url.pathname !== '/repos/ExampleOrg/app/pulls') return Response.json([]);
-        appCalls += 1;
-        assert.ok(appCalls <= 4, 'discovery pagination must terminate');
-        return url.searchParams.get('page') === '2'
-          ? page()
-          : Response.json([pull('ExampleOrg/app', 7, '[DEMO-1] Known change')], {
-              headers: { link: `<${next}>; rel="next"` },
-            });
-      },
-    });
-    const result = await fetchReviewTickets({ snapshot: snapshot() });
-    if (name === 'cross-origin next link')
-      assert.ok(
-        stub.calls.every(({ url }) => url.origin !== new URL(next).origin),
-        'foreign origin is never requested',
-      );
-    if (name === 'unwatched repo next link')
-      assert.ok(
-        stub.calls.every(({ url }) => url.pathname !== new URL(next).pathname),
-        'unwatched repository is never requested',
-      );
-    assert.equal(result.total, 1);
-    assert.equal(result.tickets[0].key, 'DEMO-1');
-    assert.deepEqual(ids(result.tickets[0].prs), ['ExampleOrg/app#7']);
-    assert.equal(result.prCoverage.complete, false);
-    assert.ok(result.prCoverage.reasons.length > 0);
-    assert.deepEqual(stub.unexpected, []);
-    assertNoSecrets(result);
+test('a failed Jira dev-status lookup keeps the other tickets and marks discovery incomplete', async (t) => {
+  const fetchReviewTickets = await queueLoader();
+  const stub = stubQueue(t, {
+    issues: [issue('DEMO-1'), issue('DEMO-2')],
+    linked: [linkedPr('ExampleOrg/app', 7, ['DEMO-1'])],
+    devStatus: ({ url }) =>
+      url.searchParams.get('issueId') === issueId('DEMO-2')
+        ? Response.json({ message: jiraToken }, { status: 503 })
+        : undefined,
   });
-}
+  const result = await fetchReviewTickets({ snapshot: snapshot() });
+  assert.equal(result.total, 2);
+  const byKey = Object.fromEntries(result.tickets.map((ticket) => [ticket.key, ticket]));
+  assert.deepEqual(ids(byKey['DEMO-1'].prs), ['ExampleOrg/app#7']);
+  assert.deepEqual(byKey['DEMO-2'].prs, []);
+  assert.equal(result.prCoverage.available, true);
+  assert.equal(result.prCoverage.complete, false);
+  assert.ok(result.prCoverage.reasons.length > 0);
+  assert.deepEqual(stub.unexpected, []);
+  assertNoSecrets(result);
+});
+
+test('every Jira dev-status lookup failing leaves discovery unavailable but keeps the Jira queue', async (t) => {
+  const fetchReviewTickets = await queueLoader();
+  stubQueue(t, {
+    issues: [issue('DEMO-1'), issue('DEMO-2')],
+    linked: [linkedPr('ExampleOrg/app', 7, ['DEMO-1'])],
+    devStatus: () => Response.json({ message: jiraToken }, { status: 503 }),
+  });
+  const result = await fetchReviewTickets({ snapshot: snapshot() });
+  assert.equal(result.total, 2);
+  assert.ok(result.tickets.every((ticket) => ticket.prs.length === 0));
+  assert.equal(result.prCoverage.available, false);
+  assert.equal(result.prCoverage.complete, false);
+  assert.ok(result.prCoverage.reasons.length > 0);
+  assertNoSecrets(result);
+});
+
+test('a failed GitHub state read cannot tell which linked PRs are open, so none is shown and discovery is unavailable', async (t) => {
+  const fetchReviewTickets = await queueLoader();
+  stubQueue(t, {
+    linked: [linkedPr('ExampleOrg/app', 7, ['DEMO-1'])],
+    detail: () => Response.json({ message: githubToken }, { status: 503 }),
+  });
+  const result = await fetchReviewTickets({ snapshot: snapshot() });
+  assert.equal(result.total, 1);
+  assert.deepEqual(result.tickets[0].prs, []);
+  assert.equal(result.prCoverage.available, false);
+  assert.equal(result.prCoverage.complete, false);
+  assertNoSecrets(result);
+});
+
+test('a ticket without a numeric Jira id cannot be looked up, so discovery is incomplete', async (t) => {
+  const fetchReviewTickets = await queueLoader();
+  stubQueue(t, {
+    issues: [issue('DEMO-1'), { ...issue('DEMO-2'), id: undefined }],
+    linked: [linkedPr('ExampleOrg/app', 7, ['DEMO-1'])],
+  });
+  const result = await fetchReviewTickets({ snapshot: snapshot() });
+  assert.equal(result.total, 2);
+  assert.equal(result.prCoverage.available, true);
+  assert.equal(result.prCoverage.complete, false);
+});
 
 test('missing GitHub credentials retains the Jira queue but cannot certify empty PR discovery', async (t) => {
   const fetchReviewTickets = await queueLoader();
@@ -256,24 +259,21 @@ test('canonical Jira queue is sorted by updated descending, then key for ties', 
   );
 });
 
-test('closed, merged and unticketed discovery entries do not become active review work or synthetic Jira cards', async (t) => {
+test('closed, merged and declined linked PRs do not become active review work or synthetic Jira cards', async (t) => {
   const fetchReviewTickets = await queueLoader();
   const reviewedIds = [];
   stubQueue(t, {
     issues: [issue('DEMO-1'), issue('DEMO-2')],
-    pulls: ({ url }) =>
-      Response.json(
-        url.pathname === '/repos/ExampleOrg/app/pulls'
-          ? [
-              pull('ExampleOrg/app', 7, '[DEMO-1] Active change'),
-              pull('ExampleOrg/app', 8, '[DEMO-1] Closed change', { state: 'closed' }),
-              pull('ExampleOrg/app', 9, '[DEMO-2] Merged change', {
-                merged_at: '2026-11-02T00:00:00Z',
-              }),
-              pull('ExampleOrg/app', 10, 'Unticketed synthetic change'),
-            ]
-          : [],
-      ),
+    linked: [
+      linkedPr('ExampleOrg/app', 7, ['DEMO-1']),
+      linkedPr('ExampleOrg/app', 8, ['DEMO-1']),
+      linkedPr('ExampleOrg/app', 9, ['DEMO-2']),
+      linkedPr('ExampleOrg/app', 10, ['DEMO-1'], { state: 'DECLINED' }),
+    ],
+    details: {
+      'ExampleOrg/app#8': openDetail({ state: 'CLOSED' }),
+      'ExampleOrg/app#9': openDetail({ state: 'MERGED', mergedAt: '2026-11-02T00:00:00Z' }),
+    },
     graphql: ({ init }) =>
       Response.json({
         data: Object.fromEntries(
@@ -300,15 +300,7 @@ test('one unreadable PR affects only its tickets, not discovery completeness or 
   const fetchReviewTickets = await queueLoader();
   stubQueue(t, {
     issues: [issue('DEMO-1'), issue('DEMO-2')],
-    pulls: ({ url }) =>
-      Response.json(
-        url.pathname === '/repos/ExampleOrg/app/pulls'
-          ? [
-              pull('ExampleOrg/app', 7, '[DEMO-1] Unreadable review'),
-              pull('ExampleOrg/app', 8, '[DEMO-2] Complete review'),
-            ]
-          : [],
-      ),
+    linked: [linkedPr('ExampleOrg/app', 7, ['DEMO-1']), linkedPr('ExampleOrg/app', 8, ['DEMO-2'])],
     graphql: ({ init }) =>
       Response.json({
         data: Object.fromEntries(
@@ -607,7 +599,6 @@ test('new queue reads and the legacy own-author scope never share an in-flight r
     const url = new URL(input);
     seen.push(url.pathname);
     if (url.pathname === '/user') return Response.json({ login: 'me' });
-    if (url.pathname === '/repos/ExampleOrg/app/pulls') return Response.json([]);
     if (url.pathname === '/rest/api/3/search/jql')
       return Response.json({ issues: [{ ...issue(), id: '10010' }], isLast: true });
     if (url.pathname === '/rest/dev-status/latest/issue/summary')
@@ -623,12 +614,15 @@ test('new queue reads and the legacy own-author scope never share an in-flight r
   assert.equal(queue.total, 1);
   assert.equal(own.total, 0);
   assert.deepEqual(own.byTicket, {});
-  assert.ok(seen.includes('/repos/ExampleOrg/app/pulls'), 'the queue read the watched repo');
   assert.ok(
     seen.includes('/rest/dev-status/latest/issue/summary'),
-    'the own read asked Jira dev-status for the ticket',
+    'both reads asked Jira dev-status for the ticket',
   );
   assert.ok(!seen.includes('/search/issues'), 'no GitHub search is made');
+  assert.ok(
+    seen.every((path) => !path.startsWith('/repos/')),
+    'no watched repository is listed',
+  );
 });
 
 test('same-revision configurations remain isolated and every upstream read uses its captured snapshot', async (t) => {
@@ -661,8 +655,15 @@ test('same-revision configurations remain isolated and every upstream read uses 
         isLast: true,
       });
     }
-    assert.equal(authorization, `Bearer synthetic-${name}-github`);
-    if (url.pathname === `/repos/ExampleOrg/${name}/pulls`) return Response.json([]);
+    if (url.pathname === '/rest/dev-status/latest/issue/summary') {
+      assert.equal(
+        authorization,
+        `Basic ${Buffer.from(`qa@example.invalid:synthetic-${name}-jira`).toString('base64')}`,
+      );
+      return Response.json({
+        summary: { pullrequest: { overall: { count: 0 }, byInstanceType: {} } },
+      });
+    }
     assert.fail(`Unexpected mocked path ${url.pathname}`);
   });
   const results = await Promise.all(
@@ -672,120 +673,19 @@ test('same-revision configurations remain isolated and every upstream read uses 
     results.map((result) => result.tickets.map((ticket) => ticket.key)),
     [['DEMO-1'], ['DEMO-2']],
   );
-  assert.deepEqual(
-    results.map((result) => result.prCoverage.repos),
-    [['ExampleOrg/first'], ['ExampleOrg/second']],
-  );
+  const queueReads = (host) =>
+    calls.filter(({ url }) => url.hostname === host && url.pathname === '/rest/api/3/search/jql')
+      .length;
   await fetchReviewTickets({ snapshot: configs[0] });
-  assert.equal(
-    calls.filter(({ url }) => url.hostname === 'first.jira.example.invalid').length,
-    2,
-    'no result cache',
-  );
+  assert.equal(queueReads('first.jira.example.invalid'), 2, 'no result cache');
   await Promise.all([
     fetchReviewTickets({ snapshot: configs[0] }),
     fetchReviewTickets({ snapshot: configs[0] }),
   ]);
-  assert.equal(
-    calls.filter(({ url }) => url.hostname === 'first.jira.example.invalid').length,
-    4,
-    'no shared in-flight cache',
-  );
+  assert.equal(queueReads('first.jira.example.invalid'), 4, 'no shared in-flight cache');
   for (const result of results)
     assertNoSecrets(
       result,
       configs.flatMap((config) => Object.values(config.credentials)),
     );
 });
-
-test('review regression: watched owner and repository casing retains the canonical GitHub PR', async (t) => {
-  const fetchReviewTickets = await queueLoader();
-  const stub = stubQueue(t, {
-    pulls: () => Response.json([pull('ExampleOrg/App', 7, '[DEMO-1] Case-variant change')]),
-  });
-  const result = await fetchReviewTickets({
-    snapshot: snapshot({ github: { api: API, org: 'exampleorg', repos: ['app'] } }),
-  });
-  assert.equal(result.total, 1);
-  assert.deepEqual(
-    ids(result.tickets[0].prs).map((id) => id.toLowerCase()),
-    ['exampleorg/app#7'],
-  );
-  assert.equal(result.prCoverage.available, true);
-  assert.equal(result.prCoverage.complete, true);
-  assert.deepEqual(result.prCoverage.reasons, []);
-  assert.deepEqual(stub.unexpected, []);
-});
-
-test('review regression: case-alias watched scope and PR identities are deduplicated', async (t) => {
-  const fetchReviewTickets = await queueLoader();
-  const stub = stubQueue(t, {
-    pulls: () =>
-      Response.json([
-        pull('ExampleOrg/app', 7, '[DEMO-1] Same change'),
-        pull('ExampleOrg/APP', 7, '[DEMO-1] Same change'),
-      ]),
-  });
-  const result = await fetchReviewTickets({
-    snapshot: snapshot({ github: { api: API, org: 'ExampleOrg', repos: ['app', 'APP'] } }),
-  });
-  assert.deepEqual(
-    ids(result.tickets[0].prs).map((id) => id.toLowerCase()),
-    ['exampleorg/app#7'],
-  );
-  assert.deepEqual(
-    result.prCoverage.repos.map((repo) => repo.toLowerCase()),
-    ['exampleorg/app'],
-  );
-  assert.equal(result.prCoverage.complete, true);
-  assert.deepEqual(result.prCoverage.reasons, []);
-  assert.equal(stub.calls.filter(({ url }) => url.pathname.startsWith('/repos/')).length, 1);
-  const reviewedIds = stub.calls
-    .filter(({ url }) => url.pathname === '/graphql')
-    .flatMap(({ init }) =>
-      aliasesOf(JSON.parse(init.body).query).map(([, id]) => id.toLowerCase()),
-    );
-  assert.deepEqual(reviewedIds, ['exampleorg/app#7']);
-  assert.deepEqual(stub.unexpected, []);
-});
-
-for (const [name, draft] of [
-  ['missing', undefined],
-  ['null', null],
-]) {
-  test(`review regression: ${name} draft metadata retains known approved PR but cannot reach Reviewed`, async (t) => {
-    const fetchReviewTickets = await queueLoader();
-    const upstream = pull('ExampleOrg/app', 7, '[DEMO-1] Unreadable draft evidence', { draft });
-    if (name === 'missing') delete upstream.draft;
-    const stub = stubQueue(t, {
-      pulls: () => Response.json([upstream]),
-      graphql: ({ init }) =>
-        Response.json({
-          data: Object.fromEntries(
-            aliasesOf(JSON.parse(init.body).query).map(([alias]) => [
-              alias,
-              { pullRequest: reviewPage([opinion('other-reviewer', 'APPROVED')]) },
-            ]),
-          ),
-        }),
-    });
-    const result = await fetchReviewTickets({
-      snapshot: snapshot({ github: { api: API, org: 'ExampleOrg', repos: ['app'] } }),
-    });
-    assert.equal(result.total, 1);
-    const ticket = result.tickets[0];
-    assert.deepEqual(ids(ticket.prs), ['ExampleOrg/app#7']);
-    assert.equal(ticket.prs[0].review.complete, true);
-    assert.equal(ticket.prs[0].review.state, 'approved');
-    assert.equal(result.prCoverage.available, true);
-    assert.deepEqual(
-      {
-        discoveryComplete: result.prCoverage.complete,
-        lane: reviewProgress(ticket, result.prCoverage),
-      },
-      { discoveryComplete: false, lane: 'to-review' },
-    );
-    assert.ok(result.prCoverage.reasons.length > 0);
-    assert.deepEqual(stub.unexpected, []);
-  });
-}

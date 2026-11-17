@@ -16,6 +16,7 @@ export function ReviewTicketCard({
   prCoverage,
   linksByTicket,
   onOpenThread,
+  claudeByTicket,
   onOpenClaude,
 }) {
   const harness = useHarness();
@@ -68,7 +69,9 @@ export function ReviewTicketCard({
         testId={`prs-ticket-actions-${ticket.key}`}
         linksByTicket={linksByTicket}
         onOpenThread={onOpenThread}
+        claudeByTicket={claudeByTicket}
         claudeProps={{
+          phase: 'review',
           testId: `prs-claude-icon-${ticket.key}`,
           label: say(`{name} code review for ${ticket.key}`, harness),
           tooltip: false,

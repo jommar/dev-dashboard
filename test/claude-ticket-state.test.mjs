@@ -2325,6 +2325,28 @@ test('a recovered session changes no state: an orphan with its flag set is done,
   assert.deepEqual(goTo.investigate, resumeFor(FIRST_ID));
 });
 
+test('a side session the listing dropped but whose transcript was recovered reads done, not failed; Re-review still needs it listed', async () => {
+  const recovered = new Map([[REVIEW_ID, sessionUuid(REVIEW_ID)]]);
+  const launch = { [REVIEW]: reviewRecord() };
+  const dropped = await derive({ launch, entries: [] });
+  assert.deepEqual(dropped.review, { state: 'failed', reason: 'session_missing' });
+  const found = await derive({ launch, entries: [], recovered });
+  assert.deepEqual(found.review, { state: 'done', reason: 'finished' });
+  assert.equal(found.blocks.review, null);
+  assert.equal(found.blocks.rereview, 'session_not_found');
+  const held = await derive({ launch, entries: [], recovered, held: () => true });
+  assert.deepEqual(held.review, { state: 'working', reason: 'running' });
+  const noListing = await derive({ launch, entries: null, recovered });
+  assert.deepEqual(noListing.review, { state: 'unknown', reason: 'listing_unavailable' });
+  // Just launched, with a transcript already on disk: still starting, never finished.
+  const fresh = await derive({
+    launch: { [REVIEW]: reviewRecord({ launchedAt: START_MS - 1_000 }) },
+    entries: [],
+    recovered,
+  });
+  assert.deepEqual(fresh.review, { state: 'working', reason: 'starting' });
+});
+
 test('a recovered session that is held reads working with no resume command, and one that is not is unchanged', async () => {
   const recovered = new Map([[FIRST_ID, sessionUuid(FIRST_ID)]]);
   const idle = await derive({ entries: [], recovered, held: () => false });

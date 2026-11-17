@@ -16,7 +16,7 @@ import { ClaudePlaceholderDialog } from '../components/ClaudePlaceholderDialog.j
 import { UpstreamNote } from '../components/UpstreamNote.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
-import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
+import { notifyClaudeTicketsChanged, useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
 import { hasCompletePrCoverage, reviewColumns, SPEC_REVIEW_LANE } from '../../ui/review-board.js';
 import { ticketPrefix } from '../../ui/work-filters.js';
@@ -27,11 +27,11 @@ const NO_SPECS = Object.freeze([]);
 const SPEC_LIMIT = 1000;
 const LANE_HINTS = {
   'to-review':
-    'No current approval or changes-request activity, no linked open PRs, or incomplete PR/review data. Evaluated across all linked open PRs in watched repositories; unknown data stays here.',
+    'No current approval or changes-request activity, no linked open PRs, or incomplete PR/review data. Evaluated across all open PRs Jira links to the ticket; unknown data stays here.',
   reviewing:
-    'PR/review data is complete and at least one linked open PR has an approval or standing changes request, but the ticket is not fully reviewed: another PR may await approval, a changes request may stand, or a draft may remain. Covers all linked open PRs in watched repositories; not live reviewer activity.',
+    'PR/review data is complete and at least one linked open PR has an approval or standing changes request, but the ticket is not fully reviewed: another PR may await approval, a changes request may stand, or a draft may remain. Covers all open PRs Jira links to the ticket; not live reviewer activity.',
   reviewed:
-    'At least one linked open PR, and every linked open PR across watched repositories is currently approved by anyone, with complete PR/review data, no drafts and no standing changes requests.',
+    'At least one linked open PR, and every open PR Jira links to the ticket is currently approved by anyone, with complete PR/review data, no drafts and no standing changes requests.',
   'awaiting-merge':
     'The Jira ticket is in Awaiting Merge, whatever the review state of its linked open PRs. Tickets here are not counted in To Review, Reviewing or Reviewed.',
   'spec-review':
@@ -54,6 +54,15 @@ export function PrsPanel({ config, active }) {
   // The spec whose dialog is open, held as the object it was opened with.
   const [openSpec, setOpenSpec] = useState(null);
   const boardRef = useRef(null);
+  // Opening a review dialog reads Claude status at once, so it never opens on a poll that is 15 s old.
+  const openReviewDialog = useCallback((key) => {
+    notifyClaudeTicketsChanged();
+    setOpenClaudeKey(key);
+  }, []);
+  const openSpecDialog = useCallback((spec) => {
+    notifyClaudeTicketsChanged();
+    setOpenSpec(spec);
+  }, []);
   const resolveThreadOpener = useCallback((ts) => {
     const panel = document.getElementById('panel-prs');
     if (!panel || panel.hidden) return null;
@@ -175,7 +184,8 @@ export function PrsPanel({ config, active }) {
     [rows],
   );
   const openClaudeTicket = openClaudeKey && rows.find((ticket) => ticket.key === openClaudeKey);
-  const claude = useClaudeTickets({ active: active && Boolean(openClaudeTicket || openSpec) });
+  // Read while the screen is active (as My Tickets does), so a card's Claude icon follows its review session.
+  const claude = useClaudeTickets({ active });
   useEffect(() => {
     if (openClaudeKey && (!active || !openClaudeTicket)) setOpenClaudeKey(null);
   }, [active, openClaudeKey, openClaudeTicket]);
@@ -220,7 +230,8 @@ export function PrsPanel({ config, active }) {
                   prCoverage={data?.prCoverage}
                   linksByTicket={linksByTicket}
                   onOpenThread={openThread}
-                  onOpenClaude={setOpenClaudeKey}
+                  claudeByTicket={claude.byTicket}
+                  onOpenClaude={openReviewDialog}
                 />
               </li>
             ))}
@@ -235,7 +246,12 @@ export function PrsPanel({ config, active }) {
         >
           {specs.map((spec) => (
             <li key={spec.number}>
-              <SpecReviewCard spec={spec} jiraBase={config.jiraBase} onOpenClaude={setOpenSpec} />
+              <SpecReviewCard
+                spec={spec}
+                jiraBase={config.jiraBase}
+                claudeEntry={claude.byTicket[spec.keys[0]]}
+                onOpenClaude={openSpecDialog}
+              />
             </li>
           ))}
           {specHasMore && (
@@ -271,6 +287,9 @@ export function PrsPanel({ config, active }) {
       data?.prCoverage,
       linksByTicket,
       openThread,
+      claude.byTicket,
+      openReviewDialog,
+      openSpecDialog,
     ],
   );
   const coverageIncomplete = data && !hasCompletePrCoverage(data.prCoverage);
@@ -281,10 +300,10 @@ export function PrsPanel({ config, active }) {
         title="Pull Requests"
         sub={
           <DashboardTooltip
-            title="Other-assigned Ready For Code Review tickets · open PRs from watched repositories only. Reviewing means approvals or changes requested, not live reviewer activity."
+            title="Other-assigned Ready For Code Review tickets · open PRs linked in Jira only. Reviewing means approvals or changes requested, not live reviewer activity."
             describeChild
           >
-            <span>Ready For Code Review · watched repositories only</span>
+            <span>Ready For Code Review · PRs linked in Jira</span>
           </DashboardTooltip>
         }
         meta={meta}
@@ -322,8 +341,8 @@ export function PrsPanel({ config, active }) {
             )}
             {coverageIncomplete && (
               <BoardNote testId="prs-coverage">
-                PR discovery unavailable or incomplete for watched repositories. Known PRs are
-                shown; every ticket remains To Review until discovery completes.
+                PR discovery through Jira unavailable or incomplete. Known PRs are shown; every
+                ticket remains To Review until discovery completes.
               </BoardNote>
             )}
             {specFailed && (

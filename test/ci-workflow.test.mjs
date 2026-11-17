@@ -47,7 +47,10 @@ test('e2e job is separate and non-blocking', () => {
   assert.match(e2e, /^\s+continue-on-error: true$/m);
   assert.doesNotMatch(e2e, /^\s+needs:/m);
   assert.ok(commands(e2e).includes('npx playwright install --with-deps chromium'));
-  assert.ok(commands(e2e).includes('npm run test:ui'));
+  // The specs are split across four runners; every shard of the count must be in the matrix.
+  assert.ok(commands(e2e).includes('npm run test:ui -- --shard=${{ matrix.shard }}/4'));
+  assert.match(e2e, /^\s+shard: \[1, 2, 3, 4\]$/m);
+  assert.match(e2e, /^\s+fail-fast: false$/m);
   assert.ok(scripts['test:ui']);
   assert.doesNotMatch(job('check'), /test:ui/);
 });

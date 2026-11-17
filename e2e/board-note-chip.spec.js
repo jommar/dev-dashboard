@@ -3,7 +3,7 @@ import { slackThreadRow, ticketBoardData } from './data.js';
 
 const NOW = Date.parse('2026-03-09T16:00:00Z');
 const NOTE_TEXT =
-  'PR discovery unavailable or incomplete for watched repositories. Known PRs are shown; every ticket remains To Review until discovery completes.';
+  'PR discovery through Jira unavailable or incomplete. Known PRs are shown; every ticket remains To Review until discovery completes.';
 
 async function freeze(page, time) {
   await page.clock.install({ time: time - 60_000 });

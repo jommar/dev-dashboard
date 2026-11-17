@@ -399,10 +399,17 @@ function goToAll(launch, entries, recovered, held, commands, harnessId) {
 }
 
 // Independent sessions finish without writing a workflow flag.
-export function sideActionState(record, entries, now) {
+//
+// `recovered` and `held` are those of `phaseSessions`: a session the listing no longer shows, whose
+// conversation is on disk, is a finished one (working while a chat turn holds it), not a missing one.
+export function sideActionState(record, entries, now, recovered = new Map(), held = () => false) {
   if (!record) return { state: 'none', reason: null };
   if (!entries) return { state: 'unknown', reason: 'listing_unavailable' };
-  const session = resolveSession(entries, record);
+  // Inside the start window the launch is "starting" until the listing shows it, never a recovered
+  // finished one (its transcript may exist already, and a finished e2e session stops its browser).
+  const session =
+    resolveSession(entries, record) ??
+    (isRunning(null, record, now) ? null : recoveredEntry(record, recovered, held));
   if (session && !KNOWN_STATES.includes(session.state))
     return { state: 'unknown', reason: 'unrecognised_state' };
   if (isRunning(session, record, now))
@@ -495,12 +502,15 @@ export function deriveEntry({
   const busy = (asked) =>
     state === 'unknown' ? 'listing_unavailable' : running && runningBlock(running, asked);
   const groomRecord = readGroom(launch);
-  const groom = sideActionState(groomRecord, entries, now);
-  const review = sideActionState(readReview(launch), entries, now);
+  // A side session the listing dropped but whose conversation is on disk reads finished, not failed.
+  const sideState = (sideRecord) => sideActionState(sideRecord, entries, now, recovered, held);
+  const groom = sideState(groomRecord);
+  const reviewRecord = readReview(launch);
+  const review = sideState(reviewRecord);
   const specReviewRecord = readSpecReview(launch);
-  const specReview = sideActionState(specReviewRecord, entries, now);
+  const specReview = sideState(specReviewRecord);
   const e2eRecord = readE2e(launch);
-  const e2e = sideActionState(e2eRecord, entries, now);
+  const e2e = sideState(e2eRecord);
   const blocks = {
     investigate: busy(INVESTIGATE) || null,
     implement: busy(IMPLEMENT) || implementBlock(status, launch, planPresent),
@@ -514,7 +524,8 @@ export function deriveEntry({
     // Only a groom session of its own blocks grooming; the workflow never does.
     groom: ownSessionBlock(groom, entries),
     review: reviewBlock(review, entries),
-    rereview: rereviewBlock(review, entries),
+    // A Re-review resumes a listed session (as the launcher checks), so a recovered one is not enough.
+    rereview: rereviewBlock(sideActionState(reviewRecord, entries, now), entries),
     // The key is there only for a ticket with a spec review record, so the blocks of every other
     // ticket keep the shape they had.
     ...(specReviewRecord && { specReview: ownSessionBlock(specReview, entries) }),
@@ -528,7 +539,7 @@ export function deriveEntry({
     state,
     reason,
     flags,
-    reviewResentAt: readReview(launch)?.rereview?.at ?? null,
+    reviewResentAt: reviewRecord?.rereview?.at ?? null,
     approvedAt: readLaunch(launch).find(({ phase }) => phase === INVESTIGATE)?.approved?.at ?? null,
     questions,
     unanswered,

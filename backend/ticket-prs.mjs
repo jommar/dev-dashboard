@@ -19,7 +19,7 @@ const BATCH_SIZE = 50;
 // The newest tickets asked about; more than this marks the answer truncated.
 const TICKET_LOOKUP_CAP = 50;
 // Longer than the board's 90 s poll, so a warm cache serves every second poll.
-const LOOKUP_TTL_MS = 120_000;
+export const LOOKUP_TTL_MS = 120_000;
 // Error types of a PR alias that GitHub will not show the token: dropped, never retried.
 const UNREADABLE_ERRORS = new Set(['NOT_FOUND', 'FORBIDDEN']);
 const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/;
@@ -235,7 +235,7 @@ async function readLane(prs, config, selection, readAlias, blank) {
 }
 
 // Open state, draft flag, author, review and CI for each PR, in input order.
-function readDetails(prs, config) {
+export function readDetails(prs, config) {
   return readLane(prs, config, DETAIL_SELECTION, detailOf, () => ({ open: false }));
 }
 
@@ -264,7 +264,7 @@ export function prsByTicket(prs) {
 // calls declined is skipped here: any other state, a draft ("DRAFT" reads as unknown) and a
 // merged one included, goes on to GitHub, which decides open, merged, draft and author.
 // The repo and number are read from the PR's URL, and a PR without a GitHub pull URL is skipped.
-function linkedPrs(entries, outcomes) {
+export function linkedPrs(entries, outcomes) {
   const found = new Map();
   for (const entry of entries) {
     for (const pr of outcomes.get(entry).prs ?? []) {

@@ -75,7 +75,7 @@ test('the board renders stable ticket/lane handles from the full-snapshot select
   assert.match(panel, /<BoardColumn\b[^>]*\btestIdPrefix="prs-column-"/);
   assert.match(panel, /<ReviewTicketCard\b/);
   assert.match(panel, /prCoverage/);
-  assert.match(panel, /watched repositor/i, 'the configured discovery boundary is visible');
+  assert.match(panel, /linked in Jira/i, 'the Jira discovery boundary is visible');
   for (const testId of ['prs-error', 'prs-loading', 'prs-empty', 'prs-no-matches']) {
     assert.ok(panel.includes(testId), `${testId} remains distinct`);
   }
