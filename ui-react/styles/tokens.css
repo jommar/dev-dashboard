@@ -28,6 +28,7 @@
   --phase-review: #f472b6;
   --phase-groom: #fb923c;
   --phase-e2e: var(--accent);
+  --phase-review-request: #facc15;
   --phase-chat: #a3e635;
 
   /* Spacing scale — use these rather than ad-hoc pixel values. */

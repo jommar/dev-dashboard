@@ -17,6 +17,9 @@ const emitServices = (page, services) =>
 test('service controls keep action labels, targets and lock scopes @regression', async ({
   page,
 }) => {
+  // It clicks through every action of every service: about 12 s on an idle machine and close to the
+  // 20 s limit on a CI runner, so a slow runner failed it with nothing wrong in the app.
+  test.slow();
   const actions = [
     {
       action: 'start',

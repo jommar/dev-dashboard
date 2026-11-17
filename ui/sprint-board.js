@@ -70,7 +70,7 @@ export function finishedColumnsLast(columns) {
   return [...columns.filter((column) => !moved(column)), ...columns.filter(moved)];
 }
 
-const SIDE_PHASES = ['groom', 'review', 'specReview', 'e2e'];
+const SIDE_PHASES = ['groom', 'review', 'specReview', 'e2e', 'reviewRequest'];
 
 // The words of ui/session-phases.js, keyed the way an entry names its sessions, plus spec review,
 // which that table does not list. Kept here because importing that module from the lazy Sprint
@@ -83,6 +83,7 @@ const SESSION_CHIP_WORDS = {
   specReview: 'Spec review',
   groom: 'Groom ticket',
   e2e: 'E2E check',
+  reviewRequest: 'Request code review',
 };
 export const sessionChipWords = (phase) => SESSION_CHIP_WORDS[phase] ?? phase;
 

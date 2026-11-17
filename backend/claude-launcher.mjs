@@ -36,6 +36,7 @@ import {
   INVESTIGATE,
   PHASES,
   REVIEW,
+  REVIEW_REQUEST,
   SPEC_REVIEW,
   answerHash,
   answersToSend,
@@ -56,6 +57,7 @@ import {
   readLaunch,
   readQuestions,
   readReview,
+  readReviewRequest,
   readSpecReview,
   resolveSession,
   rereviewBlock,
@@ -104,13 +106,22 @@ const PROMPT_NAME = {
   [REVIEW]: 'review',
   [SPEC_REVIEW]: 'spec-review',
   [E2E]: 'e2e',
+  [REVIEW_REQUEST]: 'request-review',
 };
 
 // The message each workflow phase gets when the user answers a question it asked.
 const ANSWER_PROMPT = { [INVESTIGATE]: 'answers', [IMPLEMENT]: 'answers-implement' };
 
+// The phases whose prompt has no status file, so `{STATUS_FILE}` stays as written in it.
+const NO_STATUS_FILE = [GROOM, REVIEW_REQUEST];
+
 // The launch record a side action refuses its own relaunch on.
-const OWN_SESSION_RECORD = { [GROOM]: readGroom, [SPEC_REVIEW]: readSpecReview, [E2E]: readE2e };
+const OWN_SESSION_RECORD = {
+  [GROOM]: readGroom,
+  [SPEC_REVIEW]: readSpecReview,
+  [E2E]: readE2e,
+  [REVIEW_REQUEST]: readReviewRequest,
+};
 
 // The built-in E2E text, with the same validated key/registry-port values the launcher supplies.
 export const e2ePrompt = (key, port) =>
@@ -228,11 +239,11 @@ export function createClaudeLauncher({
   // A review message has no status file either: only the key and its lower-case form.
   const rereviewValues = (key) => ({ KEY: key, SLUG: key.toLowerCase() });
 
-  // A groom prompt has no status file, so `{STATUS_FILE}` stays as written in it.
+  // A groom or request-review prompt has no status file, so `{STATUS_FILE}` stays as written in it.
   const promptValues = (key, phase) => ({
     KEY: key,
     SLUG: key.toLowerCase(),
-    ...(phase !== GROOM && { STATUS_FILE: statusPath(key) }),
+    ...(!NO_STATUS_FILE.includes(phase) && { STATUS_FILE: statusPath(key) }),
   });
 
   function ticketKeys() {
@@ -399,6 +410,9 @@ export function createClaudeLauncher({
             ...(launched.value?.[REVIEW] && { [REVIEW]: launched.value[REVIEW] }),
             ...(launched.value?.[SPEC_REVIEW] && { [SPEC_REVIEW]: launched.value[SPEC_REVIEW] }),
             ...(launched.value?.[E2E] && { [E2E]: launched.value[E2E] }),
+            ...(launched.value?.[REVIEW_REQUEST] && {
+              [REVIEW_REQUEST]: launched.value[REVIEW_REQUEST],
+            }),
           }
         : launched.value;
     const nextLaunch = { ...kept, [phase]: record };
@@ -443,7 +457,10 @@ export function createClaudeLauncher({
   }
 
   async function launch({ key, phase, pr, browserId }) {
-    if (!isTicketKey(key) || ![...PHASES, GROOM, REVIEW, SPEC_REVIEW, E2E].includes(phase))
+    if (
+      !isTicketKey(key) ||
+      ![...PHASES, GROOM, REVIEW, SPEC_REVIEW, E2E, REVIEW_REQUEST].includes(phase)
+    )
       throw invalid('INVALID_TICKET', 'Invalid ticket or phase.');
     if (phase === SPEC_REVIEW && !(Number.isSafeInteger(pr) && pr > 0))
       throw invalid('INVALID_TICKET', 'Invalid pull request number.');

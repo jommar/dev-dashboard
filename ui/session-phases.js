@@ -8,6 +8,11 @@ export const PHASES = {
   review: { words: 'Code review', icon: 'review', color: '--phase-review' },
   groom: { words: 'Groom ticket', icon: 'groom', color: '--phase-groom' },
   e2e: { words: 'E2E check', icon: 'e2e', color: '--phase-e2e' },
+  reviewRequest: {
+    words: 'Request code review',
+    icon: 'reviewRequest',
+    color: '--phase-review-request',
+  },
   chat: { words: 'Chat', icon: 'chat', color: '--phase-chat' },
 };
 

@@ -1374,6 +1374,7 @@ test('scenario 57: tab order follows the page: steps, session chip, Groom, answe
     'claude-view-plan',
     'claude-action-groom',
     'claude-action-e2e',
+    'claude-action-review-request',
     'claude-questions-resend',
     'claude-question-q1',
     'claude-prompts-open',

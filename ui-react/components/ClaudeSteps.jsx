@@ -150,6 +150,7 @@ const GO_TO_LABEL = {
   implement: 'Go to implement plan session',
   groom: 'Go to groom ticket session',
   e2e: 'Go to e2e check session',
+  reviewRequest: 'Go to request code review session',
 };
 
 // The chip that copies a session's join command. It is only drawn for a session there is to join.

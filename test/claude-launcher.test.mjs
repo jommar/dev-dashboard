@@ -11,6 +11,9 @@ import {
   ANSWERS_TEMPLATE,
   APPROVE_TEMPLATE,
   CONTINUE_TEMPLATE,
+  REVIEW_REQUEST,
+  REVIEW_REQUEST_NAME,
+  REVIEW_REQUEST_TEMPLATE,
   REREVIEW_TEMPLATE,
   BAD_PROMPT_FILES,
   BROWSER_ID,
@@ -51,6 +54,8 @@ import {
   investigateParagraphs,
   e2eEntry,
   e2eRecord,
+  reviewRequestEntry,
+  reviewRequestRecord,
   launchRecord,
   launcherEnvironment,
   listed,
@@ -3055,7 +3060,7 @@ test('scenario 121: with no answers file the message sent is the built-in text, 
   );
 });
 
-test('scenario 121: the built-in templates are exported as the eleven texts, placeholders in them', async () => {
+test('scenario 121: the built-in templates are exported as the twelve texts, placeholders in them', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-launcher.mjs');
   assert.ok(PROMPT_TEMPLATES, 'the launcher exports PROMPT_TEMPLATES');
   assert.deepEqual(PROMPT_TEMPLATES, {
@@ -3070,6 +3075,7 @@ test('scenario 121: the built-in templates are exported as the eleven texts, pla
     review: withHarnessTokens(REVIEW_TEMPLATE),
     'spec-review': withHarnessTokens(SPEC_REVIEW_TEMPLATE),
     e2e: withHarnessTokens(E2E_TEMPLATE),
+    'request-review': withHarnessTokens(REVIEW_REQUEST_TEMPLATE),
   });
 });
 
@@ -5232,4 +5238,103 @@ test('scenario 6: while a chat turn holds the session, the ticket reads working 
   const sent = await env.launcher.answer(answerBody({ q1: 'a different answer' }));
   assert.deepEqual(sent.send, { status: 'sent' });
   assert.equal(env.cli.resumes().length, 1);
+});
+
+// ---- request code review: a side action with no status file and only {KEY} and {SLUG} ----
+
+const reviewRequestBody = () => launchBody(REVIEW_REQUEST);
+
+test('request review launch: writes its own launch.json record, no status.json, and starts the built-in prompt', async (t) => {
+  const env = await launcherEnvironment(t);
+
+  const result = await env.launcher.launch(reviewRequestBody());
+
+  const [{ args, options }] = env.cli.launches();
+  assert.deepEqual(args, [
+    '--bg',
+    '-n',
+    REVIEW_REQUEST_NAME,
+    '--',
+    renderTemplate(REVIEW_REQUEST_TEMPLATE),
+  ]);
+  assert.equal(options.cwd, env.pathwise);
+  assert.deepEqual(env.parsed().launch, {
+    [REVIEW_REQUEST]: { name: REVIEW_REQUEST_NAME, launchedAt: START_MS, id: FIRST_ID },
+  });
+  assert.equal(env.files().status, null, 'no status.json');
+  assert.deepEqual(
+    [result.ok, result.phase, result.name, result.id],
+    [true, REVIEW_REQUEST, REVIEW_REQUEST_NAME, FIRST_ID],
+  );
+  assert.deepEqual(result.ticket.reviewRequest, { state: 'working', reason: 'running' });
+  assert.equal(result.ticket.state, 'none', 'the workflow stays not started');
+});
+
+test('request review launch: only {KEY} and {SLUG} are filled in, anything else stays as written', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.writePrompt('request-review', 'Ask {KEY} in {SLUG}: {STATUS_FILE} {PORT} {NOPE} $& {KEY}');
+
+  await env.launcher.launch(reviewRequestBody());
+
+  assert.equal(launchedPrompt(env), `Ask ${KEY} in ${SLUG}: {STATUS_FILE} {PORT} {NOPE} $& ${KEY}`);
+});
+
+test('request review launch: own session refuses a relaunch only while it works', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.seed(KEY, { launch: { [REVIEW_REQUEST]: reviewRequestRecord() } });
+  env.cli.setListing([reviewRequestEntry({ state: 'working', status: 'busy', pid: 4270 })]);
+  const before = env.files();
+
+  await assertRejects(
+    () => env.launcher.launch(reviewRequestBody()),
+    refused('session_running'),
+    'working',
+  );
+
+  assert.equal(env.cli.launches().length, 0, 'nothing is started');
+  assert.deepEqual(env.files(), before, 'the refusal changed nothing');
+
+  env.cli.setListing([reviewRequestEntry({ state: 'done' })]);
+  const result = await env.launcher.launch(reviewRequestBody());
+
+  assert.equal(result.ok, true, 'a finished session is launched again');
+  assert.deepEqual(env.parsed().launch[REVIEW_REQUEST], {
+    name: REVIEW_REQUEST_NAME,
+    launchedAt: START_MS,
+    id: FIRST_ID,
+  });
+});
+
+test('request review launch: the record survives an investigate launch', async (t) => {
+  const env = await launcherEnvironment(t);
+  const record = reviewRequestRecord();
+  env.seed(KEY, { launch: { [REVIEW_REQUEST]: record } });
+
+  await env.launcher.launch(launchBody(INVESTIGATE));
+
+  const launch = env.parsed().launch;
+  assert.deepEqual(launch[REVIEW_REQUEST], record, 'the side record is kept');
+  assert.equal(launch[INVESTIGATE].name, INVESTIGATE_NAME, 'the workflow record is new');
+});
+
+test('request review entry: the state, block and go-to exist only for a ticket with the record', async (t) => {
+  const env = await launcherEnvironment(t);
+  env.seed(KEY, { launch: { [INVESTIGATE]: launchRecord() } });
+
+  const bare = (await env.launcher.list()).tickets[KEY];
+
+  assert.deepEqual(bare.reviewRequest, { state: 'none', reason: null });
+  assert.equal('reviewRequest' in bare.blocks, false, 'no blocks.reviewRequest key');
+  assert.equal('reviewRequest' in bare.goTo, false, 'no goTo.reviewRequest key');
+
+  env.seed(KEY, {
+    launch: { [INVESTIGATE]: launchRecord(), [REVIEW_REQUEST]: reviewRequestRecord() },
+  });
+  env.cli.setListing([reviewRequestEntry({ state: 'working', status: 'busy', pid: 4271 })]);
+
+  const working = (await env.launcher.list()).tickets[KEY];
+
+  assert.deepEqual(working.reviewRequest, { state: 'working', reason: 'running' });
+  assert.equal(working.blocks.reviewRequest, 'session_running');
+  assert.equal(working.goTo.reviewRequest.kind, 'attach');
 });

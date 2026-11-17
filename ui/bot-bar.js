@@ -1,5 +1,5 @@
 // bot-bar.js — the pure rules behind the bot bar, the strip of mascots along the bottom of every
-// screen, one per Claude session (investigate, implement, review, groom or e2e check).
+// screen, one per Claude session (investigate, implement, review, groom, e2e check or review request).
 //
 // Nothing here touches the DOM, a timer or the network. The bar polls GET /api/claude/tickets
 // (the per-ticket entries `useClaudeTickets` holds) and these functions turn that map into the
@@ -11,7 +11,7 @@ import { verdictWord } from './claude-verdict.js';
 
 // Every session an entry can describe, in the order a ticket's bots are drawn, each with how to read
 // it off the entry. A ticket's workflow entry is the session of its current phase (`entry.phase`), so a
-// ticket has one implement or investigate session at a time; review, groom and e2e are side sessions
+// ticket has one implement or investigate session at a time; review, groom, e2e and reviewRequest are side sessions
 // with their own `{ state, reason }`. This table is the ONE place that says which sessions get a bot:
 // every row does, while it has a state to show, so a new kind of session is one new row (plus its field
 // on the entry) and no second list to keep in step.
@@ -23,6 +23,7 @@ const SESSIONS = [
   ['review', (entry) => entry.review ?? null],
   ['groom', (entry) => entry.groom ?? null],
   ['e2e', (entry) => entry.e2e ?? null],
+  ['reviewRequest', (entry) => entry.reviewRequest ?? null],
 ];
 export const BOT_PHASES = Object.freeze(SESSIONS.map(([phase]) => phase));
 
@@ -171,7 +172,7 @@ const HOLDING_KINDS = new Set(['queued', 'active', 'attention']);
 
 // The done implement bots held on the bar past DONE_TTL_MS: their ticket is still open in Jira, i.e.
 // its status is not a done-kind one (see `jiraStatusKind` in ui/jira-status.js). Only the implement
-// session holds, so a finished review, groom or e2e session still leaves after the time to live; a
+// session holds, so a finished review, groom, e2e or review-request session still leaves after the time to live; a
 // ticket with no status, an unrecognised one, or a failed read ages out as it always has.
 const HELD_PHASE = 'implement';
 

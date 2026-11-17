@@ -382,6 +382,12 @@
   align-items: center;
   gap: var(--s1) var(--s3);
 }
+.claude-independent-cell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+}
 .claude-groom-title {
   color: var(--muted);
   font-size: var(--fs-xs);
@@ -717,12 +723,8 @@
 }
 
 /* ---- E2E check ------------------------------------------------------------
-   The row under Groom ticket (it borrows the groom row's look) and the two-step dialog it opens,
-   which is a .claude-dialog: step 1 is the address field, step 2 the port and the two actions. */
-.claude-e2e {
-  border-top: 0;
-  padding-top: 0;
-}
+   The two-step dialog the E2E check button opens, which is a .claude-dialog: step 1 is the address
+   field, step 2 the port and the two actions. */
 .claude-e2e-step {
   display: flex;
   flex-direction: column;

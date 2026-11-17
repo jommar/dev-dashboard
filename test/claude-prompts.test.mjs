@@ -23,6 +23,7 @@ import {
   INVESTIGATE_TEMPLATE,
   PROMPT_MAX_CHARS,
   PROMPT_NAMES,
+  REVIEW_REQUEST_TEMPLATE,
   REREVIEW_TEMPLATE,
   REVIEW_TEMPLATE,
   SPEC_REVIEW_TEMPLATE,
@@ -71,7 +72,7 @@ test('scenario 140: with no files and no folder every prompt is the built-in tex
   assert.deepEqual(
     list,
     NAMES.map((name) => entry(name, 'default')),
-    'eleven entries, in this order, each with its label, placeholders and the built-in text',
+    'twelve entries, in this order, each with its label, placeholders and the built-in text',
   );
   assert.equal(fs.existsSync(p.promptsDir), false, 'listing creates no folder');
   assert.deepEqual(fsChanges(p.recorder), [], 'and changes nothing');
@@ -103,6 +104,7 @@ test('scenario 140: a file that is usable is custom with its trimmed text, place
     entry('review', 'default'),
     entry('spec-review', 'default'),
     entry('e2e', 'default'),
+    entry('request-review', 'default'),
   ]);
 });
 
@@ -126,7 +128,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
     assert.deepEqual(
       list,
       NAMES.map((name) => entry(name, 'unusable')),
-      'every one of the eleven',
+      'every one of the twelve',
     );
     for (const name of NAMES)
       assert.deepEqual(await p.store.read(name), entry(name, 'unusable'), `read ${name}`);
@@ -149,6 +151,7 @@ for (const { label, arrange } of BAD_PROMPT_FILES) {
         ['review', 'unusable'],
         ['spec-review', 'unusable'],
         ['e2e', 'unusable'],
+        ['request-review', 'unusable'],
       ],
     );
   });
@@ -251,7 +254,7 @@ const BAD_NAMES = [
   7,
 ];
 
-test('scenario 143: only the eleven names are known, anything else is refused before any file is looked at', async (t) => {
+test('scenario 143: only the twelve names are known, anything else is refused before any file is looked at', async (t) => {
   const p = await promptStore(t);
   // Where `../investigate` would land if a name were put into a path.
   const sentinel = path.join(p.root, 'investigate.md');
@@ -295,6 +298,7 @@ test('scenario 144: write keeps the trimmed text and one newline, and answers wi
     'groom.md',
     'implement.md',
     'investigate.md',
+    'request-review.md',
     'rereview.md',
     'review.md',
     'spec-review.md',
@@ -570,6 +574,7 @@ test('scenario 150: a file that contains a NUL byte is unusable, shown with the 
     entry('review', 'default'),
     entry('spec-review', 'default'),
     entry('e2e', 'default'),
+    entry('request-review', 'default'),
   ]);
   assert.deepEqual(await p.store.read('investigate'), entry('investigate', 'unusable'));
 });
@@ -657,6 +662,7 @@ for (const [name, placeholders] of [
   ['review', ['{KEY}', '{SLUG}', '{SKILL}', '{ASK_TOOL}']],
   ['spec-review', ['{KEY}', '{SLUG}', '{PR}', '{SKILL}', '{ASK_TOOL}']],
   ['e2e', ['{KEY}', '{SLUG}', '{PORT}', '{SKILL}', '{ASK_TOOL}']],
+  ['request-review', ['{KEY}', '{SLUG}', '{SKILL}', '{ASK_TOOL}']],
 ]) {
   test(`initial prompt override: the store exposes ${name} with only its validated placeholders`, async (t) => {
     const p = await promptStore(t);
@@ -677,7 +683,7 @@ for (const [name, placeholders] of [
 
 // ---- the registered names and the groom prompt ----
 
-test('scenario 200: the eleven registered prompt names retain their order', async () => {
+test('scenario 200: the twelve registered prompt names retain their order', async () => {
   const { PROMPT_NAMES: names, PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
 
   assert.deepEqual(names, NAMES);
@@ -690,7 +696,7 @@ test('scenario 200: the eleven registered prompt names retain their order', asyn
   );
 });
 
-test('scenario 200: the eleven built-ins are the fixture texts, so the registry and wording agree', async () => {
+test('scenario 200: the twelve built-ins are the fixture texts, so the registry and wording agree', async () => {
   const { PROMPT_TEMPLATES } = await import('../backend/claude-prompts.mjs');
 
   assert.deepEqual(PROMPT_TEMPLATES, {
@@ -705,6 +711,7 @@ test('scenario 200: the eleven built-ins are the fixture texts, so the registry 
     review: withHarnessTokens(REVIEW_TEMPLATE),
     'spec-review': withHarnessTokens(SPEC_REVIEW_TEMPLATE),
     e2e: withHarnessTokens(E2E_TEMPLATE),
+    'request-review': withHarnessTokens(REVIEW_REQUEST_TEMPLATE),
   });
 });
 

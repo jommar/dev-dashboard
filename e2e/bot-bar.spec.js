@@ -2,7 +2,7 @@ import { test, expect } from './fixtures.js';
 import { claudeEntry, settingsData, ticketBoardData } from './data.js';
 import { roamFor, walkStretch } from '../ui/bot-bar.js';
 
-// The bot bar: one mascot per Claude session (investigate, implement, review, groom, e2e) of a ticket
+// The bot bar: one mascot per Claude session (investigate, implement, review, groom, e2e, reviewRequest) of a ticket
 // in the active Jira sprint, on every screen, polling /api/claude/tickets itself and asking /api/active-sprint-tickets
 // which of its tickets are in an active sprint. Invented tickets only.
 //   BOT-1  implement session working      -> "BOT-1 implement: working"
