@@ -9,9 +9,10 @@
 // that exists and is approved makes Investigate and plan a quiet re-run, and Approve becomes a done
 // step ("Approved 7:39 AM") rather than a disabled button. Why a step is off is one line under the
 // strip (a reason that two steps share is said once). A send's outcome is a short inline message
-// beside its action that can be dismissed and clears once the ticket stops working. Groom ticket sits
-// apart, as the independent action it is, and the E2E check row follows it (its button opens
-// E2eCheckDialog over this one, and it keeps its own session chip and result link). When the
+// beside its action that can be dismissed and clears once the ticket stops working. Groom ticket, E2E
+// check and Request code review sit apart as one row of independent actions, each with its own
+// session chip (the E2E button opens E2eCheckDialog over this one), and what each does and left
+// follows the row. When the
 // planning session asked questions they follow as cards, with the progress, the bar and Resend
 // answers (sends the saved answers again, even unchanged) above them. The footer stays in view
 // beside the body's scroll: Prompts (on the left), the progress and the last save's result, Save
@@ -50,6 +51,7 @@ const INVESTIGATE = 'investigate-and-plan';
 const IMPLEMENT = 'implement-plan';
 const GROOM = 'groom';
 const E2E = 'e2e-ticket-check';
+const REVIEW_REQUEST = 'request-review';
 const BROWSER_GONE_TEXT = 'That browser is no longer running. Launch a new one.';
 // The refusals that say the e2e check's browser is gone, so the dialog starts over from step 1.
 const BROWSER_GONE = ['browser_not_found', 'browser_not_running'];
@@ -166,6 +168,45 @@ const HINT_TESTID = {
   implement: 'claude-action-hint-implement',
 };
 
+// The reason an independent action is off, and what each does: shown under the row, so every note
+// names the action it is about.
+const INDEPENDENT_HINTS = [
+  { side: 'groom', testId: 'claude-action-hint-groom' },
+  { side: 'e2e', testId: 'claude-action-hint-e2e' },
+  { side: 'reviewRequest', testId: 'claude-action-hint-review-request' },
+];
+const INDEPENDENT_NOTES = [
+  {
+    testId: 'claude-groom-note',
+    text: 'Groom ticket works on any ticket, on its own. Needs no plan and changes nothing in Jira until you say so.',
+  },
+  {
+    testId: undefined,
+    text: 'E2E check opens a new browser for you to sign in to, then runs the check on this ticket without you.',
+  },
+  {
+    testId: 'claude-review-request-note',
+    text: 'Request code review commits the work, checks the acceptance criteria against local data, opens the pull request, moves the ticket in Jira and asks developers for review in Slack.',
+  },
+];
+
+// One button of the independent row, with its session chip once the action has a session.
+function IndependentAction({ label, testId, phase, disabled, hasSession, onRun, onGoTo }) {
+  return (
+    <span className="claude-independent-cell">
+      <Button
+        className="subtle claude-groom-run"
+        data-testid={testId}
+        disabled={disabled}
+        onClick={onRun}
+      >
+        {label}
+      </Button>
+      {hasSession && <SessionChip phase={phase} onGoTo={onGoTo} />}
+    </span>
+  );
+}
+
 export function ClaudeDialog({
   ticketKey,
   summary,
@@ -253,6 +294,7 @@ export function ClaudeDialog({
     blocks.approve,
     blocks.groom,
     blocks.e2e,
+    blocks.reviewRequest,
     blocks.continue,
   ]);
 
@@ -564,32 +606,54 @@ export function ClaudeDialog({
                 </p>
               )}
 
-              {/* Grooming is not a step: it works on any ticket, on its own. */}
+              {/* The independent actions are not steps: each works on any ticket, on its own. One row of
+                  buttons (each with its session chip), then what each does and what it left. */}
               <section className="claude-groom" aria-labelledby={`${hintId}-groom`}>
                 <div className="claude-groom-main">
                   <span className="claude-groom-title" id={`${hintId}-groom`}>
                     Independent
                   </span>
-                  <Button
-                    className="subtle claude-groom-run"
-                    data-testid="claude-action-groom"
+                  <IndependentAction
+                    label="Groom ticket"
+                    testId="claude-action-groom"
+                    phase="groom"
                     disabled={busy || Boolean(blocks.groom)}
-                    onClick={() => run(() => launch(ticketKey, GROOM))}
-                  >
-                    Groom ticket
-                  </Button>
-                  {goTo.groom && <SessionChip phase="groom" onGoTo={() => copyCommand('groom')} />}
+                    hasSession={Boolean(goTo.groom)}
+                    onRun={() => run(() => launch(ticketKey, GROOM))}
+                    onGoTo={() => copyCommand('groom')}
+                  />
+                  <IndependentAction
+                    label="E2E check"
+                    testId="claude-action-e2e"
+                    phase="e2e"
+                    disabled={busy || Boolean(blocks.e2e)}
+                    hasSession={Boolean(goTo.e2e)}
+                    onRun={() => setChecking(true)}
+                    onGoTo={() => copyCommand('e2e')}
+                  />
+                  <IndependentAction
+                    label="Request code review"
+                    testId="claude-action-review-request"
+                    phase="reviewRequest"
+                    disabled={busy || Boolean(blocks.reviewRequest)}
+                    hasSession={Boolean(goTo.reviewRequest)}
+                    onRun={() => run(() => launch(ticketKey, REVIEW_REQUEST))}
+                    onGoTo={() => copyCommand('reviewRequest')}
+                  />
                 </div>
-                {reasonText[blocks.groom] && (
-                  <span className="claude-action-hint" data-testid="claude-action-hint-groom">
-                    {reasonText[blocks.groom]}
-                  </span>
+                {INDEPENDENT_HINTS.map(({ side, testId }) =>
+                  reasonText[blocks[side]] ? (
+                    <span key={side} className="claude-action-hint" data-testid={testId}>
+                      {reasonText[blocks[side]]}
+                    </span>
+                  ) : null,
                 )}
-                <span className="claude-action-hint" data-testid="claude-groom-note">
-                  Works on any ticket, on its own. Needs no plan and changes nothing in Jira until
-                  you say so.
-                </span>
-                {/* Where the result is, once the session has finished. */}
+                {INDEPENDENT_NOTES.map(({ testId, text }) => (
+                  <span key={text} className="claude-action-hint" data-testid={testId}>
+                    {text}
+                  </span>
+                ))}
+                {/* Where each result is, once its session has finished. */}
                 {entry.groom?.state === 'done' && (
                   <span className="claude-action-hint" data-testid="claude-groom-path">
                     {`~/pathwise/.orchestrator/${ticketKey.toLowerCase()}/groom.md`}
@@ -608,30 +672,6 @@ export function ClaudeDialog({
                 {entry.groom?.state === 'done' && (
                   <VerdictChip side="groom" label="Readiness" verdict={entry.groom.verdict} />
                 )}
-              </section>
-
-              {/* The e2e check is another independent action: a new browser to sign in to, then a session. */}
-              <section className="claude-groom claude-e2e" aria-label="E2E check">
-                <div className="claude-groom-main">
-                  <Button
-                    className="subtle claude-groom-run"
-                    data-testid="claude-action-e2e"
-                    disabled={busy || Boolean(blocks.e2e)}
-                    onClick={() => setChecking(true)}
-                  >
-                    E2E check
-                  </Button>
-                  {goTo.e2e && <SessionChip phase="e2e" onGoTo={() => copyCommand('e2e')} />}
-                </div>
-                {reasonText[blocks.e2e] && (
-                  <span className="claude-action-hint" data-testid="claude-action-hint-e2e">
-                    {reasonText[blocks.e2e]}
-                  </span>
-                )}
-                <span className="claude-action-hint">
-                  Opens a new browser for you to sign in to, then runs the check on this ticket
-                  without you.
-                </span>
                 {entry.e2e?.state === 'done' && (
                   <button
                     type="button"

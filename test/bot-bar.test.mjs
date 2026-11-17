@@ -61,13 +61,14 @@ const SIX = [...FIVE, 'moss'];
 const keys = (count) => Array.from({ length: count }, (_, i) => `TAP-${1000 + i}:review`);
 
 // The shape of one GET /api/claude/tickets entry, only the parts the bar reads.
-const entry = (phase, state, { review, groom, e2e } = {}) => ({
+const entry = (phase, state, { review, groom, e2e, reviewRequest } = {}) => ({
   phase,
   state,
   reason: 'r',
   review: review ?? { state: 'none', reason: null },
   groom: groom ?? { state: 'none', reason: null },
   ...(e2e && { e2e }),
+  ...(reviewRequest && { reviewRequest }),
 });
 
 test('pickMascot is stable, always one of the ids and uses every id', () => {
@@ -213,13 +214,21 @@ test('restingSpots keep done and failed bots apart and never reorder them', () =
 });
 
 test('every kind of session gets a bot, in draw order, when it has a state to show', () => {
-  assert.deepEqual(BOT_PHASES, ['investigate', 'implement', 'review', 'groom', 'e2e']);
+  assert.deepEqual(BOT_PHASES, [
+    'investigate',
+    'implement',
+    'review',
+    'groom',
+    'e2e',
+    'reviewRequest',
+  ]);
   const tickets = {
     'TAP-1': entry('investigate-and-plan', 'working'),
     'TAP-2': entry('implement-plan', 'working', {
       review: { state: 'done', reason: 'finished' },
       groom: { state: 'working', reason: 'running' },
       e2e: { state: 'working', reason: 'running' },
+      reviewRequest: { state: 'waiting', reason: 'asked' },
     }),
     'TAP-3': entry('implement-plan', 'none'),
     'TAP-4': entry(null, 'none', { groom: { state: 'done', reason: 'finished' } }),
@@ -233,6 +242,7 @@ test('every kind of session gets a bot, in draw order, when it has a state to sh
       ['TAP-2:review', 'done'],
       ['TAP-2:groom', 'working'],
       ['TAP-2:e2e', 'working'],
+      ['TAP-2:reviewRequest', 'waiting'],
       ['TAP-4:groom', 'done'],
     ],
   );

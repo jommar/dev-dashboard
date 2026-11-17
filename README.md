@@ -1404,8 +1404,9 @@ while a session works or the status is unavailable the pill and the steps alread
 lines are only for screen readers (each button points at its reason with `aria-describedby`). When
 the state is `plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows
 in the Implement step, because starting it is your approval. **Groom ticket** sits apart under a
-hairline, labelled `Independent`, with its note and, once it has a session, its own chip; the
-**E2E check** row follows it with its own chip and, once done, a **View e2e result** link. The
+hairline, labelled `Independent`, as one row of three buttons (**Groom ticket**, **E2E check** and
+**Request code review**), each with its own chip once it has a session; what each does follows the row, with
+a **View e2e result** link once the e2e check is done. The
 outcome of an approval or a save is a short inline message beside what caused it, with a **×** to
 dismiss it; it also clears by itself once the ticket stops working, so it never outlives the state
 it described.
@@ -1835,6 +1836,21 @@ reason: 'prompt_unreadable' }`, and a failed resume is `resume_failed`; both can
 - **Reply.** `{ ok, key, send, ticket }`, as for answers. A session that is working but quiet
   (stalled) and an orphan are out of scope.
 
+### Request code review
+
+**Request code review** starts a background session named `<KEY>-request-review` that takes a finished
+ticket to code review. It is independent of the workflow like Groom ticket: any ticket, no flags, no
+`status.json`, no gates; a running session of its own refuses another launch (`session_running`). The record
+is `launch.json['request-review']`, the entry's `reviewRequest` is its `{ state, reason }`, and `blocks.reviewRequest`
+and `goTo.reviewRequest` exist only for a ticket with the record. The built-in prompt (`prompts/request-review.md`
+overrides it; only `{KEY}` and `{SLUG}` are filled in) is deliberately general: it commits any uncommitted work,
+checks every acceptance criterion with the unit tests and live local data, has a read-only subagent review the diff,
+opens the pull request, then has a subagent move the ticket, comment the criteria with the commit SHA and announce it,
+and finally asks developers for review in the announcement's Slack thread. It stops at the first failed step, and does
+nothing in Jira or Slack when a criterion does not pass. Which skills do each step (pull request, Jira comment template,
+Slack announcement) is the workspace's business: name them in your local `prompts/request-review.md`, which is
+gitignored. Its bot (`reviewRequest`) and Sessions row say `Request code review`.
+
 ### Groom ticket
 
 **Groom ticket** runs your `groom-ticket` skill (from `~/pathwise/.claude/skills/groom-ticket/`)
@@ -1996,10 +2012,10 @@ browser localStorage on rollback; older code ignores review records and treats p
 
 ### Custom prompts
 
-All six launch prompts (investigate, implement, groom, review, spec-review and e2e) and the
+All seven launch prompts (investigate, implement, groom, review, spec-review, e2e and request-review) and the
 messages sent with your answers, your approval, a Continue and a re-review are editable templates:
-eleven in all, in the registry order investigate, implement, answers, answers-implement, approve,
-continue, rereview, groom, review, spec-review, e2e. By default they use the original built-in text. You can change
+twelve in all, in the registry order investigate, implement, answers, answers-implement, approve,
+continue, rereview, groom, review, spec-review, e2e, request-review. By default they use the original built-in text. You can change
 each one in the app (see **Edit in the app** below) or by hand. See also the standalone
 [prompt guide](prompts/README.md). Both edit the same file, a file of that name in the `prompts/`
 folder of the dashboard (the repo root, next to `claude/`), so a hand edit and an app edit always
@@ -2018,6 +2034,7 @@ agree:
 | `prompts/review.md`            | the prompt for a new code review session             | `{KEY}`, `{SLUG}`                                                |
 | `prompts/spec-review.md`       | the spec review prompt                               | `{KEY}`, `{SLUG}`, `{PR}`                                        |
 | `prompts/e2e.md`               | the E2E ticket check prompt                          | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
+| `prompts/request-review.md`    | the Request code review prompt                       | `{KEY}`, `{SLUG}`                                                |
 
 `{KEY}` is the validated ticket key, `{SLUG}` the key in lower case (the `.orchestrator/` folder name),
 `{STATUS_FILE}` the absolute path of the ticket's `status.json`, `{QUESTION_IDS}` the ids of the new
@@ -2060,7 +2077,7 @@ worktree on that worktree's own branch and to never push or open a pull request.
 
 - **Edit in the app.** **Prompts**, at the left of the Claude dialog's footer, swaps the dialog's
   body for an editor in the same dialog. The footer then holds **Back**, at the left where
-  **Prompts** was, and **Close**. The editor loads the eleven prompts once when it opens, not on
+  **Prompts** was, and **Close**. The editor loads the twelve prompts once when it opens, not on
   the dialog's 15 second refresh; if the load fails it shows the error and a **Retry** button.
   Each prompt has:
   - a badge: `default` (no file, so the built-in text), `custom` (a usable file) or
@@ -2086,7 +2103,7 @@ worktree on that worktree's own branch and to never push or open a pull request.
   contain {STATUS_FILE}, so the session cannot find status.json: questions, the flags and done
   will not work." **Save** stays enabled and the server never refuses a prompt for it.
 - **Absent means built-in.** A missing file is never an error. `npm run claude:prompts` creates
-  `prompts/` and writes the eleven built-in templates into it, placeholders intact, for you to edit
+  `prompts/` and writes the twelve built-in templates into it, placeholders intact, for you to edit
   by hand. It prints `wrote <path>` or `kept <path>` for each and never overwrites a file that
   exists. It needs no Settings setup.
 - **Applied at once.** The files are read on every launch and every send, never cached, so an edit
@@ -2154,23 +2171,24 @@ to default** or delete the file.
 
 ### Routes and errors
 
-| Route                               | Purpose                                                                                                                                                                           |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets, lastActive }`; `listing` is `ok` or `unavailable`; `tickets` keyed by ticket key (entry below); `lastActive` is `{ key: { phase: ISO } }`, sparse |
-| `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, `e2e-ticket-check` also takes `browserId`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }` |
-| `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                                                                |
-| `POST /api/claude/continue`         | body `{ key }`; answers `{ ok: true, key, send, ticket }` (see [Continue a failed session](#continue-a-failed-session))                                                           |
-| `GET /api/claude/usage`             | `?sessions=<uuid>,...`; token tallies per session (see [Claude usage](#claude-usage))                                                                                             |
-| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; eleven entries in the order investigate, implement, answers, answers-implement, approve, continue, rereview, groom, review, spec-review, e2e             |
-| `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                                                            |
-| `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                                                               |
+| Route                               | Purpose                                                                                                                                                                               |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/claude/tickets`           | `{ listing, updatedAt, tickets, lastActive }`; `listing` is `ok` or `unavailable`; `tickets` keyed by ticket key (entry below); `lastActive` is `{ key: { phase: ISO } }`, sparse     |
+| `POST /api/claude/launch`           | body `{ key, phase }` (`spec-review` also takes `pr`, `e2e-ticket-check` also takes `browserId`, else `400 INVALID_TICKET`); answers `{ ok: true, key, phase, name, id, ticket }`     |
+| `POST /api/claude/answers`          | body `{ key, answers }`; answers `{ ok: true, key, send, ticket }`                                                                                                                    |
+| `POST /api/claude/continue`         | body `{ key }`; answers `{ ok: true, key, send, ticket }` (see [Continue a failed session](#continue-a-failed-session))                                                               |
+| `GET /api/claude/usage`             | `?sessions=<uuid>,...`; token tallies per session (see [Claude usage](#claude-usage))                                                                                                 |
+| `GET /api/claude/prompts`           | `{ ok: true, prompts }`; twelve entries in the order investigate, implement, answers, answers-implement, approve, continue, rereview, groom, review, spec-review, e2e, request-review |
+| `PUT /api/claude/prompts/<name>`    | body `{ text }`; answers `{ ok: true, prompt }`, the entry with `source` `custom` and the trimmed text                                                                                |
+| `DELETE /api/claude/prompts/<name>` | answers `{ ok: true, prompt }`, the entry with `source` `default`; a file that is not there is fine                                                                                   |
 
 `tickets` holds an entry for every folder under `claude/` and none for a ticket never launched (the
 board shows it as not started). With no ticket folder the route answers without running the CLI;
 otherwise concurrent callers share one `claude agents --json --all`. An entry is
-`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, review, specReview, e2e, blocks, goTo }`
+`{ phase, state, reason, flags, questions[], unanswered, unsent, groom, review, specReview, e2e, reviewRequest, blocks, goTo }`
 (`groom` and `blocks.groom` are described under [Groom ticket](#groom-ticket);
 `e2e`, `blocks.e2e` and `goTo.e2e` under [E2E check](#e2e-check);
+`reviewRequest`, `blocks.reviewRequest` and `goTo.reviewRequest` under [Request code review](#request-code-review);
 `review`, `blocks.review` and `goTo.review` under [Code review](#code-review), `specReview` and `blocks.specReview` under [Spec review lane](#spec-review-lane)):
 
 - `phase` is `investigate-and-plan`, `implement-plan` or `null` (no workflow launched). `flags` holds
@@ -2291,7 +2309,7 @@ nothing was sent.` and that the session received nothing (attach to it).
    `prompts/investigate.md` (keep the rest), and launch **Investigate and plan** on a throwaway
    ticket. Confirm the session's first message contains your line. Delete the file, launch again
    once the first session has finished, and confirm the built-in text is back.
-10. Open a ticket's Claude dialog and press **Prompts**. Confirm the eleven prompts load with the
+10. Open a ticket's Claude dialog and press **Prompts**. Confirm the twelve prompts load with the
     badge `default` (or `custom` if you kept a file), and that deleting `{STATUS_FILE}` from a box
     shows the warning while **Save** stays enabled. Add a line you will recognise at the top of
     **Investigate and plan prompt**, press **Save**, and confirm `Saved.`, the badge `custom` and
@@ -2509,7 +2527,7 @@ Chat head, the Claude dialog header and the Sessions drawer's rows ask for it (s
 
 A strip of small animated mascots runs along the bottom of every screen once setup is complete (the
 Settings-only setup mode has none): one **bot per Claude session** (investigate, implement,
-review, groom or e2e check, or a standalone [Chat](#chat)), so you can see at a glance which ones are working and which need you. It is an overlay
+review, groom, e2e check or review request, or a standalone [Chat](#chat)), so you can see at a glance which ones are working and which need you. It is an overlay
 (`position: fixed`, transparent, and it ignores the pointer except on the bots), so it never scrolls the
 page. While at least one bot shows, the page keeps a 104px gutter at the bottom (`--bot-bar-gutter`) so
 the last card or board column ends above the posters: a board gives up that height and stays one viewport
@@ -2607,7 +2625,7 @@ sessions, open the session list`; under 600px one pill for the single zone). The
   (`DONE_TTL_MS`), except a **done implement bot whose ticket is still open in Jira**: that one stays
   until the ticket reaches a done-kind status (Deployed, Complete, Closed, ... — the `done` kind in
   `ui/jira-status.js`), so the bar shows the work that finished but has not shipped. Only the implement
-  session holds; a done review, groom or e2e bot still leaves after the 10 minutes. A status Jira could
+  session holds; a done review, groom, e2e or review-request bot still leaves after the 10 minutes. A status Jira could
   not give, an unrecognised one, or a failed `/api/active-sprint-tickets` read falls back to the 10
   minutes, so an outage never pins bots to the bar. A `done` or `failed` bot also has a small **x**
   beside it that dismisses it. A dismissed bot comes back if its session changes state. This is

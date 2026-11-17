@@ -6,6 +6,9 @@ import {
   E2E,
   E2E_ID,
   E2E_NAME,
+  REVIEW_REQUEST,
+  REVIEW_REQUEST_ID,
+  REVIEW_REQUEST_NAME,
   FIRST_ID,
   GROOM,
   GROOM_NAME,
@@ -22,6 +25,8 @@ import {
   answeredMap,
   e2eEntry,
   e2eRecord,
+  reviewRequestEntry,
+  reviewRequestRecord,
   launchRecord,
   listed,
   question,
@@ -2169,6 +2174,58 @@ test('e2e check state: a session missing from the listing has failed', async () 
   const entry = await e2eDerive({ entries: [] });
 
   assert.deepEqual(entry.e2e, { state: 'failed', reason: 'session_missing' });
+});
+
+// ---- request code review: its own record, state, block and go-to, present only for a ticket that has run one ----
+
+const reviewRequestDerive = (overrides = {}) =>
+  derive({
+    status: null,
+    planPresent: false,
+    launch: { [REVIEW_REQUEST]: reviewRequestRecord() },
+    entries: [reviewRequestEntry()],
+    ...overrides,
+  });
+
+test('request review state: without a record there is no block and no go-to, and the state is none', async () => {
+  const state = await import('../backend/claude-ticket-state.mjs');
+  assert.equal(state.REVIEW_REQUEST, REVIEW_REQUEST);
+  assert.deepEqual(state.PHASES, [INVESTIGATE, IMPLEMENT], 'not a workflow phase');
+  assert.equal(state.sessionName(KEY, REVIEW_REQUEST), REVIEW_REQUEST_NAME);
+
+  const entry = await reviewRequestDerive({ launch: {}, entries: [] });
+
+  assert.deepEqual(entry.reviewRequest, { state: 'none', reason: null });
+  assert.equal('reviewRequest' in entry.blocks, false, 'no blocks.reviewRequest key');
+  assert.equal('reviewRequest' in entry.goTo, false, 'no goTo.reviewRequest key');
+});
+
+test('request review state: a working session is reported, blocks only itself and offers attach', async () => {
+  const entry = await reviewRequestDerive({
+    entries: [workingEntry({ id: REVIEW_REQUEST_ID, name: REVIEW_REQUEST_NAME })],
+  });
+
+  assert.deepEqual(entry.reviewRequest, { state: 'working', reason: 'running' });
+  assert.equal(entry.blocks.reviewRequest, 'session_running');
+  assert.deepEqual(entry.goTo.reviewRequest, attachFor(REVIEW_REQUEST_ID));
+  assert.equal(entry.blocks.groom, null);
+  assert.equal(entry.blocks.review, null);
+  assert.deepEqual(entry.e2e, { state: 'none', reason: null });
+  assert.equal(entry.phase, null);
+});
+
+test('request review state: a finished session is done, unblocked and offers a resume command', async () => {
+  const entry = await reviewRequestDerive();
+
+  assert.deepEqual(entry.reviewRequest, { state: 'done', reason: 'finished' });
+  assert.equal(entry.blocks.reviewRequest, null);
+  assert.deepEqual(entry.goTo.reviewRequest, resumeFor(REVIEW_REQUEST_ID));
+});
+
+test('request review state: a session missing from the listing has failed', async () => {
+  const entry = await reviewRequestDerive({ entries: [] });
+
+  assert.deepEqual(entry.reviewRequest, { state: 'failed', reason: 'session_missing' });
 });
 
 // ---- phaseSessions: the listing entry each own session resolves to ----

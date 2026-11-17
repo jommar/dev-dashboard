@@ -17,6 +17,7 @@ export const GROOM = 'groom';
 export const REVIEW = 'pr-review-transact';
 export const SPEC_REVIEW = 'spec-review';
 export const E2E = 'e2e-ticket-check';
+export const REVIEW_REQUEST = 'request-review';
 
 const TICKET_KEY = /^[A-Z]{1,10}-\d{1,7}$/;
 const QUESTION_ID = /^[A-Za-z0-9_-]{1,32}$/;
@@ -224,6 +225,8 @@ export const readGroom = (launch) => readRecord(launch?.[GROOM]);
 export const readSpecReview = (launch) => readRecord(launch?.[SPEC_REVIEW]);
 // The e2e check record of launch.json, shaped like a phase record, or null.
 export const readE2e = (launch) => readRecord(launch?.[E2E]);
+// The request-review record of launch.json, shaped like a phase record, or null.
+export const readReviewRequest = (launch) => readRecord(launch?.[REVIEW_REQUEST]);
 // The review record, with `rereview` ({ at } once a Re-review was delivered to its session, else null).
 export function readReview(launch) {
   const base = readRecord(launch?.[REVIEW]);
@@ -333,17 +336,19 @@ function goToFor(session, commands) {
     : null;
 }
 
-// The launch record of each own session: `{ investigate, implement, review, groom }` (plus `e2e` for
-// a ticket with an e2e check record), each a record or null/undefined.
+// The launch record of each own session: `{ investigate, implement, review, groom }` (plus `e2e` and
+// `reviewRequest` for a ticket with such a record), each a record or null/undefined.
 export function phaseRecords(launch) {
   const records = readLaunch(launch);
   const e2e = readE2e(launch);
+  const reviewRequest = readReviewRequest(launch);
   return {
     investigate: records.find((found) => found.phase === INVESTIGATE),
     implement: records.find((found) => found.phase === IMPLEMENT),
     review: readReview(launch),
     groom: readGroom(launch),
     ...(e2e && { e2e }),
+    ...(reviewRequest && { reviewRequest }),
   };
 }
 
@@ -384,6 +389,7 @@ const LAUNCH_KEYS = {
   review: REVIEW,
   groom: GROOM,
   e2e: E2E,
+  reviewRequest: REVIEW_REQUEST,
 };
 
 function goToAll(launch, entries, recovered, held, commands, harnessId) {
@@ -511,6 +517,8 @@ export function deriveEntry({
   const specReview = sideState(specReviewRecord);
   const e2eRecord = readE2e(launch);
   const e2e = sideState(e2eRecord);
+  const reviewRequestRecord = readReviewRequest(launch);
+  const reviewRequest = sideState(reviewRequestRecord);
   const blocks = {
     investigate: busy(INVESTIGATE) || null,
     implement: busy(IMPLEMENT) || implementBlock(status, launch, planPresent),
@@ -530,6 +538,7 @@ export function deriveEntry({
     // ticket keep the shape they had.
     ...(specReviewRecord && { specReview: ownSessionBlock(specReview, entries) }),
     ...(e2eRecord && { e2e: ownSessionBlock(e2e, entries) }),
+    ...(reviewRequestRecord && { reviewRequest: ownSessionBlock(reviewRequest, entries) }),
     // The key is there only for a failed workflow session, so the blocks of every other state keep
     // the shape they had.
     ...(state === 'failed' && { continue: continueBlock({ state, session }) }),
@@ -548,6 +557,7 @@ export function deriveEntry({
     review,
     specReview,
     e2e,
+    reviewRequest,
     blocks,
     goTo: goToAll(launch, entries, recovered, held, commands, harnessId),
   };

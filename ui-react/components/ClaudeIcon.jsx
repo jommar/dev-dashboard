@@ -41,10 +41,11 @@ const BADGES = {
 };
 
 // Grooming and the e2e check are not part of the workflow, so a side session stands in only while the
-// workflow has not started: groom first, then e2e. `words` is what the label calls it.
+// workflow has not started: groom first, then e2e, then a code review request. `words` is what the label calls it.
 const SIDE_SESSIONS = [
   { key: 'groom', words: 'grooming' },
   { key: 'e2e', words: 'e2e check' },
+  { key: 'reviewRequest', words: 'code review request' },
 ];
 const standIn = (entry) =>
   entry?.state === 'none'

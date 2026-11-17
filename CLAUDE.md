@@ -122,14 +122,14 @@ screens' polling and shared board contracts below remain unchanged.
 
 `ui-react/components/BotBar.jsx` (mounted once in `AppShell`, only once setup is ready) is a
 `position: fixed`, transparent strip of mascots along the bottom of every screen, one per Claude
-session of any kind (investigate, implement, review, groom or e2e check, or a standalone Chat, the one
+session of any kind (investigate, implement, review, groom, e2e check or review request, or a standalone Chat, the one
 kind that is not a ticket's; see below). It is an overlay: `pointer-events: none` on the strip and `auto` on the
 bots, z-index under the tooltip and dialogs, and it never scrolls the page. The room it needs is reserved by the
 page, not the strip: `--bot-bar-gutter` (`tokens.css`, from `--bot-bar-size` and `--bot-poster-*`, 104px) is the
 height of `#root:has(.bot-bar) > .panels::after` in `shell.css`, the last flex item of `.panels`, so a board gives
 up that height, the viewport-fill rule below still holds and no bar means no gutter. Keep it that way, and never put
 a dialog inside the strip (it would inherit the `pointer-events: none`). Which sessions get a bot is the single `SESSIONS` table in
-`ui/bot-bar.js` (every row does; `BOT_PHASES` is derived from it, so a new kind of session is one new row there, never a second list) (`investigate`, `implement`, `review`, `groom`, `e2e`: every session an entry carries, in draw order; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`; every phase but `review` opens `ClaudeDialog`), with the state mapping, the done time to live, the hold rule and the pure helpers; `none` and
+`ui/bot-bar.js` (every row does; `BOT_PHASES` is derived from it, so a new kind of session is one new row there, never a second list) (`investigate`, `implement`, `review`, `groom`, `e2e`, `reviewRequest`: every session an entry carries, in draw order; an e2e bot reads `entry.e2e` and is keyed `<KEY>:e2e`; every phase but `review` opens `ClaudeDialog`), with the state mapping, the done time to live, the hold rule and the pure helpers; `none` and
 `unknown` get no bot. A ticket session's bot also needs its ticket in an active Jira sprint: the pure filter
 `inActiveSprint` is applied to the sessions with the keys `useActiveSprintKeys` gets from
 `GET /api/active-sprint-tickets` (`fetchActiveSprintKeys` in `backend/jira.mjs`; per-ticket answers
@@ -160,7 +160,7 @@ status name, so `statuses` is a key -> status map, not a second call. It feeds t
 `heldDoneBots` holds a done **implement** bot past `DONE_TTL_MS` while its ticket's status is not a
 done-kind one (`jiraStatusKind` in `ui/jira-status.js` — Deployed, Complete, Closed, ...), and the bar
 passes that set to `liveBots` and `nextBotChange` so a held bot neither fades nor schedules a fade.
-Only implement holds; a done review, groom or e2e bot keeps the time to live. A status Jira did not
+Only implement holds; a done review, groom, e2e or review-request bot keeps the time to live. A status Jira did not
 report, an unrecognised one, or an `available: false` answer falls back to the time to live, never to
 "hold forever".
 

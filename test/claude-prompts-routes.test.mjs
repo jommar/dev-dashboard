@@ -21,6 +21,7 @@ import {
   REVIEW_TEMPLATE,
   SPEC_REVIEW_TEMPLATE,
   E2E_TEMPLATE,
+  REVIEW_REQUEST_TEMPLATE,
   IMPLEMENT,
   IMPLEMENT_TEMPLATE,
   INVESTIGATE,
@@ -90,7 +91,7 @@ const assertFailed = (res, label) => {
 
 // ---- GET /api/claude/prompts ----
 
-test('scenario 170: GET lists the eleven prompts in order, each the built-in text when there is no file', async (t) => {
+test('scenario 170: GET lists the twelve prompts in order, each the built-in text when there is no file', async (t) => {
   const f = await claudeHttpFixture(t);
 
   const res = await list(f);
@@ -124,6 +125,7 @@ test('scenario 171: GET shows a usable file as custom with its trimmed text, the
     promptEntry('review', 'default'),
     promptEntry('spec-review', 'default'),
     promptEntry('e2e', 'default'),
+    promptEntry('request-review', 'default'),
   ]);
 });
 
@@ -146,6 +148,7 @@ test('scenario 171: GET shows a file that cannot be used as unusable, with the b
     promptEntry('review', 'default'),
     promptEntry('spec-review', 'default'),
     promptEntry('e2e', 'default'),
+    promptEntry('request-review', 'default'),
   ]);
 });
 
@@ -190,6 +193,7 @@ test('scenario 173: PUT saves the trimmed text with one newline and answers with
     'groom.md',
     'implement.md',
     'investigate.md',
+    'request-review.md',
     'rereview.md',
     'review.md',
     'spec-review.md',
@@ -308,9 +312,10 @@ test('scenario 180: DELETE removes the file and answers with the built-in entry,
       'default',
       'default',
       'default',
+      'default',
     ],
   );
-  // Every registered prompt, including the three initial side-action prompts, supports reset.
+  // Every registered prompt, including the initial side-action prompts, supports reset.
   for (const name of PROMPT_NAMES) {
     assert.equal((await put(f, name, `custom ${name}`)).status, 200, `save ${name}`);
     const removed = await reset(f, name);
@@ -353,7 +358,7 @@ const UNKNOWN_PATHS = [
   PROMPTS,
 ];
 
-test('scenario 183: any name but the eleven is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
+test('scenario 183: any name but the twelve is the normal 404 for PUT and DELETE, and nothing is touched outside the prompts folder', async (t) => {
   const f = await claudeHttpFixture(t);
   // Where `../investigate` and `../answers` would land if a name became part of a path.
   fs.writeFileSync(path.join(f.root, 'investigate.md'), 'outside');
@@ -482,7 +487,7 @@ test('scenario 185: the prompt routes answer while setup is incomplete, like the
   const removed = await reset(f, 'implement');
 
   assert.equal(listed.status, 200);
-  assert.equal(listed.json().prompts.length, 11);
+  assert.equal(listed.json().prompts.length, 12);
   assert.equal(saved.status, 200);
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.json().prompt, promptEntry('implement', 'default'));
@@ -654,6 +659,7 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['review', 'default', withHarnessTokens(REVIEW_TEMPLATE)],
       ['spec-review', 'default', withHarnessTokens(SPEC_REVIEW_TEMPLATE)],
       ['e2e', 'default', withHarnessTokens(E2E_TEMPLATE)],
+      ['request-review', 'default', withHarnessTokens(REVIEW_REQUEST_TEMPLATE)],
     ],
   );
   assert.equal(replies.save.status, 200);
@@ -677,6 +683,7 @@ test('scenario 190: the dashboard with its default wiring lists, saves and reset
       ['review', 'default'],
       ['spec-review', 'default'],
       ['e2e', 'default'],
+      ['request-review', 'default'],
     ],
   );
   assert.deepEqual(fs.readdirSync(sandbox.elsewhere), [], 'nothing went to the working folder');

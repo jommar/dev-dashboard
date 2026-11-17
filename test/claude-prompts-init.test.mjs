@@ -1,4 +1,4 @@
-// claude-prompts-init.test.mjs — the starter prompt files: `npm run claude:prompts` writes the eleven
+// claude-prompts-init.test.mjs — the starter prompt files: `npm run claude:prompts` writes the twelve
 // built-in messages (placeholders intact) into the prompts folder, never over a file that is there.
 // Every test runs in a temp folder; the dashboard's real `prompts` folder is only ever looked at.
 import test from 'node:test';
@@ -17,6 +17,7 @@ import {
   REVIEW_TEMPLATE,
   SPEC_REVIEW_TEMPLATE,
   E2E_TEMPLATE,
+  REVIEW_REQUEST_TEMPLATE,
   EARLIER_ID,
   IMPLEMENT,
   IMPLEMENT_TEMPLATE,
@@ -53,6 +54,7 @@ const STARTERS = [
   ['review.md', withHarnessTokens(REVIEW_TEMPLATE)],
   ['spec-review.md', withHarnessTokens(SPEC_REVIEW_TEMPLATE)],
   ['e2e.md', withHarnessTokens(E2E_TEMPLATE)],
+  ['request-review.md', withHarnessTokens(REVIEW_REQUEST_TEMPLATE)],
 ];
 
 function tempRoot(t) {
@@ -82,7 +84,7 @@ const snapshot = (dir) =>
       ]),
   );
 
-test('scenario 130: it creates the prompts folder and writes the eleven built-in texts, placeholders intact', async (t) => {
+test('scenario 130: it creates the prompts folder and writes the twelve built-in texts, placeholders intact', async (t) => {
   const dir = path.join(tempRoot(t), 'nested', 'prompts');
 
   const result = await initPrompts({ dir, fs });
@@ -101,6 +103,7 @@ test('scenario 130: it creates the prompts folder and writes the eleven built-in
     'groom.md',
     'implement.md',
     'investigate.md',
+    'request-review.md',
     'rereview.md',
     'review.md',
     'spec-review.md',
@@ -148,6 +151,7 @@ test('scenario 131: a file that is already there is kept as it is, and only the 
       ['review.md', 'wrote'],
       ['spec-review.md', 'wrote'],
       ['e2e.md', 'wrote'],
+      ['request-review.md', 'wrote'],
     ],
   );
   const after = snapshot(dir);

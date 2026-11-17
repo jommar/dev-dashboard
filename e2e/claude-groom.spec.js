@@ -22,7 +22,7 @@ const PLAN_RESUME = {
   command: 'cd ~/pathwise && claude --resume 3f2b8c1e-5d4a-4e7b-9c60-1a2b3c4d5e6f',
 };
 const NOTE =
-  'Works on any ticket, on its own. Needs no plan and changes nothing in Jira until you say so.';
+  'Groom ticket works on any ticket, on its own. Needs no plan and changes nothing in Jira until you say so.';
 const RUNNING = 'A Claude session is already running for this ticket.';
 const UNAVAILABLE = 'Claude status is unavailable.';
 const PLAN_DONE = {

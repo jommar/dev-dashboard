@@ -1,7 +1,7 @@
 # Claude prompt overrides
 
 This folder holds local overrides for the dashboard's Claude launcher. This README is a guide,
-not a prompt: only the eleven exact filenames below are registered. Overrides (including nested
+not a prompt: only the twelve exact filenames below are registered. Overrides (including nested
 contents) stay gitignored; this guide is the only tracked file here.
 
 The prompts are one set for every [harness](../backend/harness/README.md): this folder and the
@@ -25,6 +25,7 @@ The shared editor, prompt API and `npm run claude:prompts` use this registry ord
 | `review.md`            | New code review session, including Start new review     | `{KEY}`, `{SLUG}`                                                |
 | `spec-review.md`       | Spec review launch                                      | `{KEY}`, `{SLUG}`, `{PR}`                                        |
 | `e2e.md`               | E2E ticket check launch                                 | `{KEY}`, `{SLUG}`, `{PORT}`                                      |
+| `request-review.md`    | Request code review launch                              | `{KEY}`, `{SLUG}`                                                |
 
 - `{KEY}` is the validated ticket key; `{SLUG}` is its lowercase form, used for the
   `.orchestrator/` folder name.
@@ -78,11 +79,11 @@ in the worktree on its own branch and never pushes or opens a pull request.
 ## Edit, apply and reset
 
 - **In the app:** open a ticket's Claude dialog in My Tickets, then **Prompts** in its footer.
-  The existing shared editor lists all eleven templates; the separate review dialog has no editor
+  The existing shared editor lists all twelve templates; the separate review dialog has no editor
   button. **Save** writes the corresponding file; **Reset to default** removes it. Reopen the
   editor to pick up hand edits made while it was open; saving uses the last writer's text.
 - **By hand:** create or edit one of the files above in this folder. Optionally run
-  `npm run claude:prompts` from the repository root to write all eleven built-in starters with
+  `npm run claude:prompts` from the repository root to write all twelve built-in starters with
   placeholders intact. The command keeps every existing override unchanged.
 - **Default:** a missing override uses the original built-in text. Delete the override or use
   **Reset to default** to restore it. Existing overrides are never automatically upgraded: if you

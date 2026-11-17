@@ -137,6 +137,7 @@ test('session chip words are the Sessions drawer phase words', async () => {
     review: 'review',
     groom: 'groom',
     e2e: 'e2e',
+    reviewRequest: 'reviewRequest',
   };
   for (const [entryPhase, drawerPhase] of Object.entries(drawerPhaseOf)) {
     assert.equal(sessionChipWords(entryPhase), PHASES[drawerPhase].words, entryPhase);

@@ -1,5 +1,5 @@
 // BotBar.jsx — the strip of mascots along the bottom of every screen: one bot per Claude session
-// (investigate, implement, review, groom or e2e check; BOT_PHASES in ui/bot-bar.js says which), each in the
+// (investigate, implement, review, groom, e2e check or review request; BOT_PHASES in ui/bot-bar.js says which), each in the
 // state of that session. A bot is a button: it opens the same Claude dialog the My Tickets card and
 // the PR card open. The strip is an overlay (position: fixed, see bot-bar.css) and takes no room; the
 // page keeps a gutter for it instead (shell.css), so a board gives up that height and stays one viewport

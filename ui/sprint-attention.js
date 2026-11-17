@@ -16,7 +16,7 @@ export const ATTENTION_REASONS = Object.freeze([
 ]);
 
 const REASON_INDEX = Object.fromEntries(ATTENTION_REASONS.map(({ id }, index) => [id, index]));
-const SIDE_SESSIONS = ['groom', 'review', 'specReview', 'e2e'];
+const SIDE_SESSIONS = ['groom', 'review', 'specReview', 'e2e', 'reviewRequest'];
 const OPEN_GROOM_VERDICTS = ['NEEDS_INFO', 'BLOCKED'];
 
 const isWaiting = (entry) =>

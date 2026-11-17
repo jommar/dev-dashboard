@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The Claude dialog's independent actions are now one row of three buttons, **Groom ticket**, **E2E check** and the new
+  **Request code review**. Request code review launches a background session that commits uncommitted work, checks every
+  acceptance criterion against unit tests and live local data, has a subagent review the diff, opens the pull request, and
+  has a subagent move the ticket, comment the criteria with the commit SHA and announce it in Slack before asking developers
+  for review in the thread. Its built-in prompt (`request-review`, the twelfth template) is general; name your own skills
+  in `prompts/request-review.md`. It gets a bot and a Sessions row like the other sessions, and a ticket with no workflow shows its state on the card icon and as a Sprint chip. See
+  [Request code review](README.md#request-code-review).
 - **Sprint** tab fixes: a ticket Jira files under Done (Rejected, Duplicate) now counts as finished, so it has no
   attention reason, no Groom button and is never groomed, and its points count as done; on the board those columns go
   after Done. The sprint list now comes from Jira's Agile board and sprint lists (at most 20 boards, three read at a

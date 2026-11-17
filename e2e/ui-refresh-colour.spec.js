@@ -141,5 +141,7 @@ test('Claude colour: the Chat tab, the Sessions tab and the dialog primary use -
   await expect(dialog).toBeVisible();
   const primary = dialog.locator('.claude-steps .btn.primary');
   await expect(primary).toHaveCount(1);
+  // The dialog is centred, so the pointer left on the icon can end up over the button (its hover tint).
+  await page.mouse.move(0, 0);
   await expect(primary).toHaveCSS('background-color', support);
 });
