@@ -40,6 +40,17 @@ function ticketKeysIn(text) {
   return keys;
 }
 
+// The distinct TAP keys of some ticket rows (`row.key`, TRIPS folded onto TAP), in order: what a
+// board asks Slack about.
+export function ticketKeysOfRows(rows) {
+  const keys = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = normalizeTicketKey(row?.key);
+    if (key) keys.add(key);
+  }
+  return [...keys];
+}
+
 // A thread's subject: the first line the list kept as `subjectText`, or, for a row that carries
 // only its text, that text's first non-empty line.
 function subjectOf(thread) {

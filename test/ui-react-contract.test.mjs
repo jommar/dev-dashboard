@@ -369,7 +369,7 @@ test('the Slack thread dialog renders the conversation without leaving the app',
   assert.match(dialog, /aria-labelledby=\{titleId\}/);
   // A response that lands after the dialog closed must not repaint it.
   assert.match(dialog, /if \(!live \|\| request\.current !== id\) return;/);
-  assert.match(dialog, /getSlackThread\(ts\)/);
+  assert.match(dialog, /getSlackThread\(ts, channel\)/);
   assert.match(dialog, /await getSlackStatus\(\)/);
   assert.match(dialog, /slackSessionIdentity\(status, sessionIdentity\) !== sessionIdentity/);
   assert.match(dialog, /parseSlackText/);
@@ -398,7 +398,7 @@ test('the Slack thread dialog renders the conversation without leaving the app',
   assert.match(dialog, /import \{ parseSlackText \} from '\.\.\/\.\.\/ui\/slack-mrkdwn\.js';/);
 
   const api = read('lib/api.js');
-  assert.match(api, /export async function getSlackThread\(ts\)/);
+  assert.match(api, /export async function getSlackThread\(ts, channel\)/);
   assert.match(api, /\/api\/slack\/thread\?ts=\$\{encodeURIComponent\(ts\)\}/);
   assert.match(api, /if \(!res\.ok\) return \{ available: false \};/);
 

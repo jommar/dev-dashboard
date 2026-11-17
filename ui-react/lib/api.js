@@ -203,11 +203,25 @@ export async function getSlackThreads(continuation) {
   }
 }
 
+// The Slack threads that name these tickets, in any conversation the user can see. Resolves
+// `{ available: false }` on failure, like the thread list.
+export async function getSlackTicketThreads(keys) {
+  try {
+    const res = await fetch(`/api/slack/ticket-threads?keys=${encodeURIComponent(keys.join(','))}`);
+    if (!res.ok) return { available: false };
+    return await res.json();
+  } catch {
+    return { available: false };
+  }
+}
+
 // The full conversation behind one row's glyph. Also resolves on failure, so a
 // disconnected Slack becomes a Retry in the dialog rather than an error there.
-export async function getSlackThread(ts) {
+// `channel` is the conversation of a thread the shared list does not cover (found by ticket search).
+export async function getSlackThread(ts, channel) {
   try {
-    const res = await fetch(`/api/slack/thread?ts=${encodeURIComponent(ts)}`);
+    const other = channel ? `&channel=${encodeURIComponent(channel)}` : '';
+    const res = await fetch(`/api/slack/thread?ts=${encodeURIComponent(ts)}${other}`);
     if (!res.ok) return { available: false };
     return await res.json();
   } catch {

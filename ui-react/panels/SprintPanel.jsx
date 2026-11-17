@@ -26,7 +26,7 @@ import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
 import { say } from '../../ui/harness.js';
 import { slug } from '../../ui/dom.js';
 import { boardColumns } from '../../ui/ticket-board.js';
-import { normalizeTicketKey } from '../../ui/slack-ticket-links.js';
+import { normalizeTicketKey, ticketKeysOfRows } from '../../ui/slack-ticket-links.js';
 import {
   ATTENTION_REASONS,
   CLAUDE_REASONS,
@@ -118,6 +118,7 @@ export function SprintPanel({ config, active }) {
     );
   }, []);
   // Mentions too: a sprint is mostly other people's tickets, whose threads someone else started.
+  const slackKeys = useMemo(() => ticketKeysOfRows(data?.tickets), [data]);
   const {
     loadSlack,
     openThread,
@@ -130,6 +131,7 @@ export function SprintPanel({ config, active }) {
     active,
     resolveOpener: resolveThreadOpener,
     includeMentions: true,
+    ticketKeys: slackKeys,
   });
 
   // Reads the team list, then the chosen sprint's tickets. Only the newest read may change the

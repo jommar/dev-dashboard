@@ -481,3 +481,19 @@ for (const [name, separator] of [
     assert.equal(built.subjectText, subjectText);
   });
 }
+
+test('ticketKeysOfRows lists each TAP key once, folding TRIPS and skipping other projects', async () => {
+  const { ticketKeysOfRows } = await import('../ui/slack-ticket-links.js');
+  assert.deepEqual(
+    ticketKeysOfRows([
+      { key: 'TAP-2' },
+      { key: 'trips-2' },
+      { key: 'TAP-9' },
+      { key: 'ABC-1' },
+      { key: null },
+      {},
+    ]),
+    ['TAP-2', 'TAP-9'],
+  );
+  assert.deepEqual(ticketKeysOfRows(undefined), []);
+});

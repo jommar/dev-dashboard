@@ -1595,6 +1595,17 @@ function slackResponse(url, method, { slack }, body) {
     if (pathname === '/api/slack/status') return { json: slack.status };
     if (pathname === '/api/slack/threads') return { json: slack.threads };
     if (pathname === '/api/slack/pending') return { json: slack.pending };
+    // The ticket search (any conversation): nothing found unless a spec sets `slack.ticketThreads`.
+    if (pathname === '/api/slack/ticket-threads')
+      return {
+        json: slack.ticketThreads ?? {
+          available: true,
+          threads: [],
+          partial: false,
+          truncated: false,
+          remaining: 0,
+        },
+      };
     if (pathname === '/api/slack/thread') {
       const thread = slack.threadReads?.[url.searchParams.get('ts')];
       return {

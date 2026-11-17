@@ -22,6 +22,9 @@ function attachedCount(thread) {
 // printing "undefined" or "NaN"; timeAgo already returns "" for a missing date.
 function threadLabel(thread, harness) {
   const parts = ['Slack thread'];
+  const where = thread?.channel;
+  // A channel is `#name`; a direct or group message is already worded ("Direct message").
+  if (where?.name) parts.push(where.kind === 'channel' ? `#${where.name}` : where.name);
   const replies = thread?.replyCount;
   if (Number.isFinite(replies)) parts.push(`${replies} ${replies === 1 ? 'reply' : 'replies'}`);
   const when = timeAgo(thread?.activityAt);

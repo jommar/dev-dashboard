@@ -15,11 +15,13 @@ import { build } from 'vite';
 // Baseline at b2eb63d: one entry chunk, 831 KiB raw, 252 KiB gzip -9, 164 kB of CSS.
 const KIB = 1024;
 const MAX_INITIAL_RAW = 640 * KIB;
-// Raised from 200 KiB for the merged-PR rows and their toggle on My Tickets.
-const MAX_INITIAL_GZIP = 201 * KIB;
+// Raised from 200 KiB for the merged-PR rows and their toggle on My Tickets, and again to 202 KiB
+// for the ticket-thread search (any channel) that the shared Slack thread hook now asks for.
+const MAX_INITIAL_GZIP = 202 * KIB;
 // A guard against bloat, not a target: lazy loading splits code, it must not add much of it.
-// Raised from 884 KiB for the lazy Sprint screen, which could not fit the 1.5 KiB that was left.
-const MAX_TOTAL_RAW = 900 * KIB;
+// Raised from 884 KiB for the lazy Sprint screen, which could not fit the 1.5 KiB that was left,
+// and to 902 KiB for the ticket-thread search in the shared Slack hook (about 1 KiB of eager code).
+const MAX_TOTAL_RAW = 902 * KIB;
 const MAX_TOTAL_CSS = 180 * KIB;
 // Modules that must load on demand: the five rarely used screens and the two dialogs, plus the
 // markdown renderer both the viewer and the chat pull in.
