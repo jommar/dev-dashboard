@@ -2,12 +2,15 @@
 // threads whose subject names them. No backend imports: this ships in the
 // browser bundle.
 //
-// Only the opening key or comma-separated list of keys names a thread; later
-// mentions do not. TRIPS keys fold onto TAP so older threads match renamed tickets.
+// The one rule that ties a Slack thread to tickets: every ticket key on the thread's subject line
+// (the first line of its opening message) names the thread, however the line is formatted. The
+// ticket boards' chips and the thread dialog's title both read `threadTicketKeys`. TRIPS keys fold
+// onto TAP so older threads match renamed tickets.
 
 const FULL_KEY = /^(?:TAP|TRIPS)-(\d+)$/i;
-const THREAD_KEY = /^\s*(?:TAP|TRIPS)-(\d+)\b/i;
-const NEXT_KEY = /^\s*,\s*([A-Z][A-Z0-9_]*-\d+)\b/i;
+// A key inside a slug: bounded by "-" or the string's edge on both sides, so TAP-1234 is not
+// TAP-123 and STAP-123 or laptap-123 is no key at all.
+const KEY_IN_SLUG = /(?:^|-)(?:tap|trips)-(\d+)(?=-|$)/g;
 
 // A key of this project becomes "TAP-<number>"; anything else (another project,
 // a bare number, a non-string) becomes "".
@@ -23,28 +26,44 @@ export function canonicalTicketKey(value) {
   return normalizeTicketKey(value) || (typeof value === 'string' ? value.trim() : '');
 }
 
-// The ticket a thread belongs to, or "" when its text does not open with a key.
-export function ticketKeyFromThread(text) {
-  if (typeof text !== 'string') return '';
-  const match = text.match(THREAD_KEY);
-  return match ? normalizeTicketKey(match[0]) : '';
-}
-
-function ticketKeysFromThread(text) {
+// Every ticket key a line names, wherever it sits. The line is slugified first (lower case, each
+// run of anything but a letter or digit becomes one "-"), which drops the formatting Slack leaves
+// in a subject (_italics_, ~strike~, [brackets], emoji, link syntax, odd hyphens, "TAP 123").
+function ticketKeysIn(text) {
   const keys = new Set();
   if (typeof text !== 'string') return keys;
-  const first = text.match(THREAD_KEY);
-  if (!first) return keys;
-  keys.add(normalizeTicketKey(first[0]));
-  let remaining = text.slice(first[0].length);
-  while (true) {
-    const match = remaining.match(NEXT_KEY);
-    if (!match) break;
-    const key = normalizeTicketKey(match[1]);
-    if (key) keys.add(key);
-    remaining = remaining.slice(match[0].length);
-  }
+  const slug = text
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-');
+  for (const match of slug.matchAll(KEY_IN_SLUG)) keys.add(`TAP-${match[1]}`);
   return keys;
+}
+
+// The distinct TAP keys of some ticket rows (`row.key`, TRIPS folded onto TAP), in order: what a
+// board asks Slack about.
+export function ticketKeysOfRows(rows) {
+  const keys = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = normalizeTicketKey(row?.key);
+    if (key) keys.add(key);
+  }
+  return [...keys];
+}
+
+// A thread's subject: the first line the list kept as `subjectText`, or, for a row that carries
+// only its text, that text's first non-empty line.
+function subjectOf(thread) {
+  if (thread?.subjectText !== undefined) return thread.subjectText;
+  const text = thread?.text;
+  if (typeof text !== 'string') return '';
+  return text.split(/\r\n|[\r\n\u2028\u2029]/).find((line) => line.trim()) ?? '';
+}
+
+// The tickets a thread names, in the order they appear, each once ("" never): an empty list for a
+// thread whose subject names none.
+export function threadTicketKeys(thread) {
+  return [...ticketKeysIn(subjectOf(thread))];
 }
 
 // ISO-8601 strings already sort chronologically as text, so the string itself is
@@ -72,12 +91,7 @@ export function threadsByTicket(started) {
   if (!Array.isArray(started)) return byTicket;
   for (const thread of started) {
     if (!thread?.url) continue;
-    const keys =
-      thread.subjectText === undefined
-        ? [ticketKeyFromThread(thread.text)]
-        : ticketKeysFromThread(thread.subjectText);
-    for (const key of keys) {
-      if (!key) continue;
+    for (const key of threadTicketKeys(thread)) {
       // Fresh arrays hold the caller's thread objects: neither the list nor the
       // threads themselves are touched.
       const bucket = byTicket.get(key);

@@ -14,6 +14,7 @@ import { UpstreamNote } from '../components/UpstreamNote.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
+import { ticketKeysOfRows } from '../../ui/slack-ticket-links.js';
 import { useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { useHarness } from '../lib/harness-context.js';
 import { say } from '../../ui/harness.js';
@@ -94,6 +95,11 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
   const prRequest = useRef(0);
   const specRequest = useRef(0);
   const claude = useClaudeTickets({ active });
+  // What Slack is asked about: the tickets on screen, wherever a thread about them lives.
+  const slackKeys = useMemo(
+    () => ticketKeysOfRows(data?.tickets || Object.values(data?.groupsByCategory || {}).flat()),
+    [data],
+  );
   const {
     loadSlack,
     openThread,
@@ -103,7 +109,7 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
     staleReplyWarning,
     standaloneWarning,
     incomplete,
-  } = useTicketSlackThreads({ source: 'my-tickets', active });
+  } = useTicketSlackThreads({ source: 'my-tickets', active, ticketKeys: slackKeys });
   // PR status is optional in the same way. The last good map stays on screen when
   // a refresh fails, and only the newest request may change the state.
   const loadPrs = useCallback(async () => {

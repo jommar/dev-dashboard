@@ -1,12 +1,12 @@
-// slack-ticket-links.test.mjs — "<KEY>: <subject>" threads to ticket keys.
+// slack-ticket-links.test.mjs — Slack threads to ticket keys: any key on the subject line.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildThread } from '../backend/slack-model.mjs';
 import {
   canonicalTicketKey,
   normalizeTicketKey,
+  threadTicketKeys,
   threadsByTicket,
-  ticketKeyFromThread,
 } from '../ui/slack-ticket-links.js';
 
 const URL = 'https://app.slack.com/client/T1/C1/thread/C1-1793192214.548389';
@@ -61,26 +61,84 @@ test('canonical keys fold TRIPS onto TAP and keep every other project key as typ
   assert.equal(canonicalTicketKey(1543), '');
 });
 
-test('only a key that starts the thread text names the thread', () => {
-  assert.equal(ticketKeyFromThread('TAP-1765: CS migration pre-check'), 'TAP-1765');
-  assert.equal(ticketKeyFromThread('  TAP-1765: CS migration pre-check'), 'TAP-1765');
-  assert.equal(ticketKeyFromThread('\n\tTAP-1765 no subject'), 'TAP-1765');
-  assert.equal(ticketKeyFromThread('TRIPS-2165: trips spelling'), 'TAP-2165');
-  assert.equal(ticketKeyFromThread('tap-9: lower case'), 'TAP-9');
-  assert.equal(ticketKeyFromThread('Trips-9: mixed case'), 'TAP-9');
-  assert.equal(ticketKeyFromThread('TAP-1765'), 'TAP-1765');
-  assert.equal(ticketKeyFromThread('a note about TAP-1765'), '');
-  assert.equal(ticketKeyFromThread('follow-up to TAP-1765 from yesterday'), '');
-  assert.equal(ticketKeyFromThread('X-TAP-1765: prefixed'), '');
-  assert.equal(ticketKeyFromThread('TicketsTAP-1765'), '');
-  assert.equal(ticketKeyFromThread('TAP-1765abc: not a key'), '');
-  assert.equal(ticketKeyFromThread('ABC-1: other project'), '');
-  assert.equal(ticketKeyFromThread('no ticket here'), '');
-  assert.equal(ticketKeyFromThread(''), '');
-  assert.equal(ticketKeyFromThread('   '), '');
-  assert.equal(ticketKeyFromThread(null), '');
-  assert.equal(ticketKeyFromThread(undefined), '');
-  assert.equal(ticketKeyFromThread(1765), '');
+const keysOf = (subjectText) => threadTicketKeys({ subjectText });
+
+test('every ticket key on the subject line names the thread, wherever it sits', () => {
+  assert.deepEqual(keysOf('TAP-1765: CS migration pre-check'), ['TAP-1765']);
+  assert.deepEqual(keysOf('  TAP-1765: CS migration pre-check'), ['TAP-1765']);
+  assert.deepEqual(keysOf('TRIPS-2165: trips spelling'), ['TAP-2165']);
+  assert.deepEqual(keysOf('tap-9: lower case'), ['TAP-9']);
+  assert.deepEqual(keysOf('Trips-9: mixed case'), ['TAP-9']);
+  assert.deepEqual(keysOf('TAP-1765'), ['TAP-1765']);
+  assert.deepEqual(keysOf('a note about TAP-1765'), ['TAP-1765']);
+  assert.deepEqual(keysOf('follow-up to TAP-1765 from yesterday'), ['TAP-1765']);
+  assert.deepEqual(keysOf("TAP-2001's test PRs are not blocked"), ['TAP-2001']);
+  assert.deepEqual(keysOf('TAP-1, TAP-2 fix'), ['TAP-1', 'TAP-2']);
+  assert.deepEqual(keysOf('TAP-2201 is complete; TAP-2203, TAP-2250 and TAP-1500 are reopened'), [
+    'TAP-2201',
+    'TAP-2203',
+    'TAP-2250',
+    'TAP-1500',
+  ]);
+  assert.deepEqual(keysOf('TAP-1 and TRIPS-1 and tap-1'), ['TAP-1']);
+});
+
+test('slack formatting around a key does not hide it', () => {
+  for (const subject of [
+    '_TAP-123: italic_',
+    '*TAP-123: bold*',
+    '~TAP-123~ struck',
+    '`TAP-123` code',
+    ':memo: TAP-123: emoji first',
+    '[TAP-123] brackets',
+    '(TAP-123) parentheses',
+    '> TAP-123 quoted',
+    '• TAP-123 bullet',
+    'Spec: TAP-123 label first',
+    '_Spec and plan: TAP-123 italic label_ Draft PR',
+    '@Someone TAP-123 mention first',
+    'TAP 123: a space for the hyphen',
+    'TAP‑123: non-breaking hyphen',
+    '​TAP-123: zero-width space',
+    'ＴＡＰ－123: full-width letters',
+    'https://pathwise.atlassian.net/browse/TAP-123 a bare link',
+    'TAP-123 (pathwise.atlassian.net/browse/TAP-123): link repeats the key',
+  ]) {
+    assert.deepEqual(keysOf(subject), ['TAP-123'], subject);
+  }
+});
+
+test('text that only looks like a key names nothing', () => {
+  for (const subject of [
+    'STAP-123: glued to a letter',
+    'laptap-123 and wiretap-5',
+    'TAP-123abc: not a key',
+    'TAP-: no number',
+    'TAP: no number',
+    'TAP123: no hyphen',
+    'ABC-1: other project',
+    'EZAT-123: other project',
+    'PR #123 and a tap dance',
+    'no ticket here',
+    '',
+    '   ',
+  ]) {
+    assert.deepEqual(keysOf(subject), [], subject);
+  }
+  assert.deepEqual(keysOf('TAP-1234: a longer number is not a shorter one'), ['TAP-1234']);
+  for (const value of [null, undefined, 1765, {}]) assert.deepEqual(keysOf(value), []);
+  assert.deepEqual(threadTicketKeys(null), []);
+  assert.deepEqual(threadTicketKeys(undefined), []);
+  assert.deepEqual(threadTicketKeys({}), []);
+});
+
+test('a row with only its text is read on its first non-empty line', () => {
+  assert.deepEqual(threadTicketKeys({ text: 'TAP-1: first line\nTAP-2: second line' }), ['TAP-1']);
+  assert.deepEqual(threadTicketKeys({ text: '\n\r\n  \nSpec: TAP-3 after blank lines\nTAP-4' }), [
+    'TAP-3',
+  ]);
+  assert.deepEqual(threadTicketKeys({ text: 'no key TAP-5 on a Unicode line' }), []);
+  assert.deepEqual(threadTicketKeys({ text: 7 }), []);
 });
 
 test('threads group under their ticket with the newest activity first', () => {
@@ -147,9 +205,9 @@ test('threads group under their ticket with the newest activity first', () => {
   assert.deepEqual(started, snapshot);
 });
 
-test('threads without a leading key or without a link never join a ticket', () => {
+test('threads without a key or without a link never join a ticket', () => {
   const started = freezeTree([
-    thread({ ts: '1', text: 'note: TAP-1765 came up in standup' }),
+    thread({ ts: '1', text: 'note: nothing about a ticket came up in standup' }),
     thread({ ts: '2', text: 'TAP-1765: empty link', url: '' }),
     thread({ ts: '3', text: 'TAP-1765: null link', url: null }),
     thread({ ts: '4', text: 'TAP-1765: missing link', url: undefined }),
@@ -178,7 +236,7 @@ function syntheticKey(project, suffix) {
   return `${project}-${'9'.repeat(30)}${suffix}`;
 }
 
-test('one shared thread links to all four leading tickets, including renamed aliases', () => {
+test('one shared thread links to all four listed tickets, including renamed aliases', () => {
   const listed = [
     syntheticKey('trips', 1),
     syntheticKey('TAP', 2),
@@ -189,7 +247,7 @@ test('one shared thread links to all four leading tickets, including renamed ali
   const subjectText = ` \t${listed.join(', ')}: Shared work`;
   const shared = thread({ text: subjectText, subjectText });
 
-  assert.equal(ticketKeyFromThread(shared.text), expected[0]);
+  assert.deepEqual(threadTicketKeys(shared), expected);
   assert.deepEqual(
     [...threadsByTicket([shared])],
     expected.map((key) => [key, [shared]]),
@@ -218,7 +276,7 @@ test('repeated leading tickets and their aliases link a thread only once per tic
   );
 });
 
-test('later mentions do not link threads that start with a ticket list', () => {
+test('a ticket named later on the subject line links the thread like a leading one', () => {
   const first = syntheticKey('TAP', 1);
   const second = syntheticKey('TAP', 2);
   const mentionedLater = syntheticKey('TAP', 3);
@@ -228,9 +286,9 @@ test('later mentions do not link threads that start with a ticket list', () => {
   const unrelated = thread({ text: unrelatedText, subjectText: unrelatedText });
   const grouped = threadsByTicket([shared, unrelated]);
 
-  assert.equal(grouped.has(mentionedLater), false);
-  assert.deepEqual(grouped.get(first), [shared]);
-  assert.deepEqual(grouped.get(second), [shared]);
+  assert.deepEqual(grouped.get(first), [shared, unrelated]);
+  assert.deepEqual(grouped.get(second), [shared, unrelated]);
+  assert.deepEqual(grouped.get(mentionedLater), [shared]);
 });
 
 test('shared threads retain newest-first ordering and stable ties for every ticket', () => {
@@ -285,7 +343,7 @@ test('shared threads without a link do not join any listed ticket', () => {
   assert.deepEqual(started, snapshot);
 });
 
-test('unsupported projects within a leading list are skipped without changing where matching starts', () => {
+test('keys of other projects on the subject line are skipped, the rest still link', () => {
   const first = syntheticKey('TAP', 1);
   const second = syntheticKey('TAP', 2);
   const otherProject = syntheticKey('OTHER', 3);
@@ -298,18 +356,28 @@ test('unsupported projects within a leading list are skipped without changing wh
   assert.deepEqual(
     [...threadsByTicket([shared, unrelated])],
     [
-      [first, [shared]],
-      [second, [shared]],
+      [first, [shared, unrelated]],
+      [second, [shared, unrelated]],
+      [mentionedLater, [shared]],
     ],
   );
 });
 
-test('a cached thread without a subject only links its first key even when its text looks like a list', () => {
+test('a cached thread without a subject links every key on its first line', () => {
   const first = syntheticKey('TAP', 1);
   const second = syntheticKey('TAP', 2);
-  const cached = thread({ text: `${syntheticKey('TRIPS', 1)}, ${second}: Flattened text` });
+  const later = syntheticKey('TAP', 3);
+  const cached = thread({
+    text: `${syntheticKey('TRIPS', 1)}, ${second}: First line\n${later}: Second line`,
+  });
 
-  assert.deepEqual([...threadsByTicket([cached])], [[first, [cached]]]);
+  assert.deepEqual(
+    [...threadsByTicket([cached])],
+    [
+      [first, [cached]],
+      [second, [cached]],
+    ],
+  );
 });
 
 test('matching uses the preserved subject instead of a different flattened text', () => {
@@ -413,3 +481,19 @@ for (const [name, separator] of [
     assert.equal(built.subjectText, subjectText);
   });
 }
+
+test('ticketKeysOfRows lists each TAP key once, folding TRIPS and skipping other projects', async () => {
+  const { ticketKeysOfRows } = await import('../ui/slack-ticket-links.js');
+  assert.deepEqual(
+    ticketKeysOfRows([
+      { key: 'TAP-2' },
+      { key: 'trips-2' },
+      { key: 'TAP-9' },
+      { key: 'ABC-1' },
+      { key: null },
+      {},
+    ]),
+    ['TAP-2', 'TAP-9'],
+  );
+  assert.deepEqual(ticketKeysOfRows(undefined), []);
+});

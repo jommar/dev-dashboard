@@ -496,6 +496,20 @@ differences passed in rather than forked:
   `incomplete` (partial, truncated or either warning). Each panel adds its own causes (Slack:
   replies still being checked, a stale update, threads it cannot place; My Tickets: a continuation)
   and words its own note.
+- `threadTicketKeys(thread)` in `ui/slack-ticket-links.js` — the one rule that ties a Slack thread to
+  tickets: every `TAP`/`TRIPS` key on the thread's subject line (`subjectText`, the first line of the
+  opening message), found in the slugified line so formatting (`_italics_`, labels, brackets, links)
+  never hides one, bounded by `-` so `TAP-12` is not `TAP-1` and `STAP-1` is nothing. `threadsByTicket`
+  (the card chips) and the thread dialog's title both call it; never add a second key regex for Slack text.
+- **Threads in any conversation come from `backend/slack-ticket-threads.mjs`, not the board.** The hook's
+  `ticketKeys` option (each panel's `ticketKeysOfRows` of its tickets) asks `GET /api/slack/ticket-threads`
+  after the list read, fired and never awaited; one `search.messages` per key, bounded per request
+  (`SEARCH_BUDGET` 8 uncached keys, a rate limit stops the request, answers cached 15 min, failures 60 s), and
+  the hook re-asks every 20 s while `remaining > 0` (12 times at most). A hit counts only as an opening message
+  whose first line `threadTicketKeys` matches. A thread's identity is `channelId:ts`, never `ts` alone (the
+  hook's merge and `isVerifiedRoot` both key on it); `slack.thread(ts, channel)` reads another channel only
+  for a thread this module listed. `slack-board.mjs` stays single-channel and is not to be retrofitted; it only
+  exports `searchRoot`.
 - `readScroll` / `writeScroll` in `hooks/usePreservedInteraction.js` — the one way a scroll place
   is read and put back by `data-testid`; `Board` (per re-render) and `useSectionScroll` (per view)
   both use it.
@@ -854,7 +868,7 @@ team's sprint. README "Sprint" has the user-facing rules and the reply shapes.
   `includeMentions: true` (a sprint is mostly other people's tickets, as on Pull Requests); `loadSlack()` is fired from
   the panel's own `load`, never awaited, so the tickets never wait on Slack. No Slack route, method call or
   `/api/slack` literal of this screen's own: the hook's existing reads (`GET /api/slack/status` and the route-cached
-  `GET /api/slack/threads`) are the only ones.
+  `GET /api/slack/threads`, and the ticket search `GET /api/slack/ticket-threads`) are the only ones.
   The card's chips are `SlackThreadLinks`, looked up by `normalizeTicketKey` (TAP and TRIPS only), opened through the
   hook's `openThread` with `selectedTicketKey`, and its `dialog` is rendered inside the panel after the section. The
   coverage note is `sprint-board-slack-coverage` (the hook's `incomplete` or a `continuation`); it starts open
@@ -904,13 +918,13 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
   listener, `openBot`, `openClaude`), so the first press is never lost and React's 300 ms fallback
   throttle never shows. The review row of a bot still opens the eager `ClaudePlaceholderDialog`.
 - `test/bundle-budget.test.mjs` builds in memory (never `dist/`) and holds initial JS to 640 KiB raw and
-  201 KiB gzip -9 (raised from 200 for the merged-PR rows); a new eager import of a lazy module fails it. `vite.config.js` is pinned by
+  202 KiB gzip -9 (raised from 200 for the merged-PR rows, then for the ticket-thread search); a new eager import of a lazy module fails it. `vite.config.js` is pinned by
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
 - **The first-paint gzip, all-JS and CSS margins are thin.** With the Sprint tab and its Slack threads the initial
-  closure is 645,708 B raw (631 KiB) and 205,249 B gzip against 205,824 (201 KiB; 575 B spare), all JS is 919,892 B
-  against `MAX_TOTAL_RAW`, 900 KiB (921,600 B; raised from 884 KiB for the lazy Sprint screen), so 1,708 B spare
-  (the Sprint screen's Slack wiring reuses eager modules and split none out), and all CSS is 181,863 B against
-  180 KiB (184,320 B), 2,457 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
+  closure is 647,568 B raw (632 KiB) and 205,830 B gzip against 206,848 (202 KiB; 1,018 B spare), all JS is 922,480 B
+  against `MAX_TOTAL_RAW`, 902 KiB (923,648 B; raised from 884 KiB for the lazy Sprint screen, then for the
+  ticket-thread search in the shared Slack hook), so 1,168 B spare, and all CSS is 181,958 B against
+  180 KiB (184,320 B), 2,362 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
   test with no apparent cause. A lazy screen that imports a module the entry also uses can split it into an initial
   chunk of its own: `SprintPanel` therefore opens `ClaudeDialog` after `loadClaudeDialog()` instead of importing
   `LazyDialog` from `ScreenSlot`, and the Sprint card keeps a copy of the phase words instead of importing

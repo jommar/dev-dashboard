@@ -418,12 +418,13 @@ test('a shared Slack thread opens with the selected card key @regression', async
   const data = ticketBoardData(dashboard.data);
   const [sample] = data.tickets.tickets;
   const project = sample.key.split('-')[0];
-  const keys = Array.from({ length: 3 }, (_, index) => `${project}-${900000000000 + index}`);
+  const keys = Array.from({ length: 4 }, (_, index) => `${project}-${900000000000 + index}`);
   data.tickets.tickets = keys.map((key) => ({ ...sample, key }));
 
   const [thread] = data.slack.threads.started;
-  thread.text = `${keys[0]}, ${keys[1]}: shared subject mentioning ${keys[2]}`;
-  thread.subjectText = thread.text;
+  // Any key on the subject line counts, wherever it sits; a key past the first line does not.
+  thread.text = `${keys[0]}, ${keys[1]}: shared subject mentioning ${keys[2]}\nlater: ${keys[3]}`;
+  thread.subjectText = `${keys[0]}, ${keys[1]}: shared subject mentioning ${keys[2]}`;
   data.slack.threads.started = [thread];
   const root = data.slack.threadReads[thread.ts].messages[0];
   root.text = thread.text;
@@ -432,8 +433,8 @@ test('a shared Slack thread opens with the selected card key @regression', async
   await openBoard(page);
   const chipOf = (key) =>
     page.getByTestId(`my-tickets-item-${key}`).getByTestId(`slack-thread-link-${thread.ts}`);
-  await expect(page.getByTestId(`my-tickets-item-${keys[2]}`)).toBeVisible();
-  for (const key of keys.slice(0, 2)) {
+  await expect(page.getByTestId(`my-tickets-item-${keys[3]}`)).toBeVisible();
+  for (const key of keys.slice(0, 3)) {
     const chip = chipOf(key);
     await expect(chip).toBeVisible();
     await chip.click();
@@ -448,7 +449,56 @@ test('a shared Slack thread opens with the selected card key @regression', async
     await dialog.getByTestId('slack-thread-close').click();
     await expect(dialog).toHaveCount(0);
   }
-  await expect(chipOf(keys[2])).toHaveCount(0);
+  await expect(chipOf(keys[3])).toHaveCount(0);
+});
+
+test('a thread found by ticket search in another channel gets a chip that names the channel @regression', async ({
+  page,
+  dashboard,
+}) => {
+  const data = ticketBoardData(dashboard.data);
+  const [sample] = data.tickets.tickets;
+  const key = `${sample.key.split('-')[0]}-900000000020`;
+  data.tickets.tickets = [{ ...sample, key }];
+  data.slack.threads.started = [];
+
+  const [base] = Object.values(data.slack.threadReads);
+  const ts = '1794916500.000100';
+  const text = `${key}: review in another channel`;
+  data.slack.threadReads[ts] = {
+    ...structuredClone(base),
+    ts,
+    channel: { id: 'C0CA4BAGF44', name: 'piq_claudio', kind: 'channel' },
+    messages: [{ ...structuredClone(base.messages[0]), ts, text, mrkdwn: text }],
+  };
+  data.slack.ticketThreads = {
+    available: true,
+    partial: false,
+    truncated: false,
+    remaining: 0,
+    threads: [
+      {
+        ts,
+        text,
+        subjectText: text,
+        replyCount: 2,
+        needsReply: false,
+        activityAt: new Date().toISOString(),
+        url: `https://example.slack.com/archives/C0CA4BAGF44/p${ts.replace('.', '')}`,
+        watchKey: `C0CA4BAGF44:${ts}`,
+        channel: { id: 'C0CA4BAGF44', name: 'piq_claudio', kind: 'channel' },
+      },
+    ],
+  };
+
+  await openBoard(page);
+  const chip = page.getByTestId(`my-tickets-item-${key}`).getByTestId(`slack-thread-link-${ts}`);
+  await expect(chip).toBeVisible();
+  await expect(chip).toHaveAttribute('aria-label', /#piq_claudio/);
+  await chip.click();
+  await expect(
+    page.getByTestId('slack-thread-dialog').getByTestId(`slack-thread-message-${ts}`),
+  ).toContainText(text);
 });
 
 test('a legacy-project card opens its Slack thread with the displayed key @regression', async ({

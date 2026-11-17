@@ -10,7 +10,7 @@ import { getSlackStatus, getSlackThread } from '../lib/api.js';
 import { copyText } from '../../ui/dom.js';
 import { slackSessionIdentity } from '../../ui/slack-activity.js';
 import { parseSlackText } from '../../ui/slack-mrkdwn.js';
-import { ticketKeyFromThread } from '../../ui/slack-ticket-links.js';
+import { threadTicketKeys } from '../../ui/slack-ticket-links.js';
 
 const AVATAR_TONES = 4;
 
@@ -136,6 +136,8 @@ export function SlackThreadDialog({
   const sessionMismatch = useRef(onSessionMismatch);
   const titleId = useId();
   const ts = thread?.ts || '';
+  // A thread found outside the shared list's channel says where it lives.
+  const channel = thread?.channel?.id || '';
   const [attempt, setAttempt] = useState(0);
   const [load, setLoad] = useState({ status: 'idle', data: null });
   const [copy, setCopy] = useState('idle');
@@ -193,7 +195,7 @@ export function SlackThreadDialog({
     setLoad({ status: 'loading', data: null });
     setCopy('idle');
     clearTimeout(copyTimer.current);
-    getSlackThread(ts)
+    getSlackThread(ts, channel)
       .then(async (result) => {
         // A response that lands after the dialog closed or moved to another
         // thread must not repaint it.
@@ -219,7 +221,7 @@ export function SlackThreadDialog({
     return () => {
       live = false;
     };
-  }, [ts, attempt, sessionIdentity]);
+  }, [ts, channel, attempt, sessionIdentity]);
 
   useEffect(() => () => clearTimeout(copyTimer.current), []);
 
@@ -243,17 +245,18 @@ export function SlackThreadDialog({
 
   const data = load.status === 'ready' ? load.data : null;
   const messages = data?.messages || [];
-  // A mentions row previews the mentioning message rather than the subject, so
-  // the loaded root message supplies a key the preview cannot. Plain `text`, not
-  // mrkdwn: a key buried in emphasis would not be a subject prefix.
+  // The title names the first ticket the thread's subject line names (the same rule the card
+  // chips match by); the loaded root message supplies one for a row that carries no subject.
   const ticketKey =
     thread.selectedTicketKey ||
-    ticketKeyFromThread(thread.text) ||
-    ticketKeyFromThread(messages[0]?.text);
+    threadTicketKeys(thread)[0] ||
+    threadTicketKeys({ text: messages[0]?.text })[0];
   const title = ticketKey ? `${ticketKey} · Slack thread` : 'Slack thread';
   const replies = Number.isFinite(data?.replyCount) ? data.replyCount : null;
   const subtitle = [
-    data?.channel?.name ? `#${data.channel.name}` : '',
+    data?.channel?.name
+      ? `${data.channel.kind && data.channel.kind !== 'channel' ? '' : '#'}${data.channel.name}`
+      : '',
     replies === null ? '' : `${replies} ${replies === 1 ? 'reply' : 'replies'}`,
   ]
     .filter(Boolean)
