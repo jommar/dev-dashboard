@@ -418,12 +418,13 @@ test('a shared Slack thread opens with the selected card key @regression', async
   const data = ticketBoardData(dashboard.data);
   const [sample] = data.tickets.tickets;
   const project = sample.key.split('-')[0];
-  const keys = Array.from({ length: 3 }, (_, index) => `${project}-${900000000000 + index}`);
+  const keys = Array.from({ length: 4 }, (_, index) => `${project}-${900000000000 + index}`);
   data.tickets.tickets = keys.map((key) => ({ ...sample, key }));
 
   const [thread] = data.slack.threads.started;
-  thread.text = `${keys[0]}, ${keys[1]}: shared subject mentioning ${keys[2]}`;
-  thread.subjectText = thread.text;
+  // Any key on the subject line counts, wherever it sits; a key past the first line does not.
+  thread.text = `${keys[0]}, ${keys[1]}: shared subject mentioning ${keys[2]}\nlater: ${keys[3]}`;
+  thread.subjectText = `${keys[0]}, ${keys[1]}: shared subject mentioning ${keys[2]}`;
   data.slack.threads.started = [thread];
   const root = data.slack.threadReads[thread.ts].messages[0];
   root.text = thread.text;
@@ -432,8 +433,8 @@ test('a shared Slack thread opens with the selected card key @regression', async
   await openBoard(page);
   const chipOf = (key) =>
     page.getByTestId(`my-tickets-item-${key}`).getByTestId(`slack-thread-link-${thread.ts}`);
-  await expect(page.getByTestId(`my-tickets-item-${keys[2]}`)).toBeVisible();
-  for (const key of keys.slice(0, 2)) {
+  await expect(page.getByTestId(`my-tickets-item-${keys[3]}`)).toBeVisible();
+  for (const key of keys.slice(0, 3)) {
     const chip = chipOf(key);
     await expect(chip).toBeVisible();
     await chip.click();
@@ -448,7 +449,7 @@ test('a shared Slack thread opens with the selected card key @regression', async
     await dialog.getByTestId('slack-thread-close').click();
     await expect(dialog).toHaveCount(0);
   }
-  await expect(chipOf(keys[2])).toHaveCount(0);
+  await expect(chipOf(keys[3])).toHaveCount(0);
 });
 
 test('a legacy-project card opens its Slack thread with the displayed key @regression', async ({
