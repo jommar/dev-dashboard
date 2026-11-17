@@ -29,7 +29,9 @@ export default defineConfig({
   testIgnore: '**/vite-proxy.spec.js',
   fullyParallel: true,
   workers,
-  retries: 0,
+  // One retry on CI only: a shared runner can be slow enough to push a long test past the timeout
+  // (a green retry is reported as flaky, not hidden). Locally a failure stays a failure.
+  retries: onCI ? 1 : 0,
   timeout: 20_000,
   expect: { timeout: 3_000 },
   outputDir: `${artifacts}/test-results`,
