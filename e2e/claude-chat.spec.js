@@ -244,8 +244,9 @@ test('scenario 15: a chat has a bot and a drawer row outside the sprint filter, 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const recent = '3f2b8c1a-5d4e-4f60-9a7b-1c2d3e4f5a6b';
   const stale = '9a8b7c6d-1e2f-4a3b-8c4d-5e6f7a8b9c0d';
-  // One ticket session in no active sprint, so the sprint is asked about something, and two chats.
-  dashboard.data.claude.tickets['BOT-1'] = claudeEntry('working', 'running', {
+  // One finished ticket session in no active sprint (a live one would still get a bot), so the
+  // sprint is asked about something, and two chats.
+  dashboard.data.claude.tickets['BOT-1'] = claudeEntry('done', 'implemented', {
     phase: 'implement-plan',
   });
   dashboard.data.claude.activeSprint.keys = [];

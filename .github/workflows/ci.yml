@@ -36,10 +36,17 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
   # Reports but never blocks: no `needs`, and a failure here does not fail the run.
+  # Four parallel runners each take a quarter of the specs (`--shard`), so the wall time is about a
+  # quarter of one runner's. Two workers per runner stays: more fail the timing-based specs.
   e2e:
+    name: e2e (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -51,7 +58,7 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser tests
-        run: npm run test:ui
+        run: npm run test:ui -- --shard=${{ matrix.shard }}/4
         env:
           # The runner has fewer cores than the config's default of 4 workers; at 4, timing-based specs fail.
           PW_WORKERS: 2
@@ -59,6 +66,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: test/.settings-verification/playwright-report
           if-no-files-found: ignore

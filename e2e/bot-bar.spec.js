@@ -11,7 +11,8 @@ import { roamFor, walkStretch } from '../ui/bot-bar.js';
 //   BOT-4  implement session failed       -> "BOT-4 implement: failed"
 //   BOT-5  nothing ever started (investigate none, groom none, review none): no bot
 //   BOT-6  implement session unknown: no bot
-//   BOT-7  review working and BOT-8 implement done, but in no active sprint: no bot
+//   BOT-7  review done and BOT-8 implement done, but in no active sprint: no bot
+//          (a live session of such a ticket would get a bot: see `isLive` in `inActiveSprint`)
 //   The active sprint holds BOT-1 to BOT-6.
 const SESSIONS = {
   'BOT-1': claudeEntry('working', 'running', { phase: 'implement-plan' }),
@@ -24,7 +25,7 @@ const SESSIONS = {
   'BOT-4': claudeEntry('failed', 'ended_without_flag', { phase: 'implement-plan' }),
   'BOT-5': claudeEntry('none', null),
   'BOT-6': claudeEntry('unknown', 'listing_unavailable', { phase: 'implement-plan' }),
-  'BOT-7': claudeEntry('none', null, { review: { state: 'working', reason: 'running' } }),
+  'BOT-7': claudeEntry('none', null, { review: { state: 'done', reason: 'finished' } }),
   'BOT-8': claudeEntry('done', 'implemented', { phase: 'implement-plan' }),
 };
 const IN_SPRINT = ['BOT-1', 'BOT-2', 'BOT-3', 'BOT-4', 'BOT-5', 'BOT-6'];
@@ -169,7 +170,7 @@ test('only tickets in the active sprint get a bot, whatever their session', asyn
   seed(dashboard);
   await page.goto('/#/home');
   await expect(bots(page)).toHaveCount(4);
-  // BOT-7 (review working) and BOT-8 (implement done) qualify by phase and state, but their ticket
+  // BOT-7 (review done) and BOT-8 (implement done) qualify by phase and state, but their ticket
   // is in no active sprint: no bot, though the bar asked about them.
   for (const key of ['BOT-7', 'BOT-8'])
     await expect(
@@ -185,7 +186,7 @@ test('only tickets in the active sprint get a bot, whatever their session', asyn
   ]);
 });
 
-test('no bot shows until the sprint is known, and none for a ticket outside it', async ({
+test('until the sprint is known only live sessions get a bot, and a finished one waits for it', async ({
   page,
   dashboard,
 }) => {
@@ -205,25 +206,28 @@ test('no bot shows until the sprint is known, and none for a ticket outside it',
     )
     .toBe(true);
   await page.waitForTimeout(500);
-  await expect(page.getByTestId('bot-bar')).toHaveCount(0);
+  // BOT-1 (working) and BOT-2 (idle) are live, so never hidden; done and failed wait for the sprint.
+  await expect(bots(page)).toHaveCount(2);
   release();
   await expect(bots(page)).toHaveCount(4);
 });
 
-test('the bar follows the sprint: a ticket joining or leaving it brings or removes its bot', async ({
+test('the bar follows the sprint: a finished ticket joining or leaving it brings or removes its bot, a live one stays', async ({
   page,
   dashboard,
 }) => {
   await page.clock.install();
   seed(dashboard, { sprint: ['BOT-1'] });
   await page.goto('/#/home');
-  await expect(bots(page)).toHaveCount(1);
+  // BOT-1 is in the sprint and BOT-2 (idle) is live, so both show; BOT-3 and BOT-4 are finished.
+  await expect(bots(page)).toHaveCount(2);
   dashboard.data.claude.activeSprint.keys = ['BOT-1', 'BOT-2', 'BOT-3'];
   await page.clock.runFor(SPRINT_POLL_MS + 1_000);
   await expect(bots(page)).toHaveCount(3);
   dashboard.data.claude.activeSprint.keys = [];
   await page.clock.runFor(SPRINT_POLL_MS + 1_000);
-  await expect(page.getByTestId('bot-bar')).toHaveCount(0);
+  // Only the live ones stay once nothing is in the sprint.
+  await expect(bots(page)).toHaveCount(2);
 });
 
 test('a ticket the bar has not placed yet is asked about at once, not after five minutes', async ({
@@ -239,7 +243,7 @@ test('a ticket the bar has not placed yet is asked about at once, not after five
   await expect(bots(page)).toHaveCount(2);
 });
 
-test('when Jira cannot say, a ticket with no known sprint gets no bot and the last good set is kept', async ({
+test('when Jira cannot say, a finished session with no known sprint gets no bot and the last good set is kept', async ({
   page,
   dashboard,
 }) => {
@@ -249,7 +253,8 @@ test('when Jira cannot say, a ticket with no known sprint gets no bot and the la
   sprint.available = false;
   await page.goto('/#/home');
   await expect.poll(() => sprint.asks.length).toBeGreaterThan(0);
-  await expect(page.getByTestId('bot-bar')).toHaveCount(0);
+  // Only the live sessions (BOT-1 working, BOT-2 idle) show while the sprint is unknown.
+  await expect(bots(page)).toHaveCount(2);
   sprint.available = true;
   await page.clock.runFor(SPRINT_POLL_MS + 1_000);
   await expect(bots(page)).toHaveCount(4);
@@ -258,8 +263,8 @@ test('when Jira cannot say, a ticket with no known sprint gets no bot and the la
   sprint.keys = [];
   await page.clock.runFor(SPRINT_POLL_MS + 1_000);
   await expect(bots(page)).toHaveCount(4);
-  // A new session's ticket cannot be placed while Jira is away: no bot for it.
-  dashboard.data.claude.tickets['BOT-9'] = claudeEntry('working', 'running', {
+  // A finished session's new ticket cannot be placed while Jira is away: no bot for it.
+  dashboard.data.claude.tickets['BOT-9'] = claudeEntry('done', 'implemented', {
     phase: 'implement-plan',
   });
   await page.clock.runFor(16_000);
