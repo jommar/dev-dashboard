@@ -591,6 +591,22 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         );
         return;
       }
+      // Threads that name the given tickets in any conversation the user can see: up to a few Slack
+      // searches per call, so a cross-site page cannot trigger it (answered here, like the feed).
+      if (req.method === 'GET' && pathname === '/api/slack/ticket-threads') {
+        if (CROSS_SITE.includes(req.headers['sec-fetch-site'])) {
+          json(res, 403, { code: 'INVALID_ORIGIN', error: 'INVALID ORIGIN', errors: [] });
+          return;
+        }
+        const result = await slack.ticketThreads((url.searchParams.get('keys') || '').split(','));
+        // The rows get `attachedSessions` as the thread list's rows do, through the same helper.
+        const { started } = withAttachedSessions(
+          { available: result.available, started: result.threads },
+          attachedLinks(),
+        );
+        json(res, 200, result.available ? { ...result, threads: started } : result);
+        return;
+      }
       if (req.method === 'GET' && pathname === '/api/slack/pending') {
         json(res, 200, await slack.pending());
         return;
@@ -608,7 +624,11 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       // Opened from a ticket's Slack glyph; a missing `ts` is answered locally
       // rather than by asking Slack to look up nothing.
       if (req.method === 'GET' && pathname === '/api/slack/thread') {
-        json(res, 200, await slack.thread(url.searchParams.get('ts')));
+        json(
+          res,
+          200,
+          await slack.thread(url.searchParams.get('ts'), url.searchParams.get('channel')),
+        );
         return;
       }
       if (req.method === 'POST' && pathname === '/api/slack/connect') {

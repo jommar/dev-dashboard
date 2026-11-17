@@ -25,6 +25,7 @@ import { classifyError, upstreamHealth } from './upstream.mjs';
 import { readTokenFile, stageTokenFile } from './credentials.mjs';
 import { createSlackBoard, eligibleRoot } from './slack-board.mjs';
 import { createSlackFeed, mentionUnread } from './slack-feed.mjs';
+import { createSlackTicketThreads } from './slack-ticket-threads.mjs';
 import {
   buildThreadMessages,
   compareSlackTs,
@@ -51,6 +52,7 @@ const THREAD_TTL_MS = 60_000;
 const THREAD_PAGES = 3;
 const THREAD_LIMIT = 200;
 const THREAD_TS = /^\d{10,}\.\d{4,}$/;
+const CHANNEL_ID = /^[CGD][A-Z0-9]{6,20}$/;
 const THREAD_CACHE_LIMIT = 20;
 
 // The session watcher reads a thread in any channel to its newest message, so
@@ -256,6 +258,16 @@ export function createSlackIntegration({
     generation: () => generation,
   });
 
+  const ticketThreads = createSlackTicketThreads({
+    call,
+    session,
+    verify,
+    users,
+    now,
+    isCurrent,
+    generation: () => generation,
+  });
+
   function clearCaches() {
     generation += 1;
     sessionVersion = randomUUID();
@@ -266,6 +278,7 @@ export function createSlackIntegration({
     threadCache.clear();
     board.clear();
     feed.clear();
+    ticketThreads.clear();
     rateLimits.clear();
   }
 
@@ -347,28 +360,40 @@ export function createSlackIntegration({
   // before any credential is read, and every answer is either a thread or
   // "unavailable" — never an exception out of the HTTP surface.
 
-  async function thread(ts) {
+  // `channelId` names the conversation of a thread the shared list does not cover (one found by
+  // ticket search); without it, or when it is the list's own channel, this is that channel's thread.
+  async function thread(ts, channelId) {
     const key = typeof ts === 'string' ? ts.trim() : '';
+    const other = typeof channelId === 'string' ? channelId.trim() : '';
     if (!THREAD_TS.test(key) || !eligibleRoot(key, now())) return { available: false };
+    if (other && !CHANNEL_ID.test(other)) return { available: false };
     const credentials = session();
-    if (!credentials || !board.isVerifiedRoot(key)) return { available: false };
+    if (!credentials) return { available: false };
     const gen = generation;
-    const hit = threadCache.get(key);
-    if (hit && now() - hit.at < THREAD_TTL_MS) return hit.value;
     try {
+      const own = other ? await channel(credentials, gen) : null;
+      const elsewhere = Boolean(other) && other !== own?.id;
+      const verified = () =>
+        elsewhere ? ticketThreads.isVerifiedRoot(other, key) : board.isVerifiedRoot(key);
+      if (!verified()) return { available: false };
+      const cacheKey = elsewhere ? `${other}:${key}` : key;
+      const hit = threadCache.get(cacheKey);
+      if (hit && now() - hit.at < THREAD_TTL_MS) return hit.value;
       const identity = await verify(credentials, gen);
-      if (!isCurrent(gen) || !board.isVerifiedRoot(key) || !identity.connected || !identity.userId)
+      if (!isCurrent(gen) || !verified() || !identity.connected || !identity.userId)
         return { available: false };
       const me = identity.userId;
       const teamId = identity.teamId || credentials.teamId || '';
-      const target = await channel(credentials, gen);
+      const target = elsewhere
+        ? ticketThreads.describe(other, key)
+        : await channel(credentials, gen);
       if (!target) return { available: false };
 
       const messages = [];
       let cursor = '';
       let truncated = false;
       for (let page = 0; page < THREAD_PAGES; page++) {
-        if (!isCurrent(gen) || !board.isVerifiedRoot(key)) return { available: false };
+        if (!isCurrent(gen) || !verified()) return { available: false };
         const payload = await call(
           'conversations.replies',
           {
@@ -379,12 +404,7 @@ export function createSlackIntegration({
           },
           credentials,
         );
-        if (
-          !isCurrent(gen) ||
-          !board.isVerifiedRoot(key) ||
-          !payload?.ok ||
-          !Array.isArray(payload.messages)
-        )
+        if (!isCurrent(gen) || !verified() || !payload?.ok || !Array.isArray(payload.messages))
           return { available: false };
         if (
           page === 0 &&
@@ -405,7 +425,7 @@ export function createSlackIntegration({
       // Names cover the thread's authors and whoever it mentions — nobody else,
       // since users.list is workspace-wide and this dialog is one conversation.
       const members = await users(credentials, gen).catch(() => ({}));
-      if (!isCurrent(gen) || !board.isVerifiedRoot(key)) return { available: false };
+      if (!isCurrent(gen) || !verified()) return { available: false };
       const names = {};
       for (const id of [
         ...messages.map((message) => message.user).filter(Boolean),
@@ -418,7 +438,7 @@ export function createSlackIntegration({
         thread: {
           ts: key,
           ...threadLinkFields({ teamId, channelId: target.id, ts: key }),
-          channel: { id: target.id, name: target.name },
+          channel: elsewhere ? target : { id: target.id, name: target.name },
           replyCount: Math.max(0, messages.length - 1),
           truncated,
           updatedAt: new Date(now()).toISOString(),
@@ -427,7 +447,7 @@ export function createSlackIntegration({
         },
       };
       if (threadCache.size >= THREAD_CACHE_LIMIT) threadCache.clear();
-      threadCache.set(key, { at: now(), value });
+      threadCache.set(cacheKey, { at: now(), value });
       return value;
     } catch {
       return { available: false };
@@ -601,6 +621,7 @@ export function createSlackIntegration({
     status,
     threads,
     thread,
+    ticketThreads: ticketThreads.lookup,
     lastInThread,
     pending,
     feed: feed.feed,

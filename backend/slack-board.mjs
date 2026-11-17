@@ -39,7 +39,7 @@ export const eligibleRoot = eligibleSlackRoot;
 
 // A search message's own ts is not evidence that it is the root. A root
 // independently seen in bounded history is the sole exception.
-function searchRoot(match, channelId, roots) {
+export function searchRoot(match, channelId, roots) {
   if (!validSlackTs(match?.ts) || match?.channel?.id !== channelId) return '';
   const signals = [];
   if (match.thread_ts !== undefined) {

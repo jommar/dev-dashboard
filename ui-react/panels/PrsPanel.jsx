@@ -18,6 +18,7 @@ import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { notifyClaudeTicketsChanged, useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
+import { ticketKeysOfRows } from '../../ui/slack-ticket-links.js';
 import { hasCompletePrCoverage, reviewColumns, SPEC_REVIEW_LANE } from '../../ui/review-board.js';
 import { ticketPrefix } from '../../ui/work-filters.js';
 import { PR_POLL_MS } from '../../ui/polling.js';
@@ -72,6 +73,7 @@ export function PrsPanel({ config, active }) {
       panel.querySelector('[data-testid="prs-refresh"]')
     );
   }, []);
+  const slackKeys = useMemo(() => ticketKeysOfRows(data?.tickets), [data]);
   const {
     loadSlack,
     openThread,
@@ -82,6 +84,7 @@ export function PrsPanel({ config, active }) {
     active,
     resolveOpener: resolveThreadOpener,
     includeMentions: true,
+    ticketKeys: slackKeys,
   });
   const dataRef = useRef(data);
   dataRef.current = data;
