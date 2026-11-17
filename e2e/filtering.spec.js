@@ -122,10 +122,15 @@ function populateFilters(data) {
   data.tickets.truncated = true;
 }
 
+// A screen reads Claude status when it is shown (My Tickets and Pull Requests icons follow it), which is
+// not filtering, so those reads are left out of the count.
+const filterRequests = (dashboard) =>
+  apiRequests(dashboard).filter(({ path }) => path !== '/api/claude/tickets');
+
 async function expectNoFetches(dashboard, work) {
-  const before = structuredClone(apiRequests(dashboard));
+  const before = structuredClone(filterRequests(dashboard));
   await work();
-  expect(apiRequests(dashboard), 'Local filtering must not send API requests').toEqual(before);
+  expect(filterRequests(dashboard), 'Local filtering must not send API requests').toEqual(before);
 }
 
 async function waitLoaded(page, view) {

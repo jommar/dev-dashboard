@@ -11,7 +11,7 @@ const REVIEW_CHIPS = {
   stale: { text: 'New commits since your review', tone: 'warn' },
 };
 
-export function SpecReviewCard({ spec, jiraBase, onOpenClaude }) {
+export function SpecReviewCard({ spec, jiraBase, claudeEntry, onOpenClaude }) {
   const harness = useHarness();
   const [firstKey] = spec.keys;
   const reviewChip = REVIEW_CHIPS[spec.review];
@@ -66,6 +66,8 @@ export function SpecReviewCard({ spec, jiraBase, onOpenClaude }) {
       <div className="board-card-links">
         <ClaudeIcon
           ticketKey={firstKey}
+          entry={claudeEntry}
+          phase="specReview"
           onOpen={() => onOpenClaude(spec)}
           label={say(`{name} spec review for ${firstKey}`, harness)}
           testId={`prs-spec-claude-icon-${spec.number}`}

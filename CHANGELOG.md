@@ -11,6 +11,14 @@
   threads you were mentioned in, opening the same thread dialog), and a seventh attention reason, **Slack reply owed**,
   marks a ticket whose thread needs your reply. Slack is read through the existing thread list only, never awaited by
   the ticket read; an incomplete list shows a note. No new route. See [Sprint](README.md#sprint).
+- **Pull Requests** now finds each ticket's PRs through Jira, as My Tickets does, instead of listing the watched
+  repositories: `GET /api/review-tickets` reads the PRs Jira's development status links to every review-queue ticket
+  (any repository, newest 100 tickets) and GitHub confirms which are open, drafts and by whom, so a PR whose title
+  names no ticket, or in a repository outside Settings, now lands on its card. A failed lookup is reported in
+  `prCoverage` as before. The card's Claude button now shows the review session's state and turns while it works (the
+  screen reads Claude status while it is shown, not only while a dialog is open), the Spec review cards do the same, and a
+  review or other side session whose conversation the CLI dropped from its listing now reads finished, not failed
+  (also in My Tickets, the bot bar and the Sessions drawer). See [PR review board](README.md#open-prs).
 - Added the **Sprint** tab (tools group after Mascots, `#/sprint`, `g` then `b`): a product-owner view of one team's
   sprint, every ticket whoever has it, as a board by status or a Needs attention list. A summary strip counts tickets,
   points committed and done, and six attention reasons (Claude waiting, Groom: open questions, Blocked, Unassigned, No

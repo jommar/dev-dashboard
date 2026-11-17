@@ -54,17 +54,23 @@ const standIn = (entry) =>
 export function ClaudeIcon({
   ticketKey,
   entry: listed,
+  phase,
   onOpen,
   label: overrideLabel,
   testId,
   tooltip = true,
 }) {
   const harness = useHarness();
-  const side = standIn(listed);
-  const entry = side ? listed[side.key] : listed;
+  // `phase` names the one session this button stands for (the Pull Requests board's `review` or
+  // `specReview`): its state, not the workflow's, is shown, and the label gains it once it exists.
+  const side = phase ? undefined : standIn(listed);
+  const entry = phase ? listed?.[phase] : side ? listed[side.key] : listed;
   const state = entry?.state ?? 'none';
-  const label =
-    overrideLabel ?? say(`{name}${side ? ` ${side.words}` : ''}: ${claudePhrase(entry)}`, harness);
+  const label = overrideLabel
+    ? state === 'none'
+      ? overrideLabel
+      : `${overrideLabel}: ${claudePhrase(entry)}`
+    : say(`{name}${side ? ` ${side.words}` : ''}: ${claudePhrase(entry)}`, harness);
   return (
     <DashboardTooltip title={tooltip ? label : undefined}>
       <button

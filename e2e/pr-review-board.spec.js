@@ -420,7 +420,7 @@ test('review launch sends only key/action, disables repeat submission and keeps 
     });
     await expect(ticket(page).getByTestId('prs-claude-icon-DEMO-1')).toHaveAttribute(
       'data-state',
-      'none',
+      'working',
     );
   } finally {
     release();
@@ -481,27 +481,30 @@ for (const [state, reason, phrase] of [
   });
 }
 
-test('review polling runs only for an open active dialog and reopening refreshes lifecycle without claiming approval', async ({
+test('Claude status is read while the screen is active, so the card icon follows its review session, and opening the dialog reads it at once', async ({
   page,
   dashboard,
 }) => {
   await page.clock.install();
-  await page.goto('/#/prs');
-  await expect(ticket(page)).toBeVisible();
-  await page.clock.fastForward(31_000);
-  expect(claudeReads(dashboard)).toHaveLength(0);
   dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
     review: { state: 'working', reason: 'running' },
   });
-  await openReview(page);
+  await page.goto('/#/prs');
+  await expect(ticket(page)).toBeVisible();
   await expect.poll(() => claudeReads(dashboard).length).toBeGreaterThan(0);
-  await expect(reviewStart(page)).toBeDisabled();
+  const icon = page.getByTestId('prs-claude-icon-DEMO-1');
+  await expect(icon).toHaveAttribute('data-state', 'working');
+  await expect(icon).toHaveAccessibleName('Claude code review for DEMO-1: working');
+  await expect(icon.locator('.claude-icon-ring')).toHaveCount(1);
   dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
     review: { state: 'done', reason: 'finished' },
   });
   const beforePoll = claudeReads(dashboard).length;
   await page.clock.fastForward(16_000);
   await expect.poll(() => claudeReads(dashboard).length).toBeGreaterThan(beforePoll);
+  await expect(icon).toHaveAttribute('data-state', 'done');
+  await expect(icon).toHaveAccessibleName('Claude code review for DEMO-1: finished');
+  await openReview(page);
   await expect(reviewStart(page)).toBeEnabled();
   await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('finished');
   await expect(page.getByTestId('prs-claude-dialog')).not.toContainText(
@@ -513,16 +516,15 @@ test('review polling runs only for an open active dialog and reopening refreshes
   await expect(reviewStart(page)).toBeDisabled();
   await expect(page.getByTestId('prs-claude-dialog-state')).toContainText(/starting|working/i);
   await page.getByTestId('prs-claude-dialog-close').click();
-  const afterClose = claudeReads(dashboard).length;
-  await page.clock.fastForward(31_000);
-  expect(claudeReads(dashboard)).toHaveLength(afterClose);
   dashboard.data.claude.tickets['DEMO-1'] = claudeEntry('none', null, {
     review: { state: 'unknown', reason: 'listing_unavailable' },
   });
+  const afterClose = claudeReads(dashboard).length;
+  // Opening reads at once, with no poll tick in between.
   await openReview(page);
   await expect.poll(() => claudeReads(dashboard).length).toBeGreaterThan(afterClose);
-  await expect(reviewStart(page)).toBeDisabled();
   await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('status unavailable');
+  await expect(reviewStart(page)).toBeDisabled();
   await page.evaluate(() => {
     location.hash = '#/services';
   });
@@ -953,7 +955,7 @@ test('lane header help describes classifier rules on hover and actual Tab focus,
         /no current approval or changes-request activity/i,
         /no linked open PRs/i,
         /incomplete PR\/review data/i,
-        /all linked open PRs in watched repositories/i,
+        /all open PRs Jira links to the ticket/i,
         /unknown data stays here/i,
       ],
     ],
@@ -966,7 +968,7 @@ test('lane header help describes classifier rules on hover and actual Tab focus,
         /another PR may await approval/i,
         /a changes request may stand/i,
         /a draft may remain/i,
-        /all linked open PRs in watched repositories/i,
+        /all open PRs Jira links to the ticket/i,
         /not live reviewer activity/i,
       ],
     ],
@@ -975,7 +977,7 @@ test('lane header help describes classifier rules on hover and actual Tab focus,
       'Reviewed',
       [
         /at least one linked open PR/i,
-        /every linked open PR across watched repositories/i,
+        /every open PR Jira links to the ticket/i,
         /approved by anyone/i,
         /complete PR\/review data/i,
         /no drafts and no standing changes requests/i,
@@ -1110,6 +1112,8 @@ test('review dialog has one primary: Start while there is no review, Re-review o
     phase: null,
     review: { state: 'done', reason: 'finished' },
   });
+  // The screen reads Claude status on its poll, not when a dialog opens, so read it afresh.
+  await page.reload();
   await openReview(page);
   await expect(page.getByTestId('prs-claude-dialog-state')).toContainText('finished');
   await expect(rereviewButton(page)).toHaveClass(/\bprimary\b/);

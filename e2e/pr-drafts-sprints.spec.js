@@ -182,7 +182,7 @@ test('draft tickets retain amber cues, wrapping sprints, working diff and draft-
   };
   await page.getByTestId('prs-refresh').click();
   await expect(page.getByTestId('prs-coverage')).toContainText(
-    'PR discovery unavailable or incomplete',
+    'PR discovery through Jira unavailable or incomplete',
   );
   await expect(board.locator('[data-testid^="prs-ticket-warning-"]')).toHaveCount(9);
   await expect(page.getByTestId('prs-refresh')).toBeEnabled();
