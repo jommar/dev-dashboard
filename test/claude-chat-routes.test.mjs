@@ -32,6 +32,7 @@ import {
 const TICKETS = '/api/claude/tickets';
 const SEND = '/api/claude/chat/send';
 const STOP = '/api/claude/chat/stop';
+const STOP_SESSION = '/api/claude/stop';
 const STREAM = '/api/claude/chat/stream';
 const IMPLEMENT_ID = 'bbbb2222';
 
@@ -149,6 +150,50 @@ test('scenario 10: stop answers { ok: true } and signals the turn; a refusal is 
   assert.deepEqual([none.json().code, none.json().errors], ['CLAUDE_REFUSED', ['no_turn']]);
 });
 
+test('stop session: a listed session the CLI labels working while idle is stopped and then reads finished', async (t) => {
+  const f = await fixture(t);
+  const sessionId = sessionUuid(IMPLEMENT_ID);
+  f.cli.setListing([
+    listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME, state: 'working', status: 'idle', pid: 4242 }),
+  ]);
+
+  const res = await f.http.json('POST', STOP_SESSION, { session: sessionId });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json(), { ok: true });
+  assert.deepEqual(
+    f.cli.calls.filter(({ args }) => args[0] === 'stop').map(({ args }) => args),
+    [['stop', IMPLEMENT_ID]],
+  );
+  assert.equal(f.chatSpawn.calls.length, 0, 'no turn was started');
+});
+
+test('stop session: refusals are the 409 envelope and stop nothing', async (t) => {
+  const f = await fixture(t);
+  const { session: chat } = await newChat(f);
+  f.cli.setListing([
+    listed({ id: IMPLEMENT_ID, name: IMPLEMENT_NAME, state: 'working', status: 'busy', pid: 4242 }),
+  ]);
+  const cases = [
+    [sessionUuid(IMPLEMENT_ID), 'session_running'],
+    [UUID_6, 'session_not_found'],
+    [chat, 'chat_busy'],
+  ];
+  for (const [session, reason] of cases) {
+    const res = await f.http.json('POST', STOP_SESSION, { session });
+    assert.equal(res.status, 409, reason);
+    assert.deepEqual([res.json().code, res.json().errors], ['CLAUDE_REFUSED', [reason]], reason);
+  }
+  assert.deepEqual(
+    f.cli.calls.filter(({ args }) => args[0] === 'stop'),
+    [],
+    'the CLI was never asked to stop',
+  );
+
+  const bad = await f.http.json('POST', STOP_SESSION, { session: 'x' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json().code, 'INVALID_SESSION');
+});
+
 test('scenario 10: the spec error table: chat_busy, session_not_found, too_many_turns, listing_unavailable', async (t) => {
   const f = await fixture(t);
   const first = await newChat(f);
@@ -205,7 +250,7 @@ const GUARDS = [
   ['a content type that is not JSON', { 'content-type': 'text/plain' }, 415],
 ];
 
-for (const route of [SEND, STOP])
+for (const route of [SEND, STOP, STOP_SESSION])
   for (const [label, headers, status] of GUARDS)
     test(`scenario 17: POST ${route} refuses ${label} before any file access or spawn`, async (t) => {
       const f = await fixture(t);

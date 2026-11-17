@@ -16,7 +16,9 @@
 // Escape closes it and puts focus back on the tab. The list itself (groups, rows) is SessionsBody, a lazy
 // overlay BotBar loads before the drawer opens; this file keeps the tab, the search and every piece of state.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { notifyClaudeTicketsChanged } from '../hooks/useClaudeTickets.js';
 import { useSessionsUsage } from '../hooks/useSessionsUsage.js';
+import { stopSession } from '../lib/api.js';
 import { useHarness } from '../lib/harness-context.js';
 import { SessionsBody } from '../lib/lazy-overlays.js';
 import { Button, DashboardTooltip } from './Primitives.jsx';
@@ -153,6 +155,13 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify, 
     setCopied({ key, outcome: ok ? 'Copied' : 'Copy failed' });
   };
 
+  // Ends a working session's process, then has every reader of the tickets list ask again at once.
+  const stop = async (session) => {
+    const result = await stopSession(session);
+    notifyClaudeTicketsChanged();
+    return result;
+  };
+
   return (
     <EdgeDrawer
       name="sessions"
@@ -212,6 +221,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify, 
           usage={usage}
           onOpen={openRow}
           onCopy={copy}
+          onStop={stop}
           onClose={close}
         />
       </LazyDialog>

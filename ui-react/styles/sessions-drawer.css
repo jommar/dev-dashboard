@@ -231,6 +231,33 @@
   color: var(--red);
 }
 
+/* A working session that has gone quiet gets one more line under its row: what is odd about it and Stop,
+   a text button (the CLI can keep a finished turn labelled working, which locks its questions). It spans
+   the row, so the columns above keep their widths. A refusal replaces the hint in amber; it never rests
+   on colour, the words are the message. */
+.sessions-row-stuck {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  padding: 0 var(--s2) var(--s1);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.sessions-row-stuck[data-failed='true'] {
+  color: var(--amber);
+}
+.btn.subtle.sessions-row-stop[data-step='confirm'] {
+  color: var(--red);
+}
+.btn.subtle.sessions-row-stop[data-step='stopped'] {
+  color: var(--green);
+}
+.btn.subtle.sessions-row-stop[aria-disabled='true'] {
+  cursor: progress;
+}
+
 /* A session with an id also opens in the Chat screen: an icon, as tall as the copy button beside it. */
 .sessions-row-chat {
   grid-column: 4;

@@ -2377,6 +2377,12 @@ has none, so there a chat cannot start.
   of this dashboard names it and its transcript is still on disk (see [Icon and dialog](#icon-and-dialog)): it has no process,
   so it is idle, nothing is stopped, and it runs from `~/pathwise`. Any other id the CLI does not list
   is still refused (`session_not_found`).
+- **Stop a session the CLI still calls working.** The CLI can keep listing a session as `working` after its
+  turn ended, which makes the dashboard lock that ticket's answer boxes (`session_running`). A ticket session in the
+  [Sessions drawer](#bot-bar) that has been working but quiet for 5 minutes shows a line under its row with a
+  **Stop session** button: press it, then press again to confirm. The dashboard ends the session's process; the
+  ticket's answers are saved and **Save answers** resumes it under the same id. A session that is in the middle of a
+  turn, or one a chat turn of this dashboard holds, is refused and the line says so.
 - **Start a chat from the drawer.** The Sessions drawer's header has a **New chat** link (also when no
   sessions are listed): it opens the Chat tab on a fresh conversation, the same as the tab's own **New
   chat**, and closes the drawer.
@@ -2422,12 +2428,13 @@ has none, so there a chat cannot start.
 
 ### Chat routes and events
 
-| Route                                      | Purpose                                                                                                                                                                                                                |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/claude/tickets`                  | also answers `chats` (the standalone chats, at most 100, newest turn first) and `sessionIds` (`{ KEY: { phase: uuid } }`, sparse, `{}` when the listing is unavailable; includes sessions recovered from a transcript) |
-| `POST /api/claude/chat/send`               | body `{ message, session? }`; without `session` a new standalone chat is created. Answers `{ ok: true, session, chat }` once the process has started (`chat` is null for a listed session)                             |
-| `POST /api/claude/chat/stop`               | body `{ session }`; answers `{ ok: true }` once the signal is sent                                                                                                                                                     |
-| `GET /api/claude/chat/stream?session=<id>` | `text/event-stream` for one chat: `hello` first, then `item`, `delta` and `state`                                                                                                                                      |
+| Route                                      | Purpose                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/claude/tickets`                  | also answers `chats` (the standalone chats, at most 100, newest turn first) and `sessionIds` (`{ KEY: { phase: uuid } }`, sparse, `{}` when the listing is unavailable; includes sessions recovered from a transcript)                                                                                                                       |
+| `POST /api/claude/chat/send`               | body `{ message, session? }`; without `session` a new standalone chat is created. Answers `{ ok: true, session, chat }` once the process has started (`chat` is null for a listed session)                                                                                                                                                   |
+| `POST /api/claude/stop`                    | body `{ session }`; ends the process of a listed session the CLI still labels `working` (the Sessions drawer's **Stop session**) and answers `{ ok: true }` once it has no pid. Refusals are 409 `CLAUDE_REFUSED` `session_running` (mid-turn), `session_not_found` or `chat_busy` (a chat turn holds it); a bad id is 400 `INVALID_SESSION` |
+| `POST /api/claude/chat/stop`               | body `{ session }`; answers `{ ok: true }` once the signal is sent                                                                                                                                                                                                                                                                           |
+| `GET /api/claude/chat/stream?session=<id>` | `text/event-stream` for one chat: `hello` first, then `item`, `delta` and `state`                                                                                                                                                                                                                                                            |
 
 `session` is always a full session UUID; the dashboard works out the directory itself and never accepts a
 path, directory, model or flag. A `message` is a string of 1 to 32000 characters after trimming. The routes

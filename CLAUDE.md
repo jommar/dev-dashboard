@@ -284,6 +284,19 @@ the drawer, because it is non-modal and would cover the conversation it just ope
 (`notifyClaudeTicketsChanged` in `useClaudeTickets.js`, fired by the Chat screen after a send and when a
 chat's phase changes), so the bar, the drawer and the chat list follow a turn without waiting for the 15 s poll.
 
+**Stop, for a session the CLI still calls working.** `claude agents --json` can list a session as
+`status: "idle"` with `state: "working"` after its turn ended (the job's own label, `~/.claude/jobs/<id>/state.json`,
+was never updated), and the launcher takes that raw `state` as running: `blocks.answer` is `session_running` and the
+dialog's answer boxes are `disabled`. A ticket row (never a chat) that is `isQuiet` (working, last written 5+ minutes ago)
+gets one more line under it (`StuckLine` in `SessionsBody.jsx`, `sessions-stop-<key>`, `sessions-stop-<key>-note`):
+a text **Stop session** button, two presses (the first becomes `Press again to stop` for 4 s), then `POST /api/claude/stop`
+`{ session }` (`claudeChat.stopSession`: `requireSession`, a held session is `chat_busy`, then the same `settle` a send
+does, so an idle process is stopped and polled until it has no pid; a mid-turn one is `session_running`, an unlisted one
+`session_not_found`). It is a line spanning the row, never a grid column: a fourth icon column squeezed chat titles at
+390px. The drawer's `stop` calls `notifyClaudeTicketsChanged` after the reply so the list re-reads at once; a refusal's
+words replace the hint (`STOP_WORDS`, any other reason `STOP_FAILED`). Stopping is reversible: Save answers resumes the
+session with `--resume`. Do not make the dashboard guess that idle plus working means finished.
+
 ## Slack activity drawer: facts not to break
 
 The second edge drawer (`SlackDrawer.jsx`, eager: tab, count and frame only; `SlackFeedPanel.jsx`, lazy: the body) lists
@@ -921,9 +934,9 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
   202 KiB gzip -9 (raised from 200 for the merged-PR rows, then for the ticket-thread search); a new eager import of a lazy module fails it. `vite.config.js` is pinned by
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
 - **The first-paint gzip, all-JS and CSS margins are thin.** With the Sprint tab and its Slack threads the initial
-  closure is 647,568 B raw (632 KiB) and 205,830 B gzip against 206,848 (202 KiB; 1,018 B spare), all JS is 922,480 B
-  against `MAX_TOTAL_RAW`, 902 KiB (923,648 B; raised from 884 KiB for the lazy Sprint screen, then for the
-  ticket-thread search in the shared Slack hook), so 1,168 B spare, and all CSS is 181,958 B against
+  closure is 647,568 B raw (632 KiB) and 205,830 B gzip against 206,848 (202 KiB; 1,018 B spare), all JS is about
+  902.1 KiB against `MAX_TOTAL_RAW`, 904 KiB (925,696 B; raised from 884 KiB for the lazy Sprint screen, then for the
+  ticket-thread search in the shared Slack hook, then for the Sessions drawer's Stop button), so about 1.9 KiB spare, and all CSS is 181,958 B against
   180 KiB (184,320 B), 2,362 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
   test with no apparent cause. A lazy screen that imports a module the entry also uses can split it into an initial
   chunk of its own: `SprintPanel` therefore opens `ClaudeDialog` after `loadClaudeDialog()` instead of importing

@@ -358,6 +358,9 @@ export const sendChat = (message, session) =>
   watchRequest('/api/claude/chat/send', { method: 'POST', body: { message, session } });
 export const stopChat = (session) =>
   watchRequest('/api/claude/chat/stop', { method: 'POST', body: { session } });
+// Ends the process of a listed session the CLI still labels working (the Sessions drawer's Stop).
+export const stopSession = (session) =>
+  watchRequest('/api/claude/stop', { method: 'POST', body: { session } });
 export const openChatStream = (session) =>
   new EventSource(`/api/claude/chat/stream?session=${encodeURIComponent(session)}`);
 

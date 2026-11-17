@@ -944,6 +944,73 @@ test('a row copy button is an icon with a tooltip, and says whether the copy wor
   await expect(copy).toHaveAccessibleName(name);
 });
 
+// A working ticket row that has gone quiet (five minutes without a write) has a Stop line, for a session
+// the CLI still labels working: two presses (the first asks, the second stops), one stop request, and a
+// refusal is worded instead of left silent. A recent working row, a finished one and a chat have none.
+test('a quiet working drawer row has a two-press Stop that sends one stop; a refusal is worded', async ({
+  page,
+  dashboard,
+}) => {
+  const { data } = dashboard;
+  data.claude.tickets['BOT-1'] = claudeEntry('working', 'running', { phase: 'implement-plan' });
+  data.claude.tickets['BOT-2'] = claudeEntry('none', null, {
+    review: { state: 'done', reason: 'finished' },
+  });
+  data.claude.tickets['BOT-3'] = claudeEntry('working', 'running', { phase: 'implement-plan' });
+  data.claude.activeSprint.keys = ['BOT-1', 'BOT-2', 'BOT-3'];
+  data.claude.sessionIds = {
+    'BOT-1': { implement: SESSION },
+    'BOT-2': { review: OTHER },
+    'BOT-3': { implement: '5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a' },
+  };
+  const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+  data.claude.lastActive = {
+    'BOT-1': { implement: ago(14) },
+    'BOT-2': { review: ago(90) },
+    'BOT-3': { implement: ago(1) },
+  };
+  data.claude.chats = [
+    { ...chatEntry(CHAT_SESSION_ID, 'working', 1000, 'Busy chat'), lastActiveAt: ago(30) },
+  ];
+  await page.goto('/#/services');
+  await page.getByTestId('sessions-tab').click();
+  await page.mouse.move(0, 0);
+
+  for (const key of ['BOT-2:review', 'BOT-3:implement', `${CHAT_SESSION_ID}:chat`])
+    await expect(page.getByTestId(`sessions-stop-${key}`)).toHaveCount(0);
+
+  const stop = page.getByTestId('sessions-stop-BOT-1:implement');
+  await expect(stop).toHaveAccessibleName('Stop session: BOT-1 Implement plan session');
+  await expect(stop).toHaveText('Stop session');
+  await stop.click();
+  await expect(stop).toHaveText('Press again to stop');
+  await expect(stop).toHaveAttribute('data-step', 'confirm');
+  expect(callsTo(dashboard, '/api/claude/stop'), 'one press stops nothing').toHaveLength(0);
+
+  await stop.click();
+  await expect.poll(() => callsTo(dashboard, '/api/claude/stop')).toHaveLength(1);
+  expect(callsTo(dashboard, '/api/claude/stop')[0].body).toEqual({ session: SESSION });
+  await expect(stop).toHaveText('Stopped');
+  await expect(stop).toHaveAttribute('aria-disabled', 'true');
+
+  // A refused stop says why in words, and the button is ready to try again.
+  await page.route('**/api/claude/stop', (route) =>
+    route.fulfill({
+      status: 409,
+      json: { code: 'CLAUDE_REFUSED', error: 'CLAUDE REFUSED', errors: ['session_running'] },
+    }),
+  );
+  await page.reload();
+  await page.getByTestId('sessions-tab').click();
+  await page.mouse.move(0, 0);
+  await stop.click();
+  await stop.click();
+  await expect(page.getByTestId('sessions-stop-BOT-1:implement-note')).toHaveText(
+    'It is mid-turn, so it was not stopped.',
+  );
+  await expect(stop).toHaveText('Stop session');
+});
+
 // Every row always has both icon slots, Chat and Copy: live when the action exists, otherwise a dimmed,
 // focusable, aria-disabled placeholder that says why in the app's tooltip and in its name.
 for (const width of [1200, 390]) {
