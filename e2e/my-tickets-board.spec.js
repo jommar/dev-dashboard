@@ -452,6 +452,55 @@ test('a shared Slack thread opens with the selected card key @regression', async
   await expect(chipOf(keys[3])).toHaveCount(0);
 });
 
+test('a thread found by ticket search in another channel gets a chip that names the channel @regression', async ({
+  page,
+  dashboard,
+}) => {
+  const data = ticketBoardData(dashboard.data);
+  const [sample] = data.tickets.tickets;
+  const key = `${sample.key.split('-')[0]}-900000000020`;
+  data.tickets.tickets = [{ ...sample, key }];
+  data.slack.threads.started = [];
+
+  const [base] = Object.values(data.slack.threadReads);
+  const ts = '1794916500.000100';
+  const text = `${key}: review in another channel`;
+  data.slack.threadReads[ts] = {
+    ...structuredClone(base),
+    ts,
+    channel: { id: 'C0CA4BAGF44', name: 'piq_claudio', kind: 'channel' },
+    messages: [{ ...structuredClone(base.messages[0]), ts, text, mrkdwn: text }],
+  };
+  data.slack.ticketThreads = {
+    available: true,
+    partial: false,
+    truncated: false,
+    remaining: 0,
+    threads: [
+      {
+        ts,
+        text,
+        subjectText: text,
+        replyCount: 2,
+        needsReply: false,
+        activityAt: new Date().toISOString(),
+        url: `https://example.slack.com/archives/C0CA4BAGF44/p${ts.replace('.', '')}`,
+        watchKey: `C0CA4BAGF44:${ts}`,
+        channel: { id: 'C0CA4BAGF44', name: 'piq_claudio', kind: 'channel' },
+      },
+    ],
+  };
+
+  await openBoard(page);
+  const chip = page.getByTestId(`my-tickets-item-${key}`).getByTestId(`slack-thread-link-${ts}`);
+  await expect(chip).toBeVisible();
+  await expect(chip).toHaveAttribute('aria-label', /#piq_claudio/);
+  await chip.click();
+  await expect(
+    page.getByTestId('slack-thread-dialog').getByTestId(`slack-thread-message-${ts}`),
+  ).toContainText(text);
+});
+
 test('a legacy-project card opens its Slack thread with the displayed key @regression', async ({
   page,
   dashboard,
