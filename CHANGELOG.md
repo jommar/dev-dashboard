@@ -4,7 +4,7 @@
 
 - The Claude dialog's independent actions are now one row of three buttons, **Groom ticket**, **E2E check** and the new
   **Request code review**. Request code review launches a background session that commits uncommitted work, checks every
-  acceptance criterion against unit tests and live local data, has a subagent review the diff, opens the pull request, and
+  acceptance criterion against unit tests and live local data, opens the pull request, and
   has a subagent move the ticket, comment the criteria with the commit SHA and announce it in Slack before asking developers
   for review in the thread. Its built-in prompt (`request-review`, the twelfth template) is general; name your own skills
   in `prompts/request-review.md`. It gets a bot and a Sessions row like the other sessions, and a ticket with no workflow shows its state on the card icon and as a Sprint chip. See

@@ -1844,7 +1844,7 @@ ticket to code review. It is independent of the workflow like Groom ticket: any 
 is `launch.json['request-review']`, the entry's `reviewRequest` is its `{ state, reason }`, and `blocks.reviewRequest`
 and `goTo.reviewRequest` exist only for a ticket with the record. The built-in prompt (`prompts/request-review.md`
 overrides it; only `{KEY}` and `{SLUG}` are filled in) is deliberately general: it commits any uncommitted work,
-checks every acceptance criterion with the unit tests and live local data, has a read-only subagent review the diff,
+checks every acceptance criterion with the unit tests and live local data,
 opens the pull request, then has a subagent move the ticket, comment the criteria with the commit SHA and announce it,
 and finally asks developers for review in the announcement's Slack thread. It stops at the first failed step, and does
 nothing in Jira or Slack when a criterion does not pass. Which skills do each step (pull request, Jira comment template,

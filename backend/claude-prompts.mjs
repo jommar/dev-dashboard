@@ -331,19 +331,15 @@ Write the report to \`.orchestrator/{SLUG}/e2e.md\` under the current directory,
       'not only mocks. Record each criterion as Pass, Fail, Partial or Not run with the exact ' +
       'evidence. If any criterion does not pass, do not open a pull request or touch Jira or ' +
       'Slack: report which and what is needed.\n' +
-      "3. Review: start a read-only subagent with fresh context to review the diff of the ticket's " +
-      'changes for bugs and maintainability, giving it the diff and the acceptance criteria but not ' +
-      'your reasoning. Fix what it finds that is real, commit the fix, and re-run the affected ' +
-      'verification.\n' +
-      '4. Pull request: open one pull request for the ticket (or update the one that exists) the ' +
+      '3. Pull request: open one pull request for the ticket (or update the one that exists) the ' +
       "way the project's conventions require.\n" +
-      '5. Hand off: start a subagent with fresh context and give it the ticket key, the pull request ' +
+      '4. Hand off: start a subagent with fresh context and give it the ticket key, the pull request ' +
       "link, the commit SHA and the acceptance-criteria results. It runs the workspace's " +
       'announcement workflow for the ticket and: moves the Jira ticket to its ready-for-code-review ' +
       'status; adds a Jira comment with the acceptance-criteria table (criterion, status, evidence) ' +
       "and the commit SHA that proves it, in the project's comment template if there is one; and " +
       "announces the pull request in the team's Slack channel as the workflow says.\n" +
-      '6. Ask for review: once the subagent reports the announcement is posted, reply in that Slack ' +
+      '5. Ask for review: once the subagent reports the announcement is posted, reply in that Slack ' +
       'thread asking the developers for a code review of the pull request, with its link, and no ' +
       'mentions beyond those the workflow names.',
     'Report: your last message is a summary of at most ten lines: the commit SHA, the ' +
