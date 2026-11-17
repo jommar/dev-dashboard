@@ -434,6 +434,11 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       const { session } = await readJson(req);
       return claudeChat.stop({ session });
     },
+    // Ends the process of a listed session the CLI still labels `working` (the Sessions drawer's Stop).
+    'POST /api/claude/stop': async (req) => {
+      const { session } = await readJson(req);
+      return claudeChat.stopSession({ session });
+    },
   };
   // A prompt store call: its refusal of a bad text passes as it is, anything the disk does is a
   // failed Claude action.

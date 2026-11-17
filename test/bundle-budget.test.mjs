@@ -20,8 +20,9 @@ const MAX_INITIAL_RAW = 640 * KIB;
 const MAX_INITIAL_GZIP = 202 * KIB;
 // A guard against bloat, not a target: lazy loading splits code, it must not add much of it.
 // Raised from 884 KiB for the lazy Sprint screen, which could not fit the 1.5 KiB that was left,
-// and to 902 KiB for the ticket-thread search in the shared Slack hook (about 1 KiB of eager code).
-const MAX_TOTAL_RAW = 902 * KIB;
+// to 902 KiB for the ticket-thread search in the shared Slack hook (about 1 KiB of eager code), and
+// to 904 KiB for the Stop button of the Sessions drawer's rows (lazy body, a little eager wiring).
+const MAX_TOTAL_RAW = 904 * KIB;
 const MAX_TOTAL_CSS = 180 * KIB;
 // Modules that must load on demand: the five rarely used screens and the two dialogs, plus the
 // markdown renderer both the viewer and the chat pull in.

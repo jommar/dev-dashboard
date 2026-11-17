@@ -2091,6 +2091,7 @@ function claudeResponse(url, method, { claude, devtools }, body) {
     return { json: { ok: true, session, chat } };
   }
   if (pathname === '/api/claude/chat/stop') return { json: { ok: true } };
+  if (pathname === '/api/claude/stop') return { json: { ok: true } };
   if (pathname === '/api/claude/launch' && body?.phase === 'pr-review-transact') {
     const current = claude.tickets[body.key] ?? claudeEntry('none', null, { phase: null });
     if (current.blocks.review) return claudeFailure(409, 'CLAUDE_REFUSED', [current.blocks.review]);

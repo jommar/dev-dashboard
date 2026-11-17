@@ -536,6 +536,17 @@ export function createClaudeChat({
     return { ok: true };
   }
 
+  // Ends a listed session's process, for a session the CLI still labels `working` after its turn
+  // ended: the same stop-and-poll a send does first, so the session can be resumed or answered
+  // afterwards. A turn this dashboard runs has its own Stop (`stop`), a session that is mid-turn
+  // is refused by the CLI's idle check, and one already finished is settled with nothing to stop.
+  async function stopSession({ session }) {
+    requireSession(session);
+    if (claudeSessions.isHeld(session)) throw refused('chat_busy');
+    await settle(session);
+    return { ok: true };
+  }
+
   // The service stops: every turn's process is ended and every stream with it.
   function close() {
     for (const turn of turns.values()) {
@@ -550,5 +561,5 @@ export function createClaudeChat({
     streams.clear();
   }
 
-  return { list, send, stop, open, close };
+  return { list, send, stop, stopSession, open, close };
 }
