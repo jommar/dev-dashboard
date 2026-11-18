@@ -40,17 +40,22 @@ const BADGES = {
   failed: <path d="M15.6 15.6l4.8 4.8m0-4.8-4.8 4.8" />,
 };
 
-// Grooming and the e2e check are not part of the workflow, so a side session stands in only while the
-// workflow has not started: groom first, then e2e, then a code review request. `words` is what the label calls it.
+// Grooming, the e2e check and a code review request are not part of the workflow, so a side session
+// stands in while the workflow has not started (groom first, then e2e, then the review request), and also
+// while it is `working` over any workflow state but a working one, so a live side session is never hidden
+// behind a done, failed or waiting icon. `words` is what the label calls it.
 const SIDE_SESSIONS = [
   { key: 'groom', words: 'grooming' },
   { key: 'e2e', words: 'e2e check' },
   { key: 'reviewRequest', words: 'code review request' },
 ];
-const standIn = (entry) =>
-  entry?.state === 'none'
-    ? SIDE_SESSIONS.find(({ key }) => entry[key] && entry[key].state !== 'none')
-    : undefined;
+const standIn = (entry) => {
+  if (entry?.state === 'none') {
+    return SIDE_SESSIONS.find(({ key }) => entry[key] && entry[key].state !== 'none');
+  }
+  if (entry?.state === 'working') return undefined;
+  return SIDE_SESSIONS.find(({ key }) => entry?.[key]?.state === 'working');
+};
 
 export function ClaudeIcon({
   ticketKey,

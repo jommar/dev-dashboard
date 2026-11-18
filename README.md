@@ -1401,7 +1401,9 @@ The icon shows the ticket's current phase, the one launched last. Grooming does 
 shows only for a ticket with no workflow record, then with the same four looks, from the groom
 session's own state, and its label and tooltip read `Claude grooming: <phrase>`. An e2e check
 does the same after groom (a ticket with a workflow record or a groom record keeps that icon), and
-its label reads `Claude e2e check: <phrase>`. The dialog opens
+its label reads `Claude e2e check: <phrase>`. A side session that is `working` (groom, e2e check or
+code review request) also takes the icon from a workflow that is done, failed or waiting, so it is
+never hidden behind a green check; a workflow that is itself `working` keeps it. The dialog opens
 from it as a native modal. The header holds the ticket key and summary and the state as a pill (a
 mark and a word, never colour alone; workflow state only). The body opens with the workflow as a
 strip of three steps in order, **Investigate and plan**, **Approve plan**, **Implement plan** (one

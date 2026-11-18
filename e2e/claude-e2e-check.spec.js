@@ -493,7 +493,7 @@ test('e2e check: a finished session shows its chip and result, and leaves the wo
   await expect(dialog.getByTestId('claude-dialog-state')).toHaveText('not started');
 });
 
-test('e2e check: the card icon follows the e2e session only when nothing else stands in', async ({
+test('e2e check: the card icon follows a working e2e session unless the workflow is working too', async ({
   page,
   dashboard,
 }) => {
@@ -505,8 +505,13 @@ test('e2e check: the card icon follows the e2e session only when nothing else st
       groom: { state: 'working', reason: 'running' },
       e2e: E2E.done,
     }),
-    // A workflow record: the workflow's state wins.
+    // A failed workflow does not hide a side session that is working.
     'TAP-9004': claudeEntry('failed', 'ended_without_flag', { e2e: E2E.working }),
+    // A finished workflow does not hide a side session that is working.
+    'TAP-9005': claudeEntry('done', 'implemented', { e2e: E2E.working }),
+    'TAP-9006': claudeEntry('done', 'implemented', { e2e: E2E.done }),
+    // A working workflow keeps its own icon.
+    'TAP-9007': claudeEntry('working', 'running', { e2e: E2E.working }),
   });
   await expect(iconOf(page, 'TAP-9002')).toHaveAttribute('data-state', 'working');
   await expect(iconOf(page, 'TAP-9002')).toHaveAttribute('aria-label', /^Claude e2e check: /);
@@ -515,8 +520,14 @@ test('e2e check: the card icon follows the e2e session only when nothing else st
   await expect(iconOf(page, 'TAP-9003')).toHaveAttribute('aria-label', /groom/i);
   await expect(iconOf(page, 'TAP-9003')).not.toHaveAttribute('aria-label', /e2e/i);
 
-  await expect(iconOf(page, 'TAP-9004')).toHaveAttribute('data-state', 'failed');
-  await expect(iconOf(page, 'TAP-9004')).not.toHaveAttribute('aria-label', /e2e/i);
+  await expect(iconOf(page, 'TAP-9004')).toHaveAttribute('data-state', 'working');
+  await expect(iconOf(page, 'TAP-9004')).toHaveAttribute('aria-label', /^Claude e2e check: /);
+
+  await expect(iconOf(page, 'TAP-9005')).toHaveAttribute('data-state', 'working');
+  await expect(iconOf(page, 'TAP-9005')).toHaveAttribute('aria-label', /^Claude e2e check: /);
+  await expect(iconOf(page, 'TAP-9006')).toHaveAttribute('data-state', 'done');
+  await expect(iconOf(page, 'TAP-9006')).not.toHaveAttribute('aria-label', /e2e/i);
+  await expect(iconOf(page, 'TAP-9007')).not.toHaveAttribute('aria-label', /e2e/i);
 });
 
 test('e2e check: verdict chip beside the result link, only for a known verdict', async ({
