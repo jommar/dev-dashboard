@@ -1418,8 +1418,10 @@ lines are only for screen readers (each button points at its reason with `aria-d
 the state is `plan ready`, the path `~/pathwise/.orchestrator/<key in lower case>/02-plan.md` shows
 in the Implement step, because starting it is your approval. **Groom ticket** sits apart under a
 hairline, labelled `Independent`, as one row of three buttons (**Groom ticket**, **E2E check** and
-**Request code review**), each with its own chip once it has a session; what each does follows the row, with
-a **View e2e result** link once the e2e check is done. The
+**Request code review**), each with its own chip once it has a session; what each does is its tooltip
+(hover or keyboard focus, also while the button is disabled), and the same words stay in the page as
+screen-reader text that each button points at with `aria-describedby`. A **View e2e result** link
+follows the row once the e2e check is done. The
 outcome of an approval or a save is a short inline message beside what caused it, with a **×** to
 dismiss it; it also clears by itself once the ticket stops working, so it never outlives the state
 it described.
@@ -1436,7 +1438,14 @@ When a workflow session asked questions, the dialog also shows a reminder that n
 to the session until every question has an answer, and the questions as a numbered list. Each
 shows a muted `Investigate and plan` or `Implement plan` label after the question text, naming the
 phase that asked it (a question with no tag reads as `Investigate and plan`), and has a multi-line
-answer box with your saved answer filled in. The box grows with its text, from about
+answer box with your saved answer filled in. When a question's text lists lettered options
+(`(a) ... (b) ... (c) other.`, in order from `(a)`, at least two), they show as a group of radio
+choices under it, with the question's own words above them and a `Recommended` tag on the one the
+session marked `(recommended)`. Picking one writes `(b) its words` into the box, so what is saved
+and sent is still plain text and `status.json` is unchanged; typing your own answer in the box
+unselects the letters and selects **Other**, and picking **Other** (or any option worded
+`other`) clears a letter pick and moves focus to the box. A question that does not read as a clean
+lettered list keeps just the box. The box grows with its text, from about
 two lines to about twelve, then scrolls; that is CSS only (`field-sizing: content`), so a browser
 without it shows a fixed-height box that scrolls. Password-manager overlays are turned off on the
 boxes. A question that has a saved answer shows a tick (accessible name `Answered`); a draft you

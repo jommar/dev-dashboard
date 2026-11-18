@@ -388,6 +388,9 @@
   align-items: center;
   gap: var(--s1) var(--s2);
 }
+.claude-independent-tip {
+  display: inline-flex;
+}
 .claude-groom-title {
   color: var(--muted);
   font-size: var(--fs-xs);
@@ -621,6 +624,66 @@
   cursor: not-allowed;
 }
 
+/* The lettered options of a question, as choices above its answer box. A choice fills the box; the
+   box stays for an answer of your own. Lavender, like everything else in this dialog. */
+.claude-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.claude-option {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out);
+}
+.claude-option:hover {
+  border-color: var(--border-strong);
+}
+.claude-option:has(input:checked) {
+  border-color: var(--support);
+}
+.claude-option:has(input:focus-visible) {
+  outline: 2px solid var(--support);
+  outline-offset: 1px;
+}
+.claude-option:has(input:disabled) {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.claude-option input {
+  flex: none;
+  align-self: center;
+  margin: 0;
+  accent-color: var(--support);
+}
+.claude-option-letter {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+.claude-option-text {
+  flex: 1 1 auto;
+  text-wrap: pretty;
+}
+.claude-option-tag {
+  flex: none;
+  align-self: center;
+  padding: 0 var(--s1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
 /* ---- Prompt editor ---------------------------------------------------------
    The dialog body while it shows the prompt files: one stacked block per prompt. Nothing is wider
    than the body, so a long unbroken line wraps in its box instead of pushing the dialog sideways. */
@@ -714,6 +777,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .claude-icon,
+  .claude-option,
   .claude-progress > span {
     transition: none;
   }

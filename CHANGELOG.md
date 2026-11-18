@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The Claude dialog now shows the lettered options in a question's text (`(a) ... (b) ... (c) other.`) as radio
+  choices above its answer box, with a `Recommended` tag. A choice writes `(b) its words` into the box, which stays for
+  an answer of your own; `status.json` and what is sent to the session are unchanged. The descriptions under the
+  Independent buttons (Groom ticket, E2E check, Request code review) are now tooltips on the buttons. See
+  [Claude dialog](README.md#icon-and-dialog).
 - The Claude dialog's independent actions are now one row of three buttons, **Groom ticket**, **E2E check** and the new
   **Request code review**. Request code review launches a background session that commits uncommitted work, checks every
   acceptance criterion against unit tests and live local data, opens the pull request, and

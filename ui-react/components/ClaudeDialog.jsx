@@ -21,7 +21,8 @@
 // and Close, and everything this component holds (answer drafts, copy status, the last send result)
 // is there when Back returns.
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Button } from './Primitives.jsx';
+import { Button, DashboardTooltip } from './Primitives.jsx';
+import { QuestionOptions } from './QuestionOptions.jsx';
 import { ClaudePromptsEditor } from './ClaudePromptsEditor.jsx';
 import { UseInServices } from './UseInServices.jsx';
 import { LazyDialog } from './ScreenSlot.jsx';
@@ -37,6 +38,7 @@ import {
   workflowSteps,
 } from './ClaudeSteps.jsx';
 import { copyText } from '../../ui/dom.js';
+import { answerForOther, parseOptions } from '../../ui/question-options.js';
 import { say } from '../../ui/harness.js';
 import { useClaudeUsage } from '../hooks/useClaudeUsage.js';
 import { tokensLabel } from '../../ui/format-tokens.js';
@@ -168,40 +170,56 @@ const HINT_TESTID = {
   implement: 'claude-action-hint-implement',
 };
 
-// The reason an independent action is off, and what each does: shown under the row, so every note
-// names the action it is about.
+// The reason an independent action is off is shown under the row; what each action does is its
+// tooltip (hover or keyboard focus), and stays in the page as screen-reader text, linked to its button.
 const INDEPENDENT_HINTS = [
   { side: 'groom', testId: 'claude-action-hint-groom' },
   { side: 'e2e', testId: 'claude-action-hint-e2e' },
   { side: 'reviewRequest', testId: 'claude-action-hint-review-request' },
 ];
-const INDEPENDENT_NOTES = [
-  {
+const INDEPENDENT_NOTES = {
+  groom: {
     testId: 'claude-groom-note',
     text: 'Groom ticket works on any ticket, on its own. Needs no plan and changes nothing in Jira until you say so.',
   },
-  {
+  e2e: {
     testId: undefined,
     text: 'E2E check opens a new browser for you to sign in to, then runs the check on this ticket without you.',
   },
-  {
+  reviewRequest: {
     testId: 'claude-review-request-note',
     text: 'Request code review commits the work, checks the acceptance criteria against local data, opens the pull request, moves the ticket in Jira and asks developers for review in Slack.',
   },
-];
+};
 
-// One button of the independent row, with its session chip once the action has a session.
-function IndependentAction({ label, testId, phase, disabled, hasSession, onRun, onGoTo }) {
+// One button of the independent row, with its session chip once the action has a session. The note
+// is the button's tooltip; a span carries it so a disabled button still shows it on hover.
+function IndependentAction({
+  label,
+  testId,
+  phase,
+  note,
+  noteId,
+  disabled,
+  hasSession,
+  onRun,
+  onGoTo,
+}) {
   return (
     <span className="claude-independent-cell">
-      <Button
-        className="subtle claude-groom-run"
-        data-testid={testId}
-        disabled={disabled}
-        onClick={onRun}
-      >
-        {label}
-      </Button>
+      <DashboardTooltip title={note} describeChild>
+        <span className="claude-independent-tip">
+          <Button
+            className="subtle claude-groom-run"
+            data-testid={testId}
+            aria-describedby={noteId}
+            disabled={disabled}
+            onClick={onRun}
+          >
+            {label}
+          </Button>
+        </span>
+      </DashboardTooltip>
       {hasSession && <SessionChip phase={phase} onGoTo={onGoTo} />}
     </span>
   );
@@ -615,6 +633,8 @@ export function ClaudeDialog({
                   </span>
                   <IndependentAction
                     label="Groom ticket"
+                    note={INDEPENDENT_NOTES.groom.text}
+                    noteId={`${hintId}-note-groom`}
                     testId="claude-action-groom"
                     phase="groom"
                     disabled={busy || Boolean(blocks.groom)}
@@ -624,6 +644,8 @@ export function ClaudeDialog({
                   />
                   <IndependentAction
                     label="E2E check"
+                    note={INDEPENDENT_NOTES.e2e.text}
+                    noteId={`${hintId}-note-e2e`}
                     testId="claude-action-e2e"
                     phase="e2e"
                     disabled={busy || Boolean(blocks.e2e)}
@@ -633,6 +655,8 @@ export function ClaudeDialog({
                   />
                   <IndependentAction
                     label="Request code review"
+                    note={INDEPENDENT_NOTES.reviewRequest.text}
+                    noteId={`${hintId}-note-reviewRequest`}
                     testId="claude-action-review-request"
                     phase="reviewRequest"
                     disabled={busy || Boolean(blocks.reviewRequest)}
@@ -648,8 +672,13 @@ export function ClaudeDialog({
                     </span>
                   ) : null,
                 )}
-                {INDEPENDENT_NOTES.map(({ testId, text }) => (
-                  <span key={text} className="claude-action-hint" data-testid={testId}>
+                {Object.entries(INDEPENDENT_NOTES).map(([side, { testId, text }]) => (
+                  <span
+                    key={side}
+                    id={`${hintId}-note-${side}`}
+                    className="sr-only"
+                    data-testid={testId}
+                  >
                     {text}
                   </span>
                 ))}
@@ -735,63 +764,84 @@ export function ClaudeDialog({
                     answer.
                   </p>
                   <ol className="claude-question-list">
-                    {questions.map(({ id, question, answer: saved, phase }, index) => (
-                      <li key={id} className="claude-question">
-                        {/* The number, the phase and the tick sit outside the label, so its name is the question. */}
-                        <div className="claude-question-head">
-                          <span className="claude-question-number" aria-hidden="true">
-                            {index + 1}
-                          </span>
-                          <label htmlFor={`${formId}-${id}`}>{question}</label>
-                          <span
-                            className="claude-question-phase"
-                            data-testid={`claude-question-phase-${id}`}
-                          >
-                            {QUESTION_PHASE_LABEL[phase ?? INVESTIGATE]}
-                          </span>
-                          {saved?.trim() && (
-                            <span
-                              className="claude-question-answered"
-                              role="img"
-                              aria-label="Answered"
-                              data-testid={`claude-question-answered-${id}`}
-                            >
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 16 16"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.8"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                aria-hidden="true"
-                                focusable="false"
-                              >
-                                <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
-                              </svg>
+                    {questions.map(({ id, question, answer: saved, phase }, index) => {
+                      // Lettered options in the text show as choices; the answer is still the box.
+                      const parsed = parseOptions(question);
+                      const value = Object.hasOwn(drafts, id) ? drafts[id] : (saved ?? '');
+                      const setAnswer = (text) =>
+                        setDrafts((current) => ({ ...current, [id]: text }));
+                      return (
+                        <li key={id} className="claude-question">
+                          {/* The number, the phase and the tick sit outside the label, so its name is the question. */}
+                          <div className="claude-question-head">
+                            <span className="claude-question-number" aria-hidden="true">
+                              {index + 1}
                             </span>
+                            <label htmlFor={`${formId}-${id}`} id={`${formId}-${id}-text`}>
+                              {parsed ? parsed.stem : question}
+                            </label>
+                            <span
+                              className="claude-question-phase"
+                              data-testid={`claude-question-phase-${id}`}
+                            >
+                              {QUESTION_PHASE_LABEL[phase ?? INVESTIGATE]}
+                            </span>
+                            {saved?.trim() && (
+                              <span
+                                className="claude-question-answered"
+                                role="img"
+                                aria-label="Answered"
+                                data-testid={`claude-question-answered-${id}`}
+                              >
+                                <svg
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  aria-hidden="true"
+                                  focusable="false"
+                                >
+                                  <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+                                </svg>
+                              </span>
+                            )}
+                          </div>
+                          {parsed && (
+                            <QuestionOptions
+                              name={`${formId}-${id}-option`}
+                              labelledBy={`${formId}-${id}-text`}
+                              options={parsed.options}
+                              value={value}
+                              disabled={Boolean(blocks.answer)}
+                              onPick={setAnswer}
+                              onOther={() => {
+                                setAnswer(answerForOther(value, parsed.options));
+                                document.getElementById(`${formId}-${id}`)?.focus();
+                              }}
+                            />
                           )}
-                        </div>
-                        <textarea
-                          id={`${formId}-${id}`}
-                          className="claude-question-input"
-                          data-testid={`claude-question-${id}`}
-                          rows={2}
-                          maxLength={2000}
-                          autoComplete="off"
-                          data-lpignore="true"
-                          data-1p-ignore="true"
-                          data-bwignore="true"
-                          value={Object.hasOwn(drafts, id) ? drafts[id] : (saved ?? '')}
-                          disabled={Boolean(blocks.answer)}
-                          onChange={(event) => {
-                            const { value } = event.target;
-                            setDrafts((current) => ({ ...current, [id]: value }));
-                          }}
-                        />
-                      </li>
-                    ))}
+                          <textarea
+                            id={`${formId}-${id}`}
+                            className="claude-question-input"
+                            data-testid={`claude-question-${id}`}
+                            rows={2}
+                            maxLength={2000}
+                            placeholder={parsed ? 'Or write your own answer' : undefined}
+                            autoComplete="off"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
+                            data-bwignore="true"
+                            value={value}
+                            disabled={Boolean(blocks.answer)}
+                            onChange={(event) => setAnswer(event.target.value)}
+                          />
+                        </li>
+                      );
+                    })}
                   </ol>
                 </form>
               )}

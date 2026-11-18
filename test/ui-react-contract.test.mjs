@@ -1150,9 +1150,15 @@ test('question phase labels preserve accessible names', async () => {
   const labelStart = row.indexOf('<label');
   const labelEnd = row.indexOf('</label>');
   assert.ok(labelStart > -1 && labelEnd > labelStart, 'the question label is present');
+  // The text is the question, or its stem when it lists lettered options (the options are a radio
+  // group after the label, see QuestionOptions.jsx).
   assert.equal(
-    row.slice(labelStart, labelEnd + '</label>'.length),
-    '<label htmlFor={`${formId}-${id}`}>{question}</label>',
+    row
+      .slice(labelStart, labelEnd + '</label>'.length)
+      .replace(/\s+/g, ' ')
+      .replace('> {', '>{')
+      .replace('} </label>', '}</label>'),
+    '<label htmlFor={`${formId}-${id}`} id={`${formId}-${id}-text`}>{parsed ? parsed.stem : question}</label>',
     'the label is the question-only binding',
   );
   assert.doesNotMatch(

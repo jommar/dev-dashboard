@@ -693,6 +693,26 @@ file, route, reply shape, reason code and pinned word is unchanged. Rules a chan
 - **Untouched by design:** `backend/manager.mjs` and the `config.mjs` exports (`withoutSecrets` and
   `SECRET_ENV_NAMES` stay the one credential list, used by every adapter's process starts).
 
+## Claude dialog: question choices and Independent tooltips
+
+- **Choices are read from the text, never stored.** `parseOptions` in `ui/question-options.js` (pure, display-only) reads
+  `(a) ... (b) ...` markers (at the start or after whitespace, letters in order from `a`, two or more, a non-empty stem
+  and non-empty options) and returns null for anything else, so a question it cannot read keeps its textarea alone
+  (151 of 157 real questions parse). `status.json`, the answer shape (a free string), the backend and the prompts are
+  untouched; do not add an `options` key. A choice writes `(b) its words` (`optionAnswer`, never the `(recommended)`
+  tag) into the **draft**, so Save, the dirty check and the answered tick work as before (the tick follows the
+  _saved_ answer). The selected radio is derived from the box (`chosenLetter`: a leading `(b)`, `b)`, `b.` or a bare
+  `b`; "A new approach" is words, not option a; any written-in answer selects the option worded `other` when there is
+  one), the one thing kept is `QuestionOptions`' `writing` flag, so a click on Other stays selected while the box is
+  empty. The label is the stem (`parsed.stem`) and the group is `role="radiogroup"` labelled by it; the textarea
+  keeps its `claude-question-<id>` test id and is always there.
+- **Lazy only.** `QuestionOptions.jsx` and `ui/question-options.js` are imported by `ClaudeDialog.jsx` alone, so they
+  stay in its lazy chunk; importing either from an eager file spends first-paint budget.
+- **The Independent row's descriptions are tooltips** (`DashboardTooltip`, `describeChild`, on a span around each
+  button so a disabled button still shows it). The text stays in the DOM as `sr-only` (test ids
+  `claude-groom-note`, `claude-review-request-note` unchanged) and each button's `aria-describedby` points at it.
+  The reason an action is off (`claude-action-hint-*`) is still a visible line.
+
 ## Chat: facts not to break
 
 The Chat tab (`ui-react/panels/ChatPanel.jsx`) talks to a real Claude Code session: the server runs
@@ -935,9 +955,10 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
 - **The first-paint gzip, all-JS and CSS margins are thin.** With the Sprint tab and its Slack threads the initial
   closure is 647,568 B raw (632 KiB) and 205,830 B gzip against 206,848 (202 KiB; 1,018 B spare), all JS is about
-  902.1 KiB against `MAX_TOTAL_RAW`, 904 KiB (925,696 B; raised from 884 KiB for the lazy Sprint screen, then for the
-  ticket-thread search in the shared Slack hook, then for the Sessions drawer's Stop button), so about 1.9 KiB spare, and all CSS is 181,958 B against
-  180 KiB (184,320 B), 2,362 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
+  904.6 KiB against `MAX_TOTAL_RAW`, 908 KiB (929,792 B; raised from 884 KiB for the lazy Sprint screen, then for the
+  ticket-thread search in the shared Slack hook, then for the Sessions drawer's Stop button, then for the Claude
+  dialog's question choices and Independent tooltips), so 3,531 B spare, and all CSS is 183,478 B against
+  180 KiB (184,320 B), 842 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
   test with no apparent cause. A lazy screen that imports a module the entry also uses can split it into an initial
   chunk of its own: `SprintPanel` therefore opens `ClaudeDialog` after `loadClaudeDialog()` instead of importing
   `LazyDialog` from `ScreenSlot`, and the Sprint card keeps a copy of the phase words instead of importing
