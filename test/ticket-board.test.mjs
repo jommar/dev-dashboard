@@ -7,6 +7,7 @@ import {
   commentChips,
   commentSummaryText,
   reviewText,
+  reviewerLines,
 } from '../ui/ticket-board.js';
 import { jiraStatusKind } from '../ui/jira-status.js';
 import { deepFreeze } from '../e2e/deep-freeze.mjs';
@@ -244,6 +245,24 @@ test('reviewText says the review state in words and never throws on unreadable d
   assert.equal(reviewText({ state: 'changes_requested', approvals: 0 }), 'changes requested');
   assert.equal(reviewText({ state: 'awaiting', approvals: 0 }), 'awaiting');
   assert.equal(typeof reviewText(null), 'string');
+});
+
+test('reviewerLines names who approved and who requested changes, change requests first', () => {
+  assert.deepEqual(reviewerLines({ approvers: ['bob', 'dave'], changesRequesters: ['alice'] }), [
+    'Changes requested by @alice',
+    'Approved by @bob, @dave',
+  ]);
+  assert.deepEqual(reviewerLines({ approvers: ['bob'], changesRequesters: [] }), [
+    'Approved by @bob',
+  ]);
+});
+
+test('reviewerLines adds no line for empty, missing or unreadable review data', () => {
+  assert.deepEqual(reviewerLines({ state: 'awaiting', approvals: 0 }), []);
+  assert.deepEqual(reviewerLines({ approvers: [], changesRequesters: [] }), []);
+  assert.deepEqual(reviewerLines({ approvers: [null, '', 7], changesRequesters: 'x' }), []);
+  assert.deepEqual(reviewerLines(null), []);
+  assert.deepEqual(reviewerLines(undefined), []);
 });
 
 // -- a card is all-approved only when every one of its open PRs reads approved ------------------------

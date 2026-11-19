@@ -3,7 +3,7 @@ import { slug } from '../../ui/dom.js';
 import { useHarness } from '../lib/harness-context.js';
 import { say } from '../../ui/harness.js';
 import { hasCompletePrCoverage, queueReviewState } from '../../ui/review-board.js';
-import { reviewText } from '../../ui/ticket-board.js';
+import { reviewerLines, reviewText } from '../../ui/ticket-board.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { DiffViewer } from './DiffViewer.jsx';
 import { SprintPill } from './SprintPill.jsx';
@@ -111,6 +111,7 @@ export function ReviewTicketCard({
           {prs.map((pr) => {
             const state = queueReviewState(pr.review);
             const label = `${pr.repo} #${pr.number}`;
+            const reviewers = reviewerLines(pr.review);
             const id = `${ticket.key}-${slug(pr.repo)}-${pr.number}`;
             return (
               <li
@@ -118,13 +119,26 @@ export function ReviewTicketCard({
                 className="review-ticket-pr"
                 data-review-state={state}
               >
-                <DashboardTooltip title={`${label}: ${pr.title}`}>
+                <DashboardTooltip
+                  title={
+                    reviewers.length
+                      ? [`${label}: ${pr.title}`, ...reviewers].map((line) => (
+                          <div key={line}>{line}</div>
+                        ))
+                      : `${label}: ${pr.title}`
+                  }
+                  describeChild
+                >
                   <a
                     className="review-ticket-pr-link"
                     href={pr.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    aria-label={`${label}, ${pr.title}${pr.draft ? ', draft' : ''}, ${reviewText({ state })}`}
+                    aria-label={[
+                      `${label}, ${pr.title}${pr.draft ? ', draft' : ''}`,
+                      reviewText({ state }),
+                      ...reviewers,
+                    ].join(', ')}
                     data-testid={`prs-pr-${id}`}
                   >
                     <span className="review-ticket-pr-name">{label}</span>

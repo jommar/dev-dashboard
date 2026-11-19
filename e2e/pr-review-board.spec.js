@@ -50,6 +50,34 @@ test("a lane's copy button comes before its title and lists and copies the lane'
     keys.join('\n'),
   );
 });
+test("a PR link's tooltip and name say who approved and who requested changes", async ({
+  page,
+  dashboard,
+}) => {
+  const pr = dashboard.data.reviewTickets.tickets[0].prs[0];
+  pr.review = {
+    complete: true,
+    state: 'changes_requested',
+    approvers: ['bob', 'dave'],
+    changesRequesters: ['alice'],
+    reviewDecision: null,
+  };
+  await page.goto('/#/prs');
+  const link = ticket(page).locator('[data-testid^="prs-pr-"]').first();
+  await expect(link).toHaveAccessibleName(
+    /changes requested, Changes requested by @alice, Approved by @bob, @dave$/,
+  );
+  await link.hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toContainText(pr.title);
+  await expect(tooltip).toContainText('Changes requested by @alice');
+  await expect(tooltip).toContainText('Approved by @bob, @dave');
+  // The tooltip describes the link and never renames it.
+  await expect(link).toHaveAccessibleName(/^\S.*changes requested, Changes requested by @alice/);
+  await expect(link).toHaveAttribute('aria-describedby', /.+/);
+  await page.mouse.move(0, 0);
+  await expect(tooltip).toHaveCount(0);
+});
 test('ticket cards show assignee names and a readable fallback without changing their actions', async ({
   page,
   dashboard,

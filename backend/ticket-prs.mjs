@@ -103,8 +103,8 @@ export function summarizeChecks(rollup) {
 // say whether older reviews exist is unreadable in the same way.
 function reviewOf(reviews) {
   if (!Array.isArray(reviews?.nodes) || reviews.pageInfo?.hasPreviousPage !== false) return null;
-  const { state, approvers } = summarizeReviews(reviews.nodes);
-  return { state: state || 'awaiting', approvals: approvers.length };
+  const { state, approvers, changesRequesters } = summarizeReviews(reviews.nodes);
+  return { state: state || 'awaiting', approvals: approvers.length, approvers, changesRequesters };
 }
 
 // GitHub reports a field it will not show as an error entry on that field's path.

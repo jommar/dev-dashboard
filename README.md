@@ -960,7 +960,8 @@ A ticket you finished (Done) shows none either, even when its PR is still open.
       byTicket: { "<KEY>": [{ repo, number, title, url, draft, merged, mergedAt, updatedAt,
                               review, ci, comments }] } }
 
-review: { state: 'approved' | 'changes_requested' | 'awaiting', approvals } | null
+review: { state: 'approved' | 'changes_requested' | 'awaiting', approvals,
+          approvers: [login, …], changesRequesters: [login, …] } | null
 ci:     { state: 'passing' | 'failing' | 'pending' | 'none',
           passed, failed, pending, failing: [name, …] } | null
 comments: { human, copilot, other, conversation, threads, truncated } | null
@@ -988,7 +989,10 @@ still stands makes it `changes_requested` even when another reviewer approved
 later; with none standing, the newest approval or change request decides, and it
 is `awaiting` when there is neither. `approvals` counts the reviewers whose
 latest approval or change request is an approval, so it can be above 0 while the
-state is `changes_requested`. The board reads each PR's newest 100 reviews; when
+state is `changes_requested`. `approvers` and `changesRequesters` are those
+reviewers' logins: a PR line's tooltip and name list them ("Approved by @bob",
+"Changes requested by @alice"), as the Pull Requests board's PR links do from the
+same two lists of its review data. The board reads each PR's newest 100 reviews; when
 GitHub reports older ones outside that window (an older change request could
 still stand there), or does not say, `review` is `null` and the line reads
 `review unknown`, never `approved`. The Pull Requests tab pages through every

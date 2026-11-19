@@ -14,6 +14,7 @@ import {
   commentChips,
   commentSummaryText,
   mergedPrLines,
+  reviewerLines,
   reviewText,
 } from '../../ui/ticket-board.js';
 import { canonicalTicketKey } from '../../ui/slack-ticket-links.js';
@@ -172,14 +173,28 @@ function PrLine({ ticketKey, pr }) {
   const review = reviewText(pr.review);
   const chips = commentChips(pr.comments);
   const mergedLines = merged ? mergedPrLines(pr) : [];
+  const reviewers = merged ? [] : reviewerLines(pr.review);
   const words = merged
     ? `${name}, ${mergedLines.join(', ').toLowerCase()}`
-    : [`${name}${pr.draft ? ', draft' : ''}`, review, ciText, commentSummaryText(pr.comments)]
+    : [
+        `${name}${pr.draft ? ', draft' : ''}`,
+        review,
+        ...reviewers,
+        ciText,
+        commentSummaryText(pr.comments),
+      ]
         .filter(Boolean)
         .join(', ');
   return (
     <DashboardTooltip
-      title={merged ? mergedLines.map((line) => <div key={line}>{line}</div>) : ciText}
+      title={
+        merged
+          ? mergedLines.map((line) => <div key={line}>{line}</div>)
+          : reviewers.length
+            ? [ciText, ...reviewers].map((line) => <div key={line}>{line}</div>)
+            : ciText
+      }
+      describeChild
       open={lineOpen}
       onOpen={(event) => {
         if (!event.target.closest?.('.my-tickets-pr-comments')) setLineOpen(true);

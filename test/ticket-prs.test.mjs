@@ -561,7 +561,7 @@ test('fetchTicketPrs gives each ticket its PRs with review state and a CI summar
     merged: false,
     mergedAt: null,
     updatedAt: '2026-10-06T12:00:00Z',
-    review: { state: 'approved', approvals: 1 },
+    review: { state: 'approved', approvals: 1, approvers: ['bob'], changesRequesters: [] },
     ci: { state: 'failing', passed: 1, failed: 2, pending: 0, failing: ['lint', 'ci/legacy'] },
     comments: ZERO_COMMENTS,
   };
@@ -574,7 +574,12 @@ test('fetchTicketPrs gives each ticket its PRs with review state and a CI summar
     merged: false,
     mergedAt: null,
     updatedAt: '2026-10-07T12:00:00Z',
-    review: { state: 'changes_requested', approvals: 0 },
+    review: {
+      state: 'changes_requested',
+      approvals: 0,
+      approvers: [],
+      changesRequesters: ['carol'],
+    },
     ci: { state: 'pending', passed: 1, failed: 0, pending: 1, failing: [] },
     comments: ZERO_COMMENTS,
   };
@@ -589,7 +594,12 @@ test('fetchTicketPrs reads a PR with no reviews as awaiting and a PR with no che
   });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
   const [quiet] = result.byTicket['TAP-1'];
-  assert.deepEqual(quiet.review, { state: 'awaiting', approvals: 0 });
+  assert.deepEqual(quiet.review, {
+    state: 'awaiting',
+    approvals: 0,
+    approvers: [],
+    changesRequesters: [],
+  });
   assert.deepEqual(quiet.ci, { state: 'none', ...ZERO });
 });
 
@@ -617,8 +627,18 @@ test('fetchTicketPrs reads a standing change request as changes_requested beside
   const result = await fetchTicketPrs({ snapshot: snapshot() });
   const [after] = result.byTicket['TAP-1'];
   const [before] = result.byTicket['TAP-2'];
-  assert.deepEqual(after.review, { state: 'changes_requested', approvals: 1 });
-  assert.deepEqual(before.review, { state: 'changes_requested', approvals: 1 });
+  assert.deepEqual(after.review, {
+    state: 'changes_requested',
+    approvals: 1,
+    approvers: ['bob'],
+    changesRequesters: ['alice'],
+  });
+  assert.deepEqual(before.review, {
+    state: 'changes_requested',
+    approvals: 1,
+    approvers: ['bob'],
+    changesRequesters: ['alice'],
+  });
 });
 
 test('a FORBIDDEN error on one PR check rollup nulls only that PR CI and keeps its review', async (t) => {
@@ -647,7 +667,12 @@ test('a FORBIDDEN error on one PR check rollup nulls only that PR CI and keeps i
   const [quiet] = result.byTicket['TAP-3'];
   assert.equal(readable.ci.state, 'passing');
   assert.equal(forbiddenPr.ci, null, 'an unreadable CI is null, not none');
-  assert.deepEqual(forbiddenPr.review, { state: 'approved', approvals: 1 });
+  assert.deepEqual(forbiddenPr.review, {
+    state: 'approved',
+    approvals: 1,
+    approvers: ['bob'],
+    changesRequesters: [],
+  });
   assert.equal(quiet.ci.state, 'none', 'a missing rollup without an error is none');
   assert.ok(!JSON.stringify(result).includes('upstream detail'), 'no upstream error text');
 });
@@ -665,7 +690,12 @@ test('an unrelated GraphQL error entry drops nothing', async (t) => {
   });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
   const [change] = result.byTicket['TAP-1'];
-  assert.deepEqual(change.review, { state: 'approved', approvals: 1 });
+  assert.deepEqual(change.review, {
+    state: 'approved',
+    approvals: 1,
+    approvers: ['bob'],
+    changesRequesters: [],
+  });
   assert.equal(change.ci.state, 'passing');
   assert.ok(!JSON.stringify(result).includes('something odd upstream'));
 });
@@ -714,7 +744,7 @@ test('a PR in a repo outside github.repos shows on its ticket from Jira dev-stat
         merged: false,
         mergedAt: null,
         updatedAt: '2026-10-06T12:00:00Z',
-        review: { state: 'approved', approvals: 1 },
+        review: { state: 'approved', approvals: 1, approvers: ['bob'], changesRequesters: [] },
         ci: { state: 'passing', passed: 1, failed: 0, pending: 0, failing: [] },
         comments: ZERO_COMMENTS,
       },
@@ -1153,10 +1183,20 @@ test('the review, CI and comment lanes stay independent of each other', async (t
   const [requested] = result.byTicket['TAP-1'];
   const [forbiddenPr] = result.byTicket['TAP-2'];
   assert.equal(requested.comments, null, 'a failed comment batch nulls comments only');
-  assert.deepEqual(requested.review, { state: 'changes_requested', approvals: 1 });
+  assert.deepEqual(requested.review, {
+    state: 'changes_requested',
+    approvals: 1,
+    approvers: ['bob'],
+    changesRequesters: ['alice'],
+  });
   assert.equal(requested.ci.state, 'passing');
   assert.equal(forbiddenPr.ci, null, 'an unreadable CI is null and review stays');
-  assert.deepEqual(forbiddenPr.review, { state: 'approved', approvals: 1 });
+  assert.deepEqual(forbiddenPr.review, {
+    state: 'approved',
+    approvals: 1,
+    approvers: ['bob'],
+    changesRequesters: [],
+  });
   assert.equal(forbiddenPr.comments, null);
 });
 
@@ -1549,7 +1589,7 @@ const approvedPr = {
 };
 const withThreads = (threads, extra = {}) => ({ ...approvedPr, threads, ...extra });
 const REVIEW_AND_CI = {
-  review: { state: 'approved', approvals: 1 },
+  review: { state: 'approved', approvals: 1, approvers: ['bob'], changesRequesters: [] },
   ci: { state: 'passing', passed: 1, failed: 0, pending: 0, failing: [] },
 };
 
@@ -1912,7 +1952,12 @@ test('a PR whose 100 reviews are all of its reviews keeps its review state', asy
   });
   const result = await fetchTicketPrs({ snapshot: snapshot() });
   const prs = result.byTicket['TAP-1'];
-  assert.deepEqual(prs[0].review, { state: 'approved', approvals: 1 });
+  assert.deepEqual(prs[0].review, {
+    state: 'approved',
+    approvals: 1,
+    approvers: ['bob'],
+    changesRequesters: [],
+  });
   assert.equal(allPrsApproved(prs), true);
 });
 

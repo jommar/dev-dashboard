@@ -116,6 +116,36 @@ test("each lane has a copy button before its title that lists and copies the lan
   await expect(copy).toHaveAccessibleName('Copied');
 });
 
+test("a PR line's tooltip and name say who approved and who requested changes @regression", async ({
+  page,
+  dashboard,
+}) => {
+  ticketBoardData(dashboard.data);
+  const [open] = dashboard.data.ticketPrs.byTicket['TAP-9002'];
+  open.review = {
+    state: 'changes_requested',
+    approvals: 1,
+    approvers: ['bob', 'dave'],
+    changesRequesters: ['alice'],
+  };
+  await page.goto('/#/my-tickets');
+  const line = prLinesOf(page, 'TAP-9002').first();
+  await expect(line).toHaveAccessibleName(
+    /changes requested, Changes requested by @alice, Approved by @bob, @dave/,
+  );
+  await expectTooltip(
+    page,
+    line,
+    /Changes requested by @alice.*Approved by @bob, @dave/,
+    LINE_POINT,
+  );
+  // The name stays the line's own while the tooltip is open: the tooltip describes it.
+  await line.hover(LINE_POINT);
+  await expect(page.getByRole('tooltip')).toBeVisible();
+  await expect(line).toHaveAccessibleName(/^\S.*Changes requested by @alice/);
+  await expect(line).toHaveAttribute('aria-describedby', /.+/);
+});
+
 test('Include Done adds a Done column at the end of the board @regression', async ({
   page,
   dashboard,

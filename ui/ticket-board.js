@@ -149,6 +149,20 @@ export function reviewText(review) {
   return REVIEW_WORDS.get(review?.state) ?? 'review unknown';
 }
 
+// Who approved and who has a change request standing, one line each, change requests first. A
+// missing or empty list adds no line, so unreadable review data reads as before.
+export function reviewerLines(review) {
+  const names = (list) =>
+    Array.isArray(list) ? list.filter((n) => n && typeof n === 'string') : [];
+  const at = (list) => list.map((name) => `@${name}`).join(', ');
+  const requested = names(review?.changesRequesters);
+  const approved = names(review?.approvers);
+  return [
+    ...(requested.length ? [`Changes requested by ${at(requested)}`] : []),
+    ...(approved.length ? [`Approved by ${at(approved)}`] : []),
+  ];
+}
+
 // Review threads by who started them. Human comes first on the line, Copilot second.
 const COMMENT_AUTHORS = [
   { key: 'human', word: 'Human' },
