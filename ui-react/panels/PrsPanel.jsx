@@ -224,6 +224,7 @@ export function PrsPanel({ config, active }) {
             hint={LANE_HINTS[column.id]}
             count={column.tickets.length}
             testIdPrefix="prs-column-"
+            copyKeys={column.tickets.map((ticket) => ticket.key)}
           >
             {column.tickets.map((ticket) => (
               <li key={ticket.key}>
@@ -246,6 +247,7 @@ export function PrsPanel({ config, active }) {
           hint={LANE_HINTS[SPEC_REVIEW_LANE.id]}
           count={specs.length}
           testIdPrefix="prs-column-"
+          copyKeys={specs.flatMap((spec) => spec.keys)}
         >
           {specs.map((spec) => (
             <li key={spec.number}>

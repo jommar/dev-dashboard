@@ -491,6 +491,11 @@ contract, so a refactor never renames them):
   preservation (`usePreservedInteraction`), so a screen never wires it again. Optional `BoardColumn.hint`
   gives a heading existing `DashboardTooltip` help on hover/keyboard focus; only hinted headings gain
   a Tab stop. Pull Requests supplies lane meanings; My Tickets/Slack keep their no-hint defaults.
+  Optional `BoardColumn.copyKeys` (the lane's ticket keys, passed by My Tickets, Sprint and Pull Requests, spec lane
+  included; Slack passes none) renders a `CopyKeysButton` **before** the heading (`<prefix>copy-<id>`): one key per line
+  in lane order, repeats dropped, never shown for an empty lane. Its tooltip (`describeChild`, so the button keeps its
+  own name) lists every key it copies under "Copy N ticket keys", or the outcome (`Copied` / `Copy failed`), which also
+  sets the glyph and the button's `aria-label`. It is a Tab stop ahead of the lane's list.
 - `.board-card` (`.board-card-action` for a card that is a button), `.board-card-top`,
   `.board-card-summary`, `.board-card-stat` and `.board-chip` — the card shell and status chip. A
   domain card adds its own class beside them (`board-card my-tickets-card`).

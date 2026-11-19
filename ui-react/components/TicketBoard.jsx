@@ -396,6 +396,7 @@ export function TicketBoard({
             count={column.tickets.length}
             testIdPrefix="my-tickets-column-"
             kind={column.kind}
+            copyKeys={column.tickets.map((ticket) => ticket.key)}
           >
             {column.tickets.map((ticket) => (
               <li key={ticket.key}>

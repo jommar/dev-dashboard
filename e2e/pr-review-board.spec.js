@@ -29,6 +29,27 @@ const review = (state = 'approved') => ({
   reviewDecision: null,
 });
 
+test("a lane's copy button comes before its title and lists and copies the lane's ticket keys", async ({
+  page,
+}) => {
+  await page.goto('/#/prs');
+  const column = lane(page, 'reviewing');
+  await expect(column.getByTestId('prs-ticket-DEMO-1')).toBeVisible();
+  const keys = await column
+    .locator('.review-ticket-key')
+    .evaluateAll((links) => links.map((link) => link.textContent.trim()));
+  expect(keys.length).toBeGreaterThan(0);
+  const copy = page.getByTestId('prs-column-copy-reviewing');
+  const title = column.locator('.board-column-title');
+  expect((await copy.boundingBox()).x).toBeLessThan((await title.boundingBox()).x);
+  await copy.hover();
+  const tooltip = page.getByRole('tooltip');
+  for (const key of keys) await expect(tooltip).toContainText(key);
+  await copy.click();
+  expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes.at(-1))).toBe(
+    keys.join('\n'),
+  );
+});
 test('ticket cards show assignee names and a readable fallback without changing their actions', async ({
   page,
   dashboard,
@@ -942,6 +963,12 @@ test('lane header help describes classifier rules on hover and actual Tab focus,
     await expect(page.getByRole('tooltip')).toHaveCount(0);
     await board.focus();
     await page.keyboard.press('Tab');
+    // My Tickets lanes list ticket keys, so the first stop is a lane's copy button, then its list;
+    // the Slack board has no such button and goes straight to the list.
+    if (view === 'my-tickets') {
+      await expect(board.locator('.board-column-copy').first()).toBeFocused();
+      await page.keyboard.press('Tab');
+    }
     await expect(board.locator('.board-column-body').first()).toBeFocused();
   }
   await page.getByTestId('tab-prs').click();

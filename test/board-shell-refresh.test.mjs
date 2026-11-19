@@ -35,12 +35,12 @@ function blockAfter(css, head) {
 
 const emptyAttr = /\[data-empty=(['"])true\1\]/;
 
-test('BoardColumn marks an empty column with data-empty from its count and its children, and takes no new prop', () => {
+test('BoardColumn marks an empty column with data-empty from its count and its children, and takes only the copyKeys prop', () => {
   const source = functionSource(read('components/BoardShell.jsx'), 'BoardColumn');
   assert.match(
     source.split('\n')[0],
-    /\{ id, label, count, testIdPrefix, kind, hint, children \}/,
-    'no new prop',
+    /\{ id, label, count, testIdPrefix, kind, hint, copyKeys, children \}/,
+    'copyKeys is the one prop beyond the heading ones',
   );
   assert.match(source, /data-empty=/, 'the section carries data-empty');
   assert.match(source, /Number\(count\) === 0/, 'an empty column has a count of 0');
@@ -177,4 +177,29 @@ test('only the Slack coverage notes, which carry a link, start open', () => {
     const expected = file in LINKED_NOTES ? 1 : 0;
     assert.equal(opened.length, expected, `${file} opens ${expected} note(s) by default`);
   }
+});
+
+test('BoardColumn puts the copy-keys button before the title, only for a lane that lists keys, and the tooltip lists them', () => {
+  const file = read('components/BoardShell.jsx');
+  const source = functionSource(file, 'BoardColumn');
+  const button = source.indexOf('<CopyKeysButton');
+  assert.ok(button > -1, 'the lane renders the copy button');
+  assert.ok(
+    button < source.indexOf('<DashboardTooltip title={hint}'),
+    'the button comes before the heading',
+  );
+  assert.match(source, /keys\.length > 0 &&/, 'no keys, no button (an empty rail has none)');
+  assert.match(source, /new Set\(/, 'a key shared by two cards is listed and copied once');
+  const copy = file.slice(
+    file.indexOf('function CopyKeysButton'),
+    file.indexOf('export function BoardColumn'),
+  );
+  assert.match(copy, /keys\.join\('\\n'\)/, 'copied one per line');
+  assert.match(copy, /keys\.map\(\(key\) =>/, 'the tooltip lists every key');
+  for (const panel of [
+    'components/TicketBoard.jsx',
+    'panels/SprintPanel.jsx',
+    'panels/PrsPanel.jsx',
+  ])
+    assert.match(read(panel), /copyKeys=\{/, `${panel} passes its lane's keys`);
 });

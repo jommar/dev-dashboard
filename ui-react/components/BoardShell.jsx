@@ -3,8 +3,10 @@
 // that fills the viewport with a board of columns. What the cards are, and what the columns
 // mean, stay with each screen; presentation is ui-react/styles/board.css.
 import { Children, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { copyText } from '../../ui/dom.js';
 import { usePreservedInteraction } from '../hooks/usePreservedInteraction.js';
 import { registerBoardRefresh } from '../lib/board-refresh.js';
+import { NavIcon } from './NavIcon.jsx';
 import { Button, Card, DashboardTooltip, LoadingState } from './Primitives.jsx';
 
 // The panel <section>. `board-panel` is what opts the page into the one-viewport fill layout.
@@ -288,7 +290,54 @@ export function Board({ label, testId, frameRef, children }) {
 }
 
 // One column of the board: a header with its name and count, then a scrolling list of rows.
-export function BoardColumn({ id, label, count, testIdPrefix, kind, hint, children }) {
+// How long "Copied" (or "Copy failed") shows on a lane's copy button.
+const COPIED_MS = 2000;
+
+// The icon button at the start of a lane header: copies the lane's ticket keys, one per line, in the
+// order the lane shows them. Its tooltip lists every key it will copy under a line that says so, or the
+// outcome; the outcome also shows in the glyph and the button's name.
+function CopyKeysButton({ keys, label, testId }) {
+  const [outcome, setOutcome] = useState(null);
+  useEffect(() => {
+    if (!outcome) return undefined;
+    const timer = setTimeout(() => setOutcome(null), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [outcome]);
+  const words = `Copy ${keys.length} ticket ${keys.length === 1 ? 'key' : 'keys'}`;
+  const ok = outcome === 'Copied';
+  return (
+    <DashboardTooltip
+      placement="top"
+      describeChild
+      title={
+        <>
+          <span className="board-column-copy-words">{outcome ?? words}</span>
+          <ul className="board-column-copy-keys" data-testid={`${testId}-keys`}>
+            {keys.map((key) => (
+              <li key={key}>{key}</li>
+            ))}
+          </ul>
+        </>
+      }
+    >
+      <Button
+        className="subtle board-column-copy"
+        data-testid={testId}
+        data-outcome={outcome && (ok ? 'copied' : 'failed')}
+        aria-label={outcome ?? `${words} from ${label}`}
+        onClick={async () =>
+          setOutcome((await copyText(keys.join('\n'))) ? 'Copied' : 'Copy failed')
+        }
+      >
+        <NavIcon name={ok ? 'check' : 'copy'} />
+      </Button>
+    </DashboardTooltip>
+  );
+}
+
+// `copyKeys` (optional) are the ticket keys the lane lists; with at least one, a copy button comes
+// before the title. Repeats and blanks are dropped, so a lane of PRs that share a ticket lists it once.
+export function BoardColumn({ id, label, count, testIdPrefix, kind, hint, copyKeys, children }) {
   const titleId = `${testIdPrefix}title-${id}`;
   const heading = (
     <h3 className="board-column-title" id={titleId} tabIndex={hint ? 0 : undefined}>
@@ -298,6 +347,7 @@ export function BoardColumn({ id, label, count, testIdPrefix, kind, hint, childr
   // Count 0 and nothing to list: a rail beside a populated column (board.css). A lane that holds
   // only a Load more item has children, so it is not empty.
   const empty = Number(count) === 0 && Children.toArray(children).length === 0;
+  const keys = [...new Set((copyKeys ?? []).filter(Boolean))];
   return (
     <section
       className="board-column"
@@ -308,6 +358,9 @@ export function BoardColumn({ id, label, count, testIdPrefix, kind, hint, childr
       aria-labelledby={titleId}
     >
       <div className="board-column-head" data-testid={`${testIdPrefix}head-${id}`}>
+        {keys.length > 0 && (
+          <CopyKeysButton keys={keys} label={label} testId={`${testIdPrefix}copy-${id}`} />
+        )}
         {hint ? (
           <DashboardTooltip title={hint} describeChild slotProps={{ transition: { timeout: 0 } }}>
             {heading}

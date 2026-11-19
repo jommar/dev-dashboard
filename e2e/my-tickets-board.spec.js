@@ -90,6 +90,32 @@ test('columns follow the workflow order and carry their ticket counts @regressio
   await expect(page.locator('[data-testid^="my-tickets-status-"]')).toHaveCount(0);
 });
 
+test("each lane has a copy button before its title that lists and copies the lane's ticket keys @regression", async ({
+  page,
+  dashboard,
+}) => {
+  ticketBoardData(dashboard.data);
+  await openBoard(page);
+  const copy = page.getByTestId(columnId('copy', 'Code Review'));
+  const title = page.getByTestId(columnId('head', 'Code Review')).locator('.board-column-title');
+  expect((await copy.boundingBox()).x).toBeLessThan((await title.boundingBox()).x);
+  const keys = await page
+    .getByTestId(columnId('body', 'Code Review'))
+    .locator('.my-tickets-card-key')
+    .evaluateAll((links) => links.map((link) => link.textContent.trim()));
+  expect(keys).toHaveLength(2);
+  await expect(copy).toHaveAccessibleName('Copy 2 ticket keys from Code Review');
+  await copy.hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toContainText('Copy 2 ticket keys');
+  for (const key of keys) await expect(tooltip).toContainText(key);
+  await copy.click();
+  expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes.at(-1))).toBe(
+    keys.join('\n'),
+  );
+  await expect(copy).toHaveAccessibleName('Copied');
+});
+
 test('Include Done adds a Done column at the end of the board @regression', async ({
   page,
   dashboard,

@@ -43,6 +43,26 @@ async function openSprint(page) {
 }
 
 test.describe('Sprint tab', () => {
+  test("each lane's copy button comes before its title and lists and copies the lane's keys", async ({
+    page,
+  }) => {
+    const board = await openSprint(page);
+    const lane = board.getByTestId('sprint-column-To-Do');
+    const keys = await cardKeys(lane);
+    expect(keys).toEqual(NEXUS_TODO);
+    const copy = board.getByTestId('sprint-column-copy-To-Do');
+    const title = lane.locator('.board-column-title');
+    expect((await copy.boundingBox()).x).toBeLessThan((await title.boundingBox()).x);
+    await copy.hover();
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toContainText('Copy 7 ticket keys');
+    for (const key of keys) await expect(tooltip).toContainText(key);
+    await copy.click();
+    expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes.at(-1))).toBe(
+      keys.join('\n'),
+    );
+  });
+
   test("board shows every assignee's tickets in status columns with their card details", async ({
     page,
     dashboard,
