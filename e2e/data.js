@@ -1932,6 +1932,8 @@ function claudeData() {
     sends: [],
     // The Markdown each ticket's sessions left, by ticket key then file name: `{ [key]: { [name]: text } }`.
     artifacts: {},
+    // ticket key -> { run id: report text }, what /api/claude/proofs and /proof answer from.
+    proofs: {},
     prompts: {
       entries: Object.fromEntries(
         Object.keys(CLAUDE_PROMPT_LABELS).map((name) => [name, claudePromptEntry(name)]),
@@ -2017,6 +2019,36 @@ function claudeResponse(url, method, { claude, devtools }, body) {
         ok: true,
         key,
         name,
+        size: text.length,
+        updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
+        text,
+      },
+    };
+  }
+  if (method === 'GET' && pathname === '/api/claude/proofs') {
+    const key = url.searchParams.get('key');
+    // Later in the object is newer: the real route answers newest first.
+    const runs = Object.entries(claude.proofs[key] ?? {})
+      .reverse()
+      .map(([run, text], index) => ({
+        run,
+        name: 'report.md',
+        size: text.length,
+        updatedAt: new Date(Date.now() - 3_600_000 * (index + 1)).toISOString(),
+      }));
+    return { json: { ok: true, key, runs } };
+  }
+  if (method === 'GET' && pathname === '/api/claude/proof') {
+    const key = url.searchParams.get('key');
+    const run = url.searchParams.get('run');
+    const text = claude.proofs[key]?.[run];
+    if (text === undefined) return claudeFailure(404, 'ARTIFACT_NOT_FOUND');
+    return {
+      json: {
+        ok: true,
+        key,
+        run,
+        name: 'report.md',
         size: text.length,
         updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
         text,

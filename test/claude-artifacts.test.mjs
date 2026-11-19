@@ -175,3 +175,144 @@ test('GET /api/claude/artifacts and /artifact serve the list and a file, and say
   assert.notEqual(post.status, 200);
   assert.equal(fs.readFileSync(path.join(dir, '02-plan.md'), 'utf8'), '# Plan');
 });
+
+// ---- proof reports: ~/pathwise/proofs/.proofs-out/<TICKET>/<run id>/report.md -------------------
+
+const RUN_A = '77b793d4-707d-4b7f-8e00-7d847babcaeb';
+const RUN_B = 'b47a33b6-5815-4a1d-b60b-7e8ee9579cd1';
+
+function proofsWorkspace(t) {
+  const ws = workspace(t);
+  const proofsRoot = path.join(ws.home, 'pathwise', 'proofs', '.proofs-out');
+  const proofsDir = path.join(proofsRoot, KEY);
+  fs.mkdirSync(proofsDir, { recursive: true });
+  const writeRun = (run, text, seconds) => {
+    fs.mkdirSync(path.join(proofsDir, run), { recursive: true });
+    const file = path.join(proofsDir, run, 'report.md');
+    fs.writeFileSync(file, text);
+    fs.utimesSync(file, seconds, seconds);
+  };
+  return { ...ws, proofsRoot, proofsDir, writeRun };
+}
+
+test('proofs are listed apart from the orchestrator files, newest run first', (t) => {
+  const { dir, writeRun, artifacts } = proofsWorkspace(t);
+  fs.writeFileSync(path.join(dir, '02-plan.md'), '# Plan');
+  writeRun(RUN_A, '# Proof A', 2_000_000);
+  writeRun(RUN_B, '# Proof B', 3_000_000);
+  const { ok, key, runs } = artifacts.listProofs(KEY);
+  assert.equal(ok, true);
+  assert.equal(key, KEY);
+  assert.deepEqual(
+    runs.map((run) => run.run),
+    [RUN_B, RUN_A],
+  );
+  assert.deepEqual(Object.keys(runs[0]).sort(), ['name', 'run', 'size', 'updatedAt']);
+  assert.equal(runs[0].name, 'report.md');
+  assert.deepEqual(
+    artifacts.list(KEY).files.map((file) => file.name),
+    ['02-plan.md'],
+  );
+});
+
+test('only a run folder named by a UUID with a regular report.md is listed', (t) => {
+  const { proofsDir, writeRun, artifacts, home } = proofsWorkspace(t);
+  writeRun(RUN_A, '# Proof A', 2_000_000);
+  fs.mkdirSync(path.join(proofsDir, 'scratch'));
+  fs.writeFileSync(path.join(proofsDir, 'scratch', 'report.md'), '# no');
+  fs.mkdirSync(path.join(proofsDir, RUN_B)); // no report yet
+  const outside = path.join(home, 'secret.md');
+  fs.writeFileSync(outside, '# secret');
+  const linked = '11111111-2222-3333-4444-555555555555';
+  fs.mkdirSync(path.join(proofsDir, linked));
+  fs.symlinkSync(outside, path.join(proofsDir, linked, 'report.md'));
+  assert.deepEqual(
+    artifacts.listProofs(KEY).runs.map((run) => run.run),
+    [RUN_A],
+  );
+});
+
+test('a ticket with no proofs has none, not an error', (t) => {
+  const { artifacts } = proofsWorkspace(t);
+  assert.deepEqual(artifacts.listProofs('TAP-9999'), { ok: true, key: 'TAP-9999', runs: [] });
+});
+
+test('reads a proof report with its run, size and time', (t) => {
+  const { writeRun, artifacts } = proofsWorkspace(t);
+  writeRun(RUN_A, '# Proof report\n', 2_000_000);
+  const result = artifacts.readProof(KEY, RUN_A);
+  assert.equal(result.text, '# Proof report\n');
+  assert.equal(result.run, RUN_A);
+  assert.equal(result.name, 'report.md');
+  assert.equal(result.size, 15);
+});
+
+test('refuses a proof key or run id that could name another path, and says when it is missing', (t) => {
+  const { writeRun, artifacts } = proofsWorkspace(t);
+  writeRun(RUN_A, '# Proof A', 2_000_000);
+  for (const key of ['../etc', 'tap-1747', '', null, undefined])
+    assert.throws(() => artifacts.listProofs(key), refusal('INVALID_TICKET', 400), `list ${key}`);
+  for (const run of ['..', '../x', RUN_A.toUpperCase(), `${RUN_A}/report.md`, '', null, undefined])
+    assert.throws(
+      () => artifacts.readProof(KEY, run),
+      refusal('INVALID_ARTIFACT', 400),
+      `read ${run}`,
+    );
+  assert.throws(() => artifacts.readProof('../x', RUN_A), refusal('INVALID_TICKET', 400));
+  assert.throws(() => artifacts.readProof(KEY, RUN_B), refusal('ARTIFACT_NOT_FOUND', 404));
+  assert.throws(() => artifacts.readProof('TAP-9999', RUN_A), refusal('ARTIFACT_NOT_FOUND', 404));
+});
+
+test('a symlinked proof report, run folder or ticket folder is never read', (t) => {
+  const { home, proofsRoot, proofsDir, artifacts } = proofsWorkspace(t);
+  const outside = path.join(home, 'elsewhere');
+  fs.mkdirSync(path.join(outside, RUN_A), { recursive: true });
+  fs.writeFileSync(path.join(outside, RUN_A, 'report.md'), '# outside');
+  // a run folder that is a link out of the ticket's proofs folder
+  fs.symlinkSync(path.join(outside, RUN_A), path.join(proofsDir, RUN_A));
+  assert.deepEqual(artifacts.listProofs(KEY).runs, []);
+  assert.throws(() => artifacts.readProof(KEY, RUN_A), refusal('ARTIFACT_NOT_FOUND', 404));
+  // a ticket folder that is a link out of the proofs root
+  fs.symlinkSync(outside, path.join(proofsRoot, 'TAP-2000'));
+  assert.deepEqual(artifacts.listProofs('TAP-2000').runs, []);
+  assert.throws(() => artifacts.readProof('TAP-2000', RUN_A), refusal('ARTIFACT_NOT_FOUND', 404));
+  // a report that is a link
+  fs.mkdirSync(path.join(proofsDir, RUN_B));
+  fs.symlinkSync(path.join(outside, RUN_A, 'report.md'), path.join(proofsDir, RUN_B, 'report.md'));
+  assert.throws(() => artifacts.readProof(KEY, RUN_B), refusal('ARTIFACT_NOT_FOUND', 404));
+});
+
+test('a proof report over the size cap is refused rather than read', (t) => {
+  const { writeRun, artifacts } = proofsWorkspace(t);
+  writeRun(RUN_A, 'x'.repeat(MAX_ARTIFACT_BYTES + 1), 2_000_000);
+  assert.throws(() => artifacts.readProof(KEY, RUN_A), refusal('ARTIFACT_TOO_LARGE', 413));
+});
+
+test('GET /api/claude/proofs and /proof serve the runs and a report, and say why they refuse', async (t) => {
+  const { writeRun, artifacts } = proofsWorkspace(t);
+  writeRun(RUN_A, '# Proof A', 2_000_000);
+  const get = await serve(t, artifacts);
+
+  const listed = await get(`/api/claude/proofs?key=${KEY}`);
+  assert.equal(listed.status, 200);
+  assert.deepEqual(
+    listed.body.runs.map((run) => run.run),
+    [RUN_A],
+  );
+  const report = await get(`/api/claude/proof?key=${KEY}&run=${RUN_A}`);
+  assert.equal(report.status, 200);
+  assert.equal(report.body.text, '# Proof A');
+
+  for (const [url, status, code] of [
+    [`/api/claude/proofs`, 400, 'INVALID_TICKET'],
+    [`/api/claude/proof?key=${KEY}`, 400, 'INVALID_ARTIFACT'],
+    [`/api/claude/proof?key=${KEY}&run=..%2F..%2Fx`, 400, 'INVALID_ARTIFACT'],
+    [`/api/claude/proof?key=${KEY}&run=${RUN_B}`, 404, 'ARTIFACT_NOT_FOUND'],
+  ]) {
+    const result = await get(url);
+    assert.equal(result.status, status, url);
+    assert.equal(result.body.code, code, url);
+  }
+  const post = await get(`/api/claude/proof?key=${KEY}&run=${RUN_A}`, 'POST');
+  assert.notEqual(post.status, 200);
+});

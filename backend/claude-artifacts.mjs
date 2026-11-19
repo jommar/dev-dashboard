@@ -4,6 +4,8 @@
 // only `.md` files that sit directly in `~/pathwise/.orchestrator/<ticket>/` are listed or read,
 // the ticket and file names are checked before any path is built, a symlink (the folder's or the
 // file's) is never followed out of that folder, and a file over MAX_ARTIFACT_BYTES is refused.
+// Proof reports are a second, separate lookup with the same checks: the `report.md` of each run in
+// `~/pathwise/proofs/.proofs-out/<TICKET>/<run id>/` (`listProofs`, `readProof`).
 import fsDefault from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +14,9 @@ import { isTicketKey } from './claude-ticket-state.mjs';
 export const MAX_ARTIFACT_BYTES = 512 * 1024;
 export const MAX_ARTIFACTS = 50;
 const ARTIFACT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md$/;
+// A proof run is a folder named by a UUID; its report is the one file read from it.
+const RUN_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+export const PROOF_REPORT = 'report.md';
 // The plan is what a reader wants first, then the rest by name.
 const FIRST = '02-plan.md';
 
@@ -53,17 +58,39 @@ const notFound = () => refusal('ARTIFACT_NOT_FOUND', 'File not found.', 404);
 
 export function createClaudeArtifacts({ home = os.homedir(), fs = fsDefault } = {}) {
   const root = path.join(home, 'pathwise', '.orchestrator');
+  const proofsRoot = path.join(home, 'pathwise', 'proofs', '.proofs-out');
 
-  // The ticket's folder as a real path inside the root, or null: absent, not a folder, or a link
-  // that leaves the root.
-  function ticketDirectory(key) {
-    const dir = path.join(root, key.toLowerCase());
+  // `name` as a real folder path inside `base`, or null: absent, not a folder, or a link that
+  // leaves `base`.
+  function directoryIn(base, name) {
+    const dir = path.join(base, name);
     try {
       if (!fs.lstatSync(dir).isDirectory()) return null;
       const real = fs.realpathSync(dir);
-      return real.startsWith(`${fs.realpathSync(root)}${path.sep}`) ? real : null;
+      return real.startsWith(`${fs.realpathSync(base)}${path.sep}`) ? real : null;
     } catch {
       return null;
+    }
+  }
+
+  const ticketDirectory = (key) => directoryIn(root, key.toLowerCase());
+
+  // A regular `.md` file's text, size and time, or a refusal: not a file, gone, or too large.
+  function readMarkdown(dir, name) {
+    try {
+      const file = path.join(dir, name);
+      const info = fs.lstatSync(file);
+      if (!info.isFile()) throw notFound();
+      if (info.size > MAX_ARTIFACT_BYTES)
+        throw refusal('ARTIFACT_TOO_LARGE', 'File is too large to show.', 413);
+      return {
+        size: info.size,
+        updatedAt: new Date(info.mtimeMs).toISOString(),
+        text: fs.readFileSync(file, 'utf8'),
+      };
+    } catch (error) {
+      if (error.code === 'ARTIFACT_NOT_FOUND' || error.code === 'ARTIFACT_TOO_LARGE') throw error;
+      throw notFound();
     }
   }
 
@@ -93,24 +120,49 @@ export function createClaudeArtifacts({ home = os.homedir(), fs = fsDefault } = 
     if (typeof name !== 'string' || !ARTIFACT_NAME.test(name)) throw invalidArtifact();
     const dir = ticketDirectory(key);
     if (!dir) throw notFound();
-    const file = path.join(dir, name);
-    try {
-      const info = fs.lstatSync(file);
-      if (!info.isFile()) throw notFound();
-      if (info.size > MAX_ARTIFACT_BYTES)
-        throw refusal('ARTIFACT_TOO_LARGE', 'File is too large to show.', 413);
-      return {
-        ok: true,
-        key,
-        name,
-        size: info.size,
-        updatedAt: new Date(info.mtimeMs).toISOString(),
-        text: fs.readFileSync(file, 'utf8'),
-      };
-    } catch (error) {
-      if (error.code === 'ARTIFACT_NOT_FOUND' || error.code === 'ARTIFACT_TOO_LARGE') throw error;
-      throw notFound();
+    return { ok: true, key, name, ...readMarkdown(dir, name) };
+  }
+
+  // Newest run first. A run without a regular `report.md` (a link, a folder, not written yet) is
+  // not listed.
+  function listProofs(key) {
+    if (!isTicketKey(key)) throw invalidTicket();
+    const dir = directoryIn(proofsRoot, key);
+    if (!dir) return { ok: true, key, runs: [] };
+    const runs = [];
+    for (const dirent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!dirent.isDirectory() || !RUN_ID.test(dirent.name)) continue;
+      const runDir = directoryIn(dir, dirent.name);
+      if (!runDir) continue;
+      try {
+        const info = fs.lstatSync(path.join(runDir, PROOF_REPORT));
+        if (!info.isFile()) continue;
+        runs.push({
+          run: dirent.name,
+          name: PROOF_REPORT,
+          size: info.size,
+          updatedAt: new Date(info.mtimeMs).toISOString(),
+          mtimeMs: info.mtimeMs,
+        });
+      } catch {
+        // No report in this run yet.
+      }
     }
+    runs.sort((a, b) => b.mtimeMs - a.mtimeMs || a.run.localeCompare(b.run));
+    return {
+      ok: true,
+      key,
+      runs: runs.slice(0, MAX_ARTIFACTS).map(({ mtimeMs: _mtimeMs, ...run }) => run),
+    };
+  }
+
+  function readProof(key, run) {
+    if (!isTicketKey(key)) throw invalidTicket();
+    if (typeof run !== 'string' || !RUN_ID.test(run)) throw invalidArtifact();
+    const ticketDir = directoryIn(proofsRoot, key);
+    const dir = ticketDir && directoryIn(ticketDir, run);
+    if (!dir) throw notFound();
+    return { ok: true, key, run, name: PROOF_REPORT, ...readMarkdown(dir, PROOF_REPORT) };
   }
 
   // name -> { stamp, value }: a verdict is read again only when the file's time or size changed.
@@ -148,5 +200,5 @@ export function createClaudeArtifacts({ home = os.homedir(), fs = fsDefault } = 
     }
   }
 
-  return { list, read, verdict };
+  return { list, read, listProofs, readProof, verdict };
 }

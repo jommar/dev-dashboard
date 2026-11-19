@@ -71,6 +71,18 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
+/* The proofs row is the files row's twin, set under it; its label is a plain word, not a tab. */
+.artifact-viewer-proofs {
+  align-items: center;
+}
+.artifact-viewer-row-label {
+  flex: none;
+  padding: var(--s1) 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
 .artifact-viewer-file {
   appearance: none;
   padding: var(--s1) var(--s2);

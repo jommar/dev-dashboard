@@ -38,11 +38,12 @@ const CHECKLIST = '# Checklist\n\n- [ ] write the test\n';
 
 const iconOf = (page) => page.getByTestId(`claude-icon-${KEY}`);
 
-async function openClaudeDialog(page, dashboard, { entry, artifacts = {} } = {}) {
+async function openClaudeDialog(page, dashboard, { entry, artifacts = {}, proofs = {} } = {}) {
   ticketBoardData(dashboard.data);
   dashboard.data.claude.tickets[KEY] =
     entry ?? claudeEntry('done', 'plan_ready', { flags: PLAN_FINISHED });
   dashboard.data.claude.artifacts[KEY] = artifacts;
+  dashboard.data.claude.proofs[KEY] = proofs;
   await page.goto('/#/my-tickets');
   await expect(page.getByTestId(`my-tickets-item-${KEY}`)).toBeVisible();
   await iconOf(page).click();
@@ -120,6 +121,52 @@ test('the files switch, Reload re-reads, and Escape closes only the viewer', asy
   await expect(viewer).toHaveCount(0);
   await expect(dialog).toBeVisible();
   await expect(dialog.getByTestId('claude-files-open')).toBeFocused();
+});
+
+test('proofs are a second row of their own, newest first, and open apart from the files', async ({
+  page,
+  dashboard,
+}) => {
+  const OLD = '11111111-aaaa-4bbb-8ccc-222222222222';
+  const NEW = '33333333-aaaa-4bbb-8ccc-444444444444';
+  const dialog = await openClaudeDialog(page, dashboard, {
+    artifacts: { '02-plan.md': PLAN, '02-checklist.md': CHECKLIST },
+    proofs: { [OLD]: '# Old proof\n', [NEW]: '# New proof\n' },
+  });
+  await dialog.getByTestId('claude-files-open').click();
+  const viewer = page.getByTestId('artifact-viewer');
+  const files = viewer.getByRole('navigation', { name: 'Files' }).getByRole('button');
+  const proofs = viewer.getByRole('navigation', { name: 'Proofs' }).getByRole('button');
+  // The files row is unchanged and the plan is still open; proofs sit in their own row, newest first.
+  await expect(files).toHaveText(['02-plan.md', '02-checklist.md']);
+  await expect(proofs).toHaveCount(2);
+  await expect(proofs.first()).toContainText('33333333');
+  await expect(proofs.last()).toContainText('11111111');
+  await expect(files.first()).toHaveAttribute('aria-current', 'true');
+
+  await proofs.last().click();
+  await expect(page.getByTestId('artifact-viewer-title')).toContainText('Proof 11111111');
+  await expect(page.getByTestId('artifact-markdown')).toContainText('Old proof');
+  await expect(proofs.last()).toHaveAttribute('aria-current', 'true');
+  await expect(files.first()).not.toHaveAttribute('aria-current', 'true');
+  await page.getByTestId('artifact-copy-path').click();
+  expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes.at(-1))).toBe(
+    `~/pathwise/proofs/.proofs-out/${KEY}/${OLD}/report.md`,
+  );
+
+  // Picking a file goes back to the files row.
+  await files.nth(1).click();
+  await expect(page.getByTestId('artifact-markdown')).toContainText('write the test');
+  await expect(proofs.last()).not.toHaveAttribute('aria-current', 'true');
+});
+
+test('a ticket with proofs but no files opens on its newest proof', async ({ page, dashboard }) => {
+  const RUN = '55555555-aaaa-4bbb-8ccc-666666666666';
+  const dialog = await openClaudeDialog(page, dashboard, { proofs: { [RUN]: '# Only proof\n' } });
+  await dialog.getByTestId('claude-files-open').click();
+  await expect(page.getByTestId('artifact-markdown')).toContainText('Only proof');
+  await expect(page.getByTestId(`artifact-proof-${RUN}`)).toHaveAttribute('aria-current', 'true');
+  await expect(page.getByTestId('artifact-empty')).toHaveCount(0);
 });
 
 test('a ticket with no files says so, also once its only file is deleted', async ({

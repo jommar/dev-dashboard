@@ -634,6 +634,17 @@ like groom and review; the contracts the backend and UI hold:
   status.json single-writer rule holds by construction. `blocks.continue` exists only on a `failed`
   entry. README "Continue a failed session" has the refusals.
 
+## Artifact viewer: proofs are a second row
+
+`ArtifactViewer.jsx` shows two separate rows. **Files** are the `.md` files of
+`~/pathwise/.orchestrator/<key lower case>/` (`GET /api/claude/artifacts`, `/artifact`; the plan first, then by name).
+**Proofs** are `~/pathwise/proofs/.proofs-out/<KEY>/<run uuid>/report.md`, one per run, newest modified first
+(`GET /api/claude/proofs`, `/proof?key=&run=`; `listProofs` / `readProof` in `backend/claude-artifacts.mjs`). Both reuse
+the same containment checks (`directoryIn`, `readMarkdown`: no symlink followed out, 512 KB cap, regular files only),
+and proof errors reuse `INVALID_ARTIFACT` / `ARTIFACT_NOT_FOUND`. The two never mix in one list or one route; a proof
+open wins over `name` (`proof` state), a ticket with proofs and no files opens on its newest proof, and a failed proofs
+read just leaves the row out.
+
 ## Harness seam: facts not to break
 
 Everything that speaks the agent CLI sits behind one adapter in `backend/harness/`. The contract, the

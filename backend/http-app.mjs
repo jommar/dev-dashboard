@@ -425,6 +425,10 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     'GET /api/claude/artifacts': (req) => claudeArtifacts.list(queryParam(req, 'key')),
     'GET /api/claude/artifact': (req) =>
       claudeArtifacts.read(queryParam(req, 'key'), queryParam(req, 'name')),
+    // The proof reports of a ticket (`~/pathwise/proofs/.proofs-out`), kept apart from the above.
+    'GET /api/claude/proofs': (req) => claudeArtifacts.listProofs(queryParam(req, 'key')),
+    'GET /api/claude/proof': (req) =>
+      claudeArtifacts.readProof(queryParam(req, 'key'), queryParam(req, 'run')),
     // The chat module validates the body, so nothing is read or started for a bad one.
     'POST /api/claude/chat/send': async (req) => {
       const { message, session } = await readJson(req);

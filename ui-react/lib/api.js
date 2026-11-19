@@ -426,6 +426,14 @@ export const getClaudeArtifact = (key, name) =>
     `/api/claude/artifact?key=${encodeURIComponent(key)}&name=${encodeURIComponent(name)}`,
   );
 
+// The proof reports of a ticket (one `report.md` per run, newest run first), kept apart from the
+// files above: the list of runs, and one run's report by its id.
+export const getClaudeProofs = (key) =>
+  watchRequest(`/api/claude/proofs?key=${encodeURIComponent(key)}`);
+
+export const getClaudeProof = (key, run) =>
+  watchRequest(`/api/claude/proof?key=${encodeURIComponent(key)}&run=${encodeURIComponent(run)}`);
+
 export function subscribeServices(onSnapshot, onConnection = () => {}) {
   const source = new EventSource('/api/events');
   source.addEventListener('setup-required', () => {
