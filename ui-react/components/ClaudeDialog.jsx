@@ -24,6 +24,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Button, DashboardTooltip } from './Primitives.jsx';
 import { QuestionOptions } from './QuestionOptions.jsx';
 import { ClaudePromptsEditor } from './ClaudePromptsEditor.jsx';
+import { CopyPromptButton } from './CopyPromptButton.jsx';
 import { UseInServices } from './UseInServices.jsx';
 import { LazyDialog } from './ScreenSlot.jsx';
 import { lazyScreen } from '../lib/lazy-screen.js';
@@ -204,6 +205,12 @@ function IndependentAction({
   hasSession,
   onRun,
   onGoTo,
+  ticketKey,
+  promptName,
+  copyTestId,
+  onPromptCopied,
+  onPromptCopyFailed,
+  onPromptError,
 }) {
   return (
     <span className="claude-independent-cell">
@@ -220,6 +227,18 @@ function IndependentAction({
           </Button>
         </span>
       </DashboardTooltip>
+      {promptName && (
+        <CopyPromptButton
+          variant="icon"
+          ticketKey={ticketKey}
+          name={promptName}
+          testId={copyTestId}
+          label={`Copy ${label.toLowerCase()} prompt`}
+          onCopied={onPromptCopied}
+          onCopyFailed={onPromptCopyFailed}
+          onError={onPromptError}
+        />
+      )}
       {hasSession && <SessionChip phase={phase} onGoTo={onGoTo} />}
     </span>
   );
@@ -395,6 +414,9 @@ export function ClaudeDialog({
     const command = goTo[side].command;
     setCopy({ side, command, copied: await copyText(command) });
   };
+  const clearPromptError = () => setError('');
+  const handlePromptCopyFailed = () => setError("Couldn't copy the prompt to the clipboard.");
+  const handlePromptError = (result) => setError(failureText(result, reasonText, harness));
   // One status at a time, for the item last used: copying the other session's command replaces it.
   // A status for a command the poll has since replaced is not shown.
   const copied = copy?.command === goTo[copy?.side]?.command ? copy : null;
@@ -464,7 +486,7 @@ export function ClaudeDialog({
 
         <div className="claude-dialog-body">
           {editingPrompts ? (
-            <ClaudePromptsEditor />
+            <ClaudePromptsEditor ticketKey={ticketKey} />
           ) : (
             <>
               <ol className="claude-steps" aria-label="Workflow">
@@ -504,9 +526,20 @@ export function ClaudeDialog({
                         {STEP_LABEL[step.phase]}
                       </Button>
                     )}
-                    {goTo[step.phase] && (
-                      <SessionChip phase={step.phase} onGoTo={() => copyCommand(step.phase)} />
-                    )}
+                    <div className="claude-step-links">
+                      {goTo[step.phase] && (
+                        <SessionChip phase={step.phase} onGoTo={() => copyCommand(step.phase)} />
+                      )}
+                      <CopyPromptButton
+                        ticketKey={ticketKey}
+                        name={step.phase}
+                        testId={`claude-copy-prompt-${step.phase}`}
+                        label={`Copy ${STEP_LABEL[step.phase].toLowerCase()} prompt`}
+                        onCopied={clearPromptError}
+                        onCopyFailed={handlePromptCopyFailed}
+                        onError={handlePromptError}
+                      />
+                    </div>
                     {/* Approving the plan unlocks this, so where the plan is stays in view. */}
                     {step.phase === 'implement' && entry.reason === 'plan_ready' && (
                       <span className="claude-step-note" data-testid="claude-plan-hint">
@@ -558,6 +591,15 @@ export function ClaudeDialog({
                   >
                     Continue
                   </Button>
+                  <CopyPromptButton
+                    ticketKey={ticketKey}
+                    name="continue"
+                    testId="claude-copy-prompt-continue"
+                    label="Copy continue prompt"
+                    onCopied={clearPromptError}
+                    onCopyFailed={handlePromptCopyFailed}
+                    onError={handlePromptError}
+                  />
                   <span
                     id={`${hintId}-continue`}
                     className="claude-action-hint"
@@ -641,6 +683,12 @@ export function ClaudeDialog({
                     hasSession={Boolean(goTo.groom)}
                     onRun={() => run(() => launch(ticketKey, GROOM))}
                     onGoTo={() => copyCommand('groom')}
+                    ticketKey={ticketKey}
+                    promptName={GROOM}
+                    copyTestId="claude-copy-prompt-groom"
+                    onPromptCopied={clearPromptError}
+                    onPromptCopyFailed={handlePromptCopyFailed}
+                    onPromptError={handlePromptError}
                   />
                   <IndependentAction
                     label="E2E check"
@@ -663,6 +711,12 @@ export function ClaudeDialog({
                     hasSession={Boolean(goTo.reviewRequest)}
                     onRun={() => run(() => launch(ticketKey, REVIEW_REQUEST))}
                     onGoTo={() => copyCommand('reviewRequest')}
+                    ticketKey={ticketKey}
+                    promptName={REVIEW_REQUEST}
+                    copyTestId="claude-copy-prompt-review-request"
+                    onPromptCopied={clearPromptError}
+                    onPromptCopyFailed={handlePromptCopyFailed}
+                    onPromptError={handlePromptError}
                   />
                 </div>
                 {INDEPENDENT_HINTS.map(({ side, testId }) =>

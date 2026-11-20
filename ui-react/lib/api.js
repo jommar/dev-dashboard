@@ -410,6 +410,12 @@ export const rereviewClaude = (key) =>
 // or a reset answers with the prompt's new entry.
 export const getClaudePrompts = () => watchRequest('/api/claude/prompts');
 
+export const getClaudePrompt = (key, name, { browserId } = {}) => {
+  const params = new URLSearchParams({ key, name });
+  if (browserId) params.set('browserId', browserId);
+  return watchRequest(`/api/claude/prompt?${params}`);
+};
+
 export const saveClaudePrompt = (name, text) =>
   watchRequest(`/api/claude/prompts/${name}`, { method: 'PUT', body: { text } });
 

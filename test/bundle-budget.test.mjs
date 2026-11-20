@@ -22,8 +22,10 @@ const MAX_INITIAL_GZIP = 202 * KIB;
 // Raised from 884 KiB for the lazy Sprint screen, which could not fit the 1.5 KiB that was left,
 // to 902 KiB for the ticket-thread search in the shared Slack hook (about 1 KiB of eager code), and
 // to 904 KiB for the Stop button of the Sessions drawer's rows (lazy body, a little eager wiring),
-// and to 908 KiB for the question choices and Independent tooltips of the Claude dialog (all lazy).
-const MAX_TOTAL_RAW = 908 * KIB;
+// and to 908 KiB for the question choices and Independent tooltips of the Claude dialog (all lazy),
+// and to 914 KiB for the Copy prompt buttons across the Claude dialog, prompts editor and E2E check
+// (all lazy, plus one tiny helper in api.js).
+const MAX_TOTAL_RAW = 914 * KIB;
 const MAX_TOTAL_CSS = 180 * KIB;
 // Modules that must load on demand: the five rarely used screens and the two dialogs, plus the
 // markdown renderer both the viewer and the chat pull in.
@@ -39,9 +41,10 @@ const LAZY_MODULES = [
   // Opened only by a key press: the key listener is eager and tiny, these load before they open.
   'components/CommandPalette.jsx',
   'components/ShortcutsHelp.jsx',
-  // The ticket's Claude dialog (and the prompts editor and UseInServices it holds) opens on a click.
+  // The ticket's Claude dialog (and the prompts editor, CopyPromptButton and UseInServices it holds) opens on a click.
   'components/ClaudeDialog.jsx',
   'components/ClaudePromptsEditor.jsx',
+  'components/CopyPromptButton.jsx',
   'components/UseInServices.jsx',
   // The Slack activity drawer's list: its edge tab is eager and tiny, the list loads before it opens.
   'components/SlackFeedPanel.jsx',

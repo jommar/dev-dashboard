@@ -560,3 +560,26 @@ test('e2e check: verdict chip beside the result link, only for a known verdict',
     await page.keyboard.press('Escape');
   }
 });
+
+test('e2e check: step 2 Copy prompt fills the launched browser port and keeps the browser open on close', async ({
+  page,
+  dashboard,
+}) => {
+  await openStepTwo(page, dashboard);
+  const copy = e2eDialog(page).getByTestId('claude-copy-prompt-e2e');
+  await expect(copy).toBeEnabled();
+  await copy.click();
+
+  await expect(copy).toHaveText('Copied');
+  await expect(e2eDialog(page).getByTestId('claude-e2e-copied')).toContainText(
+    'browser stays open in DevTools',
+  );
+  expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes)).toEqual([
+    `Run e2e-ticket-check for ${KEY} on port ${BROWSER.port} (e2e-${KEY.toLowerCase()}).`,
+  ]);
+
+  // Closing after copying must keep the browser alive for the external harness.
+  await e2eDialog(page).getByRole('button', { name: 'Close' }).click();
+  await expect(e2eDialog(page)).toHaveCount(0);
+  expect(browserCalls(dashboard, `/${BROWSER.id}`)).toEqual([]);
+});

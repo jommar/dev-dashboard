@@ -421,6 +421,16 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
       return { sessions: await claudeUsage.tallyMany(filesById) };
     },
     'GET /api/claude/prompts': () => ({ ok: true, prompts: claudePrompts.list() }),
+    'GET /api/claude/prompt': (req) => {
+      if (CROSS_SITE.includes(req.headers['sec-fetch-site']))
+        throw httpError('INVALID_ORIGIN', 'Invalid origin.', 403);
+      const browserId = queryParam(req, 'browserId');
+      return claudeLauncher.renderPrompt({
+        key: queryParam(req, 'key'),
+        name: queryParam(req, 'name'),
+        ...(browserId !== null && { browserId }),
+      });
+    },
     // The Markdown a ticket's sessions left: the list, and one file by name. Read-only.
     'GET /api/claude/artifacts': (req) => claudeArtifacts.list(queryParam(req, 'key')),
     'GET /api/claude/artifact': (req) =>

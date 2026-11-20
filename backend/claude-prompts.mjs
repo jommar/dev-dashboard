@@ -386,6 +386,11 @@ const PROMPT_INFO = {
 for (const info of Object.values(PROMPT_INFO))
   info.placeholders = [...info.placeholders, ...HARNESS_PLACEHOLDERS];
 
+// The prompt names that receive `{STATUS_FILE}` (derived from PROMPT_INFO, one source of truth).
+export const STATUS_FILE_PROMPTS = Object.freeze(
+  PROMPT_NAMES.filter((name) => PROMPT_INFO[name].placeholders.includes('{STATUS_FILE}')),
+);
+
 // Whether `text` can be a prompt: something once trimmed, within the limit, and no NUL byte.
 const usable = (text) => {
   const trimmed = text.trim();

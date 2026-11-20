@@ -440,3 +440,43 @@ test('scenario 59: at 390px the editor does not overflow sideways and Back and C
     'Back starts the footer',
   ).toBeLessThanOrEqual(4);
 });
+
+test('copy prompt buttons work in the main dialog (even when blocked) and in the Prompts tab', async ({
+  page,
+  dashboard,
+}) => {
+  await openBoard(page, dashboard, { questions: false });
+  const dialog = await openDialog(page);
+
+  // Implement is blocked on an unstarted ticket, yet its Copy prompt button stays enabled.
+  await expect(dialog.getByTestId('claude-action-implement')).toBeDisabled();
+  const copyImplement = dialog.getByTestId('claude-copy-prompt-implement');
+  await expect(copyImplement).toBeEnabled();
+  await copyImplement.click();
+  await expect(copyImplement).toHaveText('Copied');
+
+  // Independent actions: Groom and Request code review have Copy buttons; E2E's lives in step 2.
+  await expect(dialog.getByTestId('claude-copy-prompt-e2e')).toHaveCount(0);
+  await dialog.getByTestId('claude-copy-prompt-groom').click();
+  await expect(dialog.getByTestId('claude-copy-prompt-groom')).toHaveAttribute(
+    'aria-label',
+    'Copied',
+  );
+  await dialog.getByTestId('claude-copy-prompt-review-request').click();
+
+  // Prompts tab: every prompt card has a Copy prompt button filled for the open ticket.
+  await dialog.getByTestId('claude-prompts-open').click();
+  await expect(dialog.getByTestId('claude-prompts-view')).toBeVisible();
+  const copyInTab = dialog.getByTestId('claude-prompt-copy-investigate');
+  await expect(copyInTab).toBeEnabled();
+  await copyInTab.click();
+  await expect(dialog.getByTestId('claude-prompt-status-investigate')).toHaveText('Copied.');
+
+  const writes = await page.evaluate(() => window.__dashboardMock.clipboard.writes);
+  expect(writes).toEqual([
+    `Build the plan for ${KEY} in the folder ${KEY.toLowerCase()} and record progress in /tmp/claude/${KEY}/status.json.`,
+    `Groom ticket ${KEY} and write the result under the folder ${KEY.toLowerCase()} as groom.md.`,
+    `Get ticket ${KEY} ready for code review in ${KEY.toLowerCase()}.`,
+    `Work out the plan for ${KEY} and record progress in /tmp/claude/${KEY}/status.json.`,
+  ]);
+});

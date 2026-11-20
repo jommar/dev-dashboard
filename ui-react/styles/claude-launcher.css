@@ -294,7 +294,6 @@
 }
 /* The session chip reads as a link under its step's button, not as another button. */
 .btn.subtle.claude-chip {
-  align-self: flex-start;
   gap: var(--s1);
   min-height: 28px;
   padding: 2px 0;
@@ -305,6 +304,15 @@
 }
 .claude-chip svg {
   flex: none;
+}
+/* The session and copy-prompt chips stack under a step's button, and share row 2 on a phone. */
+.claude-step-links {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.btn.subtle.claude-copy-icon {
+  min-width: 28px;
 }
 @media (hover: none) {
   .btn.subtle.claude-chip {
@@ -439,7 +447,7 @@
     grid-column: 2;
     grid-row: 1 / span 2;
   }
-  .claude-step > .claude-chip {
+  .claude-step > .claude-step-links {
     grid-column: 1;
     grid-row: 2;
   }

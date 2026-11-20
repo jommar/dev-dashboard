@@ -752,3 +752,111 @@ test('scenario 205: an edit of the groom prompt through the route is in the next
   assert.equal(prompt(1), groomPrompt(KEY));
   assert.equal(GROOM_TEMPLATE.includes('{STATUS_FILE}'), false);
 });
+
+// ---- GET /api/claude/prompt (read-only rendered prompt for copying) ----
+
+const renderUrl = (params) => `/api/claude/prompt?${new URLSearchParams(params)}`;
+
+test('GET /api/claude/prompt renders workflow and side prompts with no writes and respects custom overrides', async (t) => {
+  const f = await claudeHttpFixture(t);
+
+  const inv = await f.http.bare('GET', renderUrl({ key: KEY, name: 'investigate' }));
+  assert.equal(inv.status, 200);
+  assert.deepEqual(inv.json(), {
+    ok: true,
+    key: KEY,
+    name: 'investigate',
+    text: renderTemplate(INVESTIGATE_TEMPLATE, { statusPath: f.statusPath() }),
+  });
+
+  // Side prompts never get {STATUS_FILE}, even if a custom file writes it.
+  f.writePrompt('groom', 'Groom {KEY} ({SLUG}) {STATUS_FILE} {SKILL}');
+  const groom = await f.http.bare('GET', renderUrl({ key: KEY, name: 'groom' }));
+  assert.equal(groom.status, 200);
+  assert.equal(groom.json().text, `Groom ${KEY} (${SLUG}) {STATUS_FILE} skill`);
+
+  // E2E without browserId leaves {PORT} literal; with a running browserId fills the registry port.
+  const e2eNoPort = await f.http.bare('GET', renderUrl({ key: KEY, name: 'e2e' }));
+  assert.equal(e2eNoPort.status, 200);
+  assert.match(e2eNoPort.json().text, /\{PORT\}/);
+  assert.match(e2eNoPort.json().text, new RegExp(`e2e-${SLUG}`));
+
+  f.browsers.set([{ id: 'b-5e0f6a1b', status: 'running', port: 9304 }]);
+  const e2eWithPort = await f.http.bare(
+    'GET',
+    renderUrl({ key: KEY, name: 'e2e', browserId: 'b-5e0f6a1b' }),
+  );
+  assert.equal(e2eWithPort.status, 200);
+  assert.equal(e2eWithPort.json().text.includes('{PORT}'), false);
+  assert.match(e2eWithPort.json().text, /connect 9304/);
+
+  // Zero state writes and zero CLI launches.
+  assert.equal(fs.existsSync(f.stateDir), false, 'never creates stateDir');
+  assert.deepEqual(f.cli.launches(), [], 'never starts a session');
+});
+
+test('GET /api/claude/prompt validates key, name, browserId, unusable files, cross-site and works before setup', async (t) => {
+  const f = await claudeHttpFixture(t, { ready: false });
+
+  // Works before setup is complete.
+  const readyFalse = await f.http.bare('GET', renderUrl({ key: KEY, name: 'implement' }));
+  assert.equal(readyFalse.status, 200);
+  assert.equal(
+    readyFalse.json().text,
+    renderTemplate(IMPLEMENT_TEMPLATE, { statusPath: f.statusPath() }),
+  );
+
+  // Invalid ticket key and prompt name.
+  assert.equal(
+    (await f.http.bare('GET', renderUrl({ key: 'bad key', name: 'investigate' }))).json().code,
+    'INVALID_TICKET',
+  );
+  assert.equal(
+    (await f.http.bare('GET', renderUrl({ key: KEY, name: '../investigate' }))).json().code,
+    'INVALID_PROMPT',
+  );
+  assert.equal(
+    (await f.http.bare('GET', renderUrl({ key: KEY, name: '__proto__' }))).json().code,
+    'INVALID_PROMPT',
+  );
+
+  // browserId is only valid on e2e with a valid browser id.
+  assert.equal(
+    (
+      await f.http.bare('GET', renderUrl({ key: KEY, name: 'groom', browserId: 'b-5e0f6a1b' }))
+    ).json().code,
+    'INVALID_TICKET',
+  );
+  assert.equal(
+    (await f.http.bare('GET', renderUrl({ key: KEY, name: 'e2e', browserId: 'bad' }))).json().code,
+    'INVALID_TICKET',
+  );
+
+  // Missing or stopped browser refuses with the same codes as launch.
+  const missing = await f.http.bare(
+    'GET',
+    renderUrl({ key: KEY, name: 'e2e', browserId: 'b-5e0f6a1b' }),
+  );
+  assert.equal(missing.status, 409);
+  assert.deepEqual(missing.json().errors, ['browser_not_found']);
+
+  f.browsers.set([{ id: 'b-5e0f6a1b', status: 'stopped', port: null }]);
+  const stopped = await f.http.bare(
+    'GET',
+    renderUrl({ key: KEY, name: 'e2e', browserId: 'b-5e0f6a1b' }),
+  );
+  assert.equal(stopped.status, 409);
+  assert.deepEqual(stopped.json().errors, ['browser_not_running']);
+
+  // Unusable custom prompt file refuses with prompt_unreadable.
+  f.writePrompt('investigate', '   ');
+  const unreadable = await f.http.bare('GET', renderUrl({ key: KEY, name: 'investigate' }));
+  assert.equal(unreadable.status, 409);
+  assert.deepEqual(unreadable.json().errors, ['prompt_unreadable']);
+
+  // Cross-site request is refused with 403.
+  const crossSite = await f.http.raw('GET', renderUrl({ key: KEY, name: 'groom' }), {
+    headers: { 'sec-fetch-site': 'cross-site' },
+  });
+  assert.equal(crossSite.status, 403);
+});

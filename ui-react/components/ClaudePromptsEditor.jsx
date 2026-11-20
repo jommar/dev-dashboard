@@ -5,6 +5,7 @@
 // drafts; the dialog's own state (answer drafts, copy status) lives above and is untouched.
 import { useEffect, useId, useState } from 'react';
 import { Button } from './Primitives.jsx';
+import { CopyPromptButton } from './CopyPromptButton.jsx';
 import { getClaudePrompts, resetClaudePrompt, saveClaudePrompt } from '../lib/api.js';
 
 const STATUS_FILE = '{STATUS_FILE}';
@@ -15,12 +16,13 @@ const UNUSABLE_NOTE =
 const REASON_TEXT = {
   prompt_not_changed:
     'The prompt file could not be changed. Check that prompts/ is a real folder you can write to, with nothing in the place of the file.',
+  prompt_unreadable: UNUSABLE_NOTE,
 };
 const SOURCE_TEXT = { default: 'default', custom: 'custom', unusable: 'unusable file' };
 
 // One prompt: the label, where its text comes from, the text in a box, the placeholders it may use
 // and Save / Reset to default with the result line. `saved` is what the server last returned.
-function PromptCard({ initial }) {
+function PromptCard({ initial, ticketKey }) {
   const { name, label, placeholders } = initial;
   const headingId = useId();
   const [saved, setSaved] = useState(initial);
@@ -117,6 +119,26 @@ function PromptCard({ initial }) {
         >
           Reset to default
         </Button>
+        {ticketKey && (
+          <CopyPromptButton
+            variant="button"
+            ticketKey={ticketKey}
+            name={name}
+            testId={`claude-prompt-copy-${name}`}
+            label={`Copy ${label} for ${ticketKey}`}
+            onCopied={() =>
+              setStatus(dirty ? 'Copied saved prompt (unsaved edits not included).' : 'Copied.')
+            }
+            onCopyFailed={() => setStatus("Couldn't copy to clipboard.")}
+            onError={(result) =>
+              setStatus(
+                REASON_TEXT[result.errors?.[0]] ??
+                  result.error ??
+                  'The prompt could not be loaded.',
+              )
+            }
+          />
+        )}
         {/* Always rendered, so a screen reader hears its text change rather than appear. */}
         <p
           className="claude-note claude-prompt-status"
@@ -130,7 +152,7 @@ function PromptCard({ initial }) {
   );
 }
 
-export function ClaudePromptsEditor() {
+export function ClaudePromptsEditor({ ticketKey } = {}) {
   const [load, setLoad] = useState({ state: 'loading' });
   const [attempt, setAttempt] = useState(0);
 
@@ -179,7 +201,7 @@ export function ClaudePromptsEditor() {
         <>
           <p className="claude-note">A saved prompt applies from the next launch or send.</p>
           {load.prompts.map((prompt) => (
-            <PromptCard key={prompt.name} initial={prompt} />
+            <PromptCard key={prompt.name} initial={prompt} ticketKey={ticketKey} />
           ))}
         </>
       )}

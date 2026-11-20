@@ -9,12 +9,14 @@
 // DevTools tab); after Start the backend owns the stop. This component opens no event stream of its own.
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Button } from './Primitives.jsx';
+import { CopyPromptButton } from './CopyPromptButton.jsx';
 import { ShowWindowToggle } from './ShowWindowToggle.jsx';
 import { DevtoolsViewer } from './DevtoolsViewer.jsx';
 import { launchDevtoolsBrowser, removeDevtoolsBrowser } from '../lib/api.js';
 import { DEFAULT_DEVTOOLS_URL } from '../../ui/devtools-defaults.js';
 
 const START_LABEL = "I've logged in, start check";
+const BROWSER_GONE = ['browser_not_found', 'browser_not_running'];
 
 // `start(browserId)` launches the session and answers `{ ok }` or, for a refusal,
 // `{ ok: false, gone, handedOver, message }`: `gone` when the browser is no longer there, `handedOver`
@@ -29,6 +31,7 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
   const [browser, setBrowser] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
   const [watching, setWatching] = useState(false);
   // The browser this dialog opened and has not handed to a session; closing removes it.
   const owned = useRef(null);
@@ -101,6 +104,7 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
       return;
     }
     owned.current = result.browser.id;
+    setCopied(false);
     setBrowser(result.browser);
   };
 
@@ -156,7 +160,42 @@ export function E2eCheckDialog({ ticketKey, start, onClose }) {
                 <Button ref={startRef} className="primary" disabled={busy} onClick={begin}>
                   {START_LABEL}
                 </Button>
+                <CopyPromptButton
+                  variant="button"
+                  ticketKey={ticketKey}
+                  name="e2e"
+                  browserId={browser.id}
+                  testId="claude-copy-prompt-e2e"
+                  label="Copy E2E check prompt"
+                  onCopied={() => {
+                    // The prompt carries this browser's port for an external harness: keep it open on close.
+                    owned.current = null;
+                    setError('');
+                    setCopied(true);
+                  }}
+                  onCopyFailed={() => setError("Couldn't copy the prompt to the clipboard.")}
+                  onError={(result) => {
+                    const code = result.errors?.[0];
+                    if (BROWSER_GONE.includes(code)) {
+                      owned.current = null;
+                      setBrowser(null);
+                      setCopied(false);
+                      setError('That browser is no longer running. Launch a new one.');
+                      return;
+                    }
+                    setError(
+                      code === 'prompt_unreadable'
+                        ? "A custom prompt file could not be used. Fix or remove it in the dashboard's prompts folder."
+                        : (result.error ?? 'The prompt could not be loaded.'),
+                    );
+                  }}
+                />
               </div>
+              {copied && (
+                <p className="claude-note" role="status" data-testid="claude-e2e-copied">
+                  Prompt copied. The browser stays open in DevTools until you stop it.
+                </p>
+              )}
             </div>
           ) : (
             <form className="claude-e2e-step" onSubmit={launch}>

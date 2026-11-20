@@ -91,8 +91,10 @@ test('the Independent descriptions are tooltips, not lines under the row', async
   await page.mouse.move(0, 0);
   await expect(page.getByRole('tooltip')).toHaveCount(0);
 
-  // Keyboard focus shows it too: Tab from Groom ticket reaches E2E check.
+  // Keyboard focus shows it too: Tab from Groom ticket steps past its copy-prompt icon to E2E check.
   await groom.focus();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByTestId('claude-copy-prompt-groom')).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(dialog.getByTestId('claude-action-e2e')).toBeFocused();
   await expect(page.getByRole('tooltip')).toContainText('E2E check opens a new browser');

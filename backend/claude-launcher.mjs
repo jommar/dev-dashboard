@@ -24,7 +24,9 @@ import {
   createPromptStore,
   fillTemplate,
   harnessValues,
+  PROMPT_NAMES,
   PROMPT_TEMPLATES,
+  STATUS_FILE_PROMPTS,
 } from './claude-prompts.mjs';
 import { createClaudeArtifacts } from './claude-artifacts.mjs';
 import { BROWSER_ID, PORT_FIRST, PORT_LAST } from './browser-devtools.mjs';
@@ -912,5 +914,28 @@ export function createClaudeLauncher({
     };
   }
 
-  return { list, launch, answer, approve, continueSession, rereview, launchedName };
+  // Renders the saved (or built-in) prompt named `name` for ticket `key`, without writing state or
+  // starting a session. For `e2e` with a `browserId`, resolves the running browser's port from the
+  // DevTools registry; without one, `{PORT}` stays literal.
+  async function renderPrompt({ key, name, browserId } = {}) {
+    if (!isTicketKey(key)) throw invalid('INVALID_TICKET', 'Invalid ticket.');
+    if (!PROMPT_NAMES.includes(name)) throw invalid('INVALID_PROMPT', 'Invalid prompt.');
+    if (
+      browserId !== undefined &&
+      (name !== 'e2e' || typeof browserId !== 'string' || !BROWSER_ID.test(browserId))
+    )
+      throw invalid('INVALID_TICKET', 'Invalid browser.');
+    const template = promptTemplate(name);
+    if (!template) throw refused('prompt_unreadable');
+    const port = browserId !== undefined ? await e2ePort(browserId) : undefined;
+    const values = {
+      KEY: key,
+      SLUG: key.toLowerCase(),
+      ...(STATUS_FILE_PROMPTS.includes(name) && { STATUS_FILE: statusPath(key) }),
+      ...(port !== undefined && { PORT: port }),
+    };
+    return { ok: true, key, name, text: fill(template, values) };
+  }
+
+  return { list, launch, answer, approve, continueSession, rereview, launchedName, renderPrompt };
 }

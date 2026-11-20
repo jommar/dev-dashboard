@@ -1993,8 +1993,63 @@ function claudePromptsResponse(pathname, method, { prompts, calls }, body) {
   return null;
 }
 
+const CLAUDE_EXTRA_PROMPT_DEFAULTS = {
+  continue: 'Continue working on {KEY} and update {STATUS_FILE}.',
+  e2e: 'Run e2e-ticket-check for {KEY} on port {PORT} (e2e-{SLUG}).',
+  'request-review': 'Get ticket {KEY} ready for code review in {SLUG}.',
+};
+const CLAUDE_STATUS_FILE_PROMPTS = new Set([
+  'investigate',
+  'implement',
+  'answers',
+  'answers-implement',
+  'approve',
+  'continue',
+]);
+
+function renderClaudePrompt(url, { prompts }, devtools) {
+  const failure = prompts.failures.shift();
+  if (failure) return failure;
+  const key = url.searchParams.get('key') ?? '';
+  const name = url.searchParams.get('name') ?? '';
+  const browserId = url.searchParams.get('browserId');
+  const entry = prompts.entries[name];
+  const fallback = CLAUDE_EXTRA_PROMPT_DEFAULTS[name];
+  if (!/^[A-Z]{1,10}-\d{1,7}$/.test(key)) return claudeFailure(400, 'INVALID_TICKET');
+  if (!entry && !fallback) return claudeFailure(400, 'INVALID_PROMPT');
+  if (entry?.source === 'unusable')
+    return claudeFailure(409, 'CLAUDE_REFUSED', ['prompt_unreadable']);
+  let port;
+  if (browserId !== null) {
+    if (name !== 'e2e' || !/^b-[0-9a-f]{8}$/.test(browserId))
+      return claudeFailure(400, 'INVALID_TICKET');
+    const browser = (devtools.browsers ?? []).find(({ id }) => id === browserId);
+    if (!browser) return claudeFailure(409, 'CLAUDE_REFUSED', ['browser_not_found']);
+    if (browser.status !== 'running')
+      return claudeFailure(409, 'CLAUDE_REFUSED', ['browser_not_running']);
+    port = browser.port;
+  }
+  const values = {
+    KEY: key,
+    SLUG: key.toLowerCase(),
+    SKILL: 'skill',
+    ASK_TOOL: 'a question tool',
+    ...(CLAUDE_STATUS_FILE_PROMPTS.has(name) && {
+      STATUS_FILE: `/tmp/claude/${key}/status.json`,
+    }),
+    ...(port !== undefined && { PORT: String(port) }),
+  };
+  const template = entry ? entry.text : fallback;
+  const text = template.replace(/\{([A-Z_]+)\}/g, (match, token) =>
+    Object.hasOwn(values, token) ? values[token] : match,
+  );
+  return { json: { ok: true, key, name, text } };
+}
+
 function claudeResponse(url, method, { claude, devtools }, body) {
   const { pathname } = url;
+  if (method === 'GET' && pathname === '/api/claude/prompt')
+    return renderClaudePrompt(url, claude, devtools);
   const prompts = claudePromptsResponse(pathname, method, claude, body);
   if (prompts) return prompts;
   if (method === 'GET' && pathname === '/api/claude/artifacts') {
