@@ -912,12 +912,13 @@ threads show in neither chip, the login is probably wrong and they are counted
 under other bots.
 
 **Green card** — a card turns green when it has at least one open PR and every PR
-line reads `approved`: a 13 % green tint, a green hairline and a seal (a check in
+line is non-draft and reads `approved`: a 13 % green tint, a green hairline and a seal (a check in
 a circle) after the key, named `All PRs approved` for assistive tech and in its
 tooltip. The card carries `data-all-approved="true"`. A PR whose review is
-unknown is not approved, and a PR that reads `changes requested` never is, so a
-card with one never turns green even when its other PRs are approved. The green
-does not look at CI or drafts: an approved draft with failing CI still counts. It
+unknown is not approved, a PR that reads `changes requested` never is, and a
+draft PR never counts (even if approved), so a card with any of those never turns
+green even when its other PRs are approved. The green does not look at CI: an
+approved non-draft PR with failing CI still counts. It
 looks only at the PR lines the card shows, so when `truncated` says some of your
 PRs were not fetched, a PR that is missing is not counted. A card with no PR is
 never green.

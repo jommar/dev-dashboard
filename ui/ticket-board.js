@@ -229,13 +229,13 @@ export function commentSummaryText(comments) {
   return parts.join('; ');
 }
 
-// A card is all-approved when it has an open PR and every one reads approved. A draft counts by
-// its review state; a PR with unreadable review data is not approved; a merged PR is not open,
-// so it neither blocks nor earns the seal.
+// A card is all-approved when it has an open PR and every one is non-draft and reads approved.
+// A draft PR blocks the seal even if approved; a PR with unreadable review data is not approved;
+// a merged PR is not open, so it neither blocks nor earns the seal.
 export function allPrsApproved(prs) {
   if (!Array.isArray(prs)) return false;
   const open = prs.filter((pr) => !pr?.merged);
-  return open.length > 0 && open.every((pr) => pr?.review?.state === 'approved');
+  return open.length > 0 && open.every((pr) => !pr?.draft && pr?.review?.state === 'approved');
 }
 
 // The tooltip lines of a merged PR: its title, then "Merged <date>". With no merge time from

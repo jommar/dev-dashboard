@@ -283,11 +283,11 @@ test('allPrsApproved follows the truth table: at least one PR and every one appr
     ['approved and awaiting', [APPROVED, reviewed('awaiting')], false],
     ['approved and changes requested', [APPROVED, reviewed('changes_requested')], false],
     ['approved and an unreadable review', [APPROVED, reviewed(null)], false],
-    ['an approved draft alone', [reviewed('approved', { draft: true })], true],
+    ['an approved draft alone', [reviewed('approved', { draft: true })], false],
     [
       'an approved draft and an approved PR',
       [reviewed('approved', { draft: true }), APPROVED],
-      true,
+      false,
     ],
     [
       'twelve approved',
@@ -325,12 +325,14 @@ test('allPrsApproved is false while any one PR reads changes requested, wherever
   }
 });
 
-test('allPrsApproved never reads a draft as less approved, and a draft is not approved by being a draft', () => {
+test('allPrsApproved excludes draft PRs even when approved', () => {
   assert.equal(allPrsApproved([reviewed('awaiting', { draft: true })]), false);
+  assert.equal(allPrsApproved([reviewed('approved', { draft: true })]), false);
   assert.equal(
     allPrsApproved([reviewed('approved', { draft: true }), reviewed('awaiting', { draft: true })]),
     false,
   );
+  assert.equal(allPrsApproved([APPROVED, reviewed('approved', { draft: true })]), false);
 });
 
 test('allPrsApproved answers false for anything that is not a list of reviewed PRs, and never throws', () => {

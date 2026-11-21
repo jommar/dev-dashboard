@@ -1545,7 +1545,6 @@ const GREEN_CARDS = [
   'TAP-9007',
   'TAP-9008',
   'TAP-9420',
-  'TAP-9424',
   'TAP-9425',
   'TAP-9426',
 ];
@@ -1563,6 +1562,7 @@ const PLAIN_CARDS = [
   'TAP-9421',
   'TAP-9422',
   'TAP-9423',
+  'TAP-9424',
   'TAP-9430',
 ];
 
