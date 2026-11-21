@@ -287,7 +287,12 @@ test('allPrsApproved follows the truth table: at least one PR and every one appr
     [
       'an approved draft and an approved PR',
       [reviewed('approved', { draft: true }), APPROVED],
-      false,
+      true,
+    ],
+    [
+      'an awaiting draft and an approved PR',
+      [reviewed('awaiting', { draft: true }), APPROVED],
+      true,
     ],
     [
       'twelve approved',
@@ -318,21 +323,22 @@ test('allPrsApproved is false while any one PR reads changes requested, wherever
     first: [changes, APPROVED, APPROVED],
     middle: [APPROVED, changes, APPROVED],
     last: [APPROVED, APPROVED, changes],
-    'a draft that has it': [APPROVED, reviewed('changes_requested', { draft: true })],
   };
   for (const [name, prs] of Object.entries(lists)) {
     assert.equal(allPrsApproved(prs), false, name);
   }
 });
 
-test('allPrsApproved excludes draft PRs even when approved', () => {
+test('allPrsApproved ignores draft PRs: they neither block nor earn the seal', () => {
   assert.equal(allPrsApproved([reviewed('awaiting', { draft: true })]), false);
   assert.equal(allPrsApproved([reviewed('approved', { draft: true })]), false);
   assert.equal(
     allPrsApproved([reviewed('approved', { draft: true }), reviewed('awaiting', { draft: true })]),
     false,
   );
-  assert.equal(allPrsApproved([APPROVED, reviewed('approved', { draft: true })]), false);
+  assert.equal(allPrsApproved([APPROVED, reviewed('awaiting', { draft: true })]), true);
+  assert.equal(allPrsApproved([APPROVED, reviewed('changes_requested', { draft: true })]), true);
+  assert.equal(allPrsApproved([APPROVED, reviewed('approved', { draft: true })]), true);
 });
 
 test('allPrsApproved answers false for anything that is not a list of reviewed PRs, and never throws', () => {
