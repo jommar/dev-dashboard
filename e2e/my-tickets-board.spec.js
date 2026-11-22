@@ -111,7 +111,7 @@ test("each lane has a copy button before its title that lists and copies the lan
   for (const key of keys) await expect(tooltip).toContainText(key);
   await copy.click();
   expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes.at(-1))).toBe(
-    keys.join('\n'),
+    keys.join(' '),
   );
   await expect(copy).toHaveAccessibleName('Copied');
 });

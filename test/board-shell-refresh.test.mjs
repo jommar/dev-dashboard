@@ -194,7 +194,7 @@ test('BoardColumn puts the copy-keys button before the title, only for a lane th
     file.indexOf('function CopyKeysButton'),
     file.indexOf('export function BoardColumn'),
   );
-  assert.match(copy, /keys\.join\('\\n'\)/, 'copied one per line');
+  assert.match(copy, /keys\.join\(' '\)/, 'copied space-separated');
   assert.match(copy, /keys\.map\(\(key\) =>/, 'the tooltip lists every key');
   for (const panel of [
     'components/TicketBoard.jsx',

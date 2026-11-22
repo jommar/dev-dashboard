@@ -293,9 +293,9 @@ export function Board({ label, testId, frameRef, children }) {
 // How long "Copied" (or "Copy failed") shows on a lane's copy button.
 const COPIED_MS = 2000;
 
-// The icon button at the start of a lane header: copies the lane's ticket keys, one per line, in the
-// order the lane shows them. Its tooltip lists every key it will copy under a line that says so, or the
-// outcome; the outcome also shows in the glyph and the button's name.
+// The icon button at the start of a lane header: copies the lane's ticket keys, separated by spaces, in
+// the order the lane shows them. Its tooltip lists every key it will copy under a line that says so, or
+// the outcome; the outcome also shows in the glyph and the button's name.
 function CopyKeysButton({ keys, label, testId }) {
   const [outcome, setOutcome] = useState(null);
   useEffect(() => {
@@ -326,7 +326,7 @@ function CopyKeysButton({ keys, label, testId }) {
         data-outcome={outcome && (ok ? 'copied' : 'failed')}
         aria-label={outcome ?? `${words} from ${label}`}
         onClick={async () =>
-          setOutcome((await copyText(keys.join('\n'))) ? 'Copied' : 'Copy failed')
+          setOutcome((await copyText(keys.join(' '))) ? 'Copied' : 'Copy failed')
         }
       >
         <NavIcon name={ok ? 'check' : 'copy'} />

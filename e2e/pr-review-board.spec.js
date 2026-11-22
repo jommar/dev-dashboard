@@ -47,7 +47,7 @@ test("a lane's copy button comes before its title and lists and copies the lane'
   for (const key of keys) await expect(tooltip).toContainText(key);
   await copy.click();
   expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes.at(-1))).toBe(
-    keys.join('\n'),
+    keys.join(' '),
   );
 });
 test("a PR link's tooltip and name say who approved and who requested changes", async ({

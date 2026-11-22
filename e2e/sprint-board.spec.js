@@ -59,7 +59,7 @@ test.describe('Sprint tab', () => {
     for (const key of keys) await expect(tooltip).toContainText(key);
     await copy.click();
     expect(await page.evaluate(() => window.__dashboardMock.clipboard.writes.at(-1))).toBe(
-      keys.join('\n'),
+      keys.join(' '),
     );
   });
 
