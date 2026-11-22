@@ -10,6 +10,57 @@ import os from 'node:os';
 import { SERVICES, REPOS_ROOT, LOGS_DIR, BUFFER_BYTES, withoutSecrets } from './config.mjs';
 import { freePort } from './port.mjs';
 
+function compareVersions(a, b) {
+  const x = a.split('.').map(Number);
+  const y = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++)
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
+}
+
+// The node version a repo's own build declares, as { declared, source }, or null.
+// First match wins: the Dockerfile's ARG NODE_VERSION, then the highest literal
+// node-version in .github/workflows. Mirrors repo_node_version in the workspace's
+// scripts/run.sh (which installs with it) — keep the two in step. Reads files
+// only: runtime inspection must not start processes.
+export function buildNodeVersion(dir) {
+  const dockerfile = path.join(dir, 'Dockerfile');
+  if (fs.existsSync(dockerfile)) {
+    const match = fs.readFileSync(dockerfile, 'utf8').match(/^ARG NODE_VERSION=v?(\d[\d.]*)/m);
+    if (match) return { declared: match[1], source: 'Dockerfile' };
+  }
+  const workflows = path.join(dir, '.github', 'workflows');
+  if (!fs.existsSync(workflows)) return null;
+  const versions = fs
+    .readdirSync(workflows)
+    .filter((name) => /\.ya?ml$/.test(name))
+    .flatMap((name) => [
+      ...fs
+        .readFileSync(path.join(workflows, name), 'utf8')
+        .matchAll(/^\s*node-version:\s*['"]?v?(\d[\d.]*)/gm),
+    ])
+    .map((match) => match[1])
+    .sort(compareVersions);
+  return versions.length ? { declared: versions.at(-1), source: 'CI workflow' } : null;
+}
+
+// Newest installed nvm version matching a declared one ("24" → "v24.22.2").
+function newestInstalledNode(nvmDir, declared) {
+  const want = declared.replace(/^v/, '').split('.');
+  let names;
+  try {
+    names = fs.readdirSync(path.join(nvmDir, 'versions', 'node'));
+  } catch {
+    return null;
+  }
+  const matches = names
+    .filter((name) => /^v\d+\.\d+\.\d+$/.test(name))
+    .map((name) => name.slice(1).split('.').map(Number))
+    .filter((parts) => want.every((part, i) => String(parts[i]) === part))
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  return matches.length ? `v${matches.at(-1).join('.')}` : null;
+}
+
 // ── rolling ring buffer ────────────────────────────────────────────
 // A fixed-size byte buffer. We append lines and discard the oldest once
 // we exceed BUFFER_BYTES. Kept as a plain array of strings; we track the
@@ -130,15 +181,28 @@ export class ServiceProcess {
 
   #nodeRuntime() {
     const env = withoutSecrets(process.env);
-    const pin = this.nvmrc();
-    if (pin === null) return { env };
-    if (!/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(pin)) {
-      throw new Error(
-        `Unsupported .nvmrc pin ${JSON.stringify(pin)}: expected an exact Node version such as 20.18.0 or v20.18.0`,
-      );
-    }
-    const version = `v${pin.replace(/^v/, '')}`;
     const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), '.nvm');
+    const build = buildNodeVersion(this.cwd());
+    let version;
+    let source;
+    if (build) {
+      version = newestInstalledNode(nvmDir, build.declared);
+      source = `${build.declared} from ${build.source}`;
+      if (!version)
+        throw new Error(
+          `Node ${build.declared} (from the repo's ${build.source}) is not installed under ${nvmDir}: run nvm install ${build.declared}`,
+        );
+    } else {
+      const pin = this.nvmrc();
+      if (pin === null) return { env };
+      if (!/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(pin)) {
+        throw new Error(
+          `Unsupported .nvmrc pin ${JSON.stringify(pin)}: expected an exact Node version such as 20.18.0 or v20.18.0`,
+        );
+      }
+      version = `v${pin.replace(/^v/, '')}`;
+      source = '.nvmrc';
+    }
     const bin = path.resolve(nvmDir, 'versions', 'node', version, 'bin');
     for (const tool of ['node', 'npm']) {
       const file = path.join(bin, tool);
@@ -152,7 +216,7 @@ export class ServiceProcess {
       }
     }
     env.PATH = `${bin}${path.delimiter}${env.PATH || ''}`;
-    return { env, version, nodePath: path.join(bin, 'node') };
+    return { env, version, source, nodePath: path.join(bin, 'node') };
   }
 
   inspectRuntime() {
@@ -197,7 +261,7 @@ export class ServiceProcess {
     return this.#start(this.#nodeRuntime());
   }
 
-  async #start({ env, version, nodePath }) {
+  async #start({ env, version, source, nodePath }) {
     if (this.proc || this.closing) return false;
     const dir = this.cwd();
 
@@ -239,9 +303,11 @@ export class ServiceProcess {
       this.#flush();
     });
 
+    // Say where the version came from when the repo's build, not .nvmrc, chose it.
+    const fromBuild = source && source !== '.nvmrc' ? ` (${source})` : '';
     // One write, so the first persisted file already holds both header lines.
     this.#write(
-      (version ? `[dashboard] Node ${version}: ${nodePath}\n` : '') +
+      (version ? `[dashboard] Node ${version}: ${nodePath}${fromBuild}\n` : '') +
         `[dashboard] started (${cmd} ${args.join(' ')})\n`,
     );
     return true;

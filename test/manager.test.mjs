@@ -113,6 +113,64 @@ test('start uses the root pin only when the project pin is absent', async (t) =>
   assert.equal(f.spawns[0].options.env.PATH, `${bin}${path.delimiter}${process.env.PATH || ''}`);
 });
 
+function writeWorkflow(project, name, body) {
+  const dir = path.join(project, '.github', 'workflows');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), body);
+}
+
+test('start follows the CI node-version over .nvmrc, newest installed match, and logs it', async (t) => {
+  const f = await fixture(t);
+  writeWorkflow(f.project, 'ci.yml', "steps:\n  - with:\n      node-version: '24'\n");
+  writeWorkflow(f.project, 'deploy.yaml', '      node-version: "22"\n');
+  fs.writeFileSync(path.join(f.project, '.nvmrc'), '20.18.0\n');
+  fs.writeFileSync(path.join(f.root, '.nvmrc'), '20.19.0\n');
+  f.install('v24.2.0');
+  const bin = f.install('v24.10.1');
+  f.install('v20.18.0');
+  assert.equal(await f.service.start(), true);
+  assert.equal(f.spawns[0].options.env.PATH, `${bin}${path.delimiter}${process.env.PATH || ''}`);
+  assert.ok(
+    f.service.logTail().includes(`Node v24.10.1: ${path.join(bin, 'node')} (24 from CI workflow)`),
+  );
+});
+
+test('start prefers the Dockerfile NODE_VERSION over CI', async (t) => {
+  const f = await fixture(t);
+  fs.writeFileSync(
+    path.join(f.project, 'Dockerfile'),
+    'ARG NODE_VERSION=20.18.0\nFROM node:${NODE_VERSION}\n',
+  );
+  writeWorkflow(f.project, 'ci.yml', '      node-version: 24\n');
+  const bin = f.install('v20.18.0');
+  f.install('v24.10.1');
+  await f.service.start();
+  assert.equal(f.spawns[0].options.env.PATH, `${bin}${path.delimiter}${process.env.PATH || ''}`);
+  assert.match(f.service.logTail(), /\(20\.18\.0 from Dockerfile\)/);
+});
+
+test('start rejects a build-declared version that is not installed, without spawning', async (t) => {
+  const f = await fixture(t);
+  writeWorkflow(f.project, 'ci.yml', '      node-version: 24\n');
+  fs.writeFileSync(path.join(f.project, '.nvmrc'), '20.18.0\n');
+  f.install('v20.18.0');
+  await assert.rejects(
+    f.service.start(),
+    /Node 24 \(from the repo's CI workflow\) is not installed/,
+  );
+  assert.equal(f.spawns.length, 0);
+});
+
+test('a non-literal CI node-version falls back to .nvmrc', async (t) => {
+  const f = await fixture(t);
+  writeWorkflow(f.project, 'ci.yml', '      node-version: ${{ matrix.node }}\n');
+  fs.writeFileSync(path.join(f.project, '.nvmrc'), '20.18.0\n');
+  const bin = f.install('v20.18.0');
+  await f.service.start();
+  assert.equal(f.spawns[0].options.env.PATH, `${bin}${path.delimiter}${process.env.PATH || ''}`);
+  assert.doesNotMatch(f.service.logTail(), /from CI workflow/);
+});
+
 test('start retains inherited PATH when both pin files are absent', async (t) => {
   const f = await fixture(t);
   await f.service.start();
