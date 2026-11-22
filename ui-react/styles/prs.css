@@ -384,6 +384,21 @@
 .review-ticket-pr[data-review-state='unknown'] {
   --pr-bar: var(--amber);
 }
+.review-ticket-pr[data-my-review='approved'] {
+  background: color-mix(in srgb, var(--green) 12%, var(--panel));
+}
+.review-ticket-pr[data-my-review='commented'] {
+  background: color-mix(in srgb, var(--amber) 12%, var(--panel));
+}
+.review-ticket-pr-mine {
+  font-weight: 500;
+}
+.review-ticket-pr-mine[data-my-review='approved'] {
+  color: var(--green);
+}
+.review-ticket-pr-mine[data-my-review='commented'] {
+  color: var(--amber);
+}
 .review-ticket-pr-link {
   display: flex;
   flex: 1 1 auto;

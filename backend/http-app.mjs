@@ -111,9 +111,11 @@ function reviewSprint(sprint) {
   return { id, name, state, startDate, endDate };
 }
 
+const VIEWER_REVIEWS = new Set(['approved', 'commented', 'none']);
+
 function reviewPr(pr) {
   const { repo, number, title, url, owner, draft, updatedAt } = pr;
-  const { complete, state, approvers, changesRequesters, reviewDecision } = pr.review;
+  const { complete, state, approvers, changesRequesters, reviewDecision, viewerReview } = pr.review;
   return {
     repo,
     number,
@@ -122,7 +124,14 @@ function reviewPr(pr) {
     owner,
     draft,
     updatedAt,
-    review: { complete, state, approvers, changesRequesters, reviewDecision },
+    review: {
+      complete,
+      state,
+      approvers,
+      changesRequesters,
+      reviewDecision,
+      viewerReview: VIEWER_REVIEWS.has(viewerReview) ? viewerReview : 'none',
+    },
   };
 }
 

@@ -16,6 +16,7 @@ const REVIEW = {
   approvers: ['someone-else'],
   changesRequesters: [],
   reviewDecision: null,
+  viewerReview: 'none',
 };
 const PR = {
   repo: 'ExampleOrg/app',
@@ -150,6 +151,53 @@ test('review queue route freezes the exact nested safe response contract, includ
   assert.ok(Object.isFrozen(captured), 'one frozen settings snapshot enters the loader');
   assert.equal(captured.credentials.githubToken, githubToken);
   assert.equal(captured.credentials.jiraToken, jiraToken);
+});
+
+test('review queue route projects whitelisted viewerReview states and normalizes invalid values to none', async (t) => {
+  const cases = [
+    ['approved', 'approved'],
+    ['commented', 'commented'],
+    ['none', 'none'],
+    [undefined, 'none'],
+    [null, 'none'],
+    ['changes_requested', 'none'],
+    [{ secret: githubToken }, 'none'],
+  ];
+  const prs = cases.map(([viewerReview], index) => {
+    const review = {
+      ...REVIEW,
+      viewerLogin: 'private-viewer-login',
+      rawComments: [githubToken],
+    };
+    if (viewerReview === undefined) delete review.viewerReview;
+    else review.viewerReview = viewerReview;
+    return { ...PR, number: 100 + index, review };
+  });
+  const result = {
+    ...PAYLOAD,
+    total: 1,
+    tickets: [ticket('DEMO-1', prs)],
+  };
+  const { request } = await endpoint(t, { result });
+  const response = await request();
+  assert.equal(response.status, 200);
+  const projected = response.json.tickets[0].prs;
+  assert.deepEqual(
+    projected.map((pr) => pr.review.viewerReview),
+    cases.map(([, expected]) => expected),
+  );
+  for (const pr of projected) {
+    assert.deepEqual(Object.keys(pr.review).sort(), [
+      'approvers',
+      'changesRequesters',
+      'complete',
+      'reviewDecision',
+      'state',
+      'viewerReview',
+    ]);
+  }
+  assert.equal(response.text.includes('private-viewer-login'), false);
+  assertNoSecrets(response.text);
 });
 
 test('GitHub-only failure still returns every eligible Jira ticket and explicit discovery uncertainty', async (t) => {

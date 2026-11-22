@@ -32,6 +32,12 @@ export function queueReviewState(review) {
   return 'awaiting';
 }
 
+export function viewerReviewState(review) {
+  if (review?.viewerReview === 'approved' || review?.viewerReview === 'commented')
+    return review.viewerReview;
+  return 'none';
+}
+
 export function reviewProgress(ticket, prCoverage) {
   if (ticket.status === AWAITING_MERGE_STATUS) return 'awaiting-merge';
   const prs = ticket.prs || [];

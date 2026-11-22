@@ -128,6 +128,7 @@ export async function fetchReviewData(prs, { snapshot } = {}) {
 }
 
 const QUEUE_REVIEW_BATCH_SIZE = 50;
+const QUEUE_COMMENT_MAX_PAGES = 10;
 const QUEUE_REVIEW_STATES = new Set([
   'APPROVED',
   'CHANGES_REQUESTED',
@@ -144,14 +145,22 @@ function unknownQueueReview() {
     approvers: [],
     changesRequesters: [],
     reviewDecision: null,
+    viewerReview: 'none',
   };
 }
 
-function summarizeQueueReviews(nodes, reviewDecision) {
+function summarizeQueueReviews(nodes, reviewDecision, viewerLogin = null, viewerCommented = false) {
   const opinions = new Map();
+  const reviewCommenters = new Set();
   for (const node of nodes) {
     if (!node || !QUEUE_REVIEW_STATES.has(node.state)) return unknownQueueReview();
-    if (node.state === 'COMMENTED' || node.state === 'PENDING') continue;
+    if (node.state === 'COMMENTED') {
+      const commenter = node.author?.login;
+      if (typeof commenter === 'string' && commenter.trim())
+        reviewCommenters.add(commenter.trim().toLowerCase());
+      continue;
+    }
+    if (node.state === 'PENDING') continue;
     const login = node.author?.login;
     const time = typeof node.submittedAt === 'string' ? Date.parse(node.submittedAt) : NaN;
     if (typeof login !== 'string' || !login.trim() || !Number.isFinite(time))
@@ -169,24 +178,46 @@ function summarizeQueueReviews(nodes, reviewDecision) {
   }
   const requested = reviewDecision === 'CHANGES_REQUESTED' || changesRequesters.length > 0;
   const approved = reviewDecision === 'APPROVED' || approvers.length > 0;
+  let viewerReview = 'none';
+  if (viewerLogin) {
+    if (opinions.get(viewerLogin)?.state === 'APPROVED') viewerReview = 'approved';
+    else if (reviewCommenters.has(viewerLogin) || viewerCommented) viewerReview = 'commented';
+  }
   return {
     complete: true,
     state: requested ? 'changes_requested' : approved ? 'approved' : 'awaiting',
     approvers,
     changesRequesters,
     reviewDecision,
+    viewerReview,
   };
+}
+
+function queueQuery(pending) {
+  const body = pullRequestQuery(
+    pending.map((entry) => entry.pr),
+    (_, index) => {
+      const entry = pending[index];
+      let selection = '\n';
+      if (!entry.reviewsDone) {
+        const after = entry.cursor ? `, after: ${JSON.stringify(entry.cursor)}` : '';
+        selection +=
+          '  reviewDecision\n' +
+          `  reviews(first: 100${after}) { pageInfo { hasNextPage endCursor } nodes { state submittedAt author { login } } }\n`;
+      }
+      if (!entry.commentsDone) {
+        const after = entry.commentCursor ? `, after: ${JSON.stringify(entry.commentCursor)}` : '';
+        selection += `  comments(first: 100${after}) { pageInfo { hasNextPage endCursor } nodes { author { login } } }\n`;
+      }
+      return selection;
+    },
+  );
+  return body.replace(/^query \{\n/, 'query {\nviewer { login }\n');
 }
 
 async function postQueueReviews(pending, config) {
   try {
-    const res = await postGraphql(
-      config,
-      query(
-        pending.map((entry) => entry.pr),
-        Object.fromEntries(pending.map((entry, index) => [index, entry.cursor])),
-      ),
-    );
+    const res = await postGraphql(config, queueQuery(pending));
     if (!res.ok) return null;
     const json = await res.json();
     return json?.data && typeof json.data === 'object' ? json : null;
@@ -195,35 +226,94 @@ async function postQueueReviews(pending, config) {
   }
 }
 
-function readQueueReviewPage(json, alias, entry) {
-  if (!json || (json.errors !== undefined && !Array.isArray(json.errors))) return false;
+function isCommentsError(error, alias) {
+  return (
+    Array.isArray(error?.path) &&
+    error.path[0] === alias &&
+    error.path[1] === 'pullRequest' &&
+    error.path[2] === 'comments'
+  );
+}
+
+function readQueueReviewPage(json, alias, entry, viewerLogin) {
+  if (!json || (json.errors !== undefined && !Array.isArray(json.errors))) {
+    if (!entry.reviewsDone) return false;
+    entry.commentsDone = true;
+    return true;
+  }
   const errors = json.errors || [];
-  if (
-    errors.some(
-      (error) => !Array.isArray(error?.path) || !error.path.length || error.path[0] === alias,
-    )
-  )
-    return false;
+  const hasGlobalError = errors.some((error) => !Array.isArray(error?.path) || !error.path.length);
+  const hasReviewError =
+    hasGlobalError ||
+    errors.some((error) => error.path[0] === alias && !isCommentsError(error, alias));
+  const hasCommentError = hasGlobalError || errors.some((error) => error.path[0] === alias);
   const pr = json.data[alias]?.pullRequest;
-  const page = pr?.reviews;
-  if (
-    !pr ||
-    !QUEUE_REVIEW_DECISIONS.has(pr.reviewDecision) ||
-    !Array.isArray(page?.nodes) ||
-    typeof page.pageInfo?.hasNextPage !== 'boolean' ||
-    (page.pageInfo.endCursor !== null && typeof page.pageInfo.endCursor !== 'string')
-  )
-    return false;
-  if (entry.decision !== undefined && entry.decision !== pr.reviewDecision) return false;
-  entry.decision = pr.reviewDecision;
-  entry.nodes.push(...page.nodes);
-  const cursor = page.pageInfo.endCursor;
-  if (cursor !== null && (!cursor.trim() || entry.cursors.has(cursor))) return false;
-  if (!page.pageInfo.hasNextPage) return true;
-  if (cursor === null || !page.nodes.length) return false;
-  entry.cursors.add(cursor);
-  entry.cursor = cursor;
-  return 'next';
+
+  if (!entry.reviewsDone) {
+    if (hasReviewError || !pr) return false;
+    const page = pr.reviews;
+    if (
+      !QUEUE_REVIEW_DECISIONS.has(pr.reviewDecision) ||
+      !Array.isArray(page?.nodes) ||
+      typeof page.pageInfo?.hasNextPage !== 'boolean' ||
+      (page.pageInfo.endCursor !== null && typeof page.pageInfo.endCursor !== 'string')
+    )
+      return false;
+    if (entry.decision !== undefined && entry.decision !== pr.reviewDecision) return false;
+    entry.decision = pr.reviewDecision;
+    entry.nodes.push(...page.nodes);
+    const cursor = page.pageInfo.endCursor;
+    if (cursor !== null && (!cursor.trim() || entry.cursors.has(cursor))) return false;
+    if (page.pageInfo.hasNextPage) {
+      if (cursor === null || !page.nodes.length) return false;
+      entry.cursors.add(cursor);
+      entry.cursor = cursor;
+    } else {
+      entry.reviewsDone = true;
+    }
+  }
+
+  if (!entry.commentsDone) {
+    if (!viewerLogin || hasCommentError || !pr) {
+      entry.commentsDone = true;
+    } else {
+      const page = pr.comments;
+      if (
+        page === undefined ||
+        !Array.isArray(page?.nodes) ||
+        typeof page.pageInfo?.hasNextPage !== 'boolean' ||
+        (page.pageInfo.endCursor !== null && typeof page.pageInfo.endCursor !== 'string')
+      ) {
+        entry.commentsDone = true;
+      } else {
+        entry.commentPages += 1;
+        for (const node of page.nodes) {
+          const login = node?.author?.login;
+          if (typeof login === 'string' && login.trim().toLowerCase() === viewerLogin) {
+            entry.viewerCommented = true;
+            break;
+          }
+        }
+        const cursor = page.pageInfo.endCursor;
+        if (
+          !entry.viewerCommented &&
+          entry.commentPages < QUEUE_COMMENT_MAX_PAGES &&
+          page.pageInfo.hasNextPage &&
+          cursor !== null &&
+          cursor.trim() &&
+          !entry.commentCursors.has(cursor) &&
+          page.nodes.length
+        ) {
+          entry.commentCursors.add(cursor);
+          entry.commentCursor = cursor;
+        } else {
+          entry.commentsDone = true;
+        }
+      }
+    }
+  }
+
+  return !entry.reviewsDone || !entry.commentsDone ? 'next' : true;
 }
 
 export async function fetchQueueReviewData(prs, { snapshot } = {}) {
@@ -247,17 +337,31 @@ export async function fetchQueueReviewData(prs, { snapshot } = {}) {
     cursors: new Set(),
     nodes: [],
     decision: undefined,
+    reviewsDone: false,
+    commentCursor: null,
+    commentCursors: new Set(),
+    commentPages: 0,
+    viewerCommented: false,
+    commentsDone: false,
   }));
+  let viewerLogin = null;
   for (let offset = 0; offset < entries.length; offset += QUEUE_REVIEW_BATCH_SIZE) {
     let pending = entries.slice(offset, offset + QUEUE_REVIEW_BATCH_SIZE);
     while (pending.length) {
       const json = await postQueueReviews(pending, config);
+      const login = json?.data?.viewer?.login;
+      if (typeof login === 'string' && login.trim()) viewerLogin = login.trim().toLowerCase();
       const next = [];
       for (const [index, entry] of pending.entries()) {
-        const verdict = readQueueReviewPage(json, `a${index}`, entry);
+        const verdict = readQueueReviewPage(json, `a${index}`, entry, viewerLogin);
         if (verdict === 'next') next.push(entry);
         else if (verdict === true)
-          reviews[entry.key] = summarizeQueueReviews(entry.nodes, entry.decision);
+          reviews[entry.key] = summarizeQueueReviews(
+            entry.nodes,
+            entry.decision,
+            viewerLogin,
+            entry.viewerCommented,
+          );
       }
       pending = next;
     }

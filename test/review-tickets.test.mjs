@@ -4,6 +4,7 @@ import * as github from '../backend/github.mjs';
 import * as review from '../backend/review.mjs';
 import { fetchTicketPrs } from '../backend/ticket-prs.mjs';
 import { resetPullRequestCaches } from '../backend/dev-status.mjs';
+import { reviewProgress } from '../ui/review-board.js';
 import { assertNoSecrets, githubToken, jiraToken } from './settings-fixture.mjs';
 import {
   API,
@@ -84,7 +85,7 @@ test('queue is Jira-first: PRs come from Jira dev-status links in any repository
       assert.equal(init.method, 'POST');
       const { query } = JSON.parse(init.body);
       assert.match(query, /^\s*query\b/);
-      assert.doesNotMatch(query, /mutation|statusCheckRollup|reviewThreads|\bcomments\s*\(/);
+      assert.doesNotMatch(query, /mutation|statusCheckRollup|reviewThreads/);
       return Response.json({
         data: Object.fromEntries(
           aliasesOf(query).map(([name, id]) => {
@@ -415,6 +416,7 @@ for (const [name, decision, nodes, expected, approvers, requesters] of [
       approvers,
       changesRequesters: requesters,
       reviewDecision: decision,
+      viewerReview: 'none',
     });
   });
 }
@@ -434,6 +436,424 @@ test('dismissed approval cannot count or resurrect an older superseded opinion',
   ];
   assert.notEqual(result.state, 'approved');
   assert.deepEqual(result.approvers, []);
+});
+
+for (const [name, { viewer, reviews, comments, expected }] of [
+  [
+    'viewer approved without comments',
+    { viewer: 'Me', reviews: [opinion('me', 'APPROVED')], expected: 'approved' },
+  ],
+  [
+    'viewer approved and also commented',
+    {
+      viewer: 'me',
+      reviews: [opinion('me', 'COMMENTED', 1), opinion('me', 'APPROVED', 2)],
+      comments: [{ author: { login: 'me' } }],
+      expected: 'approved',
+    },
+  ],
+  [
+    'viewer left a review comment without approval',
+    { viewer: 'me', reviews: [opinion('ME', 'COMMENTED')], expected: 'commented' },
+  ],
+  [
+    'viewer left a PR conversation comment without approval',
+    {
+      viewer: 'me',
+      reviews: [opinion('other', 'APPROVED')],
+      comments: [{ author: { login: 'me' } }],
+      expected: 'commented',
+    },
+  ],
+  [
+    'viewer dismissed approval but has a comment',
+    {
+      viewer: 'me',
+      reviews: [opinion('me', 'APPROVED', 1), opinion('me', 'DISMISSED', 2)],
+      comments: [{ author: { login: 'me' } }],
+      expected: 'commented',
+    },
+  ],
+  [
+    'only other users approved or commented',
+    {
+      viewer: 'me',
+      reviews: [opinion('alice', 'APPROVED'), opinion('bob', 'COMMENTED')],
+      comments: [{ author: { login: 'carol' } }],
+      expected: 'none',
+    },
+  ],
+]) {
+  test(`viewer review state: ${name}`, async (t) => {
+    const fetchQueueReviewData = reviewLoader();
+    stubQueue(t, {
+      graphql: ({ init }) => {
+        const { query } = JSON.parse(init.body);
+        assert.match(query, /\bviewer\s*\{\s*login\s*\}/);
+        assert.match(
+          query,
+          /\bcomments\(\s*first:\s*100\s*\)\s*\{\s*pageInfo\s*\{\s*hasNextPage\s+endCursor\s*\}\s*nodes\s*\{\s*author\s*\{\s*login\s*\}\s*\}\s*\}/,
+        );
+        return Response.json({
+          data: {
+            viewer: { login: viewer },
+            a0: {
+              pullRequest: {
+                ...reviewPage(reviews),
+                comments: {
+                  nodes: comments || [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        });
+      },
+    });
+    const result = (await fetchQueueReviewData([pr(7)], { snapshot: snapshot() })).reviews[
+      'ExampleOrg/app#7'
+    ];
+    assert.equal(result.viewerReview, expected);
+  });
+}
+
+test('viewer conversation comment on a later comments page is detected', async (t) => {
+  const fetchQueueReviewData = reviewLoader();
+  let calls = 0;
+  stubQueue(t, {
+    graphql: ({ init }) => {
+      calls += 1;
+      const { query } = JSON.parse(init.body);
+      if (calls === 1) {
+        assert.match(query, /\bviewer\s*\{\s*login\s*\}/);
+        assert.match(
+          query,
+          /\bcomments\(\s*first:\s*100\s*\)\s*\{\s*pageInfo\s*\{\s*hasNextPage\s+endCursor\s*\}\s*nodes\s*\{\s*author\s*\{\s*login\s*\}\s*\}\s*\}/,
+        );
+        return Response.json({
+          data: {
+            viewer: { login: 'me' },
+            a0: {
+              pullRequest: {
+                ...reviewPage([]),
+                comments: {
+                  nodes: [{ author: { login: 'other' } }],
+                  pageInfo: { hasNextPage: true, endCursor: 'comment-p2' },
+                },
+              },
+            },
+          },
+        });
+      }
+      assert.match(query, /\bcomments\(\s*first:\s*100\s*,\s*after:\s*"comment-p2"\s*\)/);
+      assert.doesNotMatch(query, /\breviews\(/);
+      return Response.json({
+        data: {
+          viewer: { login: 'me' },
+          a0: {
+            pullRequest: {
+              comments: {
+                nodes: [{ author: { login: 'me' } }],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        },
+      });
+    },
+  });
+  const result = (await fetchQueueReviewData([pr(7)], { snapshot: snapshot() })).reviews[
+    'ExampleOrg/app#7'
+  ];
+  assert.equal(calls, 2);
+  assert.equal(result.complete, true);
+  assert.equal(result.viewerReview, 'commented');
+});
+
+test('viewer conversation comment on the first page stops comments pagination early', async (t) => {
+  const fetchQueueReviewData = reviewLoader();
+  let calls = 0;
+  stubQueue(t, {
+    graphql: () => {
+      calls += 1;
+      return Response.json({
+        data: {
+          viewer: { login: 'me' },
+          a0: {
+            pullRequest: {
+              ...reviewPage([opinion('alice', 'APPROVED')], 'APPROVED'),
+              comments: {
+                nodes: [{ author: { login: 'ME' } }],
+                pageInfo: { hasNextPage: true, endCursor: 'comment-p2' },
+              },
+            },
+          },
+        },
+      });
+    },
+  });
+  const result = (await fetchQueueReviewData([pr(7)], { snapshot: snapshot() })).reviews[
+    'ExampleOrg/app#7'
+  ];
+  assert.equal(calls, 1);
+  assert.equal(result.complete, true);
+  assert.equal(result.state, 'approved');
+  assert.equal(result.viewerReview, 'commented');
+});
+
+test('comments pagination stops at the page budget without losing completed review evidence', async (t) => {
+  const fetchQueueReviewData = reviewLoader();
+  let calls = 0;
+  stubQueue(t, {
+    graphql: () => {
+      calls += 1;
+      assert.ok(calls <= 15, 'comments pagination must stay within a bounded page budget');
+      return Response.json({
+        data: {
+          viewer: { login: 'me' },
+          a0: {
+            pullRequest: {
+              ...(calls === 1 ? reviewPage([opinion('alice', 'APPROVED')], 'APPROVED') : {}),
+              comments: {
+                nodes: [{ author: { login: `other-${calls}` } }],
+                pageInfo: { hasNextPage: true, endCursor: `comment-p${calls + 1}` },
+              },
+            },
+          },
+        },
+      });
+    },
+  });
+  const result = (await fetchQueueReviewData([pr(7)], { snapshot: snapshot() })).reviews[
+    'ExampleOrg/app#7'
+  ];
+  assert.equal(calls, 10);
+  assert.equal(result.complete, true);
+  assert.equal(result.state, 'approved');
+  assert.deepEqual(result.approvers, ['alice']);
+  assert.equal(result.viewerReview, 'none');
+});
+
+test('comments-path GraphQL error preserves completed review evidence, viewer approval and ticket lane', async (t) => {
+  const fetchQueueReviewData = reviewLoader();
+  stubQueue(t, {
+    graphql: () =>
+      Response.json({
+        data: {
+          viewer: { login: 'me' },
+          a0: {
+            pullRequest: {
+              ...reviewPage([opinion('alice', 'APPROVED')], 'APPROVED'),
+              comments: null,
+            },
+          },
+          a1: {
+            pullRequest: {
+              ...reviewPage([opinion('me', 'APPROVED')], 'APPROVED'),
+              comments: null,
+            },
+          },
+        },
+        errors: [
+          { message: githubToken, path: ['a0', 'pullRequest', 'comments'] },
+          { message: githubToken, path: ['a1', 'pullRequest', 'comments'] },
+        ],
+      }),
+  });
+  const result = await fetchQueueReviewData([pr(7), pr(8)], { snapshot: snapshot() });
+  const otherApproved = result.reviews['ExampleOrg/app#7'];
+  const viewerApproved = result.reviews['ExampleOrg/app#8'];
+  assert.equal(otherApproved.complete, true);
+  assert.equal(otherApproved.state, 'approved');
+  assert.deepEqual(otherApproved.approvers, ['alice']);
+  assert.equal(otherApproved.viewerReview, 'none');
+  assert.equal(
+    reviewProgress(
+      { status: 'Ready For Code Review', prs: [{ draft: false, review: otherApproved }] },
+      { available: true, complete: true },
+    ),
+    'reviewed',
+  );
+  assert.equal(viewerApproved.complete, true);
+  assert.equal(viewerApproved.state, 'approved');
+  assert.deepEqual(viewerApproved.approvers, ['me']);
+  assert.equal(viewerApproved.viewerReview, 'approved');
+  assert.equal(
+    reviewProgress(
+      { status: 'Ready For Code Review', prs: [{ draft: false, review: viewerApproved }] },
+      { available: true, complete: true },
+    ),
+    'reviewed',
+  );
+  assertNoSecrets(result);
+});
+
+test('failed comments-only pagination page preserves completed review evidence, viewer approval and ticket lane', async (t) => {
+  const fetchQueueReviewData = reviewLoader();
+  let calls = 0;
+  stubQueue(t, {
+    graphql: () => {
+      calls += 1;
+      if (calls > 1) return Response.json({}, { status: 503 });
+      return Response.json({
+        data: {
+          viewer: { login: 'me' },
+          a0: {
+            pullRequest: {
+              ...reviewPage([opinion('alice', 'APPROVED')], 'APPROVED'),
+              comments: {
+                nodes: [{ author: { login: 'other' } }],
+                pageInfo: { hasNextPage: true, endCursor: 'comment-p2' },
+              },
+            },
+          },
+          a1: {
+            pullRequest: {
+              ...reviewPage([opinion('me', 'APPROVED')], 'APPROVED'),
+              comments: {
+                nodes: [{ author: { login: 'other' } }],
+                pageInfo: { hasNextPage: true, endCursor: 'comment-p2-b' },
+              },
+            },
+          },
+        },
+      });
+    },
+  });
+  const result = (await fetchQueueReviewData([pr(7), pr(8)], { snapshot: snapshot() })).reviews;
+  assert.equal(calls, 2);
+  assert.equal(result['ExampleOrg/app#7'].complete, true);
+  assert.equal(result['ExampleOrg/app#7'].state, 'approved');
+  assert.deepEqual(result['ExampleOrg/app#7'].approvers, ['alice']);
+  assert.equal(result['ExampleOrg/app#7'].viewerReview, 'none');
+  assert.equal(
+    reviewProgress(
+      {
+        status: 'Ready For Code Review',
+        prs: [{ draft: false, review: result['ExampleOrg/app#7'] }],
+      },
+      { available: true, complete: true },
+    ),
+    'reviewed',
+  );
+  assert.equal(result['ExampleOrg/app#8'].complete, true);
+  assert.equal(result['ExampleOrg/app#8'].state, 'approved');
+  assert.deepEqual(result['ExampleOrg/app#8'].approvers, ['me']);
+  assert.equal(result['ExampleOrg/app#8'].viewerReview, 'approved');
+  assert.equal(
+    reviewProgress(
+      {
+        status: 'Ready For Code Review',
+        prs: [{ draft: false, review: result['ExampleOrg/app#8'] }],
+      },
+      { available: true, complete: true },
+    ),
+    'reviewed',
+  );
+});
+
+for (const failure of ['repeated cursor', 'missing cursor']) {
+  test(`comment ${failure} terminates cleanly while preserving completed review evidence`, async (t) => {
+    const fetchQueueReviewData = reviewLoader();
+    let calls = 0;
+    stubQueue(t, {
+      graphql: () => {
+        calls += 1;
+        assert.ok(calls <= 3, 'comment pagination terminates');
+        return Response.json({
+          data: {
+            viewer: { login: 'me' },
+            a0: {
+              pullRequest: {
+                ...(calls === 1 ? reviewPage([opinion('alice', 'APPROVED')], 'APPROVED') : {}),
+                comments: {
+                  nodes: [{ author: { login: 'other' } }],
+                  pageInfo: {
+                    hasNextPage: true,
+                    endCursor:
+                      failure === 'missing cursor' && calls > 1 ? null : 'same-comment-cursor',
+                  },
+                },
+              },
+            },
+          },
+        });
+      },
+    });
+    const result = (await fetchQueueReviewData([pr(7)], { snapshot: snapshot() })).reviews[
+      'ExampleOrg/app#7'
+    ];
+    assert.equal(calls, 2);
+    assert.equal(result.complete, true);
+    assert.equal(result.state, 'approved');
+    assert.deepEqual(result.approvers, ['alice']);
+    assert.equal(result.viewerReview, 'none');
+  });
+}
+
+test('mixed two-PR comments continuation renumbers remaining alias and isolates viewer evidence', async (t) => {
+  const fetchQueueReviewData = reviewLoader();
+  const seenAliases = [];
+  stubQueue(t, {
+    graphql: ({ init }) => {
+      const { query } = JSON.parse(init.body);
+      const aliases = aliasesOf(query);
+      seenAliases.push(aliases);
+      if (seenAliases.length === 1) {
+        assert.deepEqual(aliases, [
+          ['a0', 'ExampleOrg/app#7'],
+          ['a1', 'ExampleOrg/app#8'],
+        ]);
+        return Response.json({
+          data: {
+            viewer: { login: 'me' },
+            a0: {
+              pullRequest: {
+                ...reviewPage([opinion('alice', 'APPROVED')], 'APPROVED'),
+                comments: {
+                  nodes: [{ author: { login: 'other' } }],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+            a1: {
+              pullRequest: {
+                ...reviewPage([]),
+                comments: {
+                  nodes: [{ author: { login: 'other' } }],
+                  pageInfo: { hasNextPage: true, endCursor: 'pr8-c2' },
+                },
+              },
+            },
+          },
+        });
+      }
+      assert.deepEqual(aliases, [['a0', 'ExampleOrg/app#8']]);
+      assert.match(query, /\bcomments\(\s*first:\s*100\s*,\s*after:\s*"pr8-c2"\s*\)/);
+      assert.doesNotMatch(query, /\breviews\(/);
+      return Response.json({
+        data: {
+          viewer: { login: 'me' },
+          a0: {
+            pullRequest: {
+              comments: {
+                nodes: [{ author: { login: 'me' } }],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        },
+      });
+    },
+  });
+  const result = (await fetchQueueReviewData([pr(7), pr(8)], { snapshot: snapshot() })).reviews;
+  assert.equal(seenAliases.length, 2);
+  assert.equal(result['ExampleOrg/app#7'].complete, true);
+  assert.equal(result['ExampleOrg/app#7'].state, 'approved');
+  assert.equal(result['ExampleOrg/app#7'].viewerReview, 'none');
+  assert.equal(result['ExampleOrg/app#8'].complete, true);
+  assert.equal(result['ExampleOrg/app#8'].state, 'awaiting');
+  assert.equal(result['ExampleOrg/app#8'].viewerReview, 'commented');
 });
 
 test('approval after the first 100 reviews is counted only after complete advancing pagination', async (t) => {

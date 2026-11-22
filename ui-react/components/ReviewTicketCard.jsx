@@ -2,13 +2,22 @@ import { useLayoutEffect, useRef } from 'react';
 import { slug } from '../../ui/dom.js';
 import { useHarness } from '../lib/harness-context.js';
 import { say } from '../../ui/harness.js';
-import { hasCompletePrCoverage, queueReviewState } from '../../ui/review-board.js';
+import {
+  hasCompletePrCoverage,
+  queueReviewState,
+  viewerReviewState,
+} from '../../ui/review-board.js';
 import { reviewerLines, reviewText } from '../../ui/ticket-board.js';
 import { TicketLaunchers } from './TicketLaunchers.jsx';
 import { DiffViewer } from './DiffViewer.jsx';
 import { SprintPill } from './SprintPill.jsx';
 import { TicketStatusPill } from './TicketStatusPill.jsx';
 import { DashboardTooltip } from './Primitives.jsx';
+
+const VIEWER_REVIEW_LABELS = {
+  approved: 'You approved',
+  commented: 'You commented',
+};
 
 export function ReviewTicketCard({
   ticket,
@@ -110,19 +119,23 @@ export function ReviewTicketCard({
         <ul className="review-ticket-prs">
           {prs.map((pr) => {
             const state = queueReviewState(pr.review);
+            const myReview = viewerReviewState(pr.review);
+            const myReviewLabel = VIEWER_REVIEW_LABELS[myReview] ?? null;
             const label = `${pr.repo} #${pr.number}`;
             const reviewers = reviewerLines(pr.review);
+            const details = [...reviewers, ...(myReviewLabel ? [myReviewLabel] : [])];
             const id = `${ticket.key}-${slug(pr.repo)}-${pr.number}`;
             return (
               <li
                 key={`${pr.repo}#${pr.number}`}
                 className="review-ticket-pr"
                 data-review-state={state}
+                data-my-review={myReview}
               >
                 <DashboardTooltip
                   title={
-                    reviewers.length
-                      ? [`${label}: ${pr.title}`, ...reviewers].map((line) => (
+                    details.length
+                      ? [`${label}: ${pr.title}`, ...details].map((line) => (
                           <div key={line}>{line}</div>
                         ))
                       : `${label}: ${pr.title}`
@@ -137,13 +150,19 @@ export function ReviewTicketCard({
                     aria-label={[
                       `${label}, ${pr.title}${pr.draft ? ', draft' : ''}`,
                       reviewText({ state }),
-                      ...reviewers,
+                      ...details,
                     ].join(', ')}
                     data-testid={`prs-pr-${id}`}
                   >
                     <span className="review-ticket-pr-name">{label}</span>
                     <span className="review-ticket-pr-state" data-review-state={state}>
                       {reviewText({ state })}
+                      {myReviewLabel && (
+                        <span className="review-ticket-pr-mine" data-my-review={myReview}>
+                          {' '}
+                          · {myReviewLabel}
+                        </span>
+                      )}
                     </span>
                   </a>
                 </DashboardTooltip>

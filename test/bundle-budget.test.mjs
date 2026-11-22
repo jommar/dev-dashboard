@@ -15,9 +15,9 @@ import { build } from 'vite';
 // Baseline at b2eb63d: one entry chunk, 831 KiB raw, 252 KiB gzip -9, 164 kB of CSS.
 const KIB = 1024;
 const MAX_INITIAL_RAW = 640 * KIB;
-// Raised from 200 KiB for the merged-PR rows and their toggle on My Tickets, and again to 202 KiB
-// for the ticket-thread search (any channel) that the shared Slack thread hook now asks for.
-const MAX_INITIAL_GZIP = 202 * KIB;
+// Raised from 200→202 KiB (My Tickets merged PRs, Slack ticket-thread search), then 203 KiB for
+// per-PR viewer review indicators on the Pull Requests board.
+const MAX_INITIAL_GZIP = 203 * KIB;
 // A guard against bloat, not a target: lazy loading splits code, it must not add much of it.
 // Raised from 884 KiB for the lazy Sprint screen, which could not fit the 1.5 KiB that was left,
 // to 902 KiB for the ticket-thread search in the shared Slack hook (about 1 KiB of eager code), and
@@ -26,7 +26,8 @@ const MAX_INITIAL_GZIP = 202 * KIB;
 // and to 914 KiB for the Copy prompt buttons across the Claude dialog, prompts editor and E2E check
 // (all lazy, plus one tiny helper in api.js).
 const MAX_TOTAL_RAW = 914 * KIB;
-const MAX_TOTAL_CSS = 180 * KIB;
+// Raised from 180 KiB for per-PR viewer review background tints in prs.css.
+const MAX_TOTAL_CSS = 181 * KIB;
 // Modules that must load on demand: the five rarely used screens and the two dialogs, plus the
 // markdown renderer both the viewer and the chat pull in.
 const LAZY_MODULES = [

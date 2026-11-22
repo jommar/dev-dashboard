@@ -78,6 +78,64 @@ test("a PR link's tooltip and name say who approved and who requested changes", 
   await page.mouse.move(0, 0);
   await expect(tooltip).toHaveCount(0);
 });
+test('PR rows tint independently for viewer approval and viewer comment without tinting the ticket card', async ({
+  page,
+  dashboard,
+}) => {
+  const [first] = dashboard.data.reviewTickets.tickets;
+  const base = first.prs[0];
+  first.prs = [
+    {
+      ...base,
+      number: 101,
+      title: 'Approved by me',
+      review: { ...review('approved'), viewerReview: 'none' },
+    },
+    {
+      ...base,
+      number: 102,
+      title: 'Commented by me',
+      review: { ...review('awaiting'), viewerReview: 'none' },
+    },
+    {
+      ...base,
+      number: 103,
+      title: 'Untouched by me',
+      review: { ...review('approved'), viewerReview: 'none' },
+    },
+  ];
+  await page.goto('/#/prs');
+  const card = ticket(page, first.key);
+  const rows = card.locator('.review-ticket-pr');
+  await expect(rows).toHaveCount(3);
+  const baselineCardBg = await card.evaluate((el) => getComputedStyle(el).backgroundColor);
+
+  first.prs[0].review = { ...review('approved'), viewerReview: 'approved' };
+  first.prs[1].review = { ...review('awaiting'), viewerReview: 'commented' };
+  await page.getByTestId('prs-refresh').click();
+  await expect(rows.nth(0)).toHaveAttribute('data-my-review', 'approved');
+  await expect(rows.nth(1)).toHaveAttribute('data-my-review', 'commented');
+  await expect(rows.nth(2)).toHaveAttribute('data-my-review', 'none');
+  await expect(rows.nth(0)).toContainText('You approved');
+  await expect(rows.nth(1)).toContainText('You commented');
+  await expect(rows.nth(2)).not.toContainText('You ');
+
+  const backgrounds = await card.evaluate((el) => {
+    const items = [...el.querySelectorAll('.review-ticket-pr')];
+    return {
+      card: getComputedStyle(el).backgroundColor,
+      approved: getComputedStyle(items[0]).backgroundColor,
+      commented: getComputedStyle(items[1]).backgroundColor,
+      none: getComputedStyle(items[2]).backgroundColor,
+    };
+  });
+  expect(backgrounds.card).toBe(baselineCardBg);
+  expect(backgrounds.approved).not.toBe(backgrounds.none);
+  expect(backgrounds.commented).not.toBe(backgrounds.none);
+  expect(backgrounds.approved).not.toBe(backgrounds.commented);
+  expect(backgrounds.card).not.toBe(backgrounds.approved);
+  expect(backgrounds.card).not.toBe(backgrounds.commented);
+});
 test('ticket cards show assignee names and a readable fallback without changing their actions', async ({
   page,
   dashboard,
