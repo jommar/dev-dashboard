@@ -15,6 +15,7 @@ import { getOriginDiff } from './diff.mjs';
 import { listWorktrees, matchWorktrees } from './checkouts.mjs';
 import { isTicketKey } from './claude-ticket-state.mjs';
 import { fetchRelease } from './releases.mjs';
+import { fetchReleaseScripts } from './release-scripts.mjs';
 import { parseReleaseQuery } from './release-model.mjs';
 import { slackIntegration } from './slack.mjs';
 import { parseSlackLink } from './slack-link.mjs';
@@ -42,6 +43,43 @@ const MAX_LINKS_PER_REQUEST = 50;
 // (curl, older browsers) is not one.
 const CROSS_SITE = ['cross-site', 'same-site'];
 const MAX_USAGE_SESSIONS = 8;
+const MAX_RELEASE_SCRIPT_PRS = 200;
+
+function parseReleaseScriptsBody(body, snapshot) {
+  if (!body || !Array.isArray(body.prs) || body.prs.length > MAX_RELEASE_SCRIPT_PRS) {
+    throw httpError('INVALID_RELEASE_SCRIPTS', 'Invalid release scripts request.', 400);
+  }
+  const org = snapshot?.github?.org;
+  const allowedRepos = new Set(
+    typeof org === 'string' && org
+      ? (snapshot?.github?.repos || []).map((repo) => `${org}/${repo}`)
+      : [],
+  );
+  return body.prs.map((item) => {
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      !isTicketKey(item.ticket) ||
+      typeof item.repo !== 'string' ||
+      !allowedRepos.has(item.repo) ||
+      !Number.isSafeInteger(item.number) ||
+      item.number < 1 ||
+      (item.state !== undefined && item.state !== null && typeof item.state !== 'string') ||
+      (item.updatedAt !== undefined &&
+        item.updatedAt !== null &&
+        typeof item.updatedAt !== 'string')
+    ) {
+      throw httpError('INVALID_RELEASE_SCRIPTS', 'Invalid release scripts request.', 400);
+    }
+    return {
+      ticket: item.ticket,
+      repo: item.repo,
+      number: item.number,
+      state: item.state ?? null,
+      updatedAt: item.updatedAt ?? null,
+    };
+  });
+}
 
 function json(res, status, value) {
   res.writeHead(status, {
@@ -283,6 +321,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
     getOriginDiff,
     listWorktrees,
     fetchRelease,
+    fetchReleaseScripts,
     fetchTicketPrs,
     fetchReviewTickets,
     fetchSpecReviews,
@@ -544,11 +583,16 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         if (
           (req.headers.origin && req.headers.origin !== authority.origin) ||
           CROSS_SITE.includes(req.headers['sec-fetch-site'])
-        )
+        ) {
+          if (new URL(req.url, authority.origin).pathname === '/api/releases/scripts') {
+            json(res, 403, { code: 'INVALID_ORIGIN', error: 'INVALID ORIGIN', errors: [] });
+            return;
+          }
           throw Object.assign(new Error('Invalid origin.'), {
             code: 'INVALID_ORIGIN',
             status: 403,
           });
+        }
         if (
           ['/api/settings', '/api/settings/validate'].includes(
             new URL(req.url, authority.origin).pathname,
@@ -950,6 +994,15 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         });
         return;
       }
+      if (req.method === 'POST' && pathname === '/api/releases/scripts') {
+        const prs = parseReleaseScriptsBody(await readJson(req), snapshot);
+        const result = await api.fetchReleaseScripts(prs, options);
+        json(res, 200, {
+          ...result,
+          updatedAt: result?.updatedAt || new Date().toISOString(),
+        });
+        return;
+      }
       if (req.method === 'GET' && pathname === '/api/pr-diff') {
         json(
           res,
@@ -986,6 +1039,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
         'INVALID_JSON',
         'INVALID_SPEC_LIMIT',
         'INVALID_SPRINT',
+        'INVALID_RELEASE_SCRIPTS',
         'INVALID_LINK',
         'INVALID_SESSION',
         'INVALID_MESSAGE',

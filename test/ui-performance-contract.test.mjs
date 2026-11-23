@@ -178,16 +178,21 @@ test('lazy screens: the loading stand-in has the shape of its screen, board or p
   }
 });
 
-test('lazy screens: only Releases, the one screen that is not a board, opts out of the board shape', () => {
+test('lazy screens: every lazy screen uses the default board shape', () => {
   const slots = slotElements(read('App.jsx'));
   assert.equal(slots.length, LAZY.length);
   for (const [id] of LAZY) {
     const own = slots.find((slot) => slot.includes(`id="${id}"`));
-    assert.equal(/\bboard=\{false\}/.test(own), id === 'releases', `${id} board flag`);
+    assert.equal(/\bboard=\{false\}/.test(own), false, `${id} uses default board shape`);
   }
-  // The screens' own roots agree with the flags: Releases is a plain panel, the rest BoardPanels.
-  assert.doesNotMatch(read('panels/ReleasesPanel.jsx'), /<BoardPanel\b/);
-  for (const panel of ['ChatPanel', 'DevtoolsPanel', 'MascotsPanel', 'SprintPanel'])
+  // Every lazy screen's own root agrees: all five are BoardPanels.
+  for (const panel of [
+    'ReleasesPanel',
+    'ChatPanel',
+    'DevtoolsPanel',
+    'MascotsPanel',
+    'SprintPanel',
+  ])
     assert.match(read(`panels/${panel}.jsx`), /<BoardPanel\b/, `${panel} is a board panel`);
 });
 

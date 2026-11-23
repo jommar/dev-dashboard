@@ -1,234 +1,252 @@
-import { slug, timeAgo } from '../../ui/dom.js';
+import { useEffect, useId, useState } from 'react';
+import { copyText } from '../../ui/dom.js';
 import { jiraStatusKind } from '../../ui/jira-status.js';
-import { TicketStatusPill } from './TicketStatusPill.jsx';
-import { DashboardTooltip } from './Primitives.jsx';
+import {
+  SCRIPT_KIND_LABELS,
+  formatReleaseText,
+  formatScriptTarget,
+  plural,
+  prMergedText,
+  prRollupLabel,
+  shortRepoName,
+  summarizeRelease,
+} from '../../ui/releases-data.js';
+import { useBackdropClose, useModalDialog } from '../hooks/useModalDialog.js';
+import { Button, DashboardTooltip } from './Primitives.jsx';
+import { TicketLaunchers } from './TicketLaunchers.jsx';
 
-const DEVELOPMENT_BASE = 'ops/development';
-const SAFE_LINK_RE = /^https:\/\//i;
-const GROUP_TITLES = {
-  open: 'Open',
-  partial: 'Partially merged',
-  'no-pr': 'No PRs',
-  unavailable: 'PRs unavailable',
-  merged: 'Merged',
-};
+const SAFE_LINK = /^https:\/\//i;
+const SCRIPT_KINDS = Object.entries(SCRIPT_KIND_LABELS);
+const EXT = { target: '_blank', rel: 'noopener noreferrer' };
+const jiraKey = (id, base, testId) => (
+  <a className="jira-link releases-key" href={`${base || ''}${id}`} {...EXT} data-testid={testId}>
+    {id}
+  </a>
+);
 
-function ReleasePrRow({ pr }) {
-  const suffix = `${pr.repo}-${pr.number}`;
-  const testId = (name) => `release-pr-${name}-${suffix}`;
-  const mismatch = pr.state === 'merged' && pr.base !== DEVELOPMENT_BASE;
-  const title = pr.title || '';
-  return (
-    <div
-      className="pr-item release-pr"
-      data-pr-state={pr.state}
-      data-testid={`release-pr-${suffix}`}
-    >
-      <span className="pr-title">
-        {pr.url && SAFE_LINK_RE.test(pr.url) ? (
-          <a href={pr.url} target="_blank" rel="noopener noreferrer" data-testid={testId('link')}>
-            {title}
-          </a>
-        ) : (
-          <span data-testid={testId('title')}>{title}</span>
-        )}
-      </span>
-      <div className="pr-meta">
-        <span
-          className="pill release-pr-state"
-          data-pr-state={pr.state}
-          data-testid={testId('state')}
-        >
-          {pr.state}
-        </span>
-        {pr.owner && (
-          <span className="pr-owner" data-testid={testId('owner')}>
-            @{pr.owner}
-          </span>
-        )}
-        <span className="pr-num" data-testid={testId('num')}>
-          {pr.repo} #{pr.number}
-        </span>
-        <DashboardTooltip
-          title={mismatch ? `Merged into a branch other than ${DEVELOPMENT_BASE}` : undefined}
-          describeChild
-        >
-          <span
-            className="pill release-pr-base"
-            data-base-match={mismatch ? 'false' : undefined}
-            data-testid={testId('base')}
-          >
-            {pr.base}
-          </span>
-        </DashboardTooltip>
-        {pr.head && (
-          <span className="release-pr-head" data-testid={testId('head')}>
-            {pr.head}
-          </span>
-        )}
-        {pr.updatedAt && (
-          <span className="updated" data-testid={testId('updated')}>
-            {timeAgo(pr.updatedAt)}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
+export function ReleaseTicketCard({ ticket, jiraBase, scripts, slack, claude, onOpenClaude }) {
+  const [prsOpen, setPrsOpen] = useState(false);
+  const prsListId = useId();
+  const { key } = ticket;
+  const tid = (part) => `releases-ticket-${part}-${key}`;
+  const groups = SCRIPT_KINDS.map(([kind, label]) => [
+    kind,
+    label,
+    (scripts ?? []).filter((item) => item.kind === kind),
+  ]).filter(([, , items]) => items.length);
+  const prUnavailable = ticket.prsStatus === 'unavailable';
 
-function ReleaseTicketCard({ ticket, jiraBase }) {
-  const key = slug(ticket.key);
-  const kind = jiraStatusKind(ticket.status);
-  const meta = [ticket.priority, ticket.issueType, ticket.assignee].filter(Boolean).join(' · ');
   return (
     <article
-      className="ticket-card release-ticket"
-      data-jira-status-kind={kind}
+      className="board-card releases-card"
+      data-jira-status-kind={jiraStatusKind(ticket.status)}
       data-merge-state={ticket.mergeState}
-      data-testid={`release-ticket-${key}`}
+      data-testid={`releases-card-${key}`}
     >
-      <div className="pr-group-head">
-        <a
-          className="jira-link"
-          href={`${jiraBase || ''}${ticket.key}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          data-testid={`release-ticket-link-${key}`}
-        >
-          {ticket.key}
-        </a>
-        <TicketStatusPill status={ticket.status} testId={`release-ticket-status-${key}`} />
+      <div className="board-card-top">
+        {jiraKey(key, jiraBase, tid('link'))}
+        {ticket.assignee && <span className="board-card-stat releases-who">{ticket.assignee}</span>}
       </div>
-      <div className="release-ticket-summary" data-testid={`release-ticket-summary-${key}`}>
-        {ticket.summary || ''}
-      </div>
-      {meta && (
-        <div className="release-ticket-meta" data-testid={`release-ticket-meta-${key}`}>
-          {meta}
+      <TicketLaunchers
+        ticketKey={key}
+        testId={tid('links')}
+        linksByTicket={slack.linksByTicket}
+        onOpenThread={slack.openThread}
+        claudeByTicket={claude.byTicket}
+        onOpenClaude={onOpenClaude}
+      />
+      <DashboardTooltip title={ticket.summary} describeChild>
+        <p className="board-card-summary">{ticket.summary || ''}</p>
+      </DashboardTooltip>
+      {groups.length > 0 && (
+        <div className="releases-row" data-testid={tid('scripts')}>
+          {groups.map(([kind, label, items]) => (
+            <DashboardTooltip
+              key={kind}
+              title={items.map(formatScriptTarget).join('\n')}
+              describeChild
+            >
+              <span className="board-chip releases-badge" data-script-kind={kind}>
+                {items.length > 1 ? `${label} (${items.length})` : label}
+              </span>
+            </DashboardTooltip>
+          ))}
         </div>
       )}
-      {ticket.prsStatus === 'unavailable' ? (
+      {prUnavailable || !ticket.prs.length ? (
         <div
-          className="release-ticket-note"
-          data-state="unavailable"
+          className="releases-note"
+          data-state={prUnavailable ? 'unavailable' : undefined}
           data-error={ticket.prsError || undefined}
-          data-testid={`release-ticket-note-${key}`}
+          data-testid={tid('note')}
         >
-          PRs unavailable{ticket.prsError ? ` (${ticket.prsError})` : ''}
-        </div>
-      ) : !ticket.prs.length ? (
-        <div className="release-ticket-note" data-testid={`release-ticket-note-${key}`}>
-          No linked PRs
+          {prUnavailable
+            ? `PRs unavailable${ticket.prsError ? ` (${ticket.prsError})` : ''}`
+            : 'No PRs'}
         </div>
       ) : (
-        <div className="pr-items">
-          {ticket.prs.map((pr) => (
-            <ReleasePrRow key={`${pr.repo}#${pr.number}`} pr={pr} />
-          ))}
+        <div className="releases-prs">
+          <button
+            type="button"
+            className="releases-toggle"
+            aria-expanded={prsOpen}
+            aria-controls={prsListId}
+            data-testid={tid('prs-toggle')}
+            onClick={() => setPrsOpen(!prsOpen)}
+          >
+            <span aria-hidden="true">{prsOpen ? '▾' : '▸'}</span>
+            <span>{prRollupLabel(ticket.prs)}</span>
+          </button>
+          {prsOpen && (
+            <ul id={prsListId} data-testid={tid('prs')}>
+              {ticket.prs.map((pr) => {
+                const id = `${pr.repo}-${pr.number}`;
+                const prTid = (p) => `release-pr-${p}${id}`;
+                const label = `${shortRepoName(pr.repo)} #${pr.number}`;
+                const st = pr.state || 'unknown';
+                const safe = SAFE_LINK.test(pr.url || '');
+                return (
+                  <li key={id} className="releases-pr" data-pr-state={st} data-testid={prTid('')}>
+                    {safe ? (
+                      <a href={pr.url} {...EXT} data-testid={prTid('link-')}>
+                        {label}
+                      </a>
+                    ) : (
+                      <span data-testid={prTid('link-')}>{label}</span>
+                    )}
+                    <span className="board-chip" data-pr-state={st} data-testid={prTid('state-')}>
+                      {st.toUpperCase()}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
     </article>
   );
 }
 
-function ReleaseTicketRow({ ticket, jiraBase }) {
-  const key = slug(ticket.key);
-  const kind = jiraStatusKind(ticket.status);
-  const meta = [ticket.priority, ticket.issueType, ticket.assignee].filter(Boolean).join(' · ');
-  return (
-    <li
-      className="release-row"
-      data-jira-status-kind={kind}
-      data-merge-state={ticket.mergeState}
-      data-testid={`release-row-${key}`}
-    >
-      <a
-        className="jira-link"
-        href={`${jiraBase || ''}${ticket.key}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        data-testid={`release-row-link-${key}`}
-      >
-        {ticket.key}
-      </a>
-      <span className="release-row-summary" data-testid={`release-row-summary-${key}`}>
-        {ticket.summary || ''}
-      </span>
-      <TicketStatusPill status={ticket.status} testId={`release-row-status-${key}`} />
-      {meta && (
-        <span className="release-row-meta" data-testid={`release-row-meta-${key}`}>
-          {meta}
-        </span>
-      )}
-      <span className="release-row-prs" data-testid={`release-row-prs-${key}`}>
-        {ticket.prsStatus === 'unavailable' ? (
-          <span className="release-row-note" data-state="unavailable">
-            PRs unavailable{ticket.prsError ? ` (${ticket.prsError})` : ''}
-          </span>
-        ) : !ticket.prs.length ? (
-          <span className="release-row-note">No linked PRs</span>
-        ) : (
-          ticket.prs.map((pr) => (
-            <span
-              className="release-row-pr"
-              data-pr-state={pr.state}
-              key={`${pr.repo}#${pr.number}`}
-              data-testid={`release-row-pr-${pr.repo}-${pr.number}`}
-            >
-              <span className="pill release-pr-state" data-pr-state={pr.state}>
-                {pr.state}
-              </span>
-              {pr.url && SAFE_LINK_RE.test(pr.url) ? (
-                <a href={pr.url} target="_blank" rel="noopener noreferrer">
-                  {pr.repo} #{pr.number}
-                </a>
-              ) : (
-                <span>
-                  {pr.repo} #{pr.number}
-                </span>
-              )}
-            </span>
-          ))
-        )}
-      </span>
-    </li>
-  );
-}
+export function ReleaseSummaryDialog({ data, columns, jiraBase, scripts, onClose }) {
+  const [copied, setCopied] = useState(null);
+  const dialogRef = useModalDialog(onClose);
+  const backdrop = useBackdropClose(dialogRef, onClose);
+  const titleId = useId();
+  const tid = (part) => `releases-summary-${part}`;
 
-export function ReleaseGroups({ groups, jiraBase, view = 'cards' }) {
-  if (!groups.length)
-    return (
-      <div className="pr-empty" data-testid="releases-empty">
-        No tickets in this release.
-      </div>
-    );
-  return groups.map(({ state, tickets }) => (
-    <section
-      className="release-group"
-      data-state={state}
-      data-view={view}
-      data-testid={`releases-group-${state}`}
-      key={state}
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = setTimeout(() => setCopied(null), 2000);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const { tickets } = data;
+  const summary = summarizeRelease(tickets);
+  const text = formatReleaseText(data, scripts.byTicket);
+  const scriptTickets = tickets
+    .map((t) => [t, scripts.byTicket[t.key]])
+    .filter(([, items]) => items?.length);
+  const note =
+    scripts.state === 'loading'
+      ? ['scripts-note', 'Checking scripts and migrations…']
+      : scripts.state === 'unavailable'
+        ? ['scripts-note', 'Scripts/migrations detection unavailable.']
+        : !scriptTickets.length
+          ? ['scripts-empty', 'No scripts or migrations detected for this release.']
+          : null;
+  const stats = [
+    ['total', plural(summary.tickets.total, 'ticket')],
+    ['prs', prMergedText(summary.prs)],
+    ['scripts-count', `${plural(scriptTickets.length, 'ticket')} with scripts/migrations`],
+  ];
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="releases-dlg"
+      data-testid={tid('dialog')}
+      aria-labelledby={titleId}
+      {...backdrop}
     >
-      <h3 className="release-group-head">
-        {GROUP_TITLES[state] ?? state}
-        <span className="pr-count" data-testid={`releases-group-count-${state}`}>
-          {tickets.length}
-        </span>
-      </h3>
-      {view === 'list' ? (
-        <ul className="release-rows">
-          {tickets.map((ticket) => (
-            <ReleaseTicketRow key={ticket.key} ticket={ticket} jiraBase={jiraBase} />
-          ))}
-        </ul>
-      ) : (
-        <div className="release-ticket-groups">
-          {tickets.map((ticket) => (
-            <ReleaseTicketCard key={ticket.key} ticket={ticket} jiraBase={jiraBase} />
-          ))}
-        </div>
-      )}
-    </section>
-  ));
+      <header>
+        <h2 id={titleId} data-testid={tid('title')}>
+          {data.version?.name || 'Release'}
+        </h2>
+        <Button data-testid={tid('close')} onClick={onClose}>
+          Close
+        </Button>
+      </header>
+      <div className="releases-dlg-b">
+        <section data-testid={tid('rollup')}>
+          <div className="releases-row">
+            {stats.map(([id, label]) => (
+              <span key={id} className="releases-stat" data-testid={tid(id)}>
+                {label}
+              </span>
+            ))}
+          </div>
+          {columns.length > 0 && (
+            <div className="releases-row" data-testid={tid('statuses')}>
+              {columns.map((col) => (
+                <span key={col.status} className="board-chip" data-jira-status-kind={col.kind}>
+                  {col.status}: {col.tickets.length}
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section data-testid={tid('scripts')}>
+          <h3>Scripts &amp; Migrations</h3>
+          {scripts.truncated && (
+            <p data-testid={tid('scripts-truncated')}>
+              Some PRs or files could not be checked — results may be incomplete.
+            </p>
+          )}
+          {note ? (
+            <p data-testid={tid(note[0])}>{note[1]}</p>
+          ) : (
+            <ul>
+              {scriptTickets.map(([ticket, items]) => (
+                <li
+                  key={ticket.key}
+                  className="releases-item"
+                  data-testid={tid(`script-${ticket.key}`)}
+                >
+                  <div className="releases-base">
+                    {jiraKey(ticket.key, jiraBase)}
+                    {ticket.summary && <span className="releases-sub">{ticket.summary}</span>}
+                  </div>
+                  <ul>
+                    {items.map((item, i) => (
+                      <li key={i} className="releases-row">
+                        <span className="board-chip releases-badge" data-script-kind={item.kind}>
+                          {SCRIPT_KIND_LABELS[item.kind] ?? item.kind}
+                        </span>
+                        <span className="releases-mono">{formatScriptTarget(item)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section>
+          <div className="releases-between">
+            <h3>Release notes</h3>
+            <Button
+              data-testid="releases-copy-text"
+              onClick={async () => setCopied((await copyText(text)) ? 'Copied' : 'Copy failed')}
+            >
+              {copied ?? 'Copy text'}
+            </Button>
+          </div>
+          <pre data-testid="releases-text">{text}</pre>
+        </section>
+      </div>
+    </dialog>
+  );
 }

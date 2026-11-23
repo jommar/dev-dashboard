@@ -15,17 +15,19 @@ import { build } from 'vite';
 // Baseline at b2eb63d: one entry chunk, 831 KiB raw, 252 KiB gzip -9, 164 kB of CSS.
 const KIB = 1024;
 const MAX_INITIAL_RAW = 640 * KIB;
-// Raised from 200→202 KiB (My Tickets merged PRs, Slack ticket-thread search), then 203 KiB for
-// per-PR viewer review indicators on the Pull Requests board.
-const MAX_INITIAL_GZIP = 203 * KIB;
+// Raised from 200→202 KiB (My Tickets merged PRs, Slack ticket-thread search), 203 KiB for
+// per-PR viewer review indicators on the Pull Requests board, and 206 KiB when Releases joined
+// Sprint as a second lazy consumer of useTicketSlackThreads (causing Rolldown to split it into
+// its own initial chunk).
+const MAX_INITIAL_GZIP = 206 * KIB;
 // A guard against bloat, not a target: lazy loading splits code, it must not add much of it.
 // Raised from 884 KiB for the lazy Sprint screen, which could not fit the 1.5 KiB that was left,
 // to 902 KiB for the ticket-thread search in the shared Slack hook (about 1 KiB of eager code), and
 // to 904 KiB for the Stop button of the Sessions drawer's rows (lazy body, a little eager wiring),
 // and to 908 KiB for the question choices and Independent tooltips of the Claude dialog (all lazy),
 // and to 914 KiB for the Copy prompt buttons across the Claude dialog, prompts editor and E2E check
-// (all lazy, plus one tiny helper in api.js).
-const MAX_TOTAL_RAW = 914 * KIB;
+// (all lazy, plus one tiny helper in api.js), and to 919 KiB for the redesigned lazy Releases board.
+const MAX_TOTAL_RAW = 919 * KIB;
 // Raised from 180 KiB for per-PR viewer review background tints in prs.css.
 const MAX_TOTAL_CSS = 181 * KIB;
 // Modules that must load on demand: the five rarely used screens and the two dialogs, plus the

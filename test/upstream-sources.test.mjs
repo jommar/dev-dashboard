@@ -19,6 +19,7 @@ test('no bare fetch in the Jira and GitHub modules: every request goes through u
     'team-velocity.mjs',
     'dev-status.mjs',
     'sprint-board.mjs',
+    'release-scripts.mjs',
   ]) {
     const source = code(read(`backend/${file}`));
     assert.doesNotMatch(source, /(?<![\w.])fetch\(/, `${file} calls fetch( directly`);
@@ -60,4 +61,19 @@ test('each board mounts UpstreamNote for its integrations, refreshed with its ow
     assert.ok(source.includes(`integrations={${names}}`), `${file} names its integrations`);
     assert.match(source, /<UpstreamNote[^>]*refreshKey=\{countdown\.lastLoadedAt\}/s, file);
   }
+  const releases = code(read('ui-react/panels/ReleasesPanel.jsx'));
+  assert.match(
+    releases,
+    /import \{ UpstreamNote \} from '\.\.\/components\/UpstreamNote\.jsx'/,
+    'ReleasesPanel.jsx imports UpstreamNote',
+  );
+  assert.ok(
+    releases.includes("integrations={['jira', 'github', 'slack']}"),
+    'ReleasesPanel.jsx names its integrations',
+  );
+  assert.match(
+    releases,
+    /<UpstreamNote[^>]*refreshKey=/s,
+    'ReleasesPanel.jsx refreshes UpstreamNote',
+  );
 });

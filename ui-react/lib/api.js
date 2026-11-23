@@ -169,6 +169,22 @@ export function getReleases({ version, scope, refresh } = {}) {
   return getJson(`/api/releases${query ? `?${query}` : ''}`);
 }
 
+// Script and migration detection is optional: any failure reads as unavailable and never throws,
+// so the Releases board keeps its tickets.
+export async function getReleaseScripts(prs) {
+  try {
+    const res = await fetch('/api/releases/scripts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prs }),
+    });
+    if (!res.ok) return { available: false, reason: 'unavailable', truncated: false, byTicket: {} };
+    return await res.json();
+  } catch {
+    return { available: false, reason: 'unavailable', truncated: false, byTicket: {} };
+  }
+}
+
 export async function getPrDiff(repo, number) {
   const res = await fetch(
     `/api/pr-diff?repo=${encodeURIComponent(repo)}&number=${encodeURIComponent(String(number))}`,

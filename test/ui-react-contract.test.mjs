@@ -16,8 +16,13 @@ const rulesFor = (css, attribute) =>
     .map(([, , body]) => body)
     .join('\n');
 
-// The shared board frame, the Jira ticket-card sheet it is layered under and the Sprint board's sheet.
-const BOARD_SHEETS = ['styles/board.css', 'styles/my-tickets.css', 'styles/sprint-board.css'];
+// The shared board frame, the Jira ticket-card sheet it is layered under, the Sprint board's sheet and Releases.
+const BOARD_SHEETS = [
+  'styles/board.css',
+  'styles/my-tickets.css',
+  'styles/sprint-board.css',
+  'styles/releases.css',
+];
 
 test('the React entry mounts a themed shell with one shared ready-mode SSE hook', () => {
   assert.match(read('main.jsx'), /createRoot\(document\.getElementById\('root'\)\)/);
@@ -41,6 +46,7 @@ test('the shared API boundary retains every existing endpoint and payload operat
     '/api/ticket-prs',
     '/api/ticket-specs',
     '/api/releases',
+    '/api/releases/scripts',
     '/api/pr-diff',
     '/api/slack/status',
     '/api/slack/threads',
@@ -200,7 +206,8 @@ test('React panels own structural rendering and compose shared React components'
   assert.match(read('components/TicketBoard.jsx'), /export function TicketBoard/);
   assert.doesNotMatch(read('components/WorkTicket.jsx'), /MyTicketsGroups/);
   assert.match(read('components/WorkTicket.jsx'), /export function WorkTicketRow/);
-  assert.match(read('components/ReleaseCards.jsx'), /export function ReleaseGroups/);
+  assert.match(read('components/ReleaseCards.jsx'), /export function ReleaseTicketCard/);
+  assert.doesNotMatch(read('components/ReleaseCards.jsx'), /export function ReleaseGroups/);
   assert.match(read('components/Terminal.jsx'), /useState/);
   assert.match(read('components/Listbox.jsx'), /listboxMove/);
   assert.match(read('components/DiffViewer.jsx'), /openDiffViewer/);
@@ -529,13 +536,19 @@ test('Slack and My Tickets wire the thread dialog through one hook, not two copi
   // Each panel only passes what is its own; none keeps a copy of the wiring.
   // (My Tickets, Pull Requests and Sprint reach it through useTicketSlackThreads, which is itself a user.)
   assert.match(read('hooks/useTicketSlackThreads.jsx'), /from '\.\/useSlackThreadDialog\.jsx'/);
-  for (const file of ['panels/MyTicketsPanel.jsx', 'panels/PrsPanel.jsx', 'panels/SprintPanel.jsx'])
+  for (const file of [
+    'panels/MyTicketsPanel.jsx',
+    'panels/PrsPanel.jsx',
+    'panels/SprintPanel.jsx',
+    'panels/ReleasesPanel.jsx',
+  ])
     assert.match(read(file), /from '\.\.\/hooks\/useTicketSlackThreads\.jsx'/, `${file} uses it`);
   for (const file of [
     'panels/SlackPanel.jsx',
     'panels/MyTicketsPanel.jsx',
     'panels/PrsPanel.jsx',
     'panels/SprintPanel.jsx',
+    'panels/ReleasesPanel.jsx',
   ]) {
     const panel = read(file);
     if (file === 'panels/SlackPanel.jsx')
@@ -905,7 +918,7 @@ test('the My Tickets masonry is gone while Home, PR-tab and Slack rules stay', (
   for (const kept of ['.my-ticket', '.my-ticket-key', '.ticket-sprint', '.my-ticket-slack']) {
     assert.ok(css.includes(`${kept} {`) || css.includes(`${kept}[`), `${kept} is kept`);
   }
-  assert.match(rootCss, /\.release-ticket-groups/, 'the Releases masonry is untouched');
+  assert.doesNotMatch(rootCss, /\.release-ticket-groups/, 'the Releases masonry is removed');
 });
 
 test('the board scrolls inside itself, snaps, clamps the summary and scopes the compact toolbar', () => {

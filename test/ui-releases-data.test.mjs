@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as releasesData from '../ui/releases-data.js';
 import {
   MERGE_STATE_ORDER,
   groupByMergeState,
@@ -7,7 +8,10 @@ import {
   serializeSelection,
   summarizeRelease,
 } from '../ui/releases-data.js';
-import { MERGE_STATE_ORDER as SERVER_MERGE_STATE_ORDER } from '../backend/release-model.mjs';
+import {
+  MERGE_STATE_ORDER as SERVER_MERGE_STATE_ORDER,
+  formatReleaseText as serverFormatReleaseText,
+} from '../backend/release-model.mjs';
 
 const pr = (number, over = {}) => ({
   repo: 'example/api',
@@ -137,4 +141,154 @@ test('a chosen version serializes to a versioned record that reads back', () => 
   const stored = serializeSelection('18741');
   assert.deepEqual(JSON.parse(stored), { version: 1, versionId: '18741' });
   assert.equal(parseStoredSelection(stored), '18741');
+});
+
+test('formatReleaseText matches the server formatter without scripts and appends indented script/migration/Prisma-schema lines when provided', () => {
+  assert.equal(typeof releasesData.formatReleaseText, 'function', 'formatReleaseText is exported');
+  const data = {
+    version: {
+      id: '18741',
+      name: 'EZAT | Sprint 19.0 | 10/09/26',
+      released: false,
+      releaseDate: '2026-10-09',
+    },
+    scope: 'all',
+    total: 2,
+    truncated: false,
+    tickets: [
+      {
+        ...ticket('DEMO-100', 'open', [pr(101, { repo: 'TransActComm/TravelTracker' })]),
+        assignee: 'Developer One',
+      },
+      {
+        ...ticket('DEMO-200', 'merged', [mergedPr(201, { repo: 'TransActComm/Portage-backend' })]),
+        assignee: 'Colleague Two',
+      },
+    ],
+  };
+
+  // Without scripts, output matches backend/release-model.mjs verbatim.
+  assert.equal(releasesData.formatReleaseText(data), serverFormatReleaseText(data));
+  assert.equal(releasesData.formatReleaseText(data, {}), serverFormatReleaseText(data));
+
+  // With scripts, indented lines appear under their respective tickets while keeping existing lines intact.
+  const withScripts = releasesData.formatReleaseText(data, {
+    'DEMO-100': [
+      {
+        kind: 'migration',
+        label: '20260101_add.js',
+        path: 'setup/knex/migrations/20260101_add.js',
+        repo: 'TransActComm/TravelTracker',
+        prNumber: 101,
+      },
+      {
+        kind: 'script',
+        label: 'backfill.js',
+        path: 'setup/scripts/backfill.js',
+        repo: 'TransActComm/TravelTracker',
+        prNumber: 101,
+      },
+    ],
+    'DEMO-200': [
+      {
+        kind: 'prisma-schema',
+        label: 'client.prisma',
+        path: 'libs/client/prisma/client/client.prisma',
+        repo: 'TransActComm/Portage-backend',
+        prNumber: 201,
+      },
+    ],
+  });
+
+  const baseLines = serverFormatReleaseText(data).split('\n');
+  const scriptLines = withScripts.split('\n');
+  for (const line of baseLines) {
+    assert.ok(scriptLines.includes(line), `existing line kept: ${line}`);
+  }
+  const demo100Index = scriptLines.findIndex((line) => line.includes('DEMO-100'));
+  const demo200Index = scriptLines.findIndex((line) => line.includes('DEMO-200'));
+  assert.ok(demo100Index > -1 && demo200Index > demo100Index);
+  const demo100Block = scriptLines.slice(demo100Index, demo200Index).join('\n');
+  const demo200Block = scriptLines.slice(demo200Index).join('\n');
+  assert.match(demo100Block, /^\s{4}\[Migration\].*setup\/knex\/migrations\/20260101_add\.js/m);
+  assert.match(demo100Block, /^\s{4}\[Script\].*setup\/scripts\/backfill\.js/m);
+  assert.match(
+    demo200Block,
+    /^\s{4}\[Prisma schema\].*libs\/client\/prisma\/client\/client\.prisma/m,
+  );
+});
+
+test('finishedColumnsLast moves non-done finished columns (Rejected, Duplicate) to the end after done columns', () => {
+  assert.equal(
+    typeof releasesData.finishedColumnsLast,
+    'function',
+    'finishedColumnsLast is exported',
+  );
+  const columns = [
+    {
+      id: 'rejected',
+      label: 'Rejected',
+      kind: 'attention',
+      tickets: [{ key: 'DEMO-1', status: 'Rejected', statusCategory: 'Done' }],
+    },
+    {
+      id: 'in-progress',
+      label: 'In Progress',
+      kind: 'active',
+      tickets: [{ key: 'DEMO-2', status: 'In Progress', statusCategory: 'In Progress' }],
+    },
+    {
+      id: 'done',
+      label: 'Done',
+      kind: 'done',
+      tickets: [{ key: 'DEMO-3', status: 'Done', statusCategory: 'Done' }],
+    },
+  ];
+  const ordered = releasesData.finishedColumnsLast(columns);
+  assert.deepEqual(
+    ordered.map(({ id }) => id),
+    ['in-progress', 'done', 'rejected'],
+  );
+});
+
+test('shortRepoName strips the owner prefix and tolerates bare or empty names', () => {
+  assert.equal(releasesData.shortRepoName('TransActComm/Portage-backend'), 'Portage-backend');
+  assert.equal(releasesData.shortRepoName('example/web'), 'web');
+  assert.equal(releasesData.shortRepoName('standalone'), 'standalone');
+  assert.equal(releasesData.shortRepoName(''), '');
+  assert.equal(releasesData.shortRepoName(null), '');
+});
+
+test('prRollupLabel formats empty, single, partial, and all-merged PR lists', () => {
+  assert.equal(releasesData.prRollupLabel([]), 'No PRs');
+  assert.equal(releasesData.prRollupLabel(null), 'No PRs');
+  assert.equal(releasesData.prRollupLabel([mergedPr(1)]), '1/1 PR merged');
+  assert.equal(releasesData.prRollupLabel([pr(1)]), '0/1 PR merged');
+  assert.equal(releasesData.prRollupLabel([mergedPr(1), mergedPr(2)]), 'All 2 PRs merged');
+  assert.equal(releasesData.prRollupLabel([mergedPr(1), pr(2), pr(3)]), '1/3 PRs merged');
+});
+
+test('prMergedText pluralizes PR counts accurately', () => {
+  assert.equal(releasesData.prMergedText({ merged: 0, total: 0 }), '0 of 0 PRs merged');
+  assert.equal(releasesData.prMergedText({ merged: 1, total: 1 }), '1 of 1 PR merged');
+  assert.equal(releasesData.prMergedText({ merged: 2, total: 5 }), '2 of 5 PRs merged');
+});
+
+test('formatScriptTarget avoids repeating the label when path already ends with it', () => {
+  assert.equal(
+    releasesData.formatScriptTarget({
+      path: 'setup/scripts/backfill.js',
+      label: 'backfill.js',
+    }),
+    'setup/scripts/backfill.js',
+  );
+  assert.equal(
+    releasesData.formatScriptTarget({
+      path: 'package.json',
+      label: 'scripts.migrate',
+    }),
+    'package.json (scripts.migrate)',
+  );
+  assert.equal(releasesData.formatScriptTarget({ path: '', label: 'backfill.js' }), 'backfill.js');
+  assert.equal(releasesData.formatScriptTarget({ path: 'a/b.js', label: '' }), 'a/b.js');
 });

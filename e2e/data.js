@@ -26,6 +26,7 @@ function releaseTicket(key, summary, mergeState, prs = [], overrides = {}) {
     key,
     summary,
     status: 'In Progress',
+    statusCategory: 'In Progress',
     issueType: 'Story',
     priority: 'Medium',
     assignee: 'Developer One',
@@ -39,15 +40,22 @@ function releaseTicket(key, summary, mergeState, prs = [], overrides = {}) {
 
 function releasesData() {
   const mine = [
-    releaseTicket('DEMO-476', 'Clarify reimbursement wording', 'no-pr'),
+    releaseTicket('DEMO-476', 'Clarify reimbursement wording', 'no-pr', [], {
+      status: 'Blocked',
+      statusCategory: 'In Progress',
+    }),
     releaseTicket('DEMO-1058', 'Update mileage rate lookup', 'partial', [
       mergedReleasePr('example/web', 535),
       mergedReleasePr('example/api', 2075),
       releasePr('example/worker', 451),
     ]),
-    releaseTicket('DEMO-1200', 'Fix per diem rounding', 'merged', [
-      mergedReleasePr('example/api', 2101),
-    ]),
+    releaseTicket(
+      'DEMO-1200',
+      'Fix per diem rounding',
+      'merged',
+      [mergedReleasePr('example/api', 2101)],
+      { status: 'Done', statusCategory: 'Done' },
+    ),
     releaseTicket(
       'DEMO-1398',
       'Estimator rounding for multi-leg trips with mileage caps and long itineraries',
@@ -60,13 +68,19 @@ function releasesData() {
         releasePr('example/worker', 455),
       ],
     ),
-    releaseTicket('DEMO-1700', 'Hotfix export header', 'open', [
-      mergedReleasePr('example/api', 88, {
-        base: 'ops/qa',
-        head: 'DEMO-1700/hotfix-export-header',
-        countsAsMerged: false,
-      }),
-    ]),
+    releaseTicket(
+      'DEMO-1700',
+      'Hotfix export header',
+      'open',
+      [
+        mergedReleasePr('example/api', 88, {
+          base: 'ops/qa',
+          head: 'DEMO-1700/hotfix-export-header',
+          countsAsMerged: false,
+        }),
+      ],
+      { status: 'Ready for Testing', statusCategory: 'In Progress' },
+    ),
     releaseTicket('DEMO-1884', 'Sync approvals feed', 'unavailable', [], {
       prsStatus: 'unavailable',
       prsError: 'timeout',
@@ -75,21 +89,23 @@ function releasesData() {
   const colleague = { assignee: 'Colleague Two' };
   const all = [
     ...mine,
-    releaseTicket(
-      'DEMO-1500',
-      'Rework approval email',
-      'open',
-      [releasePr('example/web', 560)],
-      colleague,
-    ),
+    releaseTicket('DEMO-1500', 'Rework approval email', 'open', [releasePr('example/web', 560)], {
+      ...colleague,
+      status: 'To Do',
+      statusCategory: 'To Do',
+    }),
     releaseTicket(
       'DEMO-1501',
       'Add audit export',
       'merged',
       [mergedReleasePr('example/api', 2120)],
-      colleague,
+      { ...colleague, status: 'Done', statusCategory: 'Done' },
     ),
-    releaseTicket('DEMO-1502', 'Retire legacy flag', 'no-pr', [], colleague),
+    releaseTicket('DEMO-1502', 'Retire legacy flag', 'no-pr', [], {
+      ...colleague,
+      status: 'Rejected',
+      statusCategory: 'Done',
+    }),
   ];
   return {
     defaultVersionId: '18741',
@@ -813,6 +829,37 @@ export function dashboardData() {
     ),
     diff: { diff: '--- a/example.js\n+++ b/example.js\n@@ -1 +1 @@\n-old\n+new\n' },
     releases: releasesData(),
+    releaseScripts: {
+      available: true,
+      truncated: false,
+      byTicket: {
+        'DEMO-1058': [
+          {
+            kind: 'migration',
+            label: '20260101_mileage.js',
+            path: 'setup/knex/migrations/20260101_mileage.js',
+            repo: 'example/api',
+            prNumber: 2075,
+          },
+          {
+            kind: 'script',
+            label: 'backfill.js',
+            path: 'setup/scripts/backfill.js',
+            repo: 'example/api',
+            prNumber: 2075,
+          },
+        ],
+        'DEMO-1200': [
+          {
+            kind: 'prisma-schema',
+            label: 'client.prisma',
+            path: 'libs/client/prisma/client/client.prisma',
+            repo: 'example/api',
+            prNumber: 2101,
+          },
+        ],
+      },
+    },
     teamVelocity: homeVelocityData(),
     sprintBoard: sprintBoardData(),
     slack: slackData(),
@@ -2566,6 +2613,13 @@ export function apiResponse(url, method, data, body) {
   }
   if (method === 'PUT' && url.pathname === '/api/settings')
     return data.saveResponse || { json: data.settings };
+  if (method === 'POST' && url.pathname === '/api/releases/scripts' && data.releaseScripts)
+    return {
+      json: {
+        ...data.releaseScripts,
+        updatedAt: '2026-10-08T09:00:00.000Z',
+      },
+    };
   if (method === 'POST' && url.pathname === '/api/settings/validate')
     return data.validateResponse || { json: { ...data.settings, setup: data.config.setup } };
   const checkout = url.pathname.match(/^\/api\/repos\/([^/]+)\/checkout$/);

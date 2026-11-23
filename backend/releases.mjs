@@ -4,6 +4,7 @@
 // "merged" is still Jira's copy of GitHub's state and can lag a fresh merge.
 import { jiraConfig } from './jira.mjs';
 import { jiraGet, lookUpPullRequests, resetPullRequestCaches } from './dev-status.mjs';
+import { resetReleaseScriptsCache } from './release-scripts.mjs';
 import { collectCappedJiraIssues } from './jira-search.mjs';
 import { fetchPrOwners } from './github.mjs';
 import {
@@ -30,6 +31,7 @@ const SEARCH_FIELDS = 'summary,status,priority,issuetype,updated,assignee';
 
 export function resetReleaseCaches() {
   resetPullRequestCaches();
+  resetReleaseScriptsCache();
 }
 
 function projectKey() {
@@ -73,6 +75,7 @@ function mapTicket(issue) {
     key: issue.key,
     summary: typeof fields.summary === 'string' ? fields.summary : '',
     status: fields.status?.name ?? null,
+    statusCategory: fields.status?.statusCategory?.name ?? null,
     issueType: fields.issuetype?.name ?? null,
     priority: fields.priority?.name ?? null,
     assignee: fields.assignee?.displayName ?? null,

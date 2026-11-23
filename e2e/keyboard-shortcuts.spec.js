@@ -161,6 +161,7 @@ test('palette refresh runs the active board own load, and Home never reads veloc
   for (const [route, label] of [
     ['slack', 'Slack'],
     ['prs', 'Pull Requests'],
+    ['releases', 'Releases'],
     ['devtools', 'DevTools'],
   ]) {
     await load(page, route);
@@ -173,7 +174,7 @@ test('palette refresh runs the active board own load, and Home never reads veloc
     await expect(palette(page)).toBeHidden();
   }
   // Screens with nothing of their own to refresh offer nothing, and Home is not borrowed for them.
-  for (const route of ['home', 'services', 'releases', 'chat', 'mascots']) {
+  for (const route of ['home', 'services', 'chat', 'mascots']) {
     await load(page, route);
     await openPalette(page);
     await page.keyboard.type('refresh');

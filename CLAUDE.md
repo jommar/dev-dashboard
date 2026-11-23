@@ -65,7 +65,7 @@ whole app feels consistent regardless of which container a given screen width la
 
 **Not masonry, intentionally:**
 
-- The My Tickets, Slack, Pull Requests and Sprint boards (`.board-track`, `ui-react/styles/board.css`) are one row of
+- The My Tickets, Slack, Pull Requests, Releases and Sprint boards (`.board-track`, `ui-react/styles/board.css`) are one row of
   fixed-width columns (Jira statuses, Slack time groups, PR review lanes) that scrolls sideways inside itself; they
   are not card lists, so they have no `columns:` container and none of the breakpoints above. Each
   column's card list (`.board-column-body`) scrolls vertically on its own, with the column header
@@ -411,8 +411,8 @@ focus ring at 3:1; `--red` is lifted to `#fc7a8d` to clear 4.5:1 under its 12% h
   `--phase-implement` is teal, not lavender.
 - Approved card tint is 13% green over `--panel2` (8% is no longer green-dominant on the bluer surface);
   `test/ui-react-contract.test.mjs` pins it, and `--muted` on it is 4.56:1.
-- Readable text is at least `--fs-xs` (12px); the guards scan every sheet but `posters.css`, `settings.css` and
-  `releases.css`. Poster art stays as drawn.
+- Readable text is at least `--fs-xs` (12px); the guards scan every sheet but `posters.css` and
+  `settings.css` (`releases.css` now enforces the 12px floor and is in `BOARD_SHEETS`). Poster art stays as drawn.
 - Buttons are neutral by default: `.btn.MuiButton-outlined` (and native `.btn`) sits before `.btn.primary`,
   `.btn.subtle` and `.btn.danger` in `base.css`, all equal specificity so order decides; keep that order. Primary and
   `danger` are call-site classes (`className="primary"` on Home Generate velocity before data, DevTools Launch, Chat
@@ -444,7 +444,7 @@ Both launch places (the DevTools tab form and the E2E dialog's step 1) share `Sh
 a "Show browser window" checkbox, unchecked by default. Do not describe a DevTools browser as a real
 or visible window anywhere except when `headed` is set.
 
-## UI layout: the shared board (My Tickets, Slack, Pull Requests, Sprint)
+## UI layout: the shared board (My Tickets, Slack, Pull Requests, Releases, Sprint)
 
 Services also uses `BoardPanel` / `BoardSection`, with a scrolling `.board-pane`
 containing its explicit service grid rather than board columns. Keep service
@@ -452,11 +452,11 @@ identity, status and controls compact above the stable log viewport; the reserve
 feedback footer sits outside the log so polling and feedback do not shift it.
 Service-specific layout stays in `services.css`, not the shared board stylesheet.
 
-My Tickets, Slack, Pull Requests and Sprint share one screen shape with different data, built from one set of
+My Tickets, Slack, Pull Requests, Releases and Sprint share one screen shape with different data, built from one set of
 primitives — `ui-react/components/BoardShell.jsx` and `ui-react/styles/board.css` — not screen-specific copies.
-Toolbar, notes, states, board frame, columns and card shell are changed there and all four screens get
-the change. The panel sheets (`my-tickets.css`, `slack.css`, `prs.css`, `sprint-board.css`) hold only what is specific to their own
-domain: Jira card state, PR lines and chips, the Slack thread dialog and watcher. Generic classes
+Toolbar, notes, states, board frame, columns and card shell are changed there and all five screens get
+the change. The panel sheets (`my-tickets.css`, `slack.css`, `prs.css`, `releases.css`, `sprint-board.css`) hold only what is specific to their own
+domain: Jira card state, PR lines and chips, release PR rollups/script badges/Summary dialog, the Slack thread dialog and watcher. Generic classes
 are `board-*`, never prefixed with a screen's name; a rule that would read the same on a second
 screen belongs in `board.css`.
 
@@ -485,8 +485,9 @@ contract, so a refactor never renames them):
   screen shown again resumes at the true position), never per tick, which would shift a running
   animation. Hidden under reduced motion. Do not `sr-only` the readout (it would clip the line) or
   give a screen its own copy of the rule. Pass `countdown`
-  straight through, never read it as a string. All five board screens (My Tickets, Slack, Pull
-  Requests, DevTools, Sprint) do this. `RefreshControl` also registers its guarded `onRefresh` under its
+  straight through, never read it as a string. All five polling board screens (My Tickets, Slack, Pull
+  Requests, DevTools, Sprint) do this; `countdown` is optional so `Releases` uses `RefreshControl`
+  with no countdown span or timer. `RefreshControl` also registers its guarded `onRefresh` under its
   `name` (`ui-react/lib/board-refresh.js`) for the command palette; Home has no entry (its velocity
   stays explicit). Pull Requests intentionally adopted the shared `.board-next` countdown; retained
   legacy PR styles do not govern the PR board.
@@ -500,14 +501,14 @@ contract, so a refactor never renames them):
   `hint` (spoken and shown on hover, so the tone is never colour alone).
 - `BoardNote` (an amber one-line chip, `role="status"`, exact text always in the DOM and clamped by CSS; a
   24px text-less toggle, `board-note-toggle`, named "Show full note" / "Collapse note", appears only while the text
-  overflows, measured on the text span; `defaultOpen` starts it expanded, used only by the two Slack coverage notes,
-  `my-tickets-slack-coverage` and `sprint-board-slack-coverage`, because they carry a link) and `BoardState` (loading, empty, error or warning body).
+  overflows, measured on the text span; `defaultOpen` starts it expanded, used only by the three Slack coverage notes,
+  `my-tickets-slack-coverage`, `sprint-board-slack-coverage` and `releases-slack-coverage`, because they carry a link) and `BoardState` (loading, empty, error or warning body).
 - `Board` and `BoardColumn` — `.board-frame` > `.board-track` and its columns. `Board` owns scroll
   preservation (`usePreservedInteraction`), so a screen never wires it again. Optional `BoardColumn.hint`
   gives a heading existing `DashboardTooltip` help on hover/keyboard focus; only hinted headings gain
   a Tab stop. Pull Requests supplies lane meanings; My Tickets/Slack keep their no-hint defaults.
-  Optional `BoardColumn.copyKeys` (the lane's ticket keys, passed by My Tickets, Sprint and Pull Requests, spec lane
-  included; Slack passes none) renders a `CopyKeysButton` **before** the heading (`<prefix>copy-<id>`): space-separated
+  Optional `BoardColumn.copyKeys` (the lane's ticket keys, passed by My Tickets, Sprint, Pull Requests (spec lane
+  included) and Releases; Slack passes none) renders a `CopyKeysButton` **before** the heading (`<prefix>copy-<id>`): space-separated
   in lane order, repeats dropped, never shown for an empty lane. Its tooltip (`describeChild`, so the button keeps its
   own name) lists every key it copies under "Copy N ticket keys", or the outcome (`Copied` / `Copy failed`), which also
   sets the glyph and the button's `aria-label`. It is a Tab stop ahead of the lane's list.
@@ -515,8 +516,8 @@ contract, so a refactor never renames them):
   `.board-card-summary`, `.board-card-stat` and `.board-chip` — the card shell and status chip. A
   domain card adds its own class beside them (`board-card my-tickets-card`).
 
-**Shared by the four screens that open Slack threads** (the Slack board directly; the My Tickets, Pull
-Requests and Sprint card chips through `ui-react/hooks/useTicketSlackThreads.jsx`), each once, with the
+**Shared by the five screens that open Slack threads** (the Slack board directly; the My Tickets, Pull
+Requests, Sprint and Releases card chips through `ui-react/hooks/useTicketSlackThreads.jsx`), each once, with the
 differences passed in rather than forked:
 
 - `ui-react/hooks/useSlackThreadDialog.jsx` — the activity clock, the rule that a thread past the
@@ -976,21 +977,22 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
   active or when the boot route names it, and stays mounted, hidden, afterwards. Never gate a lazy
   screen on anything but the slot's own first-visit state.
 - The loading fallback is `panel-<id>-loading` (never `panel-<id>`), with the screen's own shape: a
-  `BoardPanel` by default (viewport-fill from the first paint), a plain `.panel` through
-  `<ScreenSlot board={false}>` for a non-board screen (Releases). A new lazy screen sets `board` to match
+  `BoardPanel` by default (viewport-fill from the first paint; all five lazy screens now use the default), or a plain `.panel` through
+  `<ScreenSlot board={false}>` for a non-board screen. A new lazy screen sets `board` to match
   its root. A failed chunk shows `screen-error-<id>` with Reload via `ChunkBoundary`.
 - An opener of a lazy overlay calls `load()` first and opens when it settles (the Control+K / `?`
   listener, `openBot`, `openClaude`), so the first press is never lost and React's 300 ms fallback
   throttle never shows. The review row of a bot still opens the eager `ClaudePlaceholderDialog`.
 - `test/bundle-budget.test.mjs` builds in memory (never `dist/`) and holds initial JS to 640 KiB raw and
-  202 KiB gzip -9 (raised from 200 for the merged-PR rows, then for the ticket-thread search); a new eager import of a lazy module fails it. `vite.config.js` is pinned by
+  206 KiB gzip -9 (raised from 200→202 for merged-PR rows and ticket-thread search, 203 for per-PR viewer
+  review indicators, and 206 when Releases joined Sprint as a second lazy consumer of `useTicketSlackThreads`);
+  a new eager import of a lazy module fails it. `vite.config.js` is pinned by
   `ui-build-contract.test.mjs`. Both edge-drawer bodies are in its `LAZY_MODULES`.
-- **The first-paint gzip, all-JS and CSS margins are thin.** With the Sprint tab and its Slack threads the initial
-  closure is 647,568 B raw (632 KiB) and 205,830 B gzip against 206,848 (202 KiB; 1,018 B spare), all JS is about
-  904.6 KiB against `MAX_TOTAL_RAW`, 908 KiB (929,792 B; raised from 884 KiB for the lazy Sprint screen, then for the
-  ticket-thread search in the shared Slack hook, then for the Sessions drawer's Stop button, then for the Claude
-  dialog's question choices and Independent tooltips), so 3,531 B spare, and all CSS is 183,478 B against
-  180 KiB (184,320 B), 842 B spare: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
+- **The first-paint gzip, all-JS and CSS margins are thin.** With the redesigned Releases board the initial
+  closure is ~638.1 KiB raw and ~205.7 KiB gzip against 640 / 206 KiB, all JS is ~918.3 KiB against
+  `MAX_TOTAL_RAW` of 919 KiB (raised from 884→902→904→908→914→919 KiB across Sprint, ticket-thread search,
+  Sessions Stop, Claude dialog question choices/Copy prompt, and the lazy Releases board), and all CSS is
+  ~181.0 KiB against `MAX_TOTAL_CSS` of 181 KiB: a few more bytes of eager code or CSS, or a new eager import, can fail the budget
   test with no apparent cause. A lazy screen that imports a module the entry also uses can split it into an initial
   chunk of its own: `SprintPanel` therefore opens `ClaudeDialog` after `loadClaudeDialog()` instead of importing
   `LazyDialog` from `ScreenSlot`, and the Sprint card keeps a copy of the phase words instead of importing
@@ -1035,7 +1037,7 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
 ## Integration health: facts not to break
 
 - `backend/upstream.mjs` is the one fetch seam for Jira and GitHub (`jira.mjs`, `github.mjs`,
-  `github-api.mjs`, `team-velocity.mjs`, `dev-status.mjs`, `sprint-board.mjs`); a source test forbids a bare `fetch(`,
+  `github-api.mjs`, `team-velocity.mjs`, `dev-status.mjs`, `sprint-board.mjs`, `release-scripts.mjs`); a source test forbids a bare `fetch(`,
   and also in `releases.mjs` and `ticket-prs.mjs`, which reach Jira only through `dev-status.mjs`.
   `upstreamError(name, res, message)` keeps the caller's message byte-identical. Slack feeds the same
   record from `slack.mjs` and keeps its own `fetchImpl`, timeout and cool-down; the side-branch `.catch`
@@ -1051,7 +1053,7 @@ the Slack edge tab, and `SessionsBody`, the Sessions list) are lazy overlays too
   A change to the lookup, its call order or its cache must keep the Releases call-count suites green.
 - `GET /api/health` makes no upstream call and sits before the setup gate; never add a call there.
   `useUpstreamHealth` owns no timer (one read on activation and on `refreshKey`), `/api/health` appears
-  once in `api.js`, and `UpstreamNote` is mounted in the `notes` slot of My Tickets, Pull Requests and Slack.
+  once in `api.js`, and `UpstreamNote` is mounted in the `notes` slot of My Tickets, Pull Requests, Releases and Slack.
 - The `[http]` line carries no message on `/api/claude/chat` and `/api/slack/` routes, no query and no
   body; a status below 500, a `SyntaxError` and a cool-down answer log nothing or no message. Any new
   field goes through `scrubMessage` or is a fixed value. `installProcessHandlers` runs from `start()` only.

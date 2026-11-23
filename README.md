@@ -88,9 +88,10 @@ closes on navigation or an outside click. All eleven views remain available:
 - **Chat** — a conversation with a Claude Code session, standalone or a
   ticket's. See [Chat](#chat).
 - **Releases** — the tickets of one Jira fix version (the picker defaults to the
-  earliest unreleased EZAT version), each with its GitHub PRs, grouped by
-  whether the work reached `ops/development`. It opens on your own tickets;
-  **All release tickets** widens it. See [Releases](#releases).
+  earliest unreleased EZAT version) on the shared board, grouped by Jira status,
+  with all release tickets loaded, collapsible PR rollups, script/migration/Prisma-schema
+  badges, Slack thread chips, Claude session links and a **Summary** dialog for
+  release notes. See [Releases](#releases).
 - **Services** — one card per service, each showing its status and a log
   viewport that tails the last 40 lines (_Show full_ reveals everything). The
   card header is two rows: name, directory, port and a status chip (a green dot
@@ -406,7 +407,7 @@ An agent can read the same logs three ways:
    - `GET /api/sprints` and `GET /api/sprint-tickets?sprint=<id>` (every team's sprints, and every ticket in one sprint whoever is assigned; see [Sprint](#sprint))
    - `GET /api/ticket-prs` (your open PRs keyed by ticket, with review, CI and review-comment state; see [My Tickets](#my-tickets))
    - `GET /api/ticket-specs` (which tickets already have an `ezat-specs` PR; see [My Tickets](#my-tickets))
-   - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` (see [Releases](#releases))
+   - `GET /api/releases?version=<id>&scope=mine|all&refresh=1` and `POST /api/releases/scripts` (see [Releases](#releases))
    - `GET /api/claude/tickets`, `POST /api/claude/launch`, `POST /api/claude/answers`, `POST /api/claude/approve`, `POST /api/claude/continue` and `POST /api/claude/rereview` (see [Claude launcher](#claude-launcher))
    - `GET /api/claude/usage?sessions=<uuid>,...` (token tallies per session; see [Claude usage](#claude-usage))
    - `GET /api/health` (integration health; see [Integration health](#integration-health))
@@ -419,7 +420,8 @@ An agent can read the same logs three ways:
 `GET /api/health` answers `{ generatedAt, integrations: { github, jira, slack } }`; each entry is
 `{ status: 'ok' | 'degraded' | 'unknown', lastOkAt, lastFailure: null | { kind, status, at, retryAfterSec } }`.
 It is memory only: no upstream call, answered before the setup gate, and it holds no URL, header,
-body or secret. My Tickets (Jira, GitHub, Slack), Pull Requests (GitHub, Jira) and Slack (Slack) show
+body or secret. My Tickets (Jira, GitHub, Slack), Pull Requests (GitHub, Jira), Releases (Jira,
+GitHub, Slack) and Slack (Slack) show
 a note from it in their toolbar when an integration is `degraded`; it is read once when a screen
 becomes active and again on each refresh, never on a timer.
 
@@ -2733,7 +2735,7 @@ sessions, open the session list`; under 600px one pill for the single zone). The
 - **Command palette.** Ctrl+K (Cmd+K on a Mac) opens it over every screen once setup is done. It lists
   **Go to** (every tab, with its chord), **Sessions** (the same sprint-filtered rows as the Sessions
   drawer, chats included) and **Actions** (New chat, Refresh for My Tickets, Slack, Pull Requests,
-  DevTools and Sprint when open, and `Open KEY in My Tickets` when a whole ticket key is typed). Type to filter
+  Releases, DevTools and Sprint when open, and `Open KEY in My Tickets` when a whole ticket key is typed). Type to filter
   (every word must match), arrows move, Enter chooses, Esc closes. It works from the Chat composer, and
   focus returns there on close.
 - **Chords.** `g` then a letter jumps to a tab (1.5 s window, any other key cancels): `h` Home, `t` My
@@ -2914,19 +2916,28 @@ refused with `403 OPERATION_FAILED` before Jira is asked, and a Jira failure is 
 
 The **Releases** tab answers _"did the work in this release reach
 `ops/development`?"_. A release is a Jira **fix version** of the `TAP`
-project. For every ticket in the chosen version it lists the GitHub PRs linked
-to that ticket and rolls them up into one merge state, with the tickets that
-still need attention first. It is available in the **Releases** tab, via
-`node backend/cli.mjs releases` and `GET /api/releases`.
+project. It uses the shared board shell (`BoardPanel`, `BoardSection`,
+`BoardColumn` with copy-keys, `UpstreamNote`) and organizes every ticket in the
+chosen version into **Jira-status columns** (workflow order, with non-done
+finished columns such as Rejected and Duplicate at the end). It is available in
+the **Releases** tab, via `node backend/cli.mjs releases` and `GET /api/releases`.
 
-Everything is read from Jira: the project's versions, a JQL search for the
-version's tickets (`fixVersion = <id>`, plus `assignee = currentUser()` for
-Mine) and Jira's development-status (`dev-status`) endpoints for each ticket's
-PRs (the same lookup that finds the PRs on [My Tickets](#my-tickets) cards). **No GitHub call is made and no GitHub token is read.** Within each
-merge-state group the ticket cards are masonry-packed using CSS multi-columns. The
-shared [local work filters](#local-work-filters) are not mounted on this tab.
+Ticket and PR data come from Jira (`GET /api/releases`): the project's versions,
+a JQL search for the version's tickets (`fixVersion = <id>`, plus
+`assignee = currentUser()` when `scope=mine`) and Jira's development-status
+(`dev-status`) endpoints for each ticket's PRs (the same lookup that finds the
+PRs on [My Tickets](#my-tickets) cards). `GET /api/releases` itself makes **no
+GitHub call and reads no GitHub token**. After tickets load, the browser fires a
+separate, non-blocking `POST /api/releases/scripts` request to detect runnable
+scripts, Knex migrations and Prisma schema changes across the linked PRs. Each
+card shows the Jira key and assignee, Slack thread chips (`useTicketSlackThreads`,
+including mentions) and Claude launcher icon (`ClaudeDialog`), the ticket summary,
+always-visible script/migration/Prisma-schema badges, and a compact PR rollup
+toggle (`All N PRs merged` / `M/N PRs merged`) that expands one-line PR rows
+(`repo #number` and state chip). The shared [local work filters](#local-work-filters)
+are not mounted on this tab.
 
-### Version picker
+### Version picker and Summary dialog
 
 The picker lists unreleased versions first, by release date (undated last),
 then up to 20 released versions, newest first; archived versions never appear.
@@ -2939,9 +2950,43 @@ Choosing a version saves its id in browser localStorage under
 `dev-dashboard.releases`, so the next visit asks for that version first. Only an
 explicit choice is saved, and only the id: if the server rejects the saved
 version (Jira no longer lists it), the tab clears it and loads the default.
-**Scope is never saved** — the tab always opens on **Mine**, your assigned
-tickets; tick **All release tickets** for every assignee. The version is not
-kept in the URL hash, which holds only the tab.
+The UI always requests **all release tickets** (`scope=all`, no Mine/All toggle);
+`GET /api/releases` and `backend/cli.mjs releases` keep `scope=mine` as their
+default for backward compatibility.
+
+Clicking **Summary** in the toolbar opens a modal dialog (`releases-summary-dialog`)
+showing release rollup counts, per-status counts, a **Scripts & Migrations**
+list (with a truncation notice if more than 200 PRs or partial GitHub results
+occurred) and a copyable plain-text **Release notes** export (existing merge-state
+ticket and PR lines, with indented `[Migration]`, `[Script]` and `[Prisma schema]`
+lines appended once loaded). Opening `#/releases?view=text` auto-opens the
+Summary dialog; closing it returns the URL to `#/releases`.
+
+### Scripts, migrations and Prisma schemas
+
+`POST /api/releases/scripts` (setup-gated; rejects cross-site `Sec-Fetch-Site`
+with `403 INVALID_ORIGIN`; validates up to 200 PRs against the configured GitHub
+org/repos with `400 INVALID_RELEASE_SCRIPTS`) detects deploy-relevant changes in
+the linked non-declined PRs via [`backend/release-scripts.mjs`](backend/release-scripts.mjs):
+
+1. **Batched GraphQL** (`files(first: 100)`, 50 PRs per batch via `postGraphql`)
+   classifies non-deleted paths into:
+   - **Migration** (`migration`): `TravelTracker` `setup/knex/migrations/*.js` and
+     `setup/knex/migrations/admin/*.js` (and `Portage-backend` `prisma/migrations/**`).
+   - **Script** (`script`): `TravelTracker` `setup/scripts/**/*.{js,mjs,cjs,sh}`
+     (excluding `lib/` helpers) and `Portage-frontend` `scripts/**`.
+   - **Prisma schema** (`prisma-schema`): `Portage-backend` `libs/client/prisma/**/*.prisma`.
+2. **Selective REST** (`GET /repos/{owner}/{repo}/pulls/{number}/files?per_page=100`,
+   concurrency 4 via `upstreamFetch`) runs **only** for PRs touching a
+   `package.json` and inspects the patch for added or modified `"scripts"` entries
+   (ignoring dependencies, versions, deletions and comma-only rewrites).
+
+Results are cached per PR (30 minutes for merged PRs, 5 minutes keyed by
+`updatedAt` for open PRs, invalidated on state change, max 500 entries, cleared
+by `resetReleaseCaches()`) with concurrent in-flight deduplication. Missing
+GitHub credentials or upstream failures return `200` with
+`{ available: false, reason: 'unconfigured' | 'unavailable', truncated: false, byTicket: {} }`
+so the board never breaks.
 
 ### Merge rule
 
@@ -3005,9 +3050,10 @@ does not apply it, because there Jira's link alone decides.
 
 ### Refresh and Jira call budget
 
-Unlike the other data tabs, Releases has **no auto-refresh**. It loads when you
-first open the tab and when you act: pick a version, change scope or press
-**Refresh**. A response that arrives after a newer choice is discarded.
+Unlike the other data tabs, Releases has **no auto-refresh** and no countdown
+timer. It loads when you first open the tab and when you act: pick a version or
+press **Refresh** (also available from the Ctrl/Cmd+K command palette). A response
+that arrives after a newer choice is discarded.
 Refresh sends `refresh=1`, which bypasses the server's PR cache.
 
 The server remembers each ticket's successfully looked-up PRs, unfiltered
@@ -3052,7 +3098,7 @@ as optional: the default version, `mine` and cached data.
 200 { versions: [{ id, name, released, releaseDate, family }],      // picker order
       version: { id, name, released, releaseDate } | null,           // requested, else default
       scope, total, truncated, updatedAt,
-      tickets: [{ key, summary, status, issueType, priority, assignee, updated,
+      tickets: [{ key, summary, status, statusCategory, issueType, priority, assignee, updated,
                   mergeState, prsStatus, prsError?,
                   prs: [{ repo, number, title, url, state, base, head,
                           updatedAt, countsAsMerged }] }] }
@@ -3069,15 +3115,17 @@ browser.
 The rules above — version order, request validation, JQL, PR ownership and the
 merge roll-up — are pure and live in [`backend/release-model.mjs`](backend/release-model.mjs);
 the dev-status calls, cache and concurrency are in [`backend/dev-status.mjs`](backend/dev-status.mjs),
-shared with My Tickets, and the versions, the search and the PR ownership filter are in
-[`backend/releases.mjs`](backend/releases.mjs).
-The browser's grouping and remembered-version helpers are DOM-free in
+shared with My Tickets, the versions, the search and the PR ownership filter are in
+[`backend/releases.mjs`](backend/releases.mjs), and PR script/migration detection is in
+[`backend/release-scripts.mjs`](backend/release-scripts.mjs).
+The browser's grouping, text-export and remembered-version helpers are DOM-free in
 [`ui/releases-data.js`](ui/releases-data.js). Tests are
 `test/release-*.test.mjs` and `test/ui-releases-*.test.mjs`. The Releases
-`data-testid` names (`releases-version`, `releases-scope`, `releases-refresh`,
-`releases-meta`, `releases-list`, `releases-group-<state>`,
-`release-ticket-<key>`) are pinned by `e2e/releases.spec.js` — treat them as a
-contract.
+`data-testid` names (`releases-version`, `releases-summary-open`,
+`releases-summary-dialog`, `releases-refresh`, `releases-meta`,
+`releases-board`, `releases-column-<slug>`, `releases-card-<key>`,
+`releases-ticket-prs-toggle-<key>`, `releases-ticket-scripts-<key>`) are pinned
+by `e2e/releases.spec.js` — treat them as a contract.
 
 ## Slack
 
@@ -3841,9 +3889,9 @@ cards, filters, listboxes, terminal output and status; domain-free selectors
 and established card/diff helpers preserve existing calculations, escaping
 and data-testid contracts. Masonry uses CSS multi-column packing with intact
 cards and sibling spacing at 760px and 1700px; Services retains an explicit
-CSS grid, Home uses one velocity pane in the shared board shell, and My Tickets, Slack, Pull Requests and Sprint are
+CSS grid, Home uses one velocity pane in the shared board shell, and My Tickets, Slack, Pull Requests, Releases and Sprint are
 horizontally scrolling boards of columns that scroll on their own (see
-[My Tickets](#my-tickets)). All four use one shared board frame,
+[My Tickets](#my-tickets)). All five use one shared board frame,
 [`ui-react/components/BoardShell.jsx`](ui-react/components/BoardShell.jsx) with
 [`ui-react/styles/board.css`](ui-react/styles/board.css); how a new screen adopts
 it is in [`CLAUDE.md`](CLAUDE.md). Legacy DOM panel controllers,
@@ -3855,13 +3903,13 @@ and so do the command palette, the shortcuts help, the ticket Claude dialog (wit
 and Use in Services it holds), the artifact viewer, the E2E check dialog and the bodies of the two
 right-edge drawers (the Slack activity list and the Sessions list; their edge tabs are in the first
 paint and load the body before opening). `npm run build` emits one
-entry chunk plus per-screen chunks, about 631 KiB raw / 200 KiB gzip before first paint (it was 831
+entry chunk plus per-screen chunks, about 638 KiB raw / 206 KiB gzip before first paint (it was 831
 KiB / 252 KiB). A screen mounts on the render it is first active, or at once when the boot route names
-it (`#/chat?session=<uuid>`, `#/releases?view=list`), and stays mounted, hidden, afterwards. While a
+it (`#/chat?session=<uuid>`, `#/releases?view=text`), and stays mounted, hidden, afterwards. While a
 chunk loads a panel with the screen's own shape stands in; a chunk that fails (usually a tab that
 outlived a deploy) shows a **Reload** state in place and the other tabs keep working. An opener of a
 lazy overlay loads it first and opens when it settles, so the first press or click is never lost.
-`test/bundle-budget.test.mjs` builds in memory and holds the initial JS to 640 KiB raw and 202 KiB
+`test/bundle-budget.test.mjs` builds in memory and holds the initial JS to 640 KiB raw and 206 KiB
 gzip, so a new eager import of a lazy module fails it. Identical service snapshots no longer re-render
 the app (`ui/keep-if-equal.js`), and the refresh countdown re-renders only its own readout and pauses
 while the page is hidden or its screen is not shown. On My Tickets, Slack, Pull Requests, DevTools and Sprint the

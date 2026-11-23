@@ -102,7 +102,7 @@ export function RefreshControl({ name, loading, countdown, onRefresh }) {
       <Button data-testid={`${name}-refresh`} disabled={loading} onClick={() => onRefresh()}>
         Refresh
       </Button>
-      <BoardCountdown name={name} countdown={countdown} />
+      {countdown && <BoardCountdown name={name} countdown={countdown} />}
     </span>
   );
 }

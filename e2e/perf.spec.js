@@ -60,22 +60,20 @@ test('first visit shows the loading fallback, then the real screen, for a direct
   page,
 }) => {
   const releasesRelease = await holdChunk(page, 'ReleasesPanel');
-  await page.goto('/#/releases?view=list');
+  await page.goto('/#/releases?view=text');
   await expect(page.getByTestId('panel-releases-loading')).toBeVisible();
   await expect(page.getByTestId('screen-loading-releases')).toBeVisible();
   await expect(page.getByTestId('panel-releases')).toHaveCount(0);
   expect(
     await rootIsViewportLocked(page),
-    'Releases is not a board: no viewport lock while loading',
-  ).toBe(false);
+    'Releases is a board: viewport locked from the first paint',
+  ).toBe(true);
   releasesRelease();
   await expect(page.getByTestId('panel-releases')).toBeVisible();
-  expect(await rootIsViewportLocked(page), 'and none once it has loaded, so the height holds').toBe(
-    false,
-  );
+  expect(await rootIsViewportLocked(page), 'and stays locked once it has loaded').toBe(true);
   await expect(page.getByTestId('panel-releases-loading')).toHaveCount(0);
-  await expect(page.getByTestId('releases-view-list')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page).toHaveURL(/#\/releases\?view=list$/);
+  await expect(page.getByTestId('releases-summary-dialog')).toBeVisible();
+  await expect(page).toHaveURL(/#\/releases\?view=text$/);
 
   const chatRelease = await holdChunk(page, 'ChatPanel');
   await page.goto(`/#/chat?session=${CHAT_SESSION_ID}`);
@@ -110,7 +108,7 @@ test('revisit keeps the screens mounted with their state and requests no chunk a
   await expect(page.getByTestId('panel-devtools')).toBeVisible();
   await page.getByTestId('tab-releases').click();
   await expect(page.getByTestId('panel-releases')).toBeVisible();
-  await expect(page.locator('.release-ticket').first()).toBeVisible();
+  await expect(page.locator('[data-testid^="releases-card-"]').first()).toBeVisible();
   await expect(page.getByTestId('releases-refresh')).toBeEnabled();
 
   const mark = (id) =>
@@ -119,8 +117,8 @@ test('revisit keeps the screens mounted with their state and requests no chunk a
     }, id);
   await mark('devtools');
   await mark('releases');
-  await page.getByTestId('releases-scope').check();
-  await expect(page.getByTestId('releases-scope')).toBeChecked();
+  await page.getByTestId('releases-version').selectOption('18838');
+  await expect(page.getByTestId('releases-version')).toHaveValue('18838');
   await page.getByTestId('tab-devtools').click();
   await expect(page.getByTestId('panel-devtools')).toBeVisible();
   await expect(page.getByTestId('panel-releases')).toBeHidden();
@@ -137,7 +135,7 @@ test('revisit keeps the screens mounted with their state and requests no chunk a
   await page.getByTestId('tab-releases').click();
   await expect(page.getByTestId('panel-releases')).toBeVisible();
   await expect(page.getByTestId('panel-releases')).toHaveJSProperty('__perfMarker', 'releases');
-  await expect(page.getByTestId('releases-scope')).toBeChecked();
+  await expect(page.getByTestId('releases-version')).toHaveValue('18838');
   await page.getByTestId('tab-devtools').click();
   await expect(page.getByTestId('panel-devtools')).toBeVisible();
   await expect(page.getByTestId('panel-devtools')).toHaveJSProperty('__perfMarker', 'devtools');

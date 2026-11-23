@@ -59,7 +59,7 @@ const routeFromHash = (tabs) => {
   const { route } = parseHash();
   return tabs.some(({ id }) => id === route) ? route : tabs[0].id;
 };
-// Only Releases (?view=list), Chat (?session=<uuid>) and My Tickets (?ticket=KEY, when it is a ticket
+// Only Releases (?view=text), Chat (?session=<uuid>) and My Tickets (?ticket=KEY, when it is a ticket
 // key) keep their query string; every other route drops it.
 const QUERY_ROUTES = new Set(['releases', 'chat', 'my-tickets']);
 const keepsQuery = (route, query) =>
@@ -68,10 +68,10 @@ const hashFor = (route, query = '') => `#/${route}${keepsQuery(route, query) ? `
 // The ticket a My Tickets address asks to open, or null (any other route ignores the parameter).
 const ticketRequestFor = (route) =>
   route === 'my-tickets' ? ticketFromQuery(parseHash().query) : null;
-// Any of these keys set to "list" selects the list view; anything else is the card view.
+// Any of these keys set to "text" selects the text view; anything else is the board view.
 const releaseViewFromQuery = (query) => {
   const params = new URLSearchParams(query);
-  return ['mode', 'view', 'v', 'm'].some((key) => params.get(key) === 'list') ? 'list' : 'cards';
+  return ['mode', 'view', 'v', 'm'].some((key) => params.get(key) === 'text') ? 'text' : 'board';
 };
 
 export function App() {
@@ -149,7 +149,7 @@ export function App() {
 
   // Pushes a history entry, so Back returns to the previous view.
   const changeReleaseView = useCallback((view) => {
-    const target = hashFor('releases', view === 'list' ? 'view=list' : '');
+    const target = hashFor('releases', view === 'text' ? 'view=text' : '');
     if (location.hash !== target) location.hash = target;
     setReleaseView(view);
   }, []);
@@ -182,7 +182,6 @@ export function App() {
                 <ScreenSlot
                   id="releases"
                   label="Releases"
-                  board={false}
                   Screen={Releases}
                   config={config}
                   active={active === 'releases'}

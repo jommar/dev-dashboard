@@ -80,42 +80,34 @@ body {
 
 .pr-open-groups,
 .pr-draft-groups,
-.pr-approval-groups,
-.release-ticket-groups {
+.pr-approval-groups {
   columns: 1;
   column-gap: 20px;
 }
 @media (min-width: 760px) {
   .pr-open-groups,
   .pr-draft-groups,
-  .pr-approval-groups,
-  .release-ticket-groups {
+  .pr-approval-groups {
     columns: 2;
   }
 }
 @media (min-width: 1700px) {
   .pr-open-groups,
   .pr-draft-groups,
-  .pr-approval-groups,
-  .release-ticket-groups {
+  .pr-approval-groups {
     columns: 3;
   }
 }
 .ticket-card,
-.pr-approval-ticket,
-.release-ticket {
+.pr-approval-ticket {
   break-inside: avoid;
 }
 .ticket-card + .ticket-card,
-.pr-approval-ticket + .pr-approval-ticket,
-.release-ticket + .release-ticket {
+.pr-approval-ticket + .pr-approval-ticket {
   margin-top: 20px;
 }
 .pr-approval-ticket {
   margin-bottom: 12px;
-}
-.release-ticket + .release-ticket {
-  margin-top: 20px;
 }
 
 /* Services remain a uniform explicit-column grid; Home remains three

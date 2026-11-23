@@ -254,7 +254,6 @@ test('no readable text under 12px (palette sheets)', () => {
   const skipped = new Set([
     'styles/posters.css',
     'styles/settings.css',
-    'styles/releases.css',
     'styles/shell.css',
     'styles/base.css',
   ]);

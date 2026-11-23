@@ -159,6 +159,7 @@ test('board.css draws a note as an amber one-line chip that wraps when open', ()
 const LINKED_NOTES = {
   'MyTicketsPanel.jsx': 'my-tickets-slack-coverage',
   'SprintPanel.jsx': 'sprint-board-slack-coverage',
+  'ReleasesPanel.jsx': 'releases-slack-coverage',
 };
 
 test('only the Slack coverage notes, which carry a link, start open', () => {
@@ -200,6 +201,7 @@ test('BoardColumn puts the copy-keys button before the title, only for a lane th
     'components/TicketBoard.jsx',
     'panels/SprintPanel.jsx',
     'panels/PrsPanel.jsx',
+    'panels/ReleasesPanel.jsx',
   ])
     assert.match(read(panel), /copyKeys=\{/, `${panel} passes its lane's keys`);
 });
