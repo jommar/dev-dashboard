@@ -654,6 +654,28 @@
   overflow-y: auto;
   list-style: none;
 }
+.board-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.board-divider span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.board-divider:not(:first-child) {
+  margin-top: var(--s1);
+}
 
 /* A card is the one raised surface on the board: the hairline stack, no border. A screen adds its
    own state on the element (my-tickets.css marks the current sprint and approved PRs). */

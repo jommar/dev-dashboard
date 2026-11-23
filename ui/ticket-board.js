@@ -111,6 +111,25 @@ export function boardColumns(tickets = []) {
   }));
 }
 
+// Sort items by a person label (alphabetical, case-insensitive, blank last), preserving
+// input order (or tieBreak) within each person and flagging where a divider belongs.
+export function groupByPerson(items, personOf, fallback = 'Unassigned', tieBreak = null) {
+  const labelOf = (item) => String(personOf(item) || '').trim();
+  const ordered = [...items].sort((a, b) => {
+    const an = labelOf(a);
+    const bn = labelOf(b);
+    if (!an !== !bn) return an ? -1 : 1;
+    return (
+      an.localeCompare(bn, undefined, { sensitivity: 'base' }) || (tieBreak ? tieBreak(a, b) : 0)
+    );
+  });
+  return ordered.map((item, index) => {
+    const person = labelOf(item) || fallback;
+    const prev = index > 0 ? labelOf(ordered[index - 1]) || fallback : null;
+    return { item, person, divider: prev === null || person.toLowerCase() !== prev.toLowerCase() };
+  });
+}
+
 const FAILING_NAMES_SHOWN = 3;
 
 // The CI line as words: the state, the counts, and at most three failing checks. A

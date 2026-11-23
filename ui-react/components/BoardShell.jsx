@@ -378,3 +378,11 @@ export function BoardColumn({ id, label, count, testIdPrefix, kind, hint, copyKe
     </section>
   );
 }
+
+export function BoardDivider({ label, testId }) {
+  return (
+    <li className="board-divider" data-testid={testId}>
+      <span>{label}</span>
+    </li>
+  );
+}

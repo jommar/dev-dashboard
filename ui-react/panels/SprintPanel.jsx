@@ -7,6 +7,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Board,
   BoardColumn,
+  BoardDivider,
   BoardNote,
   BoardPanel,
   BoardSection,
@@ -25,7 +26,7 @@ import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
 import { say } from '../../ui/harness.js';
 import { slug } from '../../ui/dom.js';
-import { boardColumns } from '../../ui/ticket-board.js';
+import { boardColumns, groupByPerson } from '../../ui/ticket-board.js';
 import { normalizeTicketKey, ticketKeysOfRows } from '../../ui/slack-ticket-links.js';
 import {
   ATTENTION_REASONS,
@@ -310,31 +311,47 @@ export function SprintPanel({ config, active }) {
       );
     return (
       <Board label="Sprint board" testId="sprint-board">
-        {finishedColumnsLast(boardColumns(shown)).map((column) => (
-          <BoardColumn
-            key={column.status}
-            id={slug(column.status)}
-            label={column.status}
-            count={column.tickets.length}
-            testIdPrefix="sprint-column-"
-            kind={column.kind}
-            copyKeys={column.tickets.map((ticket) => ticket.key)}
-          >
-            {column.tickets.map((ticket) => (
-              <li key={ticket.key}>
-                <SprintCard
-                  ticket={ticket}
-                  jiraBase={jiraBase}
-                  entry={claude.byTicket[ticket.key]}
-                  reasons={reasonsByKey[ticket.key]}
-                  slackLinks={slackLinksOf(ticket.key)}
-                  onGroom={openClaude}
-                  onOpenThread={openThread}
-                />
-              </li>
-            ))}
-          </BoardColumn>
-        ))}
+        {finishedColumnsLast(boardColumns(shown)).map((column) => {
+          const colId = slug(column.status);
+          const grouped = groupByPerson(column.tickets, (ticket) => ticket.assignee);
+          return (
+            <BoardColumn
+              key={column.status}
+              id={colId}
+              label={column.status}
+              count={grouped.length}
+              testIdPrefix="sprint-column-"
+              kind={column.kind}
+              copyKeys={grouped.map(({ item }) => item.key)}
+            >
+              {grouped.flatMap(({ item: ticket, person, divider }) => {
+                const row = (
+                  <li key={ticket.key}>
+                    <SprintCard
+                      ticket={ticket}
+                      jiraBase={jiraBase}
+                      entry={claude.byTicket[ticket.key]}
+                      reasons={reasonsByKey[ticket.key]}
+                      slackLinks={slackLinksOf(ticket.key)}
+                      onGroom={openClaude}
+                      onOpenThread={openThread}
+                    />
+                  </li>
+                );
+                return divider
+                  ? [
+                      <BoardDivider
+                        key={`who:${person}`}
+                        label={person}
+                        testId={`sprint-assignee-${colId}-${slug(person.toLowerCase())}`}
+                      />,
+                      row,
+                    ]
+                  : [row];
+              })}
+            </BoardColumn>
+          );
+        })}
       </Board>
     );
   }, [

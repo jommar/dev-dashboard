@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Board,
   BoardColumn,
+  BoardDivider,
   BoardNote,
   BoardPanel,
   BoardSection,
@@ -18,7 +19,9 @@ import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import { useActivePolling } from '../hooks/useActivePolling.js';
 import { notifyClaudeTicketsChanged, useClaudeTickets } from '../hooks/useClaudeTickets.js';
 import { useTicketSlackThreads } from '../hooks/useTicketSlackThreads.jsx';
+import { slug } from '../../ui/dom.js';
 import { ticketKeysOfRows } from '../../ui/slack-ticket-links.js';
+import { groupByPerson } from '../../ui/ticket-board.js';
 import { hasCompletePrCoverage, reviewColumns, SPEC_REVIEW_LANE } from '../../ui/review-board.js';
 import { ticketPrefix } from '../../ui/work-filters.js';
 import { PR_POLL_MS } from '../../ui/polling.js';
@@ -213,52 +216,80 @@ export function PrsPanel({ config, active }) {
     (key) => findOpener(`prs-claude-icon-${CSS.escape(key)}`),
     [findOpener],
   );
-  const board = useMemo(
-    () => (
+  const board = useMemo(() => {
+    const groupedSpecs = groupByPerson(specs, (spec) => spec.author, 'Unknown');
+    return (
       <Board label="PR review board" testId="prs-board" frameRef={boardRef}>
-        {columns.map((column) => (
-          <BoardColumn
-            key={column.id}
-            id={column.id}
-            label={column.label}
-            hint={LANE_HINTS[column.id]}
-            count={column.tickets.length}
-            testIdPrefix="prs-column-"
-            copyKeys={column.tickets.map((ticket) => ticket.key)}
-          >
-            {column.tickets.map((ticket) => (
-              <li key={ticket.key}>
-                <ReviewTicketCard
-                  ticket={ticket}
-                  jiraBase={config.jiraBase}
-                  prCoverage={data?.prCoverage}
-                  linksByTicket={linksByTicket}
-                  onOpenThread={openThread}
-                  claudeByTicket={claude.byTicket}
-                  onOpenClaude={openReviewDialog}
-                />
-              </li>
-            ))}
-          </BoardColumn>
-        ))}
+        {columns.map((column) => {
+          const grouped = groupByPerson(column.tickets, (ticket) => ticket.assignee);
+          return (
+            <BoardColumn
+              key={column.id}
+              id={column.id}
+              label={column.label}
+              hint={LANE_HINTS[column.id]}
+              count={grouped.length}
+              testIdPrefix="prs-column-"
+              copyKeys={grouped.map(({ item }) => item.key)}
+            >
+              {grouped.flatMap(({ item: ticket, person, divider }) => {
+                const row = (
+                  <li key={ticket.key}>
+                    <ReviewTicketCard
+                      ticket={ticket}
+                      jiraBase={config.jiraBase}
+                      prCoverage={data?.prCoverage}
+                      linksByTicket={linksByTicket}
+                      onOpenThread={openThread}
+                      claudeByTicket={claude.byTicket}
+                      onOpenClaude={openReviewDialog}
+                    />
+                  </li>
+                );
+                return divider
+                  ? [
+                      <BoardDivider
+                        key={`who:${person}`}
+                        label={person}
+                        testId={`prs-assignee-${column.id}-${slug(person.toLowerCase())}`}
+                      />,
+                      row,
+                    ]
+                  : [row];
+              })}
+            </BoardColumn>
+          );
+        })}
         <BoardColumn
           id={SPEC_REVIEW_LANE.id}
           label={SPEC_REVIEW_LANE.label}
           hint={LANE_HINTS[SPEC_REVIEW_LANE.id]}
-          count={specs.length}
+          count={groupedSpecs.length}
           testIdPrefix="prs-column-"
-          copyKeys={specs.flatMap((spec) => spec.keys)}
+          copyKeys={groupedSpecs.flatMap(({ item }) => item.keys)}
         >
-          {specs.map((spec) => (
-            <li key={spec.number}>
-              <SpecReviewCard
-                spec={spec}
-                jiraBase={config.jiraBase}
-                claudeEntry={claude.byTicket[spec.keys[0]]}
-                onOpenClaude={openSpecDialog}
-              />
-            </li>
-          ))}
+          {groupedSpecs.flatMap(({ item: spec, person, divider }) => {
+            const row = (
+              <li key={spec.number}>
+                <SpecReviewCard
+                  spec={spec}
+                  jiraBase={config.jiraBase}
+                  claudeEntry={claude.byTicket[spec.keys[0]]}
+                  onOpenClaude={openSpecDialog}
+                />
+              </li>
+            );
+            return divider
+              ? [
+                  <BoardDivider
+                    key={`who:${person}`}
+                    label={person}
+                    testId={`prs-assignee-${SPEC_REVIEW_LANE.id}-${slug(person.toLowerCase())}`}
+                  />,
+                  row,
+                ]
+              : [row];
+          })}
           {specHasMore && (
             <li>
               {specLimit < SPEC_LIMIT ? (
@@ -280,23 +311,22 @@ export function PrsPanel({ config, active }) {
           )}
         </BoardColumn>
       </Board>
-    ),
-    [
-      columns,
-      specs,
-      specHasMore,
-      specLimit,
-      specBusy,
-      loadSpecs,
-      config.jiraBase,
-      data?.prCoverage,
-      linksByTicket,
-      openThread,
-      claude.byTicket,
-      openReviewDialog,
-      openSpecDialog,
-    ],
-  );
+    );
+  }, [
+    columns,
+    specs,
+    specHasMore,
+    specLimit,
+    specBusy,
+    loadSpecs,
+    config.jiraBase,
+    data?.prCoverage,
+    linksByTicket,
+    openThread,
+    claude.byTicket,
+    openReviewDialog,
+    openSpecDialog,
+  ]);
   const coverageIncomplete = data && !hasCompletePrCoverage(data.prCoverage);
   return (
     <BoardPanel id="prs" active={active} busy={loading || specBusy}>

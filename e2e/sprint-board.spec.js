@@ -15,7 +15,7 @@ import {
 //   slack-thread-link-<ts> (a card's thread chip), sprint-board-slack-coverage.
 
 const STORAGE_KEY = 'dev-dashboard.sprint-board';
-const NEXUS_TODO = ['NXS-105', 'NXS-106', 'NXS-107', 'NXS-108', 'NXS-109', 'NXS-110', 'NXS-111'];
+const NEXUS_TODO = ['NXS-106', 'NXS-108', 'NXS-110', 'NXS-107', 'NXS-109', 'NXS-111', 'NXS-105'];
 
 const card = (page, key) => page.getByTestId(`sprint-card-${key}`);
 // A card's Groom button shares the card's id prefix, so the cards are the ones that are not it.

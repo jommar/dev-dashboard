@@ -6,6 +6,7 @@ import {
   ciSummaryText,
   commentChips,
   commentSummaryText,
+  groupByPerson,
   reviewText,
   reviewerLines,
 } from '../ui/ticket-board.js';
@@ -545,4 +546,20 @@ test('commentSummaryText says comments are unavailable for null, and stays quiet
     commentSummaryText(frozen);
     assert.deepEqual(frozen, input);
   }
+});
+
+test('groupByPerson sorts alphabetically with blank last, preserves tie order, and flags divider boundaries', () => {
+  const input = [
+    { key: 'TAP-2', assignee: 'Zoe' },
+    { key: 'TAP-1', assignee: null },
+    { key: 'TAP-4', assignee: 'alex' },
+    { key: 'TAP-3', assignee: 'Zoe' },
+    { key: 'TAP-5', assignee: 'Alex' },
+  ];
+  assert.deepEqual(
+    groupByPerson(input, (t) => t.assignee).map(
+      ({ item, person, divider }) => `${divider ? '*' : ''}${person}:${item.key}`,
+    ),
+    ['*alex:TAP-4', 'Alex:TAP-5', '*Zoe:TAP-2', 'Zoe:TAP-3', '*Unassigned:TAP-1'],
+  );
 });

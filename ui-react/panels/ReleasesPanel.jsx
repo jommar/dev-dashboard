@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Board,
   BoardColumn,
+  BoardDivider,
   BoardNote,
   BoardPanel,
   BoardSection,
@@ -253,13 +254,11 @@ export function ReleasesPanel({ config, active, view = 'board', onViewChange }) 
               );
               if (who === prev) return [row];
               return [
-                <li
+                <BoardDivider
                   key={`who:${who}`}
-                  className="releases-who"
-                  data-testid={`releases-assignee-${colId}-${slug(who.toLowerCase())}`}
-                >
-                  <span>{who}</span>
-                </li>,
+                  label={who}
+                  testId={`releases-assignee-${colId}-${slug(who.toLowerCase())}`}
+                />,
                 row,
               ];
             })}
