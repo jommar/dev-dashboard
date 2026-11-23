@@ -3,6 +3,7 @@ import { copyText } from '../../ui/dom.js';
 import { jiraStatusKind } from '../../ui/jira-status.js';
 import {
   SCRIPT_KIND_LABELS,
+  formatReleaseSummary,
   formatReleaseText,
   formatScriptTarget,
   plural,
@@ -127,6 +128,7 @@ export function ReleaseTicketCard({ ticket, jiraBase, scripts, slack, claude, on
 
 export function ReleaseSummaryDialog({ data, columns, jiraBase, scripts, onClose }) {
   const [copied, setCopied] = useState(null);
+  const [mode, setMode] = useState('deploy');
   const dialogRef = useModalDialog(onClose);
   const backdrop = useBackdropClose(dialogRef, onClose);
   const titleId = useId();
@@ -140,7 +142,14 @@ export function ReleaseSummaryDialog({ data, columns, jiraBase, scripts, onClose
 
   const { tickets } = data;
   const summary = summarizeRelease(tickets);
-  const text = formatReleaseText(data, scripts.byTicket);
+  const text =
+    mode === 'summary'
+      ? formatReleaseSummary(data, { scripts, jiraBase })
+      : formatReleaseText(data, scripts);
+  const pickMode = (next) => {
+    setMode(next);
+    setCopied(null);
+  };
   const scriptTickets = tickets
     .map((t) => [t, scripts.byTicket[t.key]])
     .filter(([, items]) => items?.length);
@@ -233,7 +242,25 @@ export function ReleaseSummaryDialog({ data, columns, jiraBase, scripts, onClose
 
         <section>
           <div className="releases-between">
-            <h3>Release notes</h3>
+            <div className="releases-row">
+              <h3>Release notes</h3>
+              <div className="releases-row" role="group" aria-label="Release notes format">
+                {[
+                  ['deploy', 'Deploy'],
+                  ['summary', 'Summary'],
+                ].map(([id, label]) => (
+                  <Button
+                    key={id}
+                    className={mode === id ? 'releases-mode-on' : undefined}
+                    data-testid={`releases-notes-${id}`}
+                    aria-pressed={mode === id}
+                    onClick={() => pickMode(id)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            </div>
             <Button
               data-testid="releases-copy-text"
               onClick={async () => setCopied((await copyText(text)) ? 'Copied' : 'Copy failed')}

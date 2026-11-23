@@ -123,12 +123,12 @@ export function normalizeDevStatusPr(rawPr) {
   };
 }
 
-const DEVELOPMENT_BASE = 'ops/development';
+const MERGED_BASES = new Set(['ops/development', 'main']);
 
-// Merged means it reached ops/development from a feature branch; a promotion
-// PR that fast-forwards another ops branch into it is not the ticket's work.
+// Merged means it reached ops/development (app repos) or main (companion/test/infra repos)
+// from a feature branch; a promotion PR from an ops branch does not count.
 export function classifyPr({ state, base, head }) {
-  return state === 'merged' && base === DEVELOPMENT_BASE && !head.startsWith('ops/');
+  return state === 'merged' && MERGED_BASES.has(base) && !head.startsWith('ops/');
 }
 
 // Declined PRs are superseded work and never change the answer.

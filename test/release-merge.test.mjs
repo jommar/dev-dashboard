@@ -11,28 +11,31 @@ async function model(...names) {
 const featureBranch = 'DEMO-1058/mileage-rate-fix';
 const candidate = (state, base, head = featureBranch) => ({ state, base, head });
 
-test('a merged PR into ops/development from a feature branch counts as merged', async () => {
+test('a merged PR into ops/development or main from a feature branch counts as merged', async () => {
   const { classifyPr } = await model('classifyPr');
   assert.equal(classifyPr(candidate('merged', 'ops/development')), true);
+  assert.equal(classifyPr(candidate('merged', 'main')), true);
 });
 
 test('an open, unknown or declined PR does not count as merged', async () => {
   const { classifyPr } = await model('classifyPr');
   for (const state of ['open', 'unknown', 'declined']) {
     assert.equal(classifyPr(candidate(state, 'ops/development')), false, state);
+    assert.equal(classifyPr(candidate(state, 'main')), false, state);
   }
 });
 
-test('a PR merged into any base other than ops/development does not count', async () => {
+test('a PR merged into a non-development ops base does not count', async () => {
   const { classifyPr } = await model('classifyPr');
   assert.equal(classifyPr(candidate('merged', 'ops/qa')), false);
   assert.equal(classifyPr(candidate('merged', 'ops/uat')), false);
 });
 
-test('a PR merged into ops/development from an ops branch does not count', async () => {
+test('a PR merged from an ops branch does not count', async () => {
   const { classifyPr } = await model('classifyPr');
   assert.equal(classifyPr(candidate('merged', 'ops/development', 'ops/qa')), false);
   assert.equal(classifyPr(candidate('merged', 'ops/development', 'ops/uat')), false);
+  assert.equal(classifyPr(candidate('merged', 'main', 'ops/uat')), false);
 });
 
 const counted = (state, base, head = featureBranch, countsAsMerged = false) => ({

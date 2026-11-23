@@ -187,6 +187,10 @@
 .releases-stat {
   color: var(--strong);
 }
+.btn.releases-mode-on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .releases-dlg h2 {
   font-size: var(--fs-xl);
 }

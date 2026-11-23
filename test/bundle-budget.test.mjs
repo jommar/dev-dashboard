@@ -27,8 +27,9 @@ const MAX_INITIAL_GZIP = 207 * KIB;
 // and to 908 KiB for the question choices and Independent tooltips of the Claude dialog (all lazy),
 // and to 914 KiB for the Copy prompt buttons across the Claude dialog, prompts editor and E2E check
 // (all lazy, plus one tiny helper in api.js), to 919 KiB for the redesigned lazy Releases board,
-// and to 921 KiB for shared person grouping & dividers across Releases, Sprint and Pull Requests.
-const MAX_TOTAL_RAW = 921 * KIB;
+// to 921 KiB for shared person grouping & dividers across Releases, Sprint and Pull Requests,
+// and to 925 KiB for the upgraded Deploy + Summary release notes formatters (lazy Releases chunk).
+const MAX_TOTAL_RAW = 925 * KIB;
 // Raised from 180 KiB for per-PR viewer review background tints in prs.css, and to 182 KiB for
 // assignee dividers in releases.css.
 const MAX_TOTAL_CSS = 182 * KIB;

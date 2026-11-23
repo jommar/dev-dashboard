@@ -8,10 +8,7 @@ import {
   serializeSelection,
   summarizeRelease,
 } from '../ui/releases-data.js';
-import {
-  MERGE_STATE_ORDER as SERVER_MERGE_STATE_ORDER,
-  formatReleaseText as serverFormatReleaseText,
-} from '../backend/release-model.mjs';
+import { MERGE_STATE_ORDER as SERVER_MERGE_STATE_ORDER } from '../backend/release-model.mjs';
 
 const pr = (number, over = {}) => ({
   repo: 'example/api',
@@ -26,7 +23,8 @@ const pr = (number, over = {}) => ({
   ...over,
 });
 
-const mergedPr = (number) => pr(number, { state: 'merged', countsAsMerged: true });
+const mergedPr = (number, over = {}) =>
+  pr(number, { state: 'merged', countsAsMerged: true, ...over });
 
 const ticket = (key, mergeState, prs = []) => ({
   key,
@@ -143,8 +141,10 @@ test('a chosen version serializes to a versioned record that reads back', () => 
   assert.equal(parseStoredSelection(stored), '18741');
 });
 
-test('formatReleaseText matches the server formatter without scripts and appends indented script/migration/Prisma-schema lines when provided', () => {
+test('formatReleaseText formats deploy notes with repo rollup, hoisted scripts/migrations, mismatches, full titles, and compact PRs', () => {
   assert.equal(typeof releasesData.formatReleaseText, 'function', 'formatReleaseText is exported');
+  const longSummary =
+    'Show and add up staff benefits on invoices the same as old UI, including the Driver Benefits total without mid-word truncation';
   const data = {
     version: {
       id: '18741',
@@ -157,65 +157,154 @@ test('formatReleaseText matches the server formatter without scripts and appends
     truncated: false,
     tickets: [
       {
-        ...ticket('DEMO-100', 'open', [pr(101, { repo: 'TransActComm/TravelTracker' })]),
+        ...ticket('DEMO-100', 'open', [
+          pr(101, { repo: 'TransActComm/TravelTracker', owner: 'dev1' }),
+          pr(102, { repo: 'TransActComm/TravelTracker', state: 'declined' }),
+        ]),
+        summary: longSummary,
+        status: 'In QA',
         assignee: 'Developer One',
       },
       {
-        ...ticket('DEMO-200', 'merged', [mergedPr(201, { repo: 'TransActComm/Portage-backend' })]),
+        ...ticket('DEMO-200', 'merged', [
+          mergedPr(201, { repo: 'TransActComm/Portage-backend' }),
+          pr(55, {
+            repo: 'TransActComm/ezat-data',
+            state: 'merged',
+            base: 'main',
+            countsAsMerged: true,
+          }),
+        ]),
+        status: 'In Progress',
         assignee: 'Colleague Two',
       },
     ],
   };
 
-  // Without scripts, output matches backend/release-model.mjs verbatim.
-  assert.equal(releasesData.formatReleaseText(data), serverFormatReleaseText(data));
-  assert.equal(releasesData.formatReleaseText(data, {}), serverFormatReleaseText(data));
-
-  // With scripts, indented lines appear under their respective tickets while keeping existing lines intact.
-  const withScripts = releasesData.formatReleaseText(data, {
-    'DEMO-100': [
-      {
-        kind: 'migration',
-        label: '20260101_add.js',
-        path: 'setup/knex/migrations/20260101_add.js',
-        repo: 'TransActComm/TravelTracker',
-        prNumber: 101,
-      },
-      {
-        kind: 'script',
-        label: 'backfill.js',
-        path: 'setup/scripts/backfill.js',
-        repo: 'TransActComm/TravelTracker',
-        prNumber: 101,
-      },
-    ],
-    'DEMO-200': [
-      {
-        kind: 'prisma-schema',
-        label: 'client.prisma',
-        path: 'libs/client/prisma/client/client.prisma',
-        repo: 'TransActComm/Portage-backend',
-        prNumber: 201,
-      },
-    ],
+  const out = releasesData.formatReleaseText(data, {
+    state: 'ready',
+    truncated: true,
+    byTicket: {
+      'DEMO-100': [
+        {
+          kind: 'migration',
+          label: '20260101_add.js',
+          path: 'setup/knex/migrations/20260101_add.js',
+          repo: 'TransActComm/TravelTracker',
+          prNumber: 101,
+        },
+        {
+          kind: 'script',
+          label: 'backfill.js',
+          path: 'setup/scripts/backfill.js',
+          repo: 'TransActComm/TravelTracker',
+          prNumber: 101,
+        },
+      ],
+      'DEMO-200': [
+        {
+          kind: 'prisma-schema',
+          label: 'client.prisma',
+          path: 'libs/client/prisma/client/client.prisma',
+          repo: 'TransActComm/Portage-backend',
+          prNumber: 201,
+        },
+      ],
+    },
   });
 
-  const baseLines = serverFormatReleaseText(data).split('\n');
-  const scriptLines = withScripts.split('\n');
-  for (const line of baseLines) {
-    assert.ok(scriptLines.includes(line), `existing line kept: ${line}`);
-  }
-  const demo100Index = scriptLines.findIndex((line) => line.includes('DEMO-100'));
-  const demo200Index = scriptLines.findIndex((line) => line.includes('DEMO-200'));
-  assert.ok(demo100Index > -1 && demo200Index > demo100Index);
-  const demo100Block = scriptLines.slice(demo100Index, demo200Index).join('\n');
-  const demo200Block = scriptLines.slice(demo200Index).join('\n');
-  assert.match(demo100Block, /^\s{4}\[Migration\].*setup\/knex\/migrations\/20260101_add\.js/m);
-  assert.match(demo100Block, /^\s{4}\[Script\].*setup\/scripts\/backfill\.js/m);
-  assert.match(
-    demo200Block,
-    /^\s{4}\[Prisma schema\].*libs\/client\/prisma\/client\/client\.prisma/m,
+  // Full summary preserved, no mid-word cut.
+  assert.ok(out.includes(longSummary));
+  // Repo rollup lists app repos before companion repos and drops declined PRs.
+  assert.ok(out.includes('== Repos touched'));
+  assert.ok(out.includes('TravelTracker  0 merged, 1 open (#101)'));
+  assert.ok(out.includes('Portage-backend  1 merged [clear]'));
+  assert.ok(out.includes('ezat-data  1 merged [clear]'));
+  assert.ok(!out.includes('#102'), 'declined PRs are omitted');
+  // Scripts hoisted to top with truncation warning.
+  assert.ok(out.includes('== Scripts & Migrations (3)'));
+  assert.ok(out.includes('scan incomplete (truncated)'));
+  assert.ok(
+    out.includes('[Migration] TravelTracker#101 (DEMO-100)  setup/knex/migrations/20260101_add.js'),
   );
+  assert.ok(out.includes('[Script] TravelTracker#101 (DEMO-100)  setup/scripts/backfill.js'));
+  assert.ok(
+    out.includes(
+      '[Prisma schema] Portage-backend#201 (DEMO-200)  libs/client/prisma/client/client.prisma',
+    ),
+  );
+  // Mismatches detected in both directions.
+  assert.ok(out.includes('== Jira / GitHub Mismatches (2)'));
+  assert.ok(out.includes('DEMO-100  Has open PRs, but Jira is "In QA" (Developer One)'));
+  assert.ok(out.includes('DEMO-200  All PRs merged, but Jira is "In Progress" (Colleague Two)'));
+  // Open PR shows owner, merged PRs compact on one line, no TransActComm/ prefix.
+  assert.ok(out.includes('OPEN  TravelTracker#101 -> ops/development (@dev1)'));
+  assert.ok(out.includes('merged: Portage-backend#201, ezat-data#55'));
+  assert.ok(!out.includes('TransActComm/'));
+});
+
+test('formatReleaseSummary formats stakeholder Markdown grouped by Features vs Bug Fixes with clickable Jira links', () => {
+  const data = {
+    version: {
+      id: '18741',
+      name: 'EZAT | Sprint 19.0 | 10/09/26',
+      released: false,
+      releaseDate: '2026-10-09',
+    },
+    scope: 'all',
+    total: 3,
+    truncated: false,
+    tickets: [
+      {
+        ...ticket('DEMO-300', 'merged', [mergedPr(1)]),
+        summary: 'Minor cosmetic tweak',
+        issueType: 'Defect',
+        priority: 'P3 - Medium',
+        status: 'Done',
+        assignee: 'Alex',
+      },
+      {
+        ...ticket('DEMO-100', 'open', [pr(2)]),
+        summary: 'Critical invoice fix',
+        issueType: 'Defect',
+        priority: 'P1 - Critical',
+        status: 'In QA',
+        assignee: 'Sam',
+      },
+      {
+        ...ticket('DEMO-200', 'merged', [mergedPr(3)]),
+        summary: 'New staff benefits rollup',
+        issueType: 'Story',
+        priority: 'P2 - High',
+        status: 'Ready for Release',
+        assignee: 'Jommar',
+      },
+    ],
+  };
+
+  const out = releasesData.formatReleaseSummary(data, {
+    jiraBase: 'https://example.atlassian.net/browse/',
+    scripts: {
+      byTicket: {
+        'DEMO-200': [{ kind: 'migration', label: '001.js', path: 'setup/knex/migrations/001.js' }],
+      },
+    },
+  });
+
+  assert.ok(out.includes('## EZAT | Sprint 19.0 | 10/09/26'));
+  assert.ok(out.includes('### Features & Improvements (1)'));
+  assert.ok(out.includes('### Bug Fixes (2)'));
+  assert.ok(
+    out.includes(
+      '- **[DEMO-200](https://example.atlassian.net/browse/DEMO-200)** (P2) — New staff benefits rollup — *Ready for Release · Jommar*',
+    ),
+  );
+  // P1 bug sorts before P3 bug.
+  assert.ok(out.indexOf('DEMO-100') < out.indexOf('DEMO-300'));
+  // Deploy notes included, PR lines excluded.
+  assert.ok(out.includes('### Deploy Notes (Scripts & Migrations)'));
+  assert.ok(out.includes('`Migration` `setup/knex/migrations/001.js`'));
+  assert.ok(!out.includes('ops/development'));
 });
 
 test('finishedColumnsLast moves non-done finished columns (Rejected, Duplicate) to the end after done columns', () => {

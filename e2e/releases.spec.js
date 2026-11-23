@@ -184,14 +184,25 @@ test('summary: toolbar Summary button opens Release Summary dialog with rollup, 
 
   const pre = page.getByTestId('releases-text');
   await expect(pre).toBeVisible();
+  await expect(page.getByTestId('releases-notes-deploy')).toHaveAttribute('aria-pressed', 'true');
+  await expect(pre).toContainText('== Repos touched');
+  await expect(pre).toContainText('== Scripts & Migrations (3)');
   await expect(pre).toContainText('DEMO-1058');
-  await expect(pre).toContainText('#2075 example/api merged -> ops/development');
+  await expect(pre).toContainText('api#2075');
   await expect(pre).toContainText('[Migration]');
   await expect(pre).toContainText('setup/knex/migrations/20260101_mileage.js');
   await expect(pre).toContainText('[Script]');
   await expect(pre).toContainText('setup/scripts/backfill.js');
   await expect(pre).toContainText('[Prisma schema]');
   await expect(pre).toContainText('libs/client/prisma/client/client.prisma');
+
+  // Switching to Summary renders clean Markdown notes with clickable Jira links and no PR noise.
+  await page.getByTestId('releases-notes-summary').click();
+  await expect(page.getByTestId('releases-notes-summary')).toHaveAttribute('aria-pressed', 'true');
+  await expect(pre).toContainText('## EZAT | Sprint 19.0 | 10/09/26');
+  await expect(pre).toContainText('[DEMO-1058](');
+  await expect(pre).toContainText('### Deploy Notes (Scripts & Migrations)');
+  await expect(pre).not.toContainText('ops/development');
   expect(releaseRequests(dashboard)).toHaveLength(requests);
 
   await page.getByTestId('releases-summary-close').click();
