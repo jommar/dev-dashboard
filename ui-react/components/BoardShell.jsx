@@ -80,7 +80,7 @@ export function BoardSection({
           {controls && <div className="board-controls">{controls}</div>}
         </div>
         {filters}
-        {notes}
+        {notes && <div className="board-notes">{notes}</div>}
       </div>
       <div className="board-body" data-testid={ids.list} {...panel}>
         {children}

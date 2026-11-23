@@ -21,8 +21,8 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 10px 12px;
+  min-height: 36px;
+  padding: 6px 12px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -33,6 +33,12 @@
   transition:
     background-color 150ms var(--ease-out),
     color 150ms var(--ease-out);
+}
+@media (hover: none) {
+  .tab,
+  .nav-tools-toggle {
+    min-height: 44px;
+  }
 }
 .nav-icon {
   flex: none;

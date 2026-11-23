@@ -7,9 +7,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 32px;
-  min-height: 76px;
-  padding: 14px 32px;
+  gap: 24px;
+  min-height: 52px;
+  padding: 6px 32px;
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--strong) 3%, var(--panel)),
@@ -42,8 +42,8 @@
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   border-radius: var(--radius-sm);
   box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--accent-fill) 55%, transparent);
 }

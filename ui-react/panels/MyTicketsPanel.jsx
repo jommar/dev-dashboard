@@ -312,6 +312,11 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
                 Include Done if it is finished work.
               </BoardNote>
             )}
+            {data?.truncated && (
+              <BoardNote testId="my-tickets-truncated">
+                Not all tickets were fetched — this list and its totals may be incomplete.
+              </BoardNote>
+            )}
             {(prStale || prs?.truncated) && (
               <BoardNote testId="my-tickets-prs-note">
                 {prStale ? prNoteText(prs) : PR_TRUNCATED_NOTE}
@@ -336,23 +341,14 @@ export function MyTicketsPanel({ config, active, requestedTicket = null, onTicke
           ) : (
             <BoardState kind="loading" label="Loading tickets…" testId="my-tickets-loading" />
           )
+        ) : rows.length === 0 ? (
+          <BoardState testId="my-tickets-empty">No tickets assigned to you.</BoardState>
+        ) : filtered.length === 0 ? (
+          <BoardState testId="my-tickets-no-matches">
+            No matches. Try changing or clearing filters.
+          </BoardState>
         ) : (
-          <>
-            {data.truncated && (
-              <BoardState kind="warning" testId="my-tickets-truncated">
-                Not all tickets were fetched — this list and its totals may be incomplete.
-              </BoardState>
-            )}
-            {rows.length === 0 ? (
-              <BoardState testId="my-tickets-empty">No tickets assigned to you.</BoardState>
-            ) : filtered.length === 0 ? (
-              <BoardState testId="my-tickets-no-matches">
-                No matches. Try changing or clearing filters.
-              </BoardState>
-            ) : (
-              board
-            )}
-          </>
+          board
         )}
       </BoardSection>
       {dialog}

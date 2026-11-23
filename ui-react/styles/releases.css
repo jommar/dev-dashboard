@@ -6,15 +6,15 @@
   margin: 0;
 }
 .releases-version {
-  min-height: 36px;
+  min-height: 28px;
   max-width: 100%;
-  padding: 5px var(--s2);
+  padding: 2px var(--s2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--panel2);
   color: var(--text);
   font: inherit;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
 }
 .releases-view {
   display: inline-flex;
@@ -36,7 +36,7 @@
 .releases-list {
   display: flex;
   flex-direction: column;
-  gap: var(--s5);
+  gap: var(--s4);
 }
 /* aria-busy sits on the panel root, and only the cards dim: the first-load spinner stays at full strength. */
 .release-group {
@@ -55,7 +55,7 @@
   display: flex;
   align-items: center;
   gap: var(--s2);
-  margin: 0 0 var(--s3);
+  margin: 0 0 var(--s2);
   color: var(--text);
   font-size: var(--fs-lg);
 }
