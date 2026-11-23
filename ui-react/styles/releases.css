@@ -40,10 +40,11 @@
 .releases-card[data-merge-state='merged'] {
   border-left-color: var(--green);
 }
-.releases-key {
+.releases-key,
+.releases-who {
   font-weight: 600;
 }
-.releases-who,
+.releases-who span,
 .releases-pr a,
 .releases-pr > span:first-child,
 .releases-sub {
@@ -52,8 +53,20 @@
   white-space: nowrap;
 }
 .releases-who {
-  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
 }
+.releases-who::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.releases-who:not(:first-child) {
+  margin-top: var(--s1);
+}
+.releases-who,
 .releases-note,
 .releases-sub {
   color: var(--muted);

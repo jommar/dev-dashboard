@@ -268,6 +268,26 @@ test('prRollupLabel formats empty, single, partial, and all-merged PR lists', ()
   assert.equal(releasesData.prRollupLabel([mergedPr(1), pr(2), pr(3)]), '1/3 PRs merged');
 });
 
+test('sortByAssignee groups tickets alphabetically by assignee with Unassigned last and key tie-break', () => {
+  const input = [
+    { key: 'TAP-2226', assignee: 'Patrick Rivera' },
+    { key: 'TAP-1988', assignee: 'EJ Bringuela' },
+    { key: 'TAP-3000', assignee: null },
+    { key: 'TAP-1869', assignee: 'Patrick Rivera' },
+    { key: 'TAP-1000', assignee: '' },
+  ];
+  assert.deepEqual(
+    releasesData.sortByAssignee(input).map((t) => `${releasesData.assigneeLabel(t)}:${t.key}`),
+    [
+      'EJ Bringuela:TAP-1988',
+      'Patrick Rivera:TAP-1869',
+      'Patrick Rivera:TAP-2226',
+      'Unassigned:TAP-1000',
+      'Unassigned:TAP-3000',
+    ],
+  );
+});
+
 test('prMergedText pluralizes PR counts accurately', () => {
   assert.equal(releasesData.prMergedText({ merged: 0, total: 0 }), '0 of 0 PRs merged');
   assert.equal(releasesData.prMergedText({ merged: 1, total: 1 }), '1 of 1 PR merged');

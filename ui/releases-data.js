@@ -126,6 +126,17 @@ export function formatReleaseText(data, scriptsByTicket = null) {
   return lines.join('\n');
 }
 
+export const assigneeLabel = (ticket) => String(ticket?.assignee || '').trim() || 'Unassigned';
+
+export function sortByAssignee(tickets) {
+  return [...tickets].sort((a, b) => {
+    const an = String(a.assignee || '').trim();
+    const bn = String(b.assignee || '').trim();
+    if (!an !== !bn) return an ? -1 : 1;
+    return an.localeCompare(bn, undefined, { sensitivity: 'base' }) || byKeyNumber(a, b);
+  });
+}
+
 // Moves non-done finished columns (Rejected, Duplicate) to the end, after done columns.
 export function finishedColumnsLast(columns) {
   const moved = (c) =>

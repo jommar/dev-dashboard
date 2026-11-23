@@ -28,8 +28,9 @@ const MAX_INITIAL_GZIP = 206 * KIB;
 // and to 914 KiB for the Copy prompt buttons across the Claude dialog, prompts editor and E2E check
 // (all lazy, plus one tiny helper in api.js), and to 919 KiB for the redesigned lazy Releases board.
 const MAX_TOTAL_RAW = 919 * KIB;
-// Raised from 180 KiB for per-PR viewer review background tints in prs.css.
-const MAX_TOTAL_CSS = 181 * KIB;
+// Raised from 180 KiB for per-PR viewer review background tints in prs.css, and to 182 KiB for
+// assignee dividers in releases.css.
+const MAX_TOTAL_CSS = 182 * KIB;
 // Modules that must load on demand: the five rarely used screens and the two dialogs, plus the
 // markdown renderer both the viewer and the chat pull in.
 const LAZY_MODULES = [

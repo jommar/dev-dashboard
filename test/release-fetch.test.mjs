@@ -148,7 +148,7 @@ function standardHandlers({ versions = rawVersions, issues = [], devStatus = {} 
   };
 }
 
-function installJira(t, handlers, projectKey = 'TAP') {
+function installJira(t, handlers, projectKey = 'TAP', draftPrs = new Set()) {
   const calls = [];
   const paths = { ...PATHS, versions: `/rest/api/3/project/${projectKey}/versions` };
   t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
@@ -164,7 +164,12 @@ function installJira(t, handlers, projectKey = 'TAP') {
         data: Object.fromEntries(
           aliases.map(([, index, number]) => [
             `a${index}`,
-            { pullRequest: { author: { login: `github-owner-${number}` } } },
+            {
+              pullRequest: {
+                author: { login: `github-owner-${number}` },
+                isDraft: draftPrs.has(Number(number)),
+              },
+            },
           ]),
         ),
       });
@@ -179,7 +184,7 @@ function installJira(t, handlers, projectKey = 'TAP') {
 async function startRelease(
   t,
   handlers,
-  { specifier = '../backend/releases.mjs', projectKey } = {},
+  { specifier = '../backend/releases.mjs', projectKey, draftPrs } = {},
 ) {
   const releases = await import(specifier);
   for (const name of ['fetchRelease', 'resetReleaseCaches']) {
@@ -190,7 +195,7 @@ async function startRelease(
   const store = await fixture.store();
   await accept(fixture, store);
   const snapshot = store.getSnapshot();
-  const calls = installJira(t, handlers, projectKey);
+  const calls = installJira(t, handlers, projectKey, draftPrs);
   const fetchRelease = (options = {}) =>
     releases.fetchRelease({ versionId: '18741', mine: true, refresh: false, snapshot, ...options });
   return { fetchRelease, calls };
@@ -656,4 +661,41 @@ test('with an underscore project key from the environment each ticket keeps the 
     'TransActComm/Portage-frontend#78',
     'TransActComm/TravelTracker#77',
   ]);
+});
+
+test('draft PRs are excluded from release tickets and merge state is rolled up without them', async (t) => {
+  const issues = [issue('39001', 'TAP-1987'), issue('39002', 'TAP-1988')];
+  const merged = rawPr({
+    number: 678,
+    repo: frontend,
+    title: '[TAP-1987] Accessibility fix',
+    status: 'MERGED',
+    head: 'TAP-1987/fix',
+  });
+  const specDraft = rawPr({
+    number: 118,
+    repo: 'TransActComm/ezat-specs',
+    title: '[TAP-1987] Spec',
+    status: 'UNKNOWN',
+    head: 'TAP-1987/spec',
+  });
+  const onlyDraft = rawPr({
+    number: 119,
+    repo: 'TransActComm/ezat-specs',
+    title: '[TAP-1988] Spec',
+    status: 'OPEN',
+    head: 'TAP-1988/spec',
+  });
+  const devStatus = {
+    39001: { count: 2, detail: [detailEntry([merged, specDraft])] },
+    39002: { count: 1, detail: [detailEntry([onlyDraft])] },
+  };
+  const { fetchRelease } = await startRelease(t, standardHandlers({ issues, devStatus }), {
+    draftPrs: new Set([118, 119]),
+  });
+  const [first, second] = (await fetchRelease()).tickets;
+  assert.equal(first.mergeState, 'merged');
+  assert.deepEqual(prIds(first), ['TransActComm/Portage-frontend#678']);
+  assert.equal(second.mergeState, 'no-pr');
+  assert.deepEqual(second.prs, []);
 });

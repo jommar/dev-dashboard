@@ -31,9 +31,9 @@ export async function getLogin(tokenStr, config) {
   return data.login;
 }
 
-// Jira's dev-status author name is not a reliable GitHub identity. Resolve the
-// actual login for a batch of linked PRs with one GitHub GraphQL request.
-export async function fetchPrOwners(prs, { snapshot } = {}) {
+// Jira's dev-status author name is not a reliable GitHub identity. Resolve
+// fields for a batch of linked PRs with one GitHub GraphQL request per 50 PRs.
+async function fetchPrGraphql(prs, selection, readNode, { snapshot } = {}) {
   const captured = captureConfiguration(snapshot);
   const tokenStr = captured.credentials.githubToken;
   const validPrs = [
@@ -53,25 +53,53 @@ export async function fetchPrOwners(prs, { snapshot } = {}) {
   if (!tokenStr || !validPrs.length) return {};
 
   try {
-    const owners = {};
+    const out = {};
     for (let offset = 0; offset < validPrs.length; offset += 50) {
       const batch = validPrs.slice(offset, offset + 50);
       const res = await postGraphql(
         captured,
-        pullRequestQuery(batch, () => ' author { login } '),
+        pullRequestQuery(batch, () => selection),
       );
       if (!res.ok) continue;
       const json = await res.json();
       if (!json.data || json.errors) continue;
       for (const [index, pr] of batch.entries()) {
-        const login = json.data[`a${index}`]?.pullRequest?.author?.login;
-        if (typeof login === 'string' && login) owners[`${pr.repo}#${pr.number}`] = login;
+        const value = readNode(json.data[`a${index}`]?.pullRequest);
+        if (value !== undefined) out[`${pr.repo}#${pr.number}`] = value;
       }
     }
-    return owners;
+    return out;
   } catch {
     return {};
   }
+}
+
+export function fetchPrOwners(prs, options) {
+  return fetchPrGraphql(
+    prs,
+    ' author { login } ',
+    (node) =>
+      typeof node?.author?.login === 'string' && node.author.login ? node.author.login : undefined,
+    options,
+  );
+}
+
+export function fetchPrMeta(prs, options) {
+  return fetchPrGraphql(
+    prs,
+    ' author { login } isDraft ',
+    (node) =>
+      node
+        ? {
+            owner:
+              typeof node.author?.login === 'string' && node.author.login
+                ? node.author.login
+                : null,
+            draft: node.isDraft === true,
+          }
+        : undefined,
+    options,
+  );
 }
 
 // Derive a lightweight {owner, repo} from a GitHub URL.

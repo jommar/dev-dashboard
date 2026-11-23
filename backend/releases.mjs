@@ -6,7 +6,7 @@ import { jiraConfig } from './jira.mjs';
 import { jiraGet, lookUpPullRequests, resetPullRequestCaches } from './dev-status.mjs';
 import { resetReleaseScriptsCache } from './release-scripts.mjs';
 import { collectCappedJiraIssues } from './jira-search.mjs';
-import { fetchPrOwners } from './github.mjs';
+import { fetchPrMeta } from './github.mjs';
 import {
   orderVersions,
   defaultVersionId,
@@ -129,15 +129,18 @@ export async function fetchRelease({
       prs,
     };
   });
-  const owners = await fetchPrOwners(
+  const meta = await fetchPrMeta(
     tickets.flatMap((ticket) => ticket.prs),
     { snapshot },
   );
   for (const ticket of tickets) {
-    ticket.prs = ticket.prs.map((pr) => ({
-      ...pr,
-      owner: owners[`${pr.repo}#${pr.number}`] ?? null,
-    }));
+    ticket.prs = ticket.prs
+      .filter((pr) => !meta[`${pr.repo}#${pr.number}`]?.draft)
+      .map((pr) => ({
+        ...pr,
+        owner: meta[`${pr.repo}#${pr.number}`]?.owner ?? null,
+      }));
+    ticket.mergeState = rollUpTicket(ticket.prs, ticket.prsStatus);
   }
   return {
     versions,

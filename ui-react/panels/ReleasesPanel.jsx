@@ -21,11 +21,13 @@ import { say } from '../../ui/harness.js';
 import { ticketKeysOfRows } from '../../ui/slack-ticket-links.js';
 import { boardColumns } from '../../ui/ticket-board.js';
 import {
+  assigneeLabel,
   clearStoredSelection,
   finishedColumnsLast,
   plural,
   prMergedText,
   readStoredSelection,
+  sortByAssignee,
   storeSelection,
   summarizeRelease,
 } from '../../ui/releases-data.js';
@@ -221,30 +223,49 @@ export function ReleasesPanel({ config, active, view = 'board', onViewChange }) 
     <BoardState testId="releases-empty">No tickets in this release.</BoardState>
   ) : (
     <Board label="Releases board" testId="releases-board">
-      {columns.map((column) => (
-        <BoardColumn
-          key={column.status}
-          id={slug(column.status.toLowerCase())}
-          label={column.status}
-          count={column.tickets.length}
-          testIdPrefix="releases-column-"
-          kind={column.kind}
-          copyKeys={column.tickets.map((ticket) => ticket.key)}
-        >
-          {column.tickets.map((ticket) => (
-            <li key={ticket.key}>
-              <ReleaseTicketCard
-                ticket={ticket}
-                jiraBase={jiraBase}
-                scripts={scripts.byTicket[ticket.key]}
-                slack={slack}
-                claude={claude}
-                onOpenClaude={openClaude}
-              />
-            </li>
-          ))}
-        </BoardColumn>
-      ))}
+      {columns.map((column) => {
+        const colId = slug(column.status.toLowerCase());
+        const ordered = sortByAssignee(column.tickets);
+        return (
+          <BoardColumn
+            key={column.status}
+            id={colId}
+            label={column.status}
+            count={ordered.length}
+            testIdPrefix="releases-column-"
+            kind={column.kind}
+            copyKeys={ordered.map((ticket) => ticket.key)}
+          >
+            {ordered.flatMap((ticket, index) => {
+              const who = assigneeLabel(ticket);
+              const prev = index > 0 ? assigneeLabel(ordered[index - 1]) : null;
+              const row = (
+                <li key={ticket.key}>
+                  <ReleaseTicketCard
+                    ticket={ticket}
+                    jiraBase={jiraBase}
+                    scripts={scripts.byTicket[ticket.key]}
+                    slack={slack}
+                    claude={claude}
+                    onOpenClaude={openClaude}
+                  />
+                </li>
+              );
+              if (who === prev) return [row];
+              return [
+                <li
+                  key={`who:${who}`}
+                  className="releases-who"
+                  data-testid={`releases-assignee-${colId}-${slug(who.toLowerCase())}`}
+                >
+                  <span>{who}</span>
+                </li>,
+                row,
+              ];
+            })}
+          </BoardColumn>
+        );
+      })}
     </Board>
   );
 

@@ -43,10 +43,7 @@ export function ReleaseTicketCard({ ticket, jiraBase, scripts, slack, claude, on
       data-merge-state={ticket.mergeState}
       data-testid={`releases-card-${key}`}
     >
-      <div className="board-card-top">
-        {jiraKey(key, jiraBase, tid('link'))}
-        {ticket.assignee && <span className="board-card-stat releases-who">{ticket.assignee}</span>}
-      </div>
+      <div className="board-card-top">{jiraKey(key, jiraBase, tid('link'))}</div>
       <TicketLaunchers
         ticketKey={key}
         testId={tid('links')}
