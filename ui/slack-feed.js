@@ -24,3 +24,16 @@ export function channelLabel(channel) {
     ? `#${channel.name}`
     : channel.name;
 }
+
+// Convert a threaded feed row into the shape the thread dialog expects, or null for non-threaded rows.
+// `subjectText` is kept only for thread rows so reply text never mis-titles the dialog.
+export function rowThread(row) {
+  const { ts, channelId } = row?.thread || {};
+  if (!ts || !channelId) return null;
+  return {
+    ts,
+    channel: { id: channelId },
+    url: row.url || '',
+    ...(row.kind === 'thread' && row.parentText ? { subjectText: row.parentText } : {}),
+  };
+}

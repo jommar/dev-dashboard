@@ -21,6 +21,16 @@ const feedRow = (id, kind, extra = {}) => ({
   ...extra,
 });
 
+const THREAD_TS = '1794905600.000100';
+const THREAD_REPLY_TS = '1794905660.000200';
+const SLACK_STATUS = {
+  connected: true,
+  verified: true,
+  userId: 'U0EXAMPLEME',
+  teamId: 'T0EXAMPLE1',
+  sessionVersion: 'v-example-1',
+};
+
 const FEED = {
   available: true,
   updatedAt: NOW,
@@ -29,11 +39,46 @@ const FEED = {
     feedRow('mention-one', 'mention', { unread: true }),
     feedRow('mention-two', 'keyword'),
   ],
-  threads: [feedRow('thread-one', 'thread', { replies: 3, parentText: 'Example parent text' })],
+  threads: [
+    feedRow('thread-one', 'thread', {
+      replies: 3,
+      parentText: 'Example parent text',
+      thread: { ts: THREAD_TS, channelId: 'C0EXAMPLE1' },
+    }),
+  ],
   reactions: [
     feedRow('reaction-one', 'reaction', { reaction: { by: 'Example Person', name: 'tada' } }),
   ],
 };
+
+const threadReply = (ts = THREAD_TS, channelId = 'C0EXAMPLE1') => ({
+  available: true,
+  thread: {
+    ts,
+    url: `${URL_BASE}/thread/${channelId}-${ts}`,
+    channel: { id: channelId, name: 'example-channel', kind: 'channel' },
+    replyCount: 1,
+    truncated: false,
+    updatedAt: NOW,
+    names: { U0EXAMPLE1: 'Alex Example', U0EXAMPLEME: 'You' },
+    messages: [
+      {
+        ts,
+        author: { id: 'U0EXAMPLE1', name: 'Alex Example', isSelf: false },
+        at: NOW,
+        text: 'Example parent text',
+        mrkdwn: 'Example parent text',
+      },
+      {
+        ts: THREAD_REPLY_TS,
+        author: { id: 'U0EXAMPLEME', name: 'You', isSelf: true },
+        at: NOW,
+        text: 'Example reply in dialog',
+        mrkdwn: 'Example reply in dialog',
+      },
+    ],
+  },
+});
 
 const pendingWith = (activityMentions, available = true) =>
   available
@@ -46,23 +91,49 @@ const pendingWith = (activityMentions, available = true) =>
       }
     : { available: false };
 
-// Answers the two Slack routes the drawer reads and counts every request to each. `state.feed` and
-// `state.pending` are what the next request gets (a function is called per request; a number is an
-// HTTP status for an error answer).
-async function mockSlack(page, { feed = FEED, pending = pendingWith(0) } = {}) {
-  const state = { feed, pending, feedReads: 0, pendingReads: 0 };
-  const answer = (route, value) => {
-    const body = typeof value === 'function' ? value() : value;
+// Answers the Slack routes the drawer and its thread dialog read and counts every request.
+// `state.feed`, `state.pending`, `state.status` and `state.thread` are what the next request gets
+// (a function is called per request; a number is an HTTP status for an error answer).
+async function mockSlack(
+  page,
+  { feed = FEED, pending = pendingWith(0), status = SLACK_STATUS, thread = threadReply() } = {},
+) {
+  const state = {
+    feed,
+    pending,
+    status,
+    thread,
+    feedReads: 0,
+    pendingReads: 0,
+    statusReads: 0,
+    threadReads: 0,
+    threadRequests: [],
+  };
+  const answer = (route, value, req) => {
+    const body = typeof value === 'function' ? value(req) : value;
     if (typeof body === 'number') return route.fulfill({ status: body, json: { error: 'failed' } });
     return route.fulfill({ json: body });
   };
   await page.route('**/api/slack/feed', (route) => {
     state.feedReads += 1;
-    return answer(route, state.feed);
+    return answer(route, state.feed, route.request());
   });
   await page.route('**/api/slack/pending', (route) => {
     state.pendingReads += 1;
-    return answer(route, state.pending);
+    return answer(route, state.pending, route.request());
+  });
+  await page.route('**/api/slack/status', (route) => {
+    state.statusReads += 1;
+    return answer(route, state.status, route.request());
+  });
+  await page.route('**/api/slack/thread*', (route) => {
+    const url = new URL(route.request().url());
+    state.threadReads += 1;
+    state.threadRequests.push({
+      ts: url.searchParams.get('ts'),
+      channel: url.searchParams.get('channel'),
+    });
+    return answer(route, state.thread, route.request());
   });
   return state;
 }
@@ -445,4 +516,133 @@ test('a failed pending fetch is retried in a minute, a server answer of unavaila
   expect(slack.pendingReads, 'an unavailable answer backs off to five minutes').toBe(3);
   await page.clock.runFor(180_000);
   await expect.poll(() => slack.pendingReads).toBe(4);
+});
+
+test('threaded rows open SlackThreadDialog while non-threaded rows stay external links', async ({
+  page,
+}) => {
+  const mentionThreadTs = '1794905700.000100';
+  const reactThreadTs = '1794905800.000100';
+  const feed = {
+    ...FEED,
+    mentions: [
+      feedRow('mention-threaded', 'mention', {
+        unread: true,
+        thread: { ts: mentionThreadTs, channelId: 'C0EXAMPLE1' },
+      }),
+      feedRow('mention-plain', 'mention'),
+    ],
+    reactions: [
+      feedRow('reaction-threaded', 'reaction', {
+        reaction: { by: 'Example Person', name: 'tada' },
+        thread: { ts: reactThreadTs, channelId: 'C0EXAMPLE2' },
+      }),
+    ],
+  };
+  const slack = await mockSlack(page, {
+    feed,
+    thread: (req) => {
+      const url = new URL(req.url());
+      return threadReply(url.searchParams.get('ts'), url.searchParams.get('channel'));
+    },
+  });
+  await page.goto('/#/home');
+  await openSlack(page);
+
+  const plainRow = page.getByTestId('slack-feed-row-mention-plain');
+  await expect(plainRow).toHaveJSProperty('tagName', 'A');
+  await expect(plainRow).toHaveAttribute('target', '_blank');
+  await expect(plainRow).toHaveAttribute('rel', 'noopener noreferrer');
+
+  const threadedMention = page.getByTestId('slack-feed-row-mention-threaded');
+  await expect(threadedMention).toHaveJSProperty('tagName', 'BUTTON');
+  await expect(threadedMention).toHaveAttribute('aria-haspopup', 'dialog');
+
+  await threadedMention.click();
+  const dialog = page.getByTestId('slack-thread-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('#example-channel');
+  await expect(dialog).toContainText('Example reply in dialog');
+  expect(slack.threadRequests).toContainEqual({ ts: mentionThreadTs, channel: 'C0EXAMPLE1' });
+  await page.getByTestId('slack-thread-close').click();
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByTestId('slack-feed-view-threads').click();
+  const threadRow = page.getByTestId('slack-feed-row-thread-one');
+  await expect(threadRow).toHaveJSProperty('tagName', 'BUTTON');
+  await expect(threadRow).toHaveAttribute('aria-haspopup', 'dialog');
+  await threadRow.click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Example parent text');
+  expect(slack.threadRequests).toContainEqual({ ts: THREAD_TS, channel: 'C0EXAMPLE1' });
+  await page.getByTestId('slack-thread-close').click();
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByTestId('slack-feed-view-reactions').click();
+  const reactRow = page.getByTestId('slack-feed-row-reaction-threaded');
+  await expect(reactRow).toHaveJSProperty('tagName', 'BUTTON');
+  await expect(reactRow).toHaveAttribute('aria-haspopup', 'dialog');
+  await reactRow.click();
+  await expect(dialog).toBeVisible();
+  expect(slack.threadRequests).toContainEqual({ ts: reactThreadTs, channel: 'C0EXAMPLE2' });
+});
+
+test('Escape and Close shut SlackThreadDialog without closing the drawer and restore focus', async ({
+  page,
+}) => {
+  await mockSlack(page);
+  await page.goto('/#/home');
+  await openSlack(page);
+  await page.getByTestId('slack-feed-view-threads').click();
+
+  const row = page.getByTestId('slack-feed-row-thread-one');
+  const dialog = page.getByTestId('slack-thread-dialog');
+
+  await row.click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Example reply in dialog');
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(drawer(page)).toBeVisible();
+  await expect(row).toBeFocused();
+
+  await row.click();
+  await expect(dialog).toBeVisible();
+  await page.getByTestId('slack-thread-close').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(drawer(page)).toBeVisible();
+  await expect(row).toBeFocused();
+});
+
+test('session change or status mismatch closes the open thread dialog and reloads the drawer', async ({
+  page,
+}) => {
+  const slack = await mockSlack(page);
+  await page.goto('/#/home');
+  await openSlack(page);
+  await page.getByTestId('slack-feed-view-threads').click();
+
+  const row = page.getByTestId('slack-feed-row-thread-one');
+  const dialog = page.getByTestId('slack-thread-dialog');
+  const readsBefore = slack.feedReads;
+
+  await row.click();
+  await expect(dialog).toBeVisible();
+
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('slack-session-changed', { detail: { source: 'spec' } })),
+  );
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => slack.feedReads).toBeGreaterThan(readsBefore);
+
+  // A session mismatch reported by /api/slack/status while opening the dialog closes it and reloads.
+  await page.getByTestId('slack-feed-view-threads').click();
+  const readsBeforeMismatch = slack.feedReads;
+  slack.status = { connected: false };
+  slack.feed = { available: false, reason: 'disconnected' };
+  await row.click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => slack.feedReads).toBeGreaterThan(readsBeforeMismatch);
+  await expect(page.getByTestId('slack-feed-disconnected')).toBeVisible();
 });

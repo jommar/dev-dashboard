@@ -16,6 +16,7 @@ const INFO_BUDGET = 10;
 const CONCURRENCY = 5;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_LIMIT = 200;
+const KNOWN_TTL_MS = 30 * 60 * 1000;
 // A row Slack would not give is not asked again for this long, so an unreadable one costs no call per open.
 const MISS_TTL_MS = 60 * 1000;
 const TEXT_LIMIT = 280;
@@ -47,6 +48,7 @@ function entryOf(item) {
           kind: 'reaction',
           channel,
           ts,
+          threadTs,
           cacheKey: `${channel}:${ts}`,
           reaction: {
             user: item.item.reaction?.user,
@@ -112,10 +114,13 @@ function channelDescription(info, names) {
   return { name, type: info.is_private ? 'private' : 'channel' };
 }
 
+const KIND_BY_TYPE = { dm: 'im', group: 'mpim', private: 'channel', channel: 'channel' };
+
 export function createSlackFeed({ call, session, verify, users, now, isCurrent, generation }) {
   const messages = new Map(); // cacheKey -> { at, value }
   const channels = new Map(); // channel id -> { at, value }
   const misses = new Map(); // cacheKey or channel id -> { at, value: true }, kept MISS_TTL_MS
+  const known = new Map(); // "<channel>:<threadTs>" -> { at, value: { name, kind } }
   let inflight = null; // { gen, promise }
 
   function fresh(cache, key, ttl = CACHE_TTL_MS) {
@@ -237,6 +242,7 @@ export function createSlackFeed({ call, session, verify, users, now, isCurrent, 
       author: message ? nameOf(message.user) : '',
       text: message ? plainText(message.text, names, TEXT_LIMIT) : '',
     };
+    if (entry.threadTs) row.thread = { ts: entry.threadTs, channelId: entry.channel };
     if (entry.kind === 'thread') {
       row.replies = entry.replies;
       row.parentText = message ? plainText(message.parentText, names, PARENT_LIMIT) : '';
@@ -261,6 +267,15 @@ export function createSlackFeed({ call, session, verify, users, now, isCurrent, 
     const names = await users(credentials, gen).catch(() => ({}));
     const flags = await hydrate(credentials, ordered, gen);
     if (!isCurrent(gen)) return UNAVAILABLE;
+    for (const entry of ordered) {
+      if (!entry.threadTs) continue;
+      const info = fresh(channels, entry.channel);
+      const desc = info ? channelDescription(info, names) : null;
+      remember(known, `${entry.channel}:${entry.threadTs}`, {
+        name: desc?.name ?? '',
+        kind: desc ? (KIND_BY_TYPE[desc.type] ?? 'channel') : 'channel',
+      });
+    }
     const context = { teamId: identity.teamId, me: identity.userId, names };
     const rows = (list) => list.map((entry) => publicRow(entry, context));
     return {
@@ -289,12 +304,22 @@ export function createSlackFeed({ call, session, verify, users, now, isCurrent, 
     return promise;
   }
 
+  function isVerifiedRoot(channelId, ts) {
+    return fresh(known, `${channelId}:${ts}`, KNOWN_TTL_MS) !== undefined;
+  }
+
+  function describe(channelId, ts) {
+    const hit = fresh(known, `${channelId}:${ts}`, KNOWN_TTL_MS);
+    return { id: channelId, name: hit?.name ?? '', kind: hit?.kind ?? 'channel' };
+  }
+
   function clear() {
     messages.clear();
     channels.clear();
     misses.clear();
+    known.clear();
     inflight = null;
   }
 
-  return { feed, clear };
+  return { feed, isVerifiedRoot, describe, clear };
 }

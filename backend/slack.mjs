@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { withoutSecrets } from './config.mjs';
 import { classifyError, upstreamHealth } from './upstream.mjs';
 import { readTokenFile, stageTokenFile } from './credentials.mjs';
-import { createSlackBoard, eligibleRoot } from './slack-board.mjs';
+import { createSlackBoard } from './slack-board.mjs';
 import { createSlackFeed, mentionUnread } from './slack-feed.mjs';
 import { createSlackTicketThreads } from './slack-ticket-threads.mjs';
 import {
@@ -360,23 +360,38 @@ export function createSlackIntegration({
   // before any credential is read, and every answer is either a thread or
   // "unavailable" — never an exception out of the HTTP surface.
 
-  // `channelId` names the conversation of a thread the shared list does not cover (one found by
-  // ticket search); without it, or when it is the list's own channel, this is that channel's thread.
+  // `channelId` names the conversation of a thread found by ticket search or the activity feed;
+  // without it, or when it matches the board's own channel, this is that channel's thread.
   async function thread(ts, channelId) {
     const key = typeof ts === 'string' ? ts.trim() : '';
     const other = typeof channelId === 'string' ? channelId.trim() : '';
-    if (!THREAD_TS.test(key) || !eligibleRoot(key, now())) return { available: false };
+    if (!THREAD_TS.test(key)) return { available: false };
     if (other && !CHANNEL_ID.test(other)) return { available: false };
     const credentials = session();
     if (!credentials) return { available: false };
     const gen = generation;
     try {
-      const own = other ? await channel(credentials, gen) : null;
-      const elsewhere = Boolean(other) && other !== own?.id;
+      let source = null;
+      let own = null;
+      if (other) {
+        if (ticketThreads.isVerifiedRoot(other, key)) source = 'ticket';
+        else if (feed.isVerifiedRoot(other, key)) source = 'feed';
+        else if (board.isVerifiedRoot(key)) {
+          own = await channel(credentials, gen);
+          if (own?.id === other) source = 'board';
+        }
+      } else if (board.isVerifiedRoot(key)) {
+        source = 'board';
+      }
+      if (!source) return { available: false };
       const verified = () =>
-        elsewhere ? ticketThreads.isVerifiedRoot(other, key) : board.isVerifiedRoot(key);
+        source === 'ticket'
+          ? ticketThreads.isVerifiedRoot(other, key)
+          : source === 'feed'
+            ? feed.isVerifiedRoot(other, key)
+            : board.isVerifiedRoot(key);
       if (!verified()) return { available: false };
-      const cacheKey = elsewhere ? `${other}:${key}` : key;
+      const cacheKey = source === 'board' ? key : `${other}:${key}`;
       const hit = threadCache.get(cacheKey);
       if (hit && now() - hit.at < THREAD_TTL_MS) return hit.value;
       const identity = await verify(credentials, gen);
@@ -384,9 +399,12 @@ export function createSlackIntegration({
         return { available: false };
       const me = identity.userId;
       const teamId = identity.teamId || credentials.teamId || '';
-      const target = elsewhere
-        ? ticketThreads.describe(other, key)
-        : await channel(credentials, gen);
+      const target =
+        source === 'ticket'
+          ? ticketThreads.describe(other, key)
+          : source === 'feed'
+            ? feed.describe(other, key)
+            : own || (await channel(credentials, gen));
       if (!target) return { available: false };
 
       const messages = [];
@@ -438,7 +456,9 @@ export function createSlackIntegration({
         thread: {
           ts: key,
           ...threadLinkFields({ teamId, channelId: target.id, ts: key }),
-          channel: elsewhere ? target : { id: target.id, name: target.name },
+          channel: target.kind
+            ? { id: target.id, name: target.name, kind: target.kind }
+            : { id: target.id, name: target.name },
           replyCount: Math.max(0, messages.length - 1),
           truncated,
           updatedAt: new Date(now()).toISOString(),

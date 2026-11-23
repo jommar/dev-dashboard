@@ -304,15 +304,21 @@ what Slack's Activity pane shows. It is read-only and never marks anything read,
 mentions are read in Slack.
 
 - **Opening and the body.** The tab calls `loadSlackFeedPanel()` and opens when it settles, success or failure; the
-  body sits in `ChunkBoundary`, whose failure line is `slack-feed-load-failed`. The panel reads `getSlackFeed()` on mount
-  and on its Refresh button (`slack-feed-refresh`, `aria-disabled` while a read is out, so focus stays; one read at a time,
-  an answer after unmount dropped, a failed refresh keeps the rows already shown), **never on a timer**, and unmounts on
-  close, so every open starts on **Mentions**. Tabs (`FEED_TABS` in `ui/slack-feed.js`, one `BoardTabs`, test ids
-  `slack-feed-view-<id>`): Mentions, Threads, Reactions; a tab's count is its unread rows (`tabCounts`, with
-  `hint: 'unread'` so it is spoken), never its row count. Not `BoardSection` (it adds a heading and status region).
-  Rows are plain `a[href][target=_blank][rel="noopener noreferrer"]` links (`slack-feed-row-<id>`) to the message in
-  Slack, because `thread()` serves one channel and only verified roots and cannot open an arbitrary message; never route
-  a row to the thread dialog. An unhydrated row reads "Unknown conversation" and "Message not loaded".
+  body sits in `ChunkBoundary`, whose failure line is `slack-feed-load-failed`. The panel reads `getSlackFeed()` and
+  `getSlackStatus()` in parallel on mount and on its Refresh button (`slack-feed-refresh`, `aria-disabled` while a read
+  is out, so focus stays; one read at a time, an answer after unmount or a session change is dropped via a `request` ref
+  counter, a failed refresh keeps the rows already shown), **never on a timer**, and unmounts on close, so every open
+  starts on **Mentions**. Tabs (`FEED_TABS` in `ui/slack-feed.js`, one `BoardTabs`, test ids `slack-feed-view-<id>`):
+  Mentions, Threads, Reactions; a tab's count is its unread rows (`tabCounts`, with `hint: 'unread'` so it is spoken),
+  never its row count. Not `BoardSection` (it adds a heading and status region). Threaded rows (`rowThread(row)` in
+  `ui/slack-feed.js` — any row carrying `row.thread = { ts, channelId }`: `thread_v2` plus threaded mentions and
+  reactions) render as `<button type="button" aria-haspopup="dialog">` (`slack-feed-row-<id>`) and open
+  `SlackThreadDialog` through `useSlackThreadDialog({ source: 'slack-feed', enforceWindow: false, ... })` (which passes
+  `enabled = false` to `useSlackActivityClock` so the drawer stays timer-free and omits `isEligible` so active threads
+  older than 28 days open; `subjectText` is passed only for `kind === 'thread'` so reply text never mis-titles the
+  dialog; Escape/Close shuts the dialog without closing `EdgeDrawer` and restores focus to the row). Non-threaded rows
+  remain plain `a[href][target=_blank][rel="noopener noreferrer"]` links (`slack-feed-row-<id>`) to the message in
+  Slack. An unhydrated row reads "Unknown conversation" and "Message not loaded".
 - **Disconnected and unavailable are calm.** `reason: 'disconnected'` shows `slack-feed-disconnected` with a link
   (`slack-feed-connect-link`) to `#/slack` that closes the drawer and refocuses the tab; the drawer never connects (the
   Slack tab owns sign-in) and shows no Connect button. `unavailable` shows `slack-feed-unavailable` with Refresh.
@@ -323,9 +329,12 @@ mentions are read in Slack.
   call, every other failure (a feed `ok:false`, a thrown call, a session change mid-read) is `unavailable`. `partial`
   holds `budget`, `rate_limited`, `unreadable`. A cross-site or same-site `Sec-Fetch-Site` is answered `403`
   `INVALID_ORIGIN` directly in the route, as the chat stream does (a thrown one would read `OPERATION_FAILED`), because a
-  read spends up to about 35 Slack calls. `/api/slack/` keeps its `[http]` line message-free. Rows carry names and text,
-  never user, channel or user-group ids: an unmapped `<@U..>` becomes `@someone`, an unlabelled `<#C..>` `#channel` and a `<!subteam^S..>` its label or `@group` (`plainText`,
-  before the shared `cleanText`, which the Slack board keeps untouched); an id with no known name is `''`.
+  read spends up to about 35 Slack calls. `/api/slack/` keeps its `[http]` line message-free. Threaded rows (any entry
+  with a non-empty `threadTs`, including `message_reaction` via `entryOf`) carry `thread: { ts, channelId }`;
+  non-threaded rows omit `thread`. Rows otherwise carry names and text only, never user or user-group ids (and channel
+  ids appear only in `url` and `row.thread.channelId`): an unmapped `<@U..>` becomes `@someone`, an unlabelled `<#C..>`
+  `#channel` and a `<!subteam^S..>` its label or `@group` (`plainText`, before the shared `cleanText`, which the Slack
+  board keeps untouched); an id with no known name is `''`.
 - **Calls and caches.** One `activity.feed` page (`types=at_user,at_channel,keyword,thread_v2,message_reaction`,
   `limit=30`), then hydration in tab order (mentions, threads, reactions), newest first, pool of 5: at most 24
   `conversations.replies` (`HYDRATE_BUDGET`, one per distinct message, never `conversations.history`) and 10
@@ -335,9 +344,15 @@ mentions are read in Slack.
   `<channel>:<ts>`, thread rows `thread:<channel>:<latest_ts>` so a reaction cannot hand a thread a parent-less entry) and
   channel infos are cached 10 minutes, 200 entries each, oldest out; a read Slack would not give is remembered 60 s
   (`MISS_TTL_MS`, a negative cache written only for an `ok:false` or unusable payload, never for a throw or rate limit)
-  so an unreadable row costs no call per open. Concurrent calls share one in-flight promise; there is no page cache.
-  `clearCaches()` calls `feed.clear()` (all three maps), and every await re-checks `isCurrent(gen)`, so an account
-  switch returns `unavailable` and a stale read writes no cache.
+  so an unreadable row costs no call per open. Verified feed thread roots are recorded in a `known` map
+  (`<channel>:<threadTs> -> { name, kind }`, capped at `CACHE_LIMIT`, `KNOWN_TTL_MS` 30 minutes) after `isCurrent(gen)`
+  in `read()`, and exposed via `isVerifiedRoot(channelId, ts)` and `describe(channelId, ts)` (`dm` -> `'im'`, `group` ->
+  `'mpim'`, `private`/`channel` -> `'channel'`). `slack.thread(ts, channelId)` checks `ticketThreads.isVerifiedRoot` and
+  `feed.isVerifiedRoot` before falling back to `board.isVerifiedRoot` + `channel()`, with no global 28-day cutoff (board
+  and ticket-thread verifiers still enforce 28 days synchronously, while feed-verified threads open regardless of root
+  age and cold-board own-channel rows open with zero extra Slack calls). Concurrent calls share one in-flight promise;
+  there is no page cache. `clearCaches()` calls `feed.clear()` (all four maps), and every await re-checks
+  `isCurrent(gen)`, so an account switch returns `unavailable` and a stale read writes no cache.
 - **Method literals and read-only.** `activity.feed`, `conversations.replies` and `conversations.info` of the feed live
   only in `slack-feed.mjs`, which is in `NEW_MODULES` of `test/slack-watch-readonly.test.mjs`; no `activity.mark*` or any
   write method. Every call goes through `call()`, so rate limits and upstream health are the integration's.
@@ -505,11 +520,12 @@ Requests and Sprint card chips through `ui-react/hooks/useTicketSlackThreads.jsx
 differences passed in rather than forked:
 
 - `ui-react/hooks/useSlackThreadDialog.jsx` — the activity clock, the rule that a thread past the
-  cutoff closes its dialog, the `slack-session-changed` listener, the dialog's session-mismatch
-  handler and the `<SlackThreadDialog>` element. The panel keeps `openThread` (its own session code
-  closes it too) and passes its `source` name, snapshot, session-identity ref, `resetSession` /
-  `reloadSession` (how each forgets and refetches its data), and for Slack `resolveOpener`, for My
-  Tickets `onExpire`. It returns `{ now, dialog }`; render `{dialog}` inside the panel, beside the card.
+  cutoff closes its dialog (both skipped when `enforceWindow: false`, used by `SlackFeedPanel` so the
+  activity drawer stays timer-free and opens >28-day-old threads), the `slack-session-changed` listener,
+  the dialog's session-mismatch handler and the `<SlackThreadDialog>` element. The panel keeps `openThread`
+  (its own session code closes it too) and passes its `source` name, snapshot, session-identity ref,
+  `resetSession` / `reloadSession` (how each forgets and refetches its data), and for Slack `resolveOpener`,
+  for My Tickets `onExpire`. It returns `{ now, dialog }`; render `{dialog}` inside the panel, beside the card.
 - `slackCoverage(snapshot)` in `ui/slack-coverage.js` — the two reason-specific warnings and
   `incomplete` (partial, truncated or either warning). Each panel adds its own causes (Slack:
   replies still being checked, a stale update, threads it cannot place; My Tickets: a continuation)
@@ -526,7 +542,7 @@ differences passed in rather than forked:
   the hook re-asks every 20 s while `remaining > 0` (12 times at most). A hit counts only as an opening message
   whose first line `threadTicketKeys` matches. A thread's identity is `channelId:ts`, never `ts` alone (the
   hook's merge and `isVerifiedRoot` both key on it); `slack.thread(ts, channel)` reads another channel only
-  for a thread this module listed. `slack-board.mjs` stays single-channel and is not to be retrofitted; it only
+  for a thread listed by this module or by `backend/slack-feed.mjs`. `slack-board.mjs` stays single-channel and is not to be retrofitted; it only
   exports `searchRoot`.
 - `readScroll` / `writeScroll` in `hooks/usePreservedInteraction.js` — the one way a scroll place
   is read and put back by `data-testid`; `Board` (per re-render) and `useSectionScroll` (per view)

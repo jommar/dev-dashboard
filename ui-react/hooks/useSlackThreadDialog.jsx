@@ -31,16 +31,17 @@ export function useSlackThreadDialog({
   resetSession,
   reloadSession,
   onExpire,
+  enforceWindow = true,
 }) {
-  const [now, currentTime] = useSlackActivityClock(snapshot, active, openThread);
+  const [now, currentTime] = useSlackActivityClock(snapshot, active, openThread, enforceWindow);
   const threadIsEligible = (ts) => eligibleSlackRoot(ts, currentTime());
 
   useEffect(() => {
-    if (openThread && !eligibleSlackRoot(openThread.ts, now)) {
+    if (enforceWindow && openThread && !eligibleSlackRoot(openThread.ts, now)) {
       onExpire?.();
       setOpenThread(null);
     }
-  }, [openThread, now, setOpenThread, onExpire]);
+  }, [enforceWindow, openThread, now, setOpenThread, onExpire]);
 
   useEffect(() => {
     const sessionChanged = (event) => {
@@ -63,7 +64,7 @@ export function useSlackThreadDialog({
       thread={openThread}
       onClose={() => setOpenThread(null)}
       resolveOpener={resolveOpener}
-      isEligible={threadIsEligible}
+      isEligible={enforceWindow ? threadIsEligible : undefined}
       sessionIdentity={sessionIdentity.current}
       onSessionMismatch={sessionMismatch}
     />

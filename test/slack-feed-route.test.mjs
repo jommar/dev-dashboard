@@ -108,11 +108,50 @@ test('route reply key sets: the page and every row kind', async (t) => {
   assert.deepEqual(Object.keys(body.mentions[0]).sort(), MENTION_KEYS);
   assert.deepEqual(
     Object.keys(body.threads[0]).sort(),
-    [...MENTION_KEYS, 'parentText', 'replies'].sort(),
+    [...MENTION_KEYS, 'parentText', 'replies', 'thread'].sort(),
   );
+  assert.deepEqual(Object.keys(body.threads[0].thread).sort(), ['channelId', 'ts']);
   assert.deepEqual(Object.keys(body.reactions[0]).sort(), [...MENTION_KEYS, 'reaction'].sort());
   assert.deepEqual(Object.keys(body.reactions[0].reaction).sort(), ['by', 'name']);
   assert.deepEqual(Object.keys(body.mentions[0].channel).sort(), ['name', 'type']);
+});
+
+test('route reply key sets: threaded mention and reaction carry thread { channelId, ts }', async (t) => {
+  const rootTs = tsOf(40);
+  const mentionTs = tsOf(55);
+  const reactedTs = tsOf(65);
+  const threadedReaction = reactionItem({ key: 'k-react-threaded', channel: ROOM, ts: reactedTs });
+  threadedReaction.item.message.thread_ts = rootTs;
+  const { integration, writeSession } = connectedFeed(t, {
+    items: [
+      mentionItem({
+        key: 'k-mention-threaded',
+        channel: ROOM,
+        ts: mentionTs,
+        threadTs: rootTs,
+        unread: true,
+      }),
+      threadedReaction,
+    ],
+    messages: {
+      [`${ROOM}:${mentionTs}`]: { ts: mentionTs, thread_ts: rootTs, user: ALEX, text: 'In thread' },
+      [`${ROOM}:${reactedTs}`]: { ts: reactedTs, thread_ts: rootTs, user: ME, text: 'My reply' },
+    },
+  });
+  writeSession();
+  const { request } = await startRoute(t, { integrations: { slack: integration } });
+
+  const res = await request('/api/slack/feed');
+
+  assert.equal(res.status, 200);
+  const body = res.json();
+  assert.deepEqual(Object.keys(body.mentions[0]).sort(), [...MENTION_KEYS, 'thread'].sort());
+  assert.deepEqual(body.mentions[0].thread, { ts: rootTs, channelId: ROOM });
+  assert.deepEqual(
+    Object.keys(body.reactions[0]).sort(),
+    [...MENTION_KEYS, 'reaction', 'thread'].sort(),
+  );
+  assert.deepEqual(body.reactions[0].thread, { ts: rootTs, channelId: ROOM });
 });
 
 test('route hygiene: a failing feed leaves one [http] line with no message and no query', async (t) => {

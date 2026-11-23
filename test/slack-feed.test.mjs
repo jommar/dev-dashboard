@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { slackTimestamp, threadLinkFields } from '../backend/slack-model.mjs';
+import { rowThread } from '../ui/slack-feed.js';
 import { deferred, flush } from './slack-watch-fixture.mjs';
 import {
   ALEX,
@@ -185,7 +186,7 @@ test('threads and reactions: one chrono activity.feed page of 30, replies asked 
   );
 });
 
-test('feed reply carries names and text, never a user or channel id outside the url', async (t) => {
+test('feed reply carries names and text, never a user or channel id outside url and thread.channelId', async (t) => {
   const feed = threadsAndReactionsFeed();
   const { integration, writeSession } = connectedFeed(t, feed);
   writeSession();
@@ -193,9 +194,207 @@ test('feed reply carries names and text, never a user or channel id outside the 
   const result = await integration.feed();
   const rows = [...result.mentions, ...result.threads, ...result.reactions];
   assert.equal(rows.length, 2);
-  const withoutUrls = JSON.stringify(rows.map(({ url: _url, ...row }) => row));
+  const withoutAllowedIds = JSON.stringify(
+    rows.map(({ url: _url, thread, ...row }) => ({
+      ...row,
+      ...(thread ? { thread: { ...thread, channelId: undefined } } : {}),
+    })),
+  );
   for (const id of [ROOM, OTHER_ROOM, ME, ALEX, SAM])
-    assert.ok(!withoutUrls.includes(id), `${id} must not reach the browser`);
+    assert.ok(!withoutAllowedIds.includes(id), `${id} must not reach the browser`);
+});
+
+test('threaded rows emit thread root identity across mentions, threads and reactions while non-threaded rows omit it', async (t) => {
+  const parentTs = tsOf(100);
+  const latestTs = tsOf(160);
+  const mentionRoot = tsOf(110);
+  const mentionReply = tsOf(170);
+  const plainMentionTs = tsOf(180);
+  const reactRoot = tsOf(120);
+  const reactReply = tsOf(190);
+  const plainReactTs = tsOf(200);
+  const threadedReaction = reactionItem({
+    key: 'k-react-threaded',
+    channel: OTHER_ROOM,
+    ts: reactReply,
+    feedTs: tsOf(195),
+    by: ALEX,
+    name: 'eyes',
+  });
+  threadedReaction.item.message.thread_ts = reactRoot;
+
+  const { integration, writeSession } = connectedFeed(t, {
+    items: [
+      threadItem({ key: 'k-thread', channel: ROOM, threadTs: parentTs, latestTs, unreadCount: 2 }),
+      mentionItem({
+        key: 'k-mention-threaded',
+        channel: ROOM,
+        ts: mentionReply,
+        threadTs: mentionRoot,
+      }),
+      mentionItem({ key: 'k-mention-plain', channel: ROOM, ts: plainMentionTs }),
+      threadedReaction,
+      reactionItem({ key: 'k-react-plain', channel: OTHER_ROOM, ts: plainReactTs }),
+    ],
+    messages: {
+      [`${ROOM}:${parentTs}`]: { ts: parentTs, user: SAM, text: 'Parent topic' },
+      [`${ROOM}:${latestTs}`]: { ts: latestTs, thread_ts: parentTs, user: ALEX, text: 'Reply' },
+      [`${ROOM}:${mentionReply}`]: {
+        ts: mentionReply,
+        thread_ts: mentionRoot,
+        user: ALEX,
+        text: 'Mention in thread',
+      },
+      [`${ROOM}:${plainMentionTs}`]: { ts: plainMentionTs, user: ALEX, text: 'Top-level mention' },
+      [`${OTHER_ROOM}:${reactReply}`]: {
+        ts: reactReply,
+        thread_ts: reactRoot,
+        user: ME,
+        text: 'Threaded reply reacted to',
+      },
+      [`${OTHER_ROOM}:${plainReactTs}`]: { ts: plainReactTs, user: ME, text: 'Top-level message' },
+    },
+  });
+  writeSession();
+
+  const result = await integration.feed();
+
+  assert.equal(result.available, true);
+  assert.deepEqual(result.threads[0].thread, { ts: parentTs, channelId: ROOM });
+
+  const byId = (rows) => Object.fromEntries(rows.map((row) => [row.id, row]));
+  const mentions = byId(result.mentions);
+  assert.deepEqual(mentions['k-mention-threaded'].thread, { ts: mentionRoot, channelId: ROOM });
+  assert.equal('thread' in mentions['k-mention-plain'], false);
+
+  const reactions = byId(result.reactions);
+  assert.deepEqual(reactions['k-react-threaded'].thread, { ts: reactRoot, channelId: OTHER_ROOM });
+  assert.equal(
+    reactions['k-react-threaded'].url,
+    threadLinkFields({ teamId: TEAM, channelId: OTHER_ROOM, ts: reactRoot }).url,
+  );
+  assert.equal('thread' in reactions['k-react-plain'], false);
+
+  const all = JSON.stringify([...result.mentions, ...result.threads, ...result.reactions]);
+  for (const id of [ME, ALEX, SAM]) assert.ok(!all.includes(id), `${id} must not leak`);
+});
+
+test('feed-verified threads open via thread(ts, channelId) including >28-day roots, channel kinds and cold-board own channel', async (t) => {
+  const PUB = 'C0PUBLIC01';
+  const PRIV = 'G0PRIVAT01';
+  const DM = 'D0DIRECT01';
+  const MPIM = 'G0GROUPM01';
+  const OWN = 'C0OWNCLD01';
+  // 35 days before NOW_MS (1_793_201_000_000 ms).
+  const oldRoot = '1790177000.000100';
+  const oldLatest = tsOf(110);
+  const privRoot = tsOf(120);
+  const privLatest = tsOf(130);
+  const dmRoot = tsOf(140);
+  const dmLatest = tsOf(150);
+  const mpimRoot = tsOf(160);
+  const mpimLatest = tsOf(170);
+  const ownRoot = tsOf(180);
+  const ownLatest = tsOf(190);
+
+  const { slack, integration, writeSession } = connectedFeed(t, {
+    items: [
+      threadItem({ key: 'k-old', channel: PUB, threadTs: oldRoot, latestTs: oldLatest }),
+      threadItem({ key: 'k-priv', channel: PRIV, threadTs: privRoot, latestTs: privLatest }),
+      threadItem({ key: 'k-dm', channel: DM, threadTs: dmRoot, latestTs: dmLatest }),
+      threadItem({ key: 'k-mpim', channel: MPIM, threadTs: mpimRoot, latestTs: mpimLatest }),
+      threadItem({ key: 'k-own', channel: OWN, threadTs: ownRoot, latestTs: ownLatest }),
+    ],
+    messages: {
+      [`${PUB}:${oldRoot}`]: { ts: oldRoot, user: SAM, text: 'Old root' },
+      [`${PUB}:${oldLatest}`]: { ts: oldLatest, thread_ts: oldRoot, user: ALEX, text: 'Recent' },
+      [`${PRIV}:${privRoot}`]: { ts: privRoot, user: SAM, text: 'Private root' },
+      [`${PRIV}:${privLatest}`]: { ts: privLatest, thread_ts: privRoot, user: ALEX, text: 'Reply' },
+      [`${DM}:${dmRoot}`]: { ts: dmRoot, user: ALEX, text: 'DM root' },
+      [`${DM}:${dmLatest}`]: { ts: dmLatest, thread_ts: dmRoot, user: ME, text: 'DM reply' },
+      [`${MPIM}:${mpimRoot}`]: { ts: mpimRoot, user: SAM, text: 'Group root' },
+      [`${MPIM}:${mpimLatest}`]: { ts: mpimLatest, thread_ts: mpimRoot, user: ALEX, text: 'Reply' },
+      [`${OWN}:${ownRoot}`]: { ts: ownRoot, user: SAM, text: 'Own channel root' },
+      [`${OWN}:${ownLatest}`]: { ts: ownLatest, thread_ts: ownRoot, user: ALEX, text: 'Reply' },
+    },
+    channels: {
+      [PUB]: { id: PUB, name: 'general-example', is_private: false },
+      [PRIV]: { id: PRIV, name: 'secret-room', is_private: true },
+      [DM]: { id: DM, is_im: true, user: ALEX },
+      [MPIM]: { id: MPIM, is_mpim: true, name: 'mpdm-alex-sam' },
+      [OWN]: { id: OWN, name: 'ezat_claudio', is_private: false },
+    },
+  });
+  writeSession();
+
+  const feed = await integration.feed();
+  assert.equal(feed.available, true);
+
+  const oldThread = await integration.thread(oldRoot, PUB);
+  assert.equal(oldThread.available, true);
+  assert.equal(oldThread.thread.ts, oldRoot);
+  assert.deepEqual(oldThread.thread.channel, {
+    id: PUB,
+    name: 'general-example',
+    kind: 'channel',
+  });
+  assert.equal(oldThread.thread.messages[0].text, 'Old root');
+
+  const privThread = await integration.thread(privRoot, PRIV);
+  assert.equal(privThread.available, true);
+  assert.deepEqual(privThread.thread.channel, {
+    id: PRIV,
+    name: 'secret-room',
+    kind: 'channel',
+  });
+
+  const dmThread = await integration.thread(dmRoot, DM);
+  assert.equal(dmThread.available, true);
+  assert.deepEqual(dmThread.thread.channel, {
+    id: DM,
+    name: 'Alex Example',
+    kind: 'im',
+  });
+
+  const mpimThread = await integration.thread(mpimRoot, MPIM);
+  assert.equal(mpimThread.available, true);
+  assert.deepEqual(mpimThread.thread.channel, {
+    id: MPIM,
+    name: 'mpdm-alex-sam',
+    kind: 'mpim',
+  });
+
+  const ownThread = await integration.thread(ownRoot, OWN);
+  assert.equal(ownThread.available, true);
+  assert.deepEqual(ownThread.thread.channel, {
+    id: OWN,
+    name: 'ezat_claudio',
+    kind: 'channel',
+  });
+  assert.equal(
+    slack.count('search.messages'),
+    0,
+    'cold-board feed row in own channel opens without searching board channel',
+  );
+});
+
+test('unverified roots and cleared feed caches fail closed with zero Slack calls', async (t) => {
+  const feed = threadsAndReactionsFeed();
+  const { slack, integration, writeSession } = connectedFeed(t, feed);
+  writeSession();
+
+  assert.deepEqual(await integration.thread(feed.parentTs, ROOM), { available: false });
+  assert.equal(slack.calls.length, 0, 'unverified root makes zero Slack calls');
+
+  await integration.feed();
+  const open = await integration.thread(feed.parentTs, ROOM);
+  assert.equal(open.available, true);
+
+  integration.disconnect();
+  writeSession();
+  const callsAfterClear = slack.calls.length;
+  assert.deepEqual(await integration.thread(feed.parentTs, ROOM), { available: false });
+  assert.equal(slack.calls.length, callsAfterClear, 'cleared feed cache makes zero Slack calls');
 });
 
 // 30 distinct messages in 12 channels: 10 threads, then 10 reactions, then the 10 mentions, in feed
@@ -569,4 +768,50 @@ test('a rate-limited activity.feed is calm, and the cool-down asks Slack nothing
   assert.equal(slack.count('activity.feed'), 1);
   assert.deepEqual(await integration.feed(), { available: false, reason: 'unavailable' });
   assert.equal(slack.count('activity.feed'), 1, 'no request while the method cools down');
+});
+
+test('rowThread maps threaded rows for the dialog and returns null for non-threaded or partial rows', () => {
+  const ts = tsOf(800);
+  const url = `https://app.slack.com/client/${TEAM}/${ROOM}/thread/${ROOM}-${ts}`;
+
+  assert.equal(rowThread(null), null);
+  assert.equal(rowThread(undefined), null);
+  assert.equal(rowThread({}), null);
+  assert.equal(rowThread({ thread: { ts } }), null);
+  assert.equal(rowThread({ thread: { channelId: ROOM } }), null);
+  assert.equal(rowThread({ thread: { ts: '', channelId: ROOM } }), null);
+
+  const missingUrl = rowThread({ kind: 'mention', thread: { ts, channelId: ROOM } });
+  assert.deepEqual(missingUrl, { ts, channel: { id: ROOM }, url: '' });
+  assert.equal('subjectText' in missingUrl, false);
+
+  assert.deepEqual(
+    rowThread({
+      kind: 'thread',
+      thread: { ts, channelId: ROOM },
+      url,
+      parentText: 'Parent topic text',
+    }),
+    { ts, channel: { id: ROOM }, url, subjectText: 'Parent topic text' },
+  );
+
+  const emptyParent = rowThread({
+    kind: 'thread',
+    thread: { ts, channelId: ROOM },
+    url,
+    parentText: '',
+  });
+  assert.deepEqual(emptyParent, { ts, channel: { id: ROOM }, url });
+  assert.equal('subjectText' in emptyParent, false);
+
+  for (const kind of ['mention', 'reaction']) {
+    const nonThread = rowThread({
+      kind,
+      thread: { ts, channelId: ROOM },
+      url,
+      parentText: 'Should not become subjectText',
+    });
+    assert.deepEqual(nonThread, { ts, channel: { id: ROOM }, url });
+    assert.equal('subjectText' in nonThread, false);
+  }
 });

@@ -104,10 +104,12 @@ test('the feed panel reads on open and Refresh only: no timer, no polling hook',
   assert.match(panel, /BoardTabs/);
   assert.doesNotMatch(panel, /setInterval|setTimeout|useActivePolling|useSlackPending/);
   assert.doesNotMatch(panel, /getSlackThreads|getSlackThread\b|getSlackPending/);
-  // A row is a plain link out to Slack, never the thread dialog.
+  // Non-threaded rows remain external links; threaded rows reuse useSlackThreadDialog without a timer.
   assert.match(panel, /target="_blank"/);
   assert.match(panel, /rel="noopener noreferrer"/);
-  assert.doesNotMatch(panel, /SlackThreadDialog|useSlackThreadDialog|kind="error"/);
+  assert.match(panel, /useSlackThreadDialog/);
+  assert.match(panel, /enforceWindow:\s*false/);
+  assert.doesNotMatch(panel, /\bSlackThreadDialog\b|kind="error"/);
 });
 
 test('api.js holds the /api/slack/feed literal once and degrades every failure to unavailable', () => {
