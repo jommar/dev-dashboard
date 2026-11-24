@@ -149,6 +149,49 @@ test.describe('Sprint tab', () => {
       ]);
   });
 
+  test('assignee filter scopes the board, summary, Needs attention view and resets on team switch', async ({
+    page,
+  }) => {
+    const board = await openSprint(page);
+    const select = page.getByTestId('sprint-assignee-select');
+    await expect(select).toBeEnabled();
+    await expect(select.locator('option')).toHaveText([
+      'Everyone',
+      'Avery Quill',
+      'Bryn Talbot',
+      'Unassigned',
+    ]);
+
+    await select.selectOption({ label: 'Avery Quill' });
+    await expect
+      .poll(() => cardKeys(board))
+      .toEqual(['NXS-103', 'NXS-106', 'NXS-108', 'NXS-110', 'NXS-101']);
+    await expect(page.getByTestId('sprint-summary')).toContainText('5 tickets');
+    await expect(page.getByTestId('sprint-summary')).toContainText('11 pt committed');
+    await expect(page.getByTestId('sprint-summary')).toContainText('0 pt done');
+    await expect(page.getByTestId('sprint-view-attention')).toContainText('4');
+
+    // Combines with attention reason toggles and applies to Needs attention view.
+    await page.getByTestId('sprint-reason-jira-blocked').click();
+    await expect.poll(() => cardKeys(board)).toEqual(['NXS-103']);
+    await page.getByTestId('sprint-view-attention').click();
+    await expect
+      .poll(() => cardKeys(page.getByTestId('sprint-attention-list')))
+      .toEqual(['NXS-103']);
+
+    // Switching to Unassigned and clearing reason shows only the unassigned ticket.
+    await page.getByTestId('sprint-reason-jira-blocked').click();
+    await page.getByTestId('sprint-view-board').click();
+    await select.selectOption({ label: 'Unassigned' });
+    await expect.poll(() => cardKeys(board)).toEqual(['NXS-105']);
+
+    // Team switch resets assignee to Everyone and omits Unassigned when none exist.
+    await page.getByTestId('sprint-team-select').selectOption({ label: 'Orion' });
+    await expect(card(page, 'ORB-201')).toBeVisible();
+    await expect.poll(() => chosen(select)).toBe('Everyone');
+    await expect(select.locator('option')).toHaveText(['Everyone', 'Casey Moor', 'Dale Ferris']);
+  });
+
   test('card groom opens the Claude dialog for that ticket and launches nothing by itself', async ({
     page,
     dashboard,

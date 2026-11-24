@@ -70,6 +70,33 @@ export function finishedColumnsLast(columns) {
   return [...columns.filter((column) => !moved(column)), ...columns.filter(moved)];
 }
 
+export const UNASSIGNED_ASSIGNEE = '__unassigned__';
+
+const assigneeOf = (ticket) => String(ticket?.assignee ?? '').trim();
+
+// Distinct assignees in the sprint: alphabetical case-insensitive, Unassigned last when present.
+export function sprintAssignees(tickets = []) {
+  const names = new Map();
+  let hasUnassigned = false;
+  for (const ticket of tickets) {
+    const name = assigneeOf(ticket);
+    if (!name) hasUnassigned = true;
+    else if (!names.has(name.toLowerCase())) names.set(name.toLowerCase(), name);
+  }
+  const list = [...names.values()]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map((name) => ({ value: name, label: name }));
+  if (hasUnassigned) list.push({ value: UNASSIGNED_ASSIGNEE, label: 'Unassigned' });
+  return list;
+}
+
+export function matchesAssignee(ticket, selected) {
+  if (!selected) return true;
+  const name = assigneeOf(ticket);
+  if (selected === UNASSIGNED_ASSIGNEE) return !name;
+  return name.toLowerCase() === selected.toLowerCase();
+}
+
 const SIDE_PHASES = ['groom', 'review', 'specReview', 'e2e', 'reviewRequest'];
 
 // The words of ui/session-phases.js, keyed the way an entry names its sessions, plus spec review,

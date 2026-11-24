@@ -41,10 +41,12 @@ import {
 import {
   SPRINT_BOARD_POLL_MS,
   finishedColumnsLast,
+  matchesAssignee,
   pickSprint,
   pickTeam,
   readSprintChoice,
   settledChoice,
+  sprintAssignees,
   sprintChoice,
   writeSprintChoice,
 } from '../../ui/sprint-board.js';
@@ -103,6 +105,7 @@ export function SprintPanel({ config, active }) {
   const [failure, setFailure] = useState('');
   const [refreshFailed, setRefreshFailed] = useState(false);
   const [view, setView] = useState('board');
+  const [assignee, setAssignee] = useState('');
   const [selected, setSelected] = useState(NO_REASONS);
   const [openClaudeKey, setOpenClaudeKey] = useState(null);
   const [claudeLoadFailed, setClaudeLoadFailed] = useState(false);
@@ -204,6 +207,7 @@ export function SprintPanel({ config, active }) {
     setData(null);
     setFailure('');
     setRefreshFailed(false);
+    setAssignee('');
     setSelected(NO_REASONS);
     load();
   };
@@ -211,6 +215,15 @@ export function SprintPanel({ config, active }) {
   const chooseTeam = (name) => choose({ team: name, sprint: null });
 
   const tickets = data?.tickets ?? NO_TICKETS;
+  const assignees = useMemo(() => sprintAssignees(tickets), [tickets]);
+  const activeAssignee = assignees.some(({ value }) => value === assignee) ? assignee : '';
+  const byAssignee = useMemo(
+    () =>
+      activeAssignee
+        ? tickets.filter((ticket) => matchesAssignee(ticket, activeAssignee))
+        : tickets,
+    [tickets, activeAssignee],
+  );
   // Threads are keyed by the normalised key (TRIPS folds onto TAP).
   const slackLinksOf = useCallback(
     (key) => linksByTicket.get(normalizeTicketKey(key)) || NO_LINKS,
@@ -229,16 +242,22 @@ export function SprintPanel({ config, active }) {
       ),
     [tickets, claude.byTicket, claude.loaded, slackLinksOf],
   );
-  const summary = useMemo(() => sprintSummary(tickets, reasonsByKey), [tickets, reasonsByKey]);
-  const shown = useMemo(
-    () => tickets.filter((ticket) => matchesReasons(reasonsByKey[ticket.key], selected)),
-    [tickets, reasonsByKey, selected],
+  const summary = useMemo(
+    () => sprintSummary(byAssignee, reasonsByKey),
+    [byAssignee, reasonsByKey],
   );
-  const flagged = useMemo(() => attentionOrder(tickets, reasonsByKey), [tickets, reasonsByKey]);
+  const shown = useMemo(
+    () => byAssignee.filter((ticket) => matchesReasons(reasonsByKey[ticket.key], selected)),
+    [byAssignee, reasonsByKey, selected],
+  );
+  const flagged = useMemo(
+    () => attentionOrder(byAssignee, reasonsByKey),
+    [byAssignee, reasonsByKey],
+  );
   const attention = useMemo(() => attentionOrder(shown, reasonsByKey), [shown, reasonsByKey]);
   const candidates = useMemo(
-    () => groomCandidates(tickets, reasonsByKey, claude.byTicket),
-    [tickets, reasonsByKey, claude.byTicket],
+    () => groomCandidates(byAssignee, reasonsByKey, claude.byTicket),
+    [byAssignee, reasonsByKey, claude.byTicket],
   );
   // No reason while the sprint is not read: an empty candidate list then says nothing about it.
   const groomReason = !data
@@ -406,12 +425,30 @@ export function SprintPanel({ config, active }) {
                 ))}
               </select>
             </label>
+            <label className="sprint-board-field">
+              Assignee
+              <select
+                data-testid="sprint-assignee-select"
+                value={activeAssignee}
+                disabled={!assignees.length}
+                onChange={(event) => setAssignee(event.target.value)}
+              >
+                <option value="">Everyone</option>
+                {assignees.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <Button
               className="sprint-board-groom-batch"
               data-testid="sprint-groom-batch"
               disabled={candidates.length === 0}
               aria-describedby={groomReason ? groomReasonId : undefined}
-              onClick={() => setGroomBatch(tickets.filter(({ key }) => candidates.includes(key)))}
+              onClick={() =>
+                setGroomBatch(byAssignee.filter(({ key }) => candidates.includes(key)))
+              }
             >
               Groom ungroomed ({candidates.length})
             </Button>

@@ -215,3 +215,41 @@ test('finished columns that are not done-kind move after the done band, order ot
     'the input is not mutated',
   );
 });
+
+test('sprintAssignees lists distinct assignees alphabetically with Unassigned last, and matchesAssignee filters them', async () => {
+  const { UNASSIGNED_ASSIGNEE, sprintAssignees, matchesAssignee } = await load();
+  const tickets = [
+    { key: 'A-1', assignee: 'Bryn Talbot' },
+    { key: 'A-2', assignee: null },
+    { key: 'A-3', assignee: 'avery quill' },
+    { key: 'A-4', assignee: 'Avery Quill' },
+    { key: 'A-5', assignee: '  ' },
+    { key: 'A-6', assignee: 'Casey Moor' },
+  ];
+
+  assert.deepEqual(sprintAssignees(tickets), [
+    { value: 'avery quill', label: 'avery quill' },
+    { value: 'Bryn Talbot', label: 'Bryn Talbot' },
+    { value: 'Casey Moor', label: 'Casey Moor' },
+    { value: UNASSIGNED_ASSIGNEE, label: 'Unassigned' },
+  ]);
+  assert.deepEqual(
+    sprintAssignees([{ key: 'A-1', assignee: 'Bryn Talbot' }]),
+    [{ value: 'Bryn Talbot', label: 'Bryn Talbot' }],
+    'omits Unassigned when every ticket is assigned',
+  );
+  assert.deepEqual(sprintAssignees([]), []);
+
+  assert.deepEqual(
+    tickets.filter((t) => matchesAssignee(t, '')).map((t) => t.key),
+    ['A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6'],
+  );
+  assert.deepEqual(
+    tickets.filter((t) => matchesAssignee(t, 'Avery Quill')).map((t) => t.key),
+    ['A-3', 'A-4'],
+  );
+  assert.deepEqual(
+    tickets.filter((t) => matchesAssignee(t, UNASSIGNED_ASSIGNEE)).map((t) => t.key),
+    ['A-2', 'A-5'],
+  );
+});
