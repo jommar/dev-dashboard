@@ -44,24 +44,32 @@ const MAX_LINKS_PER_REQUEST = 50;
 const CROSS_SITE = ['cross-site', 'same-site'];
 const MAX_USAGE_SESSIONS = 8;
 const MAX_RELEASE_SCRIPT_PRS = 200;
+const REPO_NAME = /^[A-Za-z0-9_.-]+$/;
+
+function isOrgRepo(repo, org) {
+  if (typeof repo !== 'string' || typeof org !== 'string' || !org) return false;
+  const parts = repo.split('/');
+  if (parts.length !== 2) return false;
+  const [owner, name] = parts;
+  return (
+    owner.toLowerCase() === org.toLowerCase() &&
+    REPO_NAME.test(name) &&
+    name !== '.' &&
+    name !== '..'
+  );
+}
 
 function parseReleaseScriptsBody(body, snapshot) {
   if (!body || !Array.isArray(body.prs) || body.prs.length > MAX_RELEASE_SCRIPT_PRS) {
     throw httpError('INVALID_RELEASE_SCRIPTS', 'Invalid release scripts request.', 400);
   }
   const org = snapshot?.github?.org;
-  const allowedRepos = new Set(
-    typeof org === 'string' && org
-      ? (snapshot?.github?.repos || []).map((repo) => `${org}/${repo}`)
-      : [],
-  );
   return body.prs.map((item) => {
     if (
       !item ||
       typeof item !== 'object' ||
       !isTicketKey(item.ticket) ||
-      typeof item.repo !== 'string' ||
-      !allowedRepos.has(item.repo) ||
+      !isOrgRepo(item.repo, org) ||
       !Number.isSafeInteger(item.number) ||
       item.number < 1 ||
       (item.state !== undefined && item.state !== null && typeof item.state !== 'string') ||

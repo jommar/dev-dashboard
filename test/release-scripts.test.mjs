@@ -460,19 +460,30 @@ test('POST /api/releases/scripts enforces setup gate, 403 INVALID_ORIGIN, and 40
   assert.equal(crossSite.json().code, 'INVALID_ORIGIN');
   assert.deepEqual(calls, []);
 
-  // Unallowlisted repo is rejected with 400.
+  // Repo outside the configured org is rejected with 400.
   const badRepo = await post({
     prs: [{ ticket: 'DEMO-1', repo: 'OtherOrg/secret-repo', number: 1, state: 'open' }],
   });
   assert.equal(badRepo.status, 400);
   assert.deepEqual(calls, []);
 
-  // Unconfigured repo in the same org is rejected with 400.
-  const unknownRepo = await post({
-    prs: [{ ticket: 'DEMO-1', repo: 'ExampleOrg/not-configured', number: 1, state: 'open' }],
-  });
-  assert.equal(unknownRepo.status, 400);
+  // Malformed repo names in the configured org are rejected with 400.
+  for (const invalidRepo of ['ExampleOrg/..', 'ExampleOrg/.', 'ExampleOrg/a/b', 'ExampleOrg/']) {
+    const res = await post({
+      prs: [{ ticket: 'DEMO-1', repo: invalidRepo, number: 1, state: 'open' }],
+    });
+    assert.equal(res.status, 400);
+  }
   assert.deepEqual(calls, []);
+
+  // Other repos in the configured org (e.g. test/infra repos linked in Jira) are accepted.
+  const siblingRepo = await post({
+    prs: [{ ticket: 'DEMO-1', repo: 'ExampleOrg/ezat-infra', number: 147, state: 'open' }],
+  });
+  assert.equal(siblingRepo.status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0][0].repo, 'ExampleOrg/ezat-infra');
+  calls.length = 0;
 
   // Over 200 PRs is rejected with 400.
   const tooMany = Array.from({ length: 201 }, (_, i) => ({
