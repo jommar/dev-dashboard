@@ -228,12 +228,15 @@ export function HomePanel({ active }) {
     () => comparisonPeople(selected?.people || NO_PEOPLE, sprintId),
     [selected, sprintId],
   );
-  const averageLines = useMemo(
-    () => people.filter((person) => person.id !== 'unassigned' && person.id !== 'unknown'),
-    [people],
-  );
-  const activePersonId = hoveredPersonId || personId;
   const chosenPerson = people.find((person) => person.id === personId);
+  const activePersonId = hoveredPersonId || personId;
+  const activePerson = people.find(
+    (person) =>
+      person.id === activePersonId && person.id !== 'unassigned' && person.id !== 'unknown',
+  );
+  const teamAverage = series.length
+    ? series.reduce((sum, entry) => sum + entry.points, 0) / series.length
+    : 0;
   const choosePerson = (id) => setSelection((current) => ({ ...current, person: id }));
   const generated = data && new Date(data.updatedAt).toLocaleString();
   const meta = data ? (
@@ -250,12 +253,12 @@ export function HomePanel({ active }) {
           personLabel={chosenPerson?.label || 'Everyone'}
           series={chosenPerson?.series || series}
           scaleSeries={series}
-          averageLines={averageLines}
-          activePersonId={activePersonId}
-          onHover={setHoveredPersonId}
+          teamAverage={teamAverage}
+          personLine={activePerson}
+          isTeamView={!chosenPerson}
         />
       ) : null,
-    [series, team, chosenPerson, averageLines, activePersonId],
+    [series, team, chosenPerson, teamAverage, activePerson],
   );
 
   return (

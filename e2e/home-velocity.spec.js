@@ -305,7 +305,7 @@ test('honest values expose exact estimates status memberships and uncertainty @r
     'Completed',
     'In progress',
     'Not started',
-    'Person avg / sprint',
+    'Avg / sprint',
   ]) {
     await expect(chart(page)).toContainText(value);
   }
@@ -1041,7 +1041,7 @@ test('unambiguous person labels reserve aggregate literal suffixes and special b
 test.describe('explicit sprint inspection', () => {
   test.use({ hasTouch: true });
 
-  test('per-person average lines exclude unassigned/unknown and highlight on hover or select @regression', async ({
+  test('team average line shows for Everyone and person average line highlights on hover or select @regression', async ({
     page,
     dashboard,
   }) => {
@@ -1060,20 +1060,28 @@ test.describe('explicit sprint inspection', () => {
       '0/sprint',
     ]);
 
-    // Only the 2 real people get average lines on the chart (Unassigned & Unknown excluded).
+    // In Everyone view, only the team average line is drawn (12.75 / 4 = 3.2 avg).
     const lines = page.getByTestId('home-velocity-avg-line');
-    await expect(lines).toHaveCount(2);
-    await expect(page.getByTestId('home-velocity-avg-label')).toHaveCount(0);
+    await expect(lines).toHaveCount(1);
+    await expect(lines.first()).toHaveAttribute('data-active', 'true');
+    await expect(page.getByTestId('home-velocity-avg-label')).toHaveText('Nexus · 3.2 avg');
 
-    // Hovering a person row highlights their line and shows their average label.
+    // Hovering a real person adds their highlighted average line alongside the dimmed team line.
     await rows.nth(0).hover();
-    await expect(lines.nth(0)).toHaveAttribute('data-active', 'true');
+    await expect(lines).toHaveCount(2);
+    await expect(lines.nth(1)).toHaveAttribute('data-active', 'true');
     await expect(page.getByTestId('home-velocity-avg-label')).toHaveText(/Alex Example .*1\.4 avg/);
 
-    // Selecting a person keeps their line highlighted after pointer leaves.
+    // Hovering Unassigned does not draw a person line; team average stays active.
+    await rows.nth(2).hover();
+    await expect(lines).toHaveCount(1);
+    await expect(page.getByTestId('home-velocity-avg-label')).toHaveText('Nexus · 3.2 avg');
+
+    // Selecting a person shows only their average line after pointer leaves.
     await rows.nth(1).click();
     await chart(page).locator('h3').hover();
-    await expect(lines.nth(1)).toHaveAttribute('data-active', 'true');
+    await expect(lines).toHaveCount(1);
+    await expect(lines.first()).toHaveAttribute('data-active', 'true');
     await expect(page.getByTestId('home-velocity-avg-label')).toHaveText(/Alex Example .*1\.1 avg/);
     await expect(chart(page)).toContainText('1.1 avg / sprint');
     expect(reads(dashboard)).toBe(0);

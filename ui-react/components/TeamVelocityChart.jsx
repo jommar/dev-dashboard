@@ -22,9 +22,9 @@ export const TeamVelocityChart = memo(function TeamVelocityChart({
   personLabel,
   series,
   scaleSeries,
-  averageLines,
-  activePersonId,
-  onHover,
+  teamAverage,
+  personLine,
+  isTeamView,
 }) {
   const maximum = scaleFor(scaleSeries);
   const ticks = Array.from(
@@ -34,7 +34,23 @@ export const TeamVelocityChart = memo(function TeamVelocityChart({
   const viewAverage = series.length
     ? series.reduce((sum, entry) => sum + entry.points, 0) / series.length
     : 0;
-  const hasActiveLine = activePersonId && averageLines.some((line) => line.id === activePersonId);
+  const lines = [];
+  if (isTeamView) {
+    lines.push({
+      id: 'team',
+      label: team,
+      average: teamAverage,
+      active: !personLine,
+    });
+  }
+  if (personLine) {
+    lines.push({
+      id: personLine.id,
+      label: personLine.label,
+      average: personLine.average,
+      active: true,
+    });
+  }
 
   return (
     <figure
@@ -61,10 +77,10 @@ export const TeamVelocityChart = memo(function TeamVelocityChart({
             {label}
           </li>
         ))}
-        {averageLines.length > 0 && (
+        {lines.length > 0 && (
           <li>
             <span className="home-velocity-swatch" data-status="average" aria-hidden="true" />
-            Person avg / sprint
+            Avg / sprint
           </li>
         )}
       </ul>
@@ -126,27 +142,21 @@ export const TeamVelocityChart = memo(function TeamVelocityChart({
               </DashboardTooltip>
             ))}
           </div>
-          {averageLines.length > 0 && (
-            <div
-              className="home-velocity-averages"
-              data-has-active={hasActiveLine ? 'true' : undefined}
-            >
-              {averageLines.map((line) => {
+          {lines.length > 0 && (
+            <div className="home-velocity-averages" data-has-active="true" aria-hidden="true">
+              {lines.map((line) => {
                 const ratio = Math.min(1, Math.max(0, line.average / maximum));
-                const active = activePersonId === line.id;
                 return (
                   <div
                     key={line.id}
                     className="home-velocity-avg-line"
                     data-testid="home-velocity-avg-line"
-                    data-active={active ? 'true' : undefined}
+                    data-active={line.active ? 'true' : undefined}
                     data-low={ratio < 0.12 ? 'true' : undefined}
                     style={{ top: `${(1 - ratio) * 100}%` }}
-                    onMouseEnter={() => onHover(line.id)}
-                    onMouseLeave={() => onHover('')}
                   >
-                    <span className="home-velocity-avg-rule" aria-hidden="true" />
-                    {active && (
+                    <span className="home-velocity-avg-rule" />
+                    {line.active && (
                       <span
                         className="home-velocity-avg-label"
                         data-testid="home-velocity-avg-label"
