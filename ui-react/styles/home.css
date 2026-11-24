@@ -664,11 +664,22 @@ button.sprint-legend-note {
 .home-velocity-person-meter .home-velocity-segment {
   height: 100%;
 }
+.home-velocity-person-values {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-shrink: 0;
+}
+.home-velocity-person-avg {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
 .home-velocity-people-list strong {
   color: var(--strong);
   font-weight: 600;
 }
 .home-velocity-people-list button:hover,
+.home-velocity-people-list button[data-hovered='true'],
 .home-velocity-people-list button[aria-pressed='true'] {
   color: var(--accent);
   box-shadow: inset 2px 0 var(--accent);
@@ -691,9 +702,7 @@ button.sprint-legend-note {
   font: inherit;
 }
 .home-velocity-team-field select:focus-visible,
-.home-velocity-scroll:focus-visible,
-.home-velocity-column:focus-visible,
-.home-velocity-details summary:focus-visible {
+.home-velocity-scroll:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -754,6 +763,12 @@ button.sprint-legend-note {
 .home-velocity-segment[data-status='notStarted'] {
   background: var(--muted);
 }
+.home-velocity-swatch[data-status='average'] {
+  width: 16px;
+  height: 0;
+  border-top: 2px dashed var(--amber);
+  border-radius: 0;
+}
 .home-velocity-scroll {
   max-width: 100%;
   overflow-x: auto;
@@ -810,12 +825,8 @@ button.sprint-legend-note {
   min-width: 96px;
   max-width: 176px;
   padding: 0;
-  border: 0;
-  border-radius: 0;
   color: var(--text);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
+  text-align: center;
 }
 .home-velocity-bar-space {
   display: flex;
@@ -848,9 +859,8 @@ button.sprint-legend-note {
   flex-shrink: 0;
   width: 100%;
 }
-.home-velocity-column:hover .home-velocity-sprint-label,
-.home-velocity-column[aria-pressed='true'] .home-velocity-sprint-label {
-  color: var(--accent);
+.home-velocity-column:hover .home-velocity-sprint-label {
+  color: var(--strong);
 }
 .home-velocity-sprint-label {
   display: -webkit-box;
@@ -865,68 +875,67 @@ button.sprint-legend-note {
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
-.home-velocity-details {
-  margin-top: var(--s5);
-  border-top: 1px solid var(--border);
-  font-size: var(--fs-sm);
+.home-velocity-averages {
+  position: absolute;
+  top: var(--s5);
+  left: 44px;
+  right: var(--s2);
+  height: var(--plot-height);
+  pointer-events: none;
+  z-index: 2;
 }
-.home-velocity-details summary {
-  padding: var(--s4) 0;
-  color: var(--text);
-  cursor: pointer;
-}
-.home-velocity-details summary > span {
-  margin-left: var(--s2);
-  color: var(--muted);
-}
-.home-velocity-details ol {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.home-velocity-details li {
-  padding: var(--s4) var(--s3);
-  border-top: 1px solid var(--border);
-}
-.home-velocity-details li[data-selected='true'] {
-  box-shadow: inset 2px 0 var(--accent);
-}
-.home-velocity-detail-title {
+.home-velocity-avg-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 12px;
+  margin-top: -6px;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: var(--s1) var(--s4);
-  overflow-wrap: anywhere;
+  align-items: center;
+  pointer-events: auto;
+  opacity: 0.45;
+  transition: opacity 120ms var(--ease-out);
 }
-.home-velocity-detail-title h4 {
-  margin: 0;
+.home-velocity-averages[data-has-active='true'] .home-velocity-avg-line {
+  opacity: 0.14;
+}
+.home-velocity-averages[data-has-active='true'] .home-velocity-avg-line[data-active='true'],
+.home-velocity-avg-line[data-active='true'] {
+  opacity: 1;
+  z-index: 3;
+}
+.home-velocity-avg-rule {
+  display: block;
+  width: 100%;
+  border-top: 1px dashed var(--amber);
+}
+.home-velocity-avg-line[data-active='true'] .home-velocity-avg-rule {
+  border-top-width: 2px;
+}
+.home-velocity-avg-label {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px var(--s2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--amber);
+  background: var(--panel);
   color: var(--strong);
-  font: inherit;
+  font-size: var(--fs-xs);
   font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: var(--shadow);
 }
-.home-velocity-detail-title h4:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.home-velocity-avg-line[data-low='true'] .home-velocity-avg-label {
+  top: 0;
+  transform: translateY(-100%);
 }
-.home-velocity-detail-title > span {
-  color: var(--muted);
-}
-.home-velocity-details dl {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s3) var(--s5);
-  margin: var(--s3) 0 0;
-}
-.home-velocity-details dl > div {
-  display: flex;
-  gap: var(--s2);
-}
-.home-velocity-details dt {
-  color: var(--muted);
-}
-.home-velocity-details dd {
-  margin: 0;
-  color: var(--strong);
+@media (prefers-reduced-motion: reduce) {
+  .home-velocity-avg-line {
+    transition: none;
+  }
 }
 .home-velocity-notes {
   max-width: 90ch;
@@ -954,9 +963,5 @@ button.sprint-legend-note {
   }
   .home-velocity-plot {
     --plot-height: 240px;
-  }
-  .home-velocity-details summary > span {
-    display: block;
-    margin: var(--s1) 0 0 var(--s4);
   }
 }

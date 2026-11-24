@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardNote, BoardPanel, BoardSection, BoardState } from '../components/BoardShell.jsx';
 import { Button, DashboardTooltip } from '../components/Primitives.jsx';
-import { TeamVelocityChart } from '../components/TeamVelocityChart.jsx';
+import { TeamVelocityChart, formatPoints } from '../components/TeamVelocityChart.jsx';
 import { useDashboardApi } from '../hooks/useDashboardApi.js';
 import {
   readVelocityTeam,
@@ -46,11 +46,13 @@ function comparisonPeople(people, sprintId) {
       const byStatus = { done: 0, inProgress: 0, notStarted: 0 };
       for (const entry of series)
         for (const status of Object.keys(byStatus)) byStatus[status] += entry.byStatus[status];
+      const points = series.reduce((total, entry) => total + entry.points, 0);
       return {
         ...person,
         series,
         label,
-        points: series.reduce((total, entry) => total + entry.points, 0),
+        points,
+        average: series.length ? points / series.length : 0,
         byStatus,
       };
     })
@@ -80,7 +82,15 @@ function reconcileSelection(boards, current) {
   return { team, sprint, person };
 }
 
-function PersonBreakdown({ people, personId, sprintCount, sprintName, onSelect }) {
+function PersonBreakdown({
+  people,
+  personId,
+  hoveredPersonId,
+  sprintCount,
+  sprintName,
+  onSelect,
+  onHover,
+}) {
   const maximum = Math.max(0, ...people.map((person) => person.points)) || 1;
   return (
     <section
@@ -96,38 +106,56 @@ function PersonBreakdown({ people, personId, sprintCount, sprintName, onSelect }
         </span>
       </div>
       <ul className="home-velocity-people-list">
-        {people.map((person) => (
-          <li key={person.id}>
-            <DashboardTooltip
-              title={`${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started points`}
-            >
-              <button
-                type="button"
-                data-testid="home-velocity-person-row"
-                aria-pressed={personId === person.id}
-                aria-label={`${person.label}: ${person.points} total points; ${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started`}
-                onClick={() => onSelect(personId === person.id ? '' : person.id)}
+        {people.map((person) => {
+          const avg = formatPoints(person.average);
+          const enter = () => onHover(person.id);
+          const leave = () => onHover('');
+          return (
+            <li key={person.id}>
+              <DashboardTooltip
+                title={`${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started points`}
               >
-                <span className="home-velocity-person-name">{person.label}</span>
-                <strong>{person.points}</strong>
-                <span
-                  className="home-velocity-person-meter"
-                  data-testid="home-velocity-person-meter"
-                  aria-hidden="true"
+                <button
+                  type="button"
+                  data-testid="home-velocity-person-row"
+                  aria-pressed={personId === person.id}
+                  data-hovered={hoveredPersonId === person.id ? 'true' : undefined}
+                  aria-label={`${person.label}: ${person.points} total points (${avg} avg per sprint); ${person.byStatus.done} completed, ${person.byStatus.inProgress} in progress, ${person.byStatus.notStarted} not started`}
+                  onClick={() => onSelect(personId === person.id ? '' : person.id)}
+                  onMouseEnter={enter}
+                  onMouseLeave={leave}
+                  onFocus={enter}
+                  onBlur={leave}
                 >
-                  {Object.entries(person.byStatus).map(([status, points]) => (
+                  <span className="home-velocity-person-name">{person.label}</span>
+                  <span className="home-velocity-person-values">
+                    <strong>{person.points}</strong>
                     <span
-                      key={status}
-                      className="home-velocity-segment"
-                      data-status={status}
-                      style={{ width: `${(points / maximum) * 100}%` }}
-                    />
-                  ))}
-                </span>
-              </button>
-            </DashboardTooltip>
-          </li>
-        ))}
+                      className="home-velocity-person-avg"
+                      data-testid="home-velocity-person-avg"
+                    >
+                      {avg}/sprint
+                    </span>
+                  </span>
+                  <span
+                    className="home-velocity-person-meter"
+                    data-testid="home-velocity-person-meter"
+                    aria-hidden="true"
+                  >
+                    {Object.entries(person.byStatus).map(([status, points]) => (
+                      <span
+                        key={status}
+                        className="home-velocity-segment"
+                        data-status={status}
+                        style={{ width: `${(points / maximum) * 100}%` }}
+                      />
+                    ))}
+                  </span>
+                </button>
+              </DashboardTooltip>
+            </li>
+          );
+        })}
       </ul>
       <p>
         Bars share the same point scale across people. Carried issues count in each sprint
@@ -195,10 +223,16 @@ export function HomePanel({ active }) {
     () => sprintWindow(selected?.series || [], sprintId),
     [selected, sprintId],
   );
+  const [hoveredPersonId, setHoveredPersonId] = useState('');
   const people = useMemo(
     () => comparisonPeople(selected?.people || NO_PEOPLE, sprintId),
     [selected, sprintId],
   );
+  const averageLines = useMemo(
+    () => people.filter((person) => person.id !== 'unassigned' && person.id !== 'unknown'),
+    [people],
+  );
+  const activePersonId = hoveredPersonId || personId;
   const chosenPerson = people.find((person) => person.id === personId);
   const choosePerson = (id) => setSelection((current) => ({ ...current, person: id }));
   const generated = data && new Date(data.updatedAt).toLocaleString();
@@ -216,9 +250,12 @@ export function HomePanel({ active }) {
           personLabel={chosenPerson?.label || 'Everyone'}
           series={chosenPerson?.series || series}
           scaleSeries={series}
+          averageLines={averageLines}
+          activePersonId={activePersonId}
+          onHover={setHoveredPersonId}
         />
       ) : null,
-    [series, team, chosenPerson],
+    [series, team, chosenPerson, averageLines, activePersonId],
   );
 
   return (
@@ -341,9 +378,11 @@ export function HomePanel({ active }) {
                 <PersonBreakdown
                   people={people}
                   personId={personId}
+                  hoveredPersonId={hoveredPersonId}
                   sprintCount={series.length}
                   sprintName={sprintId || undefined}
                   onSelect={choosePerson}
+                  onHover={setHoveredPersonId}
                 />
               )}
               <div className="home-velocity-notes">

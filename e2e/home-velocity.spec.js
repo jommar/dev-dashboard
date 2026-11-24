@@ -295,21 +295,19 @@ test('honest values expose exact estimates status memberships and uncertainty @r
   await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
   await expect(chart(page)).toBeVisible();
-  const data = page.getByTestId('home-velocity-data');
+  await expect(chart(page).locator('details')).toHaveCount(0);
   for (const value of [
-    'Nexus Sprint 1',
-    'Nexus Sprint 2',
-    'Nexus Sprint 3',
+    'Sprint 1',
+    'Sprint 2',
+    'Sprint 3',
     'active',
     '4.75',
-    '2.5',
-    '1.25',
     'Completed',
     'In progress',
     'Not started',
-    'unestimated',
+    'Person avg / sprint',
   ]) {
-    await expect(data).toContainText(value);
+    await expect(chart(page)).toContainText(value);
   }
   await expect(page.getByTestId('home-velocity-methodology')).toContainText(
     /current.*(status|estimates)/i,
@@ -332,7 +330,6 @@ test('honest values expose exact estimates status memberships and uncertainty @r
     ).toBe(0);
   }
   await expect(page.getByTestId('home-velocity-axis')).toContainText('0');
-  await expect(data).not.toContainText('Invalid Date');
   expect(reads(dashboard)).toBe(0);
   dashboard.data.teamVelocity.coverage.possibleTruncation = false;
   await refresh(page).click();
@@ -391,7 +388,7 @@ test('responsive keyboard access keeps overflow internal and full data reachable
           return style.outlineStyle !== 'none' || style.boxShadow !== 'none';
         }),
       ).toBe(true);
-      await expect(page.getByTestId('home-velocity-data')).toContainText(`${longName} Sprint 27`);
+      await expect(chart(page)).toContainText('Sprint 27');
       await person(page).focus();
       await person(page).press('End');
       await person(page).press('Enter');
@@ -1044,135 +1041,41 @@ test('unambiguous person labels reserve aggregate literal suffixes and special b
 test.describe('explicit sprint inspection', () => {
   test.use({ hasTouch: true });
 
-  test('activated sprint details reveal and focus only after keyboard or touch activation including repeat @regression', async ({
+  test('per-person average lines exclude unassigned/unknown and highlight on hover or select @regression', async ({
     page,
     dashboard,
   }) => {
-    const nexus = dashboard.data.teamVelocity.boards[1];
-    const sprint = (index) => ({
-      id: index + 20,
-      name: `Nexus Sprint ${index + 20}`,
-      state: 'closed',
-      endDate: null,
-    });
-    nexus.series = Array.from({ length: 8 }, (_, index) => ({
-      ...structuredClone(nexus.series[1]),
-      sprint: sprint(index),
-    }));
-    for (const p of nexus.people)
-      p.series = Array.from({ length: 8 }, (_, index) => ({
-        ...structuredClone(p.series[1]),
-        sprint: sprint(index),
-      }));
     await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
     await page.goto('/#/home');
     await expect(chart(page)).toBeVisible();
-    const pane = chart(page).locator('..');
-    const details = chart(page).locator('details');
-    // Keep a real destination offscreen even on a tall desktop; only the inspect action may reveal it.
-    await page.addStyleTag({ content: '#home-velocity-details { margin-top: 900px; }' });
-    await page.evaluate(() => {
-      window.__velocityDetailFocuses = 0;
-      document.addEventListener('focusin', (event) => {
-        if (event.target.closest('[data-testid="home-velocity-data"]'))
-          window.__velocityDetailFocuses++;
-      });
-    });
-    await expect(details).not.toHaveAttribute('open', '');
-    expect(await pane.evaluate((el) => el.scrollTop)).toBe(0);
+    await expect(chart(page).locator('details')).toHaveCount(0);
+
+    // Nexus has 4 rows in People (2 Alex Example + Unassigned + Unknown assignee), 4 sprints.
+    const rows = page.getByTestId('home-velocity-person-row');
+    await expect(rows).toHaveCount(4);
+    await expect(rows.getByTestId('home-velocity-person-avg')).toHaveText([
+      '1.4/sprint',
+      '1.1/sprint',
+      '0.8/sprint',
+      '0/sprint',
+    ]);
+
+    // Only the 2 real people get average lines on the chart (Unassigned & Unknown excluded).
+    const lines = page.getByTestId('home-velocity-avg-line');
+    await expect(lines).toHaveCount(2);
+    await expect(page.getByTestId('home-velocity-avg-label')).toHaveCount(0);
+
+    // Hovering a person row highlights their line and shows their average label.
+    await rows.nth(0).hover();
+    await expect(lines.nth(0)).toHaveAttribute('data-active', 'true');
+    await expect(page.getByTestId('home-velocity-avg-label')).toHaveText(/Alex Example .*1\.4 avg/);
+
+    // Selecting a person keeps their line highlighted after pointer leaves.
+    await rows.nth(1).click();
+    await chart(page).locator('h3').hover();
+    await expect(lines.nth(1)).toHaveAttribute('data-active', 'true');
+    await expect(page.getByTestId('home-velocity-avg-label')).toHaveText(/Alex Example .*1\.1 avg/);
+    await expect(chart(page)).toContainText('1.1 avg / sprint');
     expect(reads(dashboard)).toBe(0);
-    const selected = page.getByTestId('home-velocity-data').locator('li[data-selected="true"]');
-    const observations = [];
-    for (const [input, width, height] of [
-      ['Enter', 1440, 900],
-      ['Space', 1440, 900],
-      ['touch', 390, 844],
-    ]) {
-      await page.setViewportSize({ width, height });
-      for (const repeat of [false, true]) {
-        const bar = chart(page).getByRole('button', {
-          name: 'Nexus Sprint 27: 4.75 story points. Inspect sprint details.',
-          exact: true,
-        });
-        await bar.scrollIntoViewIfNeeded();
-        if (input === 'touch') await bar.tap();
-        else {
-          await bar.focus();
-          await bar.press(input);
-        }
-        await expect(details).toHaveAttribute('open', '');
-        await expect(selected).toContainText('Nexus Sprint 27');
-        await expect(selected.locator('dd').first()).toHaveText('4.75');
-        await page.evaluate(
-          () =>
-            new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-        );
-        const state = await selected.evaluate((row) => {
-          const heading = row.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
-          const pane = row.closest('figure').parentElement.getBoundingClientRect();
-          const box = row.getBoundingClientRect();
-          const h = heading?.getBoundingClientRect();
-          const style = heading && getComputedStyle(heading);
-          return {
-            heading: heading?.textContent === 'Nexus Sprint 27',
-            focused: Boolean(heading && document.activeElement === heading),
-            visible: Boolean(
-              h && h.top >= Math.max(0, pane.top) && h.bottom <= Math.min(innerHeight, pane.bottom),
-            ),
-            rowRevealed:
-              box.top >= Math.max(0, pane.top) && box.bottom <= Math.min(innerHeight, pane.bottom),
-            focusIndicator: Boolean(
-              style && (style.outlineStyle !== 'none' || style.boxShadow !== 'none'),
-            ),
-          };
-        });
-        await page.keyboard.press('Tab');
-        const tabContinues = await page
-          .getByTestId('home-velocity-person-row')
-          .first()
-          .evaluate((el) => el === document.activeElement);
-        observations.push({ input, repeat, ...state, tabContinues });
-      }
-    }
-    // An already-selected/open destination must not turn later renders into inspect actions.
-    await pane.evaluate((el) => {
-      el.scrollTop = 0;
-    });
-    await person(page).focus();
-    const focuses = await page.evaluate(() => window.__velocityDetailFocuses);
-    await person(page).selectOption(alexA);
-    await expect(person(page)).toBeFocused();
-    expect(await pane.evaluate((el) => el.scrollTop)).toBe(0);
-    dashboard.data.teamVelocity.updatedAt = '2026-11-10T01:02:03Z';
-    await refresh(page).evaluate((el) => el.click());
-    await expect(page.getByTestId('home-meta').locator('time')).toHaveAttribute(
-      'datetime',
-      '2026-11-10T01:02:03Z',
-    );
-    await expect(person(page)).toBeFocused();
-    expect(await pane.evaluate((el) => el.scrollTop)).toBe(0);
-    await team(page).focus();
-    await team(page).selectOption('Mobile');
-    await expect(team(page)).toBeFocused();
-    await team(page).selectOption('Nexus');
-    await expect(team(page)).toBeFocused();
-    expect(await pane.evaluate((el) => el.scrollTop)).toBe(0);
-    expect(await page.evaluate(() => window.__velocityDetailFocuses)).toBe(focuses);
-    expect(reads(dashboard)).toBe(1);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-      true,
-    );
-    expect(observations).toEqual(
-      observations.map(({ input, repeat }) => ({
-        input,
-        repeat,
-        heading: true,
-        focused: true,
-        visible: true,
-        rowRevealed: true,
-        focusIndicator: true,
-        tabContinues: true,
-      })),
-    );
   });
 });
