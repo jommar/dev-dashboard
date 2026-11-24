@@ -14,7 +14,8 @@ import { build } from 'vite';
 //
 // Baseline at b2eb63d: one entry chunk, 831 KiB raw, 252 KiB gzip -9, 164 kB of CSS.
 const KIB = 1024;
-const MAX_INITIAL_RAW = 640 * KIB;
+// Raised from 640→644 KiB for multi-select Sprint, Team, and Person filters on Home.
+const MAX_INITIAL_RAW = 644 * KIB;
 // Raised from 200→202 KiB (My Tickets merged PRs, Slack ticket-thread search), 203 KiB for
 // per-PR viewer review indicators on the Pull Requests board, 206 KiB when Releases joined
 // Sprint as a second lazy consumer of useTicketSlackThreads (causing Rolldown to split it into
@@ -28,8 +29,9 @@ const MAX_INITIAL_GZIP = 207 * KIB;
 // and to 914 KiB for the Copy prompt buttons across the Claude dialog, prompts editor and E2E check
 // (all lazy, plus one tiny helper in api.js), to 919 KiB for the redesigned lazy Releases board,
 // to 921 KiB for shared person grouping & dividers across Releases, Sprint and Pull Requests,
-// and to 925 KiB for the upgraded Deploy + Summary release notes formatters (lazy Releases chunk).
-const MAX_TOTAL_RAW = 925 * KIB;
+// and to 925 KiB for the upgraded Deploy + Summary release notes formatters (lazy Releases chunk),
+// and to 929 KiB for multi-select Sprint, Team, and Person filters on Home.
+const MAX_TOTAL_RAW = 929 * KIB;
 // Raised from 180 KiB for per-PR viewer review background tints in prs.css, and to 182 KiB for
 // assignee dividers in releases.css.
 const MAX_TOTAL_CSS = 182 * KIB;

@@ -553,7 +553,10 @@ test('Home Team filtering changes only chart scope and keeps shared work filters
   const snapshot = structuredClone(dashboard.data.teamVelocity);
   const select = page.getByTestId('home-velocity-team');
   await expectNoFetches(dashboard, async () => {
-    await select.selectOption('Mobile');
+    await select.click();
+    await page.locator('[data-testid="home-velocity-team-option"][data-value="Nexus"]').click();
+    await page.locator('[data-testid="home-velocity-team-option"][data-value="Mobile"]').click();
+    await page.keyboard.press('Escape');
     await expect(page.getByTestId('home-velocity-chart')).toContainText('Mobile Sprint 11');
     await expect(page.getByTestId('home-velocity-chart')).not.toContainText('Nexus Sprint');
   });
@@ -562,7 +565,7 @@ test('Home Team filtering changes only chart scope and keeps shared work filters
   await page.getByTestId('tab-my-tickets').click();
   await expect(mine.search).toHaveValue('DEMO-1');
   await page.getByTestId('tab-home').click();
-  await expect(select).toHaveValue('Mobile');
+  await expect(select).toContainText('Mobile');
   await page.getByTestId('home-refresh').click();
   await waitLoaded(page, 'home');
   await expect(page.getByTestId('home-velocity-chart')).toContainText('Mobile Sprint 11');

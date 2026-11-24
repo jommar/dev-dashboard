@@ -34,7 +34,7 @@ for (const [width, height] of [
       if (route === 'home') {
         await expect(page.getByTestId('home-title')).toHaveText('Velocity');
         await expect(page.getByTestId('home-velocity-team')).toHaveAccessibleName('Team');
-        await expect(page.getByTestId('home-velocity-team')).toHaveValue('Nexus');
+        await expect(page.getByTestId('home-velocity-team')).toContainText('Nexus');
         await expect(page.getByTestId('home-refresh')).toBeVisible();
         const pane = page.getByTestId('home-list').locator('.board-pane');
         await expect(pane).toHaveCount(1);
@@ -80,9 +80,12 @@ test('long velocity team and sprint names and coverage warnings fit mobile @regr
   await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#/home');
-  await page.getByTestId('home-velocity-team').selectOption(teamName);
-  await expect(page.getByTestId('home-velocity-team')).toHaveValue(teamName);
-  await expect(page.getByTestId('home-velocity-data')).toContainText(sprintName);
+  await page.getByTestId('home-velocity-team').click();
+  await page.locator('[data-testid="home-velocity-team-option"][data-value="Nexus"]').click();
+  await page.locator(`[data-testid="home-velocity-team-option"][data-value="${teamName}"]`).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('home-velocity-team')).toContainText(teamName);
+  await expect(page.getByTestId('home-velocity-chart')).toContainText(sprintName);
   await expect(page.getByTestId('home-velocity-coverage')).toBeVisible();
   await expect(page.getByTestId('home-velocity-coverage')).toContainText(/limit|5,?000/i);
   await expect(page.getByTestId('home-refresh')).toBeVisible();
@@ -100,7 +103,7 @@ test('empty workspace renders honest states @regression', async ({ page, dashboa
   await expect(page.getByTestId('home-velocity-empty')).toHaveText(
     'No velocity history for Nexus.',
   );
-  await expect(page.getByTestId('home-velocity-team')).toHaveValue('Nexus');
+  await expect(page.getByTestId('home-velocity-team')).toContainText('Nexus');
   await expect(page.getByTestId('home-velocity-chart')).toHaveCount(0);
   await mkdir(screenshots, { recursive: true });
   await page.screenshot({ path: `${screenshots}/mocked-home-empty.png`, fullPage: true });

@@ -10,6 +10,37 @@ const person = (page) => page.getByTestId('home-velocity-person');
 const sprint = (page) => page.getByTestId('home-velocity-sprint');
 const chart = (page) => page.getByTestId('home-velocity-chart');
 const refresh = (page) => page.getByTestId('home-refresh');
+
+async function chooseFilter(page, testId, values) {
+  const list = Array.isArray(values) ? values : values ? [values] : [];
+  await page.getByTestId(testId).click();
+  await page.getByTestId(`${testId}-all`).click();
+  if (!list.length) return;
+  await page.getByTestId(testId).click();
+  for (const value of list) {
+    await page.locator(`[data-testid="${testId}-option"][data-value="${value}"]`).click();
+  }
+  await page.keyboard.press('Escape');
+}
+
+async function readOptions(page, testId, includeAll = true) {
+  await page.getByTestId(testId).click();
+  const texts = [];
+  if (includeAll) texts.push(await page.getByTestId(`${testId}-all`).textContent());
+  texts.push(...(await page.getByTestId(`${testId}-option`).allTextContents()));
+  await page.keyboard.press('Escape');
+  return texts;
+}
+
+async function readChoices(page, testId) {
+  await page.getByTestId(testId).click();
+  const all = { value: '', label: await page.getByTestId(`${testId}-all`).textContent() };
+  const opts = await page
+    .getByTestId(`${testId}-option`)
+    .evaluateAll((els) => els.map((el) => ({ value: el.dataset.value, label: el.textContent })));
+  await page.keyboard.press('Escape');
+  return [all, ...opts];
+}
 const reads = (dashboard) =>
   dashboard.requests.filter(({ path }) => path === '/api/team-velocity').length;
 const stored = (page, key = snapshotKey) => page.evaluate((key) => localStorage.getItem(key), key);
@@ -46,10 +77,10 @@ test('first visit offers Generate with no implicit velocity request @regression'
 }) => {
   await page.goto('/#/home');
   await expect(page.getByTestId('home-title')).toHaveText('Velocity');
-  await expect(team(page)).toHaveValue('Nexus');
+  await expect(team(page)).toHaveAttribute('data-values', 'Nexus');
   await expect(team(page)).toHaveAccessibleName('Team');
   await expect(person(page)).toHaveAccessibleName('Person');
-  await expect(person(page)).toHaveValue('');
+  await expect(person(page)).toHaveAttribute('data-values', '');
   await expect(noCache(page)).toHaveText(
     'No saved velocity snapshot. Generate velocity to load team sprint history.',
   );
@@ -95,20 +126,20 @@ test('persists selected team and original generated snapshot without revalidatio
     { key: preferenceKey },
   );
   await page.goto('/#/home');
-  await expect(team(page)).toHaveValue('Mobile');
+  await expect(team(page)).toHaveAttribute('data-values', 'Mobile');
   await expect(chart(page)).toContainText('Mobile Sprint 11');
   const generated = await page.getByTestId('home-meta').textContent();
   expect(generated).toContain('Generated');
   expect(generated).toContain('2026');
   const saved = await stored(page);
   await page.reload();
-  await expect(team(page)).toHaveValue('Mobile');
+  await expect(team(page)).toHaveAttribute('data-values', 'Mobile');
   await expect(chart(page)).toContainText('Mobile Sprint 11');
   await page.getByTestId('tab-services').click();
   await page.getByTestId('tab-home').click();
-  await team(page).selectOption('Nexus');
+  await chooseFilter(page, 'home-velocity-team', 'Nexus');
   await expect(chart(page)).toContainText('Nexus Sprint 2');
-  await team(page).selectOption('Mobile');
+  await chooseFilter(page, 'home-velocity-team', 'Mobile');
   await expect(chart(page)).toContainText('Mobile Sprint 11');
   await expect(chart(page)).not.toContainText('Nexus Sprint');
   await expect(page.getByTestId('home-meta')).toHaveText(generated);
@@ -123,7 +154,7 @@ test('persists selected team and original generated snapshot without revalidatio
     version: 2,
     snapshot: dashboard.data.teamVelocity,
   });
-  await expect(team(page)).toHaveValue('Mobile');
+  await expect(team(page)).toHaveAttribute('data-values', 'Mobile');
   await expect(chart(page)).toContainText('Mobile Sprint 11');
 });
 
@@ -149,7 +180,7 @@ test('storage edge cases fail closed without fetching and keep unsaved successfu
       await setStored(page, preferenceKey, JSON.stringify({ version: 1, team: 'Mobile' }));
       await page.reload();
       await expect(noCache(page)).toBeVisible();
-      await expect(team(page)).toHaveValue('Mobile');
+      await expect(team(page)).toHaveAttribute('data-values', 'Mobile');
       await expect(refresh(page)).toHaveText('Generate velocity');
       expect(await stored(page)).toBe(raw);
       expect(reads(dashboard)).toBe(0);
@@ -159,7 +190,7 @@ test('storage edge cases fail closed without fetching and keep unsaved successfu
   await setStored(page, snapshotKey, record(cached));
   await setStored(page, preferenceKey, JSON.stringify({ version: 1, team: 'Removed Team' }));
   await page.reload();
-  await expect(team(page)).toHaveValue('Removed Team');
+  await expect(team(page)).toHaveAttribute('data-values', 'Removed Team');
   await expect(page.getByTestId('home-velocity-empty')).toHaveText(
     'No velocity history for Removed Team.',
   );
@@ -175,7 +206,7 @@ test('storage edge cases fail closed without fetching and keep unsaved successfu
   await setStored(page, snapshotKey, record(cached));
   await setStored(page, preferenceKey, '{bad team');
   await page.reload();
-  await expect(team(page)).toHaveValue('Nexus');
+  await expect(team(page)).toHaveAttribute('data-values', 'Nexus');
   await expect(chart(page)).toContainText('Nexus Sprint 2');
   const old = await stored(page);
   const oldMeta = await page.getByTestId('home-meta').textContent();
@@ -230,7 +261,7 @@ test('storage edge cases fail closed without fetching and keep unsaved successfu
   await refresh(page).click();
   await expect(chart(page)).toBeVisible();
   await expect(page.getByTestId('home-velocity-save-warning')).toBeVisible();
-  await team(page).selectOption('Mobile');
+  await chooseFilter(page, 'home-velocity-team', 'Mobile');
   await expect(chart(page)).toContainText('Mobile Sprint 11');
 });
 
@@ -265,16 +296,16 @@ test('loading error retry and stale only follow explicit manual generation @regr
   await expect(chart(page)).toContainText('Nexus Sprint 2');
   const old = await stored(page);
   const date = await page.getByTestId('home-meta').textContent();
-  await person(page).selectOption(alexA);
+  await chooseFilter(page, 'home-velocity-person', alexA);
   await refresh(page).click();
   await expect.poll(() => pending.length).toBe(3);
   await expect(chart(page)).toContainText('Nexus Sprint 2');
   expect(await stored(page)).toBe(old);
   await expect(person(page)).toBeEnabled();
-  await person(page).selectOption(alexB);
+  await chooseFilter(page, 'home-velocity-person', alexB);
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '1.25', '0', '3']);
-  await team(page).selectOption('Mobile');
-  await expect(person(page)).toHaveValue('');
+  await chooseFilter(page, 'home-velocity-team', 'Mobile');
+  await expect(person(page)).toHaveAttribute('data-values', '');
   await expect(chart(page)).toContainText('Mobile Sprint 11');
   await expect(chart(page)).not.toContainText('Nexus Sprint');
   await pending[2].fulfill({ status: 502, json: { error: 'Refresh unavailable' } });
@@ -377,10 +408,8 @@ test('responsive keyboard access keeps overflow internal and full data reachable
   ]) {
     await test.step(`${width}x${height}`, async () => {
       await page.setViewportSize({ width, height });
-      await team(page).focus();
-      await team(page).press('Home');
-      await team(page).press('Enter');
-      await expect(team(page)).toHaveValue(longName);
+      await chooseFilter(page, 'home-velocity-team', longName);
+      await expect(team(page)).toHaveAttribute('data-values', longName);
       await expect(team(page)).toBeFocused();
       expect(
         await team(page).evaluate((el) => {
@@ -389,10 +418,8 @@ test('responsive keyboard access keeps overflow internal and full data reachable
         }),
       ).toBe(true);
       await expect(chart(page)).toContainText('Sprint 27');
-      await person(page).focus();
-      await person(page).press('End');
-      await person(page).press('Enter');
-      await expect(person(page)).toHaveValue(`name:${'d'.repeat(64)}`);
+      await chooseFilter(page, 'home-velocity-person', `name:${'d'.repeat(64)}`);
+      await expect(person(page)).toHaveAttribute('data-values', `name:${'d'.repeat(64)}`);
       await expect(person(page)).toBeFocused();
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -407,9 +434,9 @@ test('responsive keyboard access keeps overflow internal and full data reachable
       await page.screenshot({
         path: `.orchestrator/home-velocity/scratch/screenshots/manual-home-${width}x${height}.png`,
       });
-      await team(page).selectOption('Mobile');
+      await chooseFilter(page, 'home-velocity-team', 'Mobile');
       await expect(chart(page)).toContainText('Mobile Sprint 11');
-      await expect(person(page)).toHaveValue('');
+      await expect(person(page)).toHaveAttribute('data-values', '');
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       ).toBe(true);
@@ -456,7 +483,7 @@ test('manual snapshot lifecycle never fetches on old invalid or absent cache @re
       await expect(page.getByTestId('home-next')).toHaveCount(0);
     });
   }
-  await team(page).selectOption('Mobile');
+  await chooseFilter(page, 'home-velocity-team', 'Mobile');
   await page.setViewportSize({ width: 390, height: 844 });
   const scroll = page.getByTestId('home-velocity-scroll');
   await scroll.evaluate((el) => {
@@ -476,12 +503,12 @@ test('manual snapshot lifecycle never fetches on old invalid or absent cache @re
   await expect.poll(() => pending.length).toBe(1);
   await page.clock.fastForward(180_000);
   expect(pending).toHaveLength(1);
-  await expect(team(page)).toHaveValue('Mobile');
+  await expect(team(page)).toHaveAttribute('data-values', 'Mobile');
   await expect(team(page)).toBeFocused();
   expect(await scroll.evaluate((el) => el.scrollLeft)).toBe(before);
   await pending[0].fulfill({ json: old });
   await expect(refresh(page)).toBeEnabled();
-  await expect(team(page)).toHaveValue('Mobile');
+  await expect(team(page)).toHaveAttribute('data-values', 'Mobile');
   await expect(team(page)).toBeFocused();
   expect(await scroll.evaluate((el) => el.scrollLeft)).toBe(before);
 });
@@ -493,8 +520,8 @@ test('person velocity stays local with point-sorted same-window comparison and r
   await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
   await expect(person(page)).toHaveAccessibleName('Person');
-  await expect(person(page)).toHaveValue('');
-  await expect(person(page).locator('option[value=""]')).toHaveText('Everyone');
+  await expect(person(page)).toHaveAttribute('data-values', '');
+  await expect(person(page)).toContainText('Everyone');
   const comparison = page.getByTestId('home-velocity-people');
   const rows = comparison.getByTestId('home-velocity-person-row');
   await expect(rows).toHaveCount(4);
@@ -542,10 +569,10 @@ test('person velocity stays local with point-sorted same-window comparison and r
   await expect(rows.nth(1)).toHaveAccessibleName(/0 completed, 4\.25 in progress, 0 not started/);
   await rows.nth(0).click();
   await expect(rows.nth(0)).toBeFocused();
-  await expect(person(page)).toHaveValue(alexA);
+  await expect(person(page)).toHaveAttribute('data-values', alexA);
   await expect(chart(page)).toContainText('Alex Example');
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '2.5', '0', '3']);
-  await person(page).selectOption(alexB);
+  await chooseFilter(page, 'home-velocity-person', alexB);
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '1.25', '0', '3']);
   expect(reads(dashboard)).toBe(0);
   await expect(page.getByTestId('home-velocity-methodology')).toContainText(/current assignee/i);
@@ -556,19 +583,19 @@ test('person velocity stays local with point-sorted same-window comparison and r
     /(name.*(fallback|merge|rename)|fallback.*name)/i,
   );
   await expect(comparison).toContainText(/carried.*(sprint|membership)/i);
-  await team(page).selectOption('Mobile');
-  await expect(person(page)).toHaveValue('');
+  await chooseFilter(page, 'home-velocity-team', 'Mobile');
+  await expect(person(page)).toHaveAttribute('data-values', '');
   await expect(chart(page)).toContainText('Mobile Sprint 11');
-  await team(page).selectOption('Nexus');
-  await expect(person(page)).toHaveValue('');
-  await person(page).selectOption(alexA);
+  await chooseFilter(page, 'home-velocity-team', 'Nexus');
+  await expect(person(page)).toHaveAttribute('data-values', '');
+  await chooseFilter(page, 'home-velocity-person', alexA);
   await page.reload();
-  await expect(person(page)).toHaveValue('');
+  await expect(person(page)).toHaveAttribute('data-values', '');
   expect(reads(dashboard)).toBe(0);
-  await person(page).selectOption(alexA);
+  await chooseFilter(page, 'home-velocity-person', alexA);
   await refresh(page).click();
   await expect(refresh(page)).toBeEnabled();
-  await expect(person(page)).toHaveValue(alexA);
+  await expect(person(page)).toHaveAttribute('data-values', alexA);
   // The latest generation transfers the departed person's memberships to the remaining account.
   const nexus = dashboard.data.teamVelocity.boards.find(({ name }) => name === 'Nexus');
   const departed = nexus.people.shift();
@@ -582,7 +609,7 @@ test('person velocity stays local with point-sorted same-window comparison and r
   }
   await refresh(page).click();
   await expect(refresh(page)).toBeEnabled();
-  await expect(person(page)).toHaveValue('');
+  await expect(person(page)).toHaveAttribute('data-values', '');
   expect(reads(dashboard)).toBe(2);
   expect(
     JSON.parse(await stored(page))
@@ -603,29 +630,29 @@ test('clicking the selected person resets to Everyone without fetching or changi
   const saved = await stored(page);
   const generated = await page.getByTestId('home-meta').textContent();
   for (const window of ['', 'Sprint 2']) {
-    await sprint(page).selectOption(window);
+    await chooseFilter(page, 'home-velocity-sprint', window);
     const everyoneTotals = await totals.allTextContents();
     await rows.nth(0).click();
-    await expect(person(page)).toHaveValue(alexA);
+    await expect(person(page)).toHaveAttribute('data-values', alexA);
     await expect(rows.nth(0)).toHaveAttribute('aria-pressed', 'true');
     await expect(totals).toHaveText(window ? ['2.5'] : ['0', '2.5', '0', '3']);
     await rows.nth(0).click();
-    await expect(person(page)).toHaveValue('');
+    await expect(person(page)).toHaveAttribute('data-values', '');
     await expect(rows.nth(0)).toHaveAttribute('aria-pressed', 'false');
     await expect(chart(page)).toContainText('Nexus · Everyone');
     await expect(totals).toHaveText(everyoneTotals);
     await rows.nth(0).click();
     await rows.nth(1).click();
-    await expect(person(page)).toHaveValue(alexB);
-    await expect(rows.nth(0)).toHaveAttribute('aria-pressed', 'false');
+    await expect(person(page)).toHaveAttribute('data-values', `${alexA},${alexB}`);
+    await expect(rows.nth(0)).toHaveAttribute('aria-pressed', 'true');
     await expect(rows.nth(1)).toHaveAttribute('aria-pressed', 'true');
-    await expect(totals).toHaveText(window ? ['1.25'] : ['0', '1.25', '0', '3']);
-    await person(page).selectOption(alexA);
+    await expect(totals).toHaveText(window ? ['3.75'] : ['0', '3.75', '0', '6']);
+    await chooseFilter(page, 'home-velocity-person', alexA);
     await rows.nth(0).click();
-    await expect(person(page)).toHaveValue('');
+    await expect(person(page)).toHaveAttribute('data-values', '');
     await expect(totals).toHaveText(everyoneTotals);
-    await expect(team(page)).toHaveValue('Nexus');
-    await expect(sprint(page)).toHaveValue(window);
+    await expect(team(page)).toHaveAttribute('data-values', 'Nexus');
+    await expect(sprint(page)).toHaveAttribute('data-values', window);
   }
   await expect(page.getByTestId('home-meta')).toHaveText(generated);
   expect(await stored(page)).toBe(saved);
@@ -651,14 +678,14 @@ test('people sort by selected-window points with alphabetical ties without chang
     'Unknown assignee (1)',
   ]);
   await expect(rows.locator('strong')).toHaveText(['5.5', '4.25', '3', '0']);
-  await expect(person(page).locator('option')).toHaveText([
+  expect(await readOptions(page, 'home-velocity-person')).toEqual([
     'Everyone',
     'Zoe Example',
     'Alex Example',
     'Unassigned (1)',
     'Unknown assignee (1)',
   ]);
-  await sprint(page).selectOption('Sprint 4');
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 4');
   await expect(labels).toHaveText([
     'Alex Example',
     'Zoe Example',
@@ -666,7 +693,7 @@ test('people sort by selected-window points with alphabetical ties without chang
     'Unknown assignee (1)',
   ]);
   await expect(rows.locator('strong')).toHaveText(['3', '3', '2', '0']);
-  await sprint(page).selectOption('Sprint 2');
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 2');
   await expect(labels).toHaveText([
     'Zoe Example',
     'Alex Example',
@@ -688,8 +715,8 @@ test('one sprint compares every person on the same local window and shared scale
   await seedVelocitySnapshot(page, original);
   await page.goto('/#/home');
   await expect(sprint(page)).toHaveAccessibleName('Sprint');
-  await expect(sprint(page)).toHaveValue('');
-  expect(await sprint(page).locator('option').allTextContents()).toEqual([
+  await expect(sprint(page)).toHaveAttribute('data-values', '');
+  expect(await readOptions(page, 'home-velocity-sprint')).toEqual([
     'All displayed sprints',
     'Sprint 11',
     'Sprint 4',
@@ -700,7 +727,7 @@ test('one sprint compares every person on the same local window and shared scale
   const saved = await stored(page);
   const rows = page.getByTestId('home-velocity-person-row');
   const comparison = page.getByTestId('home-velocity-people');
-  await sprint(page).selectOption('Sprint 2');
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 2');
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['4.75']);
   await expect(comparison).toContainText('Total points · Sprint 2');
   await expect(rows.locator('strong')).toHaveText(['2.5', '1.25', '1', '0']);
@@ -724,20 +751,21 @@ test('one sprint compares every person on the same local window and shared scale
       await expect(segment).toHaveCSS('background-color', color);
     }
     await rows.nth(index).click();
-    await expect(person(page)).toHaveValue(p.id);
-    await expect(sprint(page)).toHaveValue('Sprint 2');
+    await expect(person(page)).toHaveAttribute('data-values', p.id);
+    await expect(sprint(page)).toHaveAttribute('data-values', 'Sprint 2');
     await expect(page.getByTestId('home-velocity-total')).toHaveText([String(p.series[1].points)]);
     await expect(page.getByTestId('home-velocity-axis')).toHaveText(axis);
     await expect(rows).toHaveCount(4);
     await expect(rows.locator('strong')).toHaveText(['2.5', '1.25', '1', '0']);
+    await rows.nth(index).click();
   }
-  await person(page).selectOption('');
-  await sprint(page).selectOption('Sprint 1');
+  await chooseFilter(page, 'home-velocity-person', '');
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 1');
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['0']);
   await expect(rows.locator('strong')).toHaveText(['0']);
   await expect(comparison).toContainText('Total points · Sprint 1');
-  await expect(person(page).locator('option')).toHaveCount(2);
-  await sprint(page).selectOption('');
+  expect(await readOptions(page, 'home-velocity-person')).toHaveLength(2);
+  await chooseFilter(page, 'home-velocity-sprint', '');
   await expect(comparison).toContainText('Total points · 4 displayed sprints');
   await expect(rows.locator('strong')).toHaveText(['5.5', '4.25', '3', '0']);
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '4.75', '0', '8']);
@@ -759,10 +787,10 @@ test('global sprint cascades team and person locally and retains valid children 
   await expect(sprint(page)).toBeVisible();
   expect(
     await page
-      .locator('#panel-home select')
+      .locator('#panel-home .home-velocity-select')
       .evaluateAll((els) => els.map((el) => el.dataset.testid)),
   ).toEqual(['home-velocity-sprint', 'home-velocity-team', 'home-velocity-person']);
-  await expect(sprint(page).locator('option')).toHaveText([
+  expect(await readOptions(page, 'home-velocity-sprint')).toEqual([
     'All displayed sprints',
     'Sprint 4',
     'Sprint 3',
@@ -770,38 +798,38 @@ test('global sprint cascades team and person locally and retains valid children 
     'Sprint 1',
   ]);
   const saved = await stored(page);
-  await person(page).selectOption(alexA);
-  await sprint(page).selectOption('Sprint 2');
-  await expect(person(page)).toHaveValue(alexA);
-  await expect(sprint(page)).toHaveValue('Sprint 2');
-  await expect(team(page).locator('option')).toHaveText(['Mobile', 'Nexus']);
-  await team(page).selectOption('Mobile');
-  await expect(sprint(page)).toHaveValue('Sprint 2');
-  await expect(person(page)).toHaveValue('');
+  await chooseFilter(page, 'home-velocity-person', alexA);
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 2');
+  await expect(person(page)).toHaveAttribute('data-values', alexA);
+  await expect(sprint(page)).toHaveAttribute('data-values', 'Sprint 2');
+  expect(await readOptions(page, 'home-velocity-team', false)).toEqual(['Mobile', 'Nexus']);
+  await chooseFilter(page, 'home-velocity-team', 'Mobile');
+  await expect(sprint(page)).toHaveAttribute('data-values', 'Sprint 2');
+  await expect(person(page)).toHaveAttribute('data-values', '');
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['7']);
   await expect(chart(page)).toContainText('Mobile Sprint 2');
-  await person(page).selectOption(mobile.people[0].id);
-  await sprint(page).selectOption('Sprint 1');
-  await expect(team(page)).toHaveValue('Nexus');
-  await expect(team(page).locator('option')).toHaveText(['Nexus']);
-  await expect(person(page)).toHaveValue('');
-  await expect(person(page).locator('option')).toHaveCount(2);
+  await chooseFilter(page, 'home-velocity-person', mobile.people[0].id);
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 1');
+  await expect(team(page)).toHaveAttribute('data-values', 'Nexus');
+  expect(await readOptions(page, 'home-velocity-team', false)).toEqual(['Nexus']);
+  await expect(person(page)).toHaveAttribute('data-values', '');
+  expect(await readOptions(page, 'home-velocity-person')).toHaveLength(2);
   expect(JSON.parse(await stored(page, preferenceKey)).team).toBe('Nexus');
-  await sprint(page).selectOption('Sprint 3');
-  await expect(person(page).locator('option')).toHaveCount(5);
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 3');
+  expect(await readOptions(page, 'home-velocity-person')).toHaveLength(5);
   await expect(page.getByTestId('home-velocity-person-row').locator('strong')).toHaveText([
     '0',
     '0',
     '0',
     '0',
   ]);
-  await person(page).selectOption('unknown');
-  await sprint(page).selectOption('Sprint 2');
-  await expect(person(page)).toHaveValue('unknown');
-  await sprint(page).selectOption('Sprint 1');
-  await expect(person(page)).toHaveValue('');
-  await sprint(page).selectOption('');
-  await expect(team(page).locator('option')).toHaveText(['Mobile', 'Nexus']);
+  await chooseFilter(page, 'home-velocity-person', 'unknown');
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 2');
+  await expect(person(page)).toHaveAttribute('data-values', 'unknown');
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 1');
+  await expect(person(page)).toHaveAttribute('data-values', '');
+  await chooseFilter(page, 'home-velocity-sprint', '');
+  expect(await readOptions(page, 'home-velocity-team', false)).toEqual(['Mobile', 'Nexus']);
   expect(await stored(page)).toBe(saved);
   expect(dashboard.data.teamVelocity).toEqual(original);
   expect(reads(dashboard)).toBe(0);
@@ -816,23 +844,23 @@ test('refresh reconciles global sprint and children and reload keeps only team @
     series[0].sprint.name = 'Mobile Sprint 2';
   await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
-  await team(page).selectOption('Nexus');
-  await sprint(page).selectOption('Sprint 2');
-  await person(page).selectOption(alexB);
+  await chooseFilter(page, 'home-velocity-team', 'Nexus');
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 2');
+  await chooseFilter(page, 'home-velocity-person', alexB);
   await refresh(page).click();
   await expect(refresh(page)).toBeEnabled();
-  await expect(sprint(page)).toHaveValue('Sprint 2');
-  await expect(person(page)).toHaveValue(alexB);
+  await expect(sprint(page)).toHaveAttribute('data-values', 'Sprint 2');
+  await expect(person(page)).toHaveAttribute('data-values', alexB);
   const nexus = dashboard.data.teamVelocity.boards.find(({ name }) => name === 'Nexus');
   for (const series of [nexus.series, ...nexus.people.map((p) => p.series)])
     series[1].sprint.name = 'Nexus Sprint 22';
   await refresh(page).click();
   await expect(refresh(page)).toBeEnabled();
-  await expect(sprint(page)).toHaveValue('Sprint 2');
-  await expect(team(page)).toHaveValue('Mobile');
-  await expect(person(page)).toHaveValue('');
+  await expect(sprint(page)).toHaveAttribute('data-values', 'Sprint 2');
+  await expect(team(page)).toHaveAttribute('data-values', 'Mobile');
+  await expect(person(page)).toHaveAttribute('data-values', '');
   expect(JSON.parse(await stored(page, preferenceKey)).team).toBe('Mobile');
-  await expect(sprint(page).locator('option')).toHaveText([
+  expect(await readOptions(page, 'home-velocity-sprint')).toEqual([
     'All displayed sprints',
     'Sprint 22',
     'Sprint 4',
@@ -840,25 +868,25 @@ test('refresh reconciles global sprint and children and reload keeps only team @
     'Sprint 2',
     'Sprint 1',
   ]);
-  await sprint(page).selectOption('Sprint 22');
-  await expect(team(page)).toHaveValue('Nexus');
-  await person(page).selectOption(alexB);
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 22');
+  await expect(team(page)).toHaveAttribute('data-values', 'Nexus');
+  await chooseFilter(page, 'home-velocity-person', alexB);
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['1.25']);
   await expect(page.getByTestId('home-velocity-people')).toContainText('Total points · Sprint 22');
   for (const series of [nexus.series, ...nexus.people.map((p) => p.series)]) series.splice(1, 1);
   await refresh(page).click();
   await expect(refresh(page)).toBeEnabled();
-  await expect(sprint(page)).toHaveValue('');
-  await expect(person(page)).toHaveValue(alexB);
+  await expect(sprint(page)).toHaveAttribute('data-values', '');
+  await expect(person(page)).toHaveAttribute('data-values', alexB);
   await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '0', '3']);
   await expect(page.getByTestId('home-velocity-people')).toContainText(
     'Total points · 3 displayed sprints',
   );
   expect(JSON.parse(await stored(page)).snapshot).toEqual(dashboard.data.teamVelocity);
-  await sprint(page).selectOption('Sprint 4');
+  await chooseFilter(page, 'home-velocity-sprint', 'Sprint 4');
   await page.reload();
-  await expect(sprint(page)).toHaveValue('');
-  await expect(person(page)).toHaveValue('');
+  await expect(sprint(page)).toHaveAttribute('data-values', '');
+  await expect(person(page)).toHaveAttribute('data-values', '');
   expect(reads(dashboard)).toBe(3);
 });
 
@@ -871,18 +899,19 @@ test('exact nonstandard sprint names and refreshed membership counts govern peop
     series[0].sprint.name = 'Release Alpha';
   await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
-  await sprint(page).selectOption('Release Alpha');
-  await expect(team(page).locator('option')).toHaveText(['Nexus']);
-  await expect(person(page).locator('option')).toHaveCount(2);
-  await person(page).selectOption(alexA);
+  await chooseFilter(page, 'home-velocity-sprint', 'Release Alpha');
+  expect(await readOptions(page, 'home-velocity-team', false)).toEqual(['Nexus']);
+  expect(await readOptions(page, 'home-velocity-person')).toHaveLength(2);
+  await chooseFilter(page, 'home-velocity-person', alexA);
   nexus.people[0].series[0].count = 0;
   nexus.people[1].series[0].count = 1;
   await refresh(page).click();
   await expect(refresh(page)).toBeEnabled();
-  await expect(sprint(page)).toHaveValue('Release Alpha');
-  await expect(person(page)).toHaveValue('');
-  await expect(person(page).locator('option')).toHaveCount(2);
-  await expect(person(page).locator('option').last()).toHaveAttribute('value', alexB);
+  await expect(sprint(page)).toHaveAttribute('data-values', 'Release Alpha');
+  await expect(person(page)).toHaveAttribute('data-values', '');
+  const updatedPeople = await readChoices(page, 'home-velocity-person');
+  expect(updatedPeople).toHaveLength(2);
+  expect(updatedPeople.at(-1).value).toBe(alexB);
   await expect(page.getByTestId('home-velocity-person-row').locator('strong')).toHaveText(['0']);
   await expect(page.getByTestId('home-velocity-people')).toContainText(
     'Total points · Release Alpha',
@@ -897,7 +926,7 @@ test('snapshot arithmetic rejects a manual result without replacing last-good ch
   await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
   await page.goto('/#/home');
   await expect(chart(page)).toBeVisible();
-  await person(page).selectOption(alexA);
+  await chooseFilter(page, 'home-velocity-person', alexA);
   const saved = await stored(page);
   const date = await page.getByTestId('home-meta').textContent();
   const totals = await page.getByTestId('home-velocity-total').allTextContents();
@@ -908,7 +937,7 @@ test('snapshot arithmetic rejects a manual result without replacing last-good ch
   await refresh(page).click();
   await expect(page.getByTestId('home-velocity-stale')).toContainText(/invalid/i);
   await expect(refresh(page)).toBeEnabled();
-  await expect(person(page)).toHaveValue(alexA);
+  await expect(person(page)).toHaveAttribute('data-values', alexA);
   await expect(page.getByTestId('home-velocity-total')).toHaveText(totals);
   await expect(page.getByTestId('home-meta')).toHaveText(date);
   expect(await stored(page)).toBe(saved);
@@ -992,15 +1021,11 @@ test('unambiguous person labels reserve aggregate literal suffixes and special b
   const original = structuredClone(dashboard.data.teamVelocity);
   await seedVelocitySnapshot(page, original);
   await page.goto('/#/home');
-  const options = person(page).locator('option');
   const expected = [
     { value: '', label: 'Everyone' },
     ...rankedPeople.map((p) => ({ value: p.id, label: labelsById.get(p.id) })),
   ];
-  await expect(options).toHaveCount(expected.length);
-  const choices = await options.evaluateAll((elements) =>
-    elements.map((el) => ({ value: el.value, label: el.textContent })),
-  );
+  const choices = await readChoices(page, 'home-velocity-person');
   expect(choices).toEqual(expected);
   expect(new Set(choices.map(({ label }) => label)).size).toBe(choices.length);
   const rows = page.getByTestId('home-velocity-person-row');
@@ -1008,33 +1033,28 @@ test('unambiguous person labels reserve aggregate literal suffixes and special b
   for (const [index, p] of rankedPeople.entries()) {
     const label = labelsById.get(p.id);
     await expect(rows.nth(index).locator('.home-velocity-person-name')).toHaveText(label);
-    await person(page).focus();
-    await person(page).selectOption(p.id);
+    await chooseFilter(page, 'home-velocity-person', p.id);
     await expect(person(page)).toBeFocused();
     await expect(page.getByTestId('home-velocity-total')).toHaveText([String(p.series[0].points)]);
     await expect(chart(page).locator('figcaption p')).toHaveText(`Nexus · ${label}`);
     await expect(page.getByTestId('home-velocity-scroll')).toHaveAccessibleName(
       `Nexus, ${label} sprint history; scroll to see more sprints`,
     );
-    await person(page).selectOption('');
+    await chooseFilter(page, 'home-velocity-person', '');
     await expect(page.getByTestId('home-velocity-total')).toHaveText(['45']);
     await rows.nth(index).click();
     await expect(rows.nth(index)).toBeFocused();
-    await expect(person(page)).toHaveValue(p.id);
+    await expect(person(page)).toHaveAttribute('data-values', p.id);
     await expect(chart(page).locator('figcaption p')).toHaveText(`Nexus · ${label}`);
     await expect(page.getByTestId('home-velocity-total')).toHaveText([String(p.series[0].points)]);
+    await rows.nth(index).click();
   }
   expect(reads(dashboard)).toBe(0);
   expect(JSON.parse(await stored(page)).snapshot).toEqual(original);
   expect(dashboard.data.teamVelocity).toEqual(original);
   await page.reload();
-  await expect(person(page)).toHaveValue('');
-  await expect(options).toHaveCount(expected.length);
-  expect(
-    await options.evaluateAll((elements) =>
-      elements.map((el) => ({ value: el.value, label: el.textContent })),
-    ),
-  ).toEqual(expected);
+  await expect(person(page)).toHaveAttribute('data-values', '');
+  expect(await readChoices(page, 'home-velocity-person')).toEqual(expected);
   expect(reads(dashboard)).toBe(0);
 });
 
@@ -1084,6 +1104,36 @@ test.describe('explicit sprint inspection', () => {
     await expect(lines.first()).toHaveAttribute('data-active', 'true');
     await expect(page.getByTestId('home-velocity-avg-label')).toHaveText(/Alex Example .*1\.1 avg/);
     await expect(chart(page)).toContainText('1.1 avg / sprint');
+    expect(reads(dashboard)).toBe(0);
+  });
+
+  test('Sprint, Team, and Person filters all support selecting multiple items @regression', async ({
+    page,
+    dashboard,
+  }) => {
+    await seedVelocitySnapshot(page, dashboard.data.teamVelocity);
+    await page.goto('/#/home');
+    await expect(chart(page)).toBeVisible();
+
+    // Multi-select 2 sprints: Sprint 2 (4.75) + Sprint 4 (8) -> 2 bars, avg 6.4.
+    await chooseFilter(page, 'home-velocity-sprint', ['Sprint 2', 'Sprint 4']);
+    await expect(sprint(page)).toContainText('2 selected');
+    await expect(page.getByTestId('home-velocity-total')).toHaveText(['4.75', '8']);
+    await expect(page.getByTestId('home-velocity-avg-label')).toHaveText('Nexus · 6.4 avg');
+
+    // Reset sprints, multi-select 2 people (alexA + alexB): [0, 3.75, 0, 6] -> avg 2.4.
+    await chooseFilter(page, 'home-velocity-sprint', []);
+    await chooseFilter(page, 'home-velocity-person', [alexA, alexB]);
+    await expect(person(page)).toContainText('2 selected');
+    await expect(chart(page).locator('figcaption p')).toHaveText('Nexus · 2 people');
+    await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '3.75', '0', '6']);
+    await expect(page.getByTestId('home-velocity-avg-label')).toHaveText('2 people · 2.4 avg');
+
+    // Multi-select 2 teams (Nexus + Mobile): combines sprints across both teams.
+    await chooseFilter(page, 'home-velocity-team', ['Nexus', 'Mobile']);
+    await expect(team(page)).toContainText('2 selected');
+    await expect(chart(page).locator('figcaption p')).toHaveText('2 teams · Everyone');
+    await expect(page.getByTestId('home-velocity-total')).toHaveText(['0', '4.75', '0', '8', '7']);
     expect(reads(dashboard)).toBe(0);
   });
 });

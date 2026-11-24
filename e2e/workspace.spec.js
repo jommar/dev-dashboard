@@ -8,7 +8,7 @@ test('Home keeps one velocity pane in the shared workspace @regression', async (
   await page.goto('/#/home');
   await expect(page.getByTestId('home-title')).toHaveText('Velocity');
   await expect(page.getByTestId('home-velocity-chart')).toBeVisible();
-  await expect(page.getByTestId('home-velocity-team')).toHaveValue('Nexus');
+  await expect(page.getByTestId('home-velocity-team')).toContainText('Nexus');
   for (const id of ['home-kpi-row', 'home-sprint-block', 'home-services-block']) {
     await expect(page.getByTestId(id)).toHaveCount(0);
   }

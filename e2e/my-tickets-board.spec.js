@@ -908,8 +908,11 @@ test('Home Team selection never folds away @regression', async ({ page, dashboar
   const team = page.getByTestId('home-velocity-team');
   await expect(team).toBeVisible();
   await expect(team).toHaveAccessibleName('Team');
-  await expect(team).toHaveValue('Nexus');
-  await team.selectOption('Mobile');
+  await expect(team).toContainText('Nexus');
+  await team.click();
+  await page.locator('[data-testid="home-velocity-team-option"][data-value="Nexus"]').click();
+  await page.locator('[data-testid="home-velocity-team-option"][data-value="Mobile"]').click();
+  await page.keyboard.press('Escape');
   await expect(page.getByTestId('home-velocity-chart')).toContainText('Mobile Sprint 11');
 });
 
