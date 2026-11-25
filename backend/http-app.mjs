@@ -633,6 +633,7 @@ export function createHttpHandler({ settings, manager, integrations = {} }) {
           jiraBase: publicSettings.jira.baseUrl
             ? `${publicSettings.jira.baseUrl.replace(/\/+$/, '')}/browse/`
             : '',
+          usageAppUrl: publicSettings.usageAppUrl || '',
           setup: settings.getSetupStatus(),
           harness: harnessMeta(harness),
         });

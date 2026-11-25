@@ -19,8 +19,9 @@ const MAX_INITIAL_RAW = 644 * KIB;
 // Raised from 200→202 KiB (My Tickets merged PRs, Slack ticket-thread search), 203 KiB for
 // per-PR viewer review indicators on the Pull Requests board, 206 KiB when Releases joined
 // Sprint as a second lazy consumer of useTicketSlackThreads (causing Rolldown to split it into
-// its own initial chunk), and 207 KiB for shared BoardDivider / person grouping on Pull Requests.
-const MAX_INITIAL_GZIP = 207 * KIB;
+// its own initial chunk), 207 KiB for shared BoardDivider / person grouping on Pull Requests,
+// and 208 KiB for the optional usageAppUrl Settings field and context.
+const MAX_INITIAL_GZIP = 208 * KIB;
 // A guard against bloat, not a target: lazy loading splits code, it must not add much of it.
 // Raised from 884 KiB for the lazy Sprint screen, which could not fit the 1.5 KiB that was left,
 // to 902 KiB for the ticket-thread search in the shared Slack hook (about 1 KiB of eager code), and
@@ -30,11 +31,12 @@ const MAX_INITIAL_GZIP = 207 * KIB;
 // (all lazy, plus one tiny helper in api.js), to 919 KiB for the redesigned lazy Releases board,
 // to 921 KiB for shared person grouping & dividers across Releases, Sprint and Pull Requests,
 // and to 925 KiB for the upgraded Deploy + Summary release notes formatters (lazy Releases chunk),
-// and to 929 KiB for multi-select Sprint, Team, and Person filters on Home.
-const MAX_TOTAL_RAW = 929 * KIB;
-// Raised from 180 KiB for per-PR viewer review background tints in prs.css, and to 182 KiB for
-// assignee dividers in releases.css.
-const MAX_TOTAL_CSS = 182 * KIB;
+// to 929 KiB for multi-select Sprint, Team, and Person filters on Home,
+// and to 931 KiB for usageAppUrl Settings field and clickable Sessions drawer token links.
+const MAX_TOTAL_RAW = 931 * KIB;
+// Raised from 180 KiB for per-PR viewer review background tints in prs.css, to 182 KiB for
+// assignee dividers in releases.css, and to 183 KiB for clickable usage-link styles in sessions-drawer.css.
+const MAX_TOTAL_CSS = 183 * KIB;
 // Modules that must load on demand: the five rarely used screens and the two dialogs, plus the
 // markdown renderer both the viewer and the chat pull in.
 const LAZY_MODULES = [

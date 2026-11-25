@@ -5,6 +5,7 @@ import { ScreenSlot } from './components/ScreenSlot.jsx';
 import { dashboardTheme } from './theme.js';
 import { getConfig } from './lib/api.js';
 import { HarnessContext } from './lib/harness-context.js';
+import { UsageAppContext } from './lib/usage-app-context.js';
 import { lazyScreen } from './lib/lazy-screen.js';
 import { useServiceEvents } from './hooks/useServiceEvents.js';
 import { HomePanel } from './panels/HomePanel.jsx';
@@ -161,64 +162,66 @@ export function App() {
         <StartupState error={bootError} onRetry={() => setReloadKey((key) => key + 1)} />
       ) : (
         <HarnessContext.Provider value={harness}>
-          <AppShell
-            tabs={tabs}
-            active={active}
-            onNavigate={navigate}
-            connection={connection}
-            ready={ready}
-          >
-            {ready && (
-              <>
-                <Home config={config} active={active === 'home'} />
-                <Services config={config} active={active === 'services'} services={services} />
-                <Prs config={config} active={active === 'prs'} />
-                <MyTickets
-                  config={config}
-                  active={active === 'my-tickets'}
-                  requestedTicket={ticketRequest}
-                  onTicketHandled={ticketHandled}
-                />
-                <ScreenSlot
-                  id="releases"
-                  label="Releases"
-                  Screen={Releases}
-                  config={config}
-                  active={active === 'releases'}
-                  view={releaseView}
-                  onViewChange={changeReleaseView}
-                />
-                <Slack active={active === 'slack'} />
-                <ScreenSlot
-                  id="chat"
-                  label="Chat"
-                  Screen={Chat}
-                  active={active === 'chat'}
-                  session={chatSession}
-                />
-                <ScreenSlot
-                  id="devtools"
-                  label="DevTools"
-                  Screen={Devtools}
-                  active={active === 'devtools'}
-                />
-                <ScreenSlot
-                  id="mascots"
-                  label="Mascots"
-                  Screen={Mascots}
-                  active={active === 'mascots'}
-                />
-                <ScreenSlot
-                  id="sprint"
-                  label="Sprint"
-                  Screen={Sprint}
-                  config={config}
-                  active={active === 'sprint'}
-                />
-              </>
-            )}
-            <Settings config={config} active={active === 'settings'} />
-          </AppShell>
+          <UsageAppContext.Provider value={config.usageAppUrl || ''}>
+            <AppShell
+              tabs={tabs}
+              active={active}
+              onNavigate={navigate}
+              connection={connection}
+              ready={ready}
+            >
+              {ready && (
+                <>
+                  <Home config={config} active={active === 'home'} />
+                  <Services config={config} active={active === 'services'} services={services} />
+                  <Prs config={config} active={active === 'prs'} />
+                  <MyTickets
+                    config={config}
+                    active={active === 'my-tickets'}
+                    requestedTicket={ticketRequest}
+                    onTicketHandled={ticketHandled}
+                  />
+                  <ScreenSlot
+                    id="releases"
+                    label="Releases"
+                    Screen={Releases}
+                    config={config}
+                    active={active === 'releases'}
+                    view={releaseView}
+                    onViewChange={changeReleaseView}
+                  />
+                  <Slack active={active === 'slack'} />
+                  <ScreenSlot
+                    id="chat"
+                    label="Chat"
+                    Screen={Chat}
+                    active={active === 'chat'}
+                    session={chatSession}
+                  />
+                  <ScreenSlot
+                    id="devtools"
+                    label="DevTools"
+                    Screen={Devtools}
+                    active={active === 'devtools'}
+                  />
+                  <ScreenSlot
+                    id="mascots"
+                    label="Mascots"
+                    Screen={Mascots}
+                    active={active === 'mascots'}
+                  />
+                  <ScreenSlot
+                    id="sprint"
+                    label="Sprint"
+                    Screen={Sprint}
+                    config={config}
+                    active={active === 'sprint'}
+                  />
+                </>
+              )}
+              <Settings config={config} active={active === 'settings'} />
+            </AppShell>
+          </UsageAppContext.Provider>
         </HarnessContext.Provider>
       )}
     </ThemeProvider>

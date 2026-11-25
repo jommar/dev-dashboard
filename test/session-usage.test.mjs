@@ -5,6 +5,7 @@ import {
   MAX_ROW_SESSIONS,
   USAGE_CHUNK,
   rowUsageLabel,
+  usageAppHref,
   usageChunks,
   usageSessionIds,
 } from '../ui/session-usage.js';
@@ -49,6 +50,21 @@ test('session usage: a row says its tokens, nothing for none or no answer', () =
   assert.equal(rowUsageLabel(tally(ZERO)), null);
   assert.equal(rowUsageLabel(undefined), null);
   assert.equal(rowUsageLabel(null), null);
+});
+
+test('session usage: usageAppHref builds a session deep link only when both url and session exist', () => {
+  assert.equal(
+    usageAppHref('http://127.0.0.1:7842/', id(1)),
+    `http://127.0.0.1:7842/#/sessions/${id(1)}`,
+  );
+  assert.equal(
+    usageAppHref('  http://127.0.0.1:7842  ', id(2)),
+    `http://127.0.0.1:7842/#/sessions/${id(2)}`,
+  );
+  assert.equal(usageAppHref('', id(1)), null);
+  assert.equal(usageAppHref('   ', id(1)), null);
+  assert.equal(usageAppHref(null, id(1)), null);
+  assert.equal(usageAppHref('http://127.0.0.1:7842', null), null);
 });
 
 test('session usage: only the drawer asks, and never on a timer', () => {

@@ -26,3 +26,10 @@ export function rowUsageLabel(tally) {
   const sum = sumUsage([tally]);
   return sum.total > 0 ? tokensLabel(sum) : null;
 }
+
+// Deep link into the configured usage app for a session, or null when unconfigured or missing an id.
+export function usageAppHref(baseUrl, session) {
+  const base = typeof baseUrl === 'string' ? baseUrl.trim().replace(/\/+$/, '') : '';
+  if (!base || !session) return null;
+  return `${base}/#/sessions/${encodeURIComponent(session)}`;
+}

@@ -158,6 +158,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sessions-row-usage-link {
+  text-decoration: none;
+}
+.sessions-row-usage-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.sessions-row-usage-link:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 /* The Notify me button's state as a word in a small pill after its name (On, Off, Blocked), so the state
    is never colour alone; the pill is aria-hidden, the button's name and aria-pressed stay as they are. */
 .btn.subtle.sessions-notify {

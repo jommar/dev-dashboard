@@ -84,3 +84,17 @@ test('drawer usage: no session rows, no request', async ({ page, dashboard }) =>
   await expect(page.getByTestId('sessions-empty')).toBeVisible();
   expect(dashboard.data.claude.usage.asks).toEqual([]);
 });
+
+test('drawer usage: token readout links to the configured usage app and stays plain when unset', async ({
+  page,
+  dashboard,
+}) => {
+  dashboard.data.config.usageAppUrl = 'http://127.0.0.1:7842';
+  await seed(page, dashboard);
+  await page.getByTestId('sessions-tab').click();
+  const usage = page.getByTestId('sessions-usage-TAP-9101:implement');
+  await expect(usage).toHaveText('~101.1k tokens');
+  await expect(usage).toHaveAttribute('href', `http://127.0.0.1:7842/#/sessions/${A}`);
+  await expect(usage).toHaveAttribute('target', '_blank');
+  await expect(usage).toHaveAttribute('rel', 'noopener noreferrer');
+});

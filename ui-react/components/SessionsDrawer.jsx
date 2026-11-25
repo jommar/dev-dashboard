@@ -20,6 +20,7 @@ import { notifyClaudeTicketsChanged } from '../hooks/useClaudeTickets.js';
 import { useSessionsUsage } from '../hooks/useSessionsUsage.js';
 import { stopSession } from '../lib/api.js';
 import { useHarness } from '../lib/harness-context.js';
+import { useUsageAppUrl } from '../lib/usage-app-context.js';
 import { SessionsBody } from '../lib/lazy-overlays.js';
 import { Button, DashboardTooltip } from './Primitives.jsx';
 import { EdgeDrawer } from './EdgeDrawer.jsx';
@@ -110,6 +111,7 @@ const notifyBlocked = (notify) => Boolean(notify?.supported) && notify.permissio
 
 export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify, drawerId }) {
   const harness = useHarness();
+  const usageAppUrl = useUsageAppUrl();
   const count = groups.reduce((total, { rows }) => total + rows.length, 0);
   const waiting = groups.find(({ state }) => state === 'waiting')?.rows.length ?? 0;
   const notifyNoteId = useId();
@@ -219,6 +221,7 @@ export function SessionsDrawer({ groups, open, onToggle, onOpenSession, notify, 
           now={now}
           copied={copied}
           usage={usage}
+          usageAppUrl={usageAppUrl}
           onOpen={openRow}
           onCopy={copy}
           onStop={stop}

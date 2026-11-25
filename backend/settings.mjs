@@ -49,6 +49,12 @@ const editable = (input = {}) => ({
       : input.local.services,
   },
   minPrApprover: input.minPrApprover,
+  usageAppUrl:
+    input.usageAppUrl == null
+      ? ''
+      : typeof input.usageAppUrl === 'string'
+        ? input.usageAppUrl.trim().replace(/\/+$/, '')
+        : input.usageAppUrl,
 });
 
 const slackWatchDefaults = {
@@ -208,6 +214,24 @@ export function createSettingsStore(options = {}) {
       add('credentials.jiraToken', 'Provide a readable Jira token.', 'CREDENTIAL_REQUIRED');
     if (!Number.isSafeInteger(candidate?.minPrApprover) || candidate.minPrApprover < 1)
       add('minPrApprover', 'Enter a positive approval count.');
+    if (candidate?.usageAppUrl !== undefined && candidate.usageAppUrl !== '') {
+      try {
+        const url = new URL(candidate.usageAppUrl);
+        if (
+          !['https:', 'http:'].includes(url.protocol) ||
+          url.username ||
+          url.password ||
+          url.search ||
+          url.hash
+        )
+          throw new Error();
+      } catch {
+        add(
+          'usageAppUrl',
+          'Enter an HTTP(S) usage app URL without credentials, query or fragment.',
+        );
+      }
+    }
     const local = candidate?.local;
     let rootValid = typeof local?.root === 'string' && path.isAbsolute(local.root);
     if (rootValid) {
@@ -322,6 +346,7 @@ export function createSettingsStore(options = {}) {
       jira: fields.jira || {},
       local: fields.local || { root: paths.root, services: [] },
       minPrApprover: record?.minPrApprover || 1,
+      usageAppUrl: typeof fields.usageAppUrl === 'string' ? fields.usageAppUrl : '',
       slackWatch: readSlackWatch(record?.slackWatch),
       credentials: Object.fromEntries(
         ['github', 'jira'].map((name) => [

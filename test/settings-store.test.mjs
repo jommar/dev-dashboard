@@ -388,3 +388,41 @@ test('an ordinary Settings save on a restarted store keeps slackWatch while it e
   assert.equal(restarted.getPublicSettings().minPrApprover, 3);
   assertKeepsSlackWatch(f, restarted, { ...f.configuration, minPrApprover: 3 });
 });
+
+test('usageAppUrl is optional, trims trailing slashes, persists, and rejects invalid URLs', async (t) => {
+  const f = settingsFixture(t);
+  const store = await f.store();
+  await accept(f, store);
+  assert.equal(store.getPublicSettings().usageAppUrl, '');
+
+  const rev1 = store.getPublicSettings().revision;
+  await store.save({
+    ...f.configuration,
+    usageAppUrl: '  http://127.0.0.1:7842/  ',
+    expectedRevision: rev1,
+  });
+  assert.equal(store.getPublicSettings().usageAppUrl, 'http://127.0.0.1:7842');
+
+  const restarted = await f.store();
+  await restarted.initialize();
+  assert.equal(restarted.getPublicSettings().usageAppUrl, 'http://127.0.0.1:7842');
+
+  const rev2 = restarted.getPublicSettings().revision;
+  await assert.rejects(
+    restarted.save({
+      ...f.configuration,
+      usageAppUrl: 'ftp://127.0.0.1:7842',
+      expectedRevision: rev2,
+    }),
+    (error) =>
+      error.code === 'INVALID_SETTINGS' &&
+      error.errors.some((issue) => issue.field === 'usageAppUrl'),
+  );
+
+  await restarted.save({
+    ...f.configuration,
+    usageAppUrl: '',
+    expectedRevision: rev2,
+  });
+  assert.equal(restarted.getPublicSettings().usageAppUrl, '');
+});

@@ -10,7 +10,7 @@ import { NavIcon } from './NavIcon.jsx';
 import { RelativeTime } from './slack-watch/RelativeTime.jsx';
 import { QUIET_WORKING_MS, isQuiet } from '../../ui/bot-bar.js';
 import { chatHref } from '../../ui/chat-stream.js';
-import { rowUsageLabel } from '../../ui/session-usage.js';
+import { rowUsageLabel, usageAppHref } from '../../ui/session-usage.js';
 
 // The popup on a row's time: when the session was last written to and, for a quiet one, for how long.
 const activityTitle = (iso, quiet) =>
@@ -105,7 +105,7 @@ function StuckLine({ session, what, testId, onStop }) {
   );
 }
 
-function Row({ row, now, outcome, usage, onOpen, onCopy, onStop, onClose }) {
+function Row({ row, now, outcome, usage, usageAppUrl, onOpen, onCopy, onStop, onClose }) {
   const { key, ticket, phase, state, goTo, lastActiveAt, session, mark, detail, copyWord, meta } =
     row;
   const phaseWords = row.words;
@@ -119,6 +119,7 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onStop, onClose }) {
   const ok = outcome === 'Copied';
   const quiet = isQuiet(row, now);
   const tokens = rowUsageLabel(usage);
+  const usageHref = usageAppHref(usageAppUrl, session);
   const described = [tokens && usageId, lastActiveAt && whenId].filter(Boolean).join(' ');
   return (
     <li className="sessions-row" data-testid={`sessions-row-${key}`} data-state={state}>
@@ -149,11 +150,25 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onStop, onClose }) {
         <span className="sessions-row-ticket">{name}</span>
         <span className="sessions-row-detail">{detail}</span>
       </button>
-      {tokens && (
-        <span id={usageId} className="sessions-row-usage" data-testid={`sessions-usage-${key}`}>
-          {tokens}
-        </span>
-      )}
+      {tokens &&
+        (usageHref ? (
+          <DashboardTooltip title="Open session in usage app" placement="top">
+            <a
+              id={usageId}
+              className="sessions-row-usage sessions-row-usage-link"
+              href={usageHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid={`sessions-usage-${key}`}
+            >
+              {tokens}
+            </a>
+          </DashboardTooltip>
+        ) : (
+          <span id={usageId} className="sessions-row-usage" data-testid={`sessions-usage-${key}`}>
+            {tokens}
+          </span>
+        ))}
       {lastActiveAt && (
         <span
           id={whenId}
@@ -216,7 +231,17 @@ function Row({ row, now, outcome, usage, onOpen, onCopy, onStop, onClose }) {
 // `words`, `detail`, `copyWord` and `meta` (the phase's icon and colour) it shows and `empty` is the line for no
 // sessions. `copied` is { key, outcome } of the row whose copy button shows its outcome.
 // The rest (`onOpen`, `onCopy`, `onStop`, `onClose`) goes to each row.
-export function SessionsBody({ empty, count, shown, dress, now, copied, usage, ...handlers }) {
+export function SessionsBody({
+  empty,
+  count,
+  shown,
+  dress,
+  now,
+  copied,
+  usage,
+  usageAppUrl,
+  ...handlers
+}) {
   return (
     <div className="sessions-body" data-testid="sessions-body">
       {shown.length === 0 ? (
@@ -238,6 +263,7 @@ export function SessionsBody({ empty, count, shown, dress, now, copied, usage, .
                   now={now}
                   outcome={copied?.key === row.key ? copied.outcome : null}
                   usage={row.session ? usage[row.session] : undefined}
+                  usageAppUrl={usageAppUrl}
                   {...handlers}
                 />
               ))}

@@ -28,6 +28,7 @@ function normalizeSettings(source) {
     github: { ...github },
     jira: { ...value.jira },
     local,
+    usageAppUrl: typeof value.usageAppUrl === 'string' ? value.usageAppUrl : '',
     credentials: { github: {}, jira: {}, ...value.credentials },
     setup: value.setup || {},
   };
@@ -156,6 +157,7 @@ export function SettingsPanel({ config, active, enabled = true }) {
           jira: settings.jira,
           local: { ...settings.local, services: localServices },
           minPrApprover: Number(settings.minPrApprover),
+          usageAppUrl: settings.usageAppUrl || '',
           ...(Object.keys(credentials).length ? { credentials } : {}),
         };
       }
@@ -414,6 +416,11 @@ export function SettingsPanel({ config, active, enabled = true }) {
                 })}
                 {input('minPrApprover', 'Minimum PR approvers', settings.minPrApprover, {
                   type: 'number',
+                })}
+                {input('usageAppUrl', 'Usage app URL', settings.usageAppUrl || '', {
+                  type: 'url',
+                  placeholder: 'http://127.0.0.1:7842',
+                  hint: 'Optional. Links session token counts in the Sessions drawer to this app.',
                 })}
               </Card>
             </div>

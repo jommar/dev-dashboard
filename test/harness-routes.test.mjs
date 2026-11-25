@@ -97,8 +97,10 @@ test('config harness: GET /api/config carries Claude Code metadata beside its un
     'harness',
     'jiraBase',
     'setup',
+    'usageAppUrl',
   ]);
   assert.equal(res.json.jiraBase, 'https://jira.example.test/browse/');
+  assert.equal(res.json.usageAppUrl, '');
   assert.deepEqual(res.json.setup, { ready: true });
   assert.equal(typeof res.json.defaultTailLines, 'number');
 });
